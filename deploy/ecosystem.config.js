@@ -24,39 +24,5 @@ module.exports = {
       restart_delay: 3000,
       log_date_format: "YYYY-MM-DD HH:mm:ss",
     },
-
-    // ── 2. Backend: Fastify API (Node.js :4000) ──────────────────────────────
-    {
-      name: "backend",
-      script: "npm",
-      args: "run dev",
-      cwd: path.join(ROOT_DIR, "backend"),
-      interpreter: "none",
-      env: {
-        PORT: "4000",
-        HOST: "0.0.0.0",
-      },
-      autorestart: true,
-      max_restarts: 10,
-      restart_delay: 2000,
-      log_date_format: "YYYY-MM-DD HH:mm:ss",
-    },
-
-    // ── 3. Frontend: Next.js Studio (:3000) ──────────────────────────────────
-    {
-      name: "frontend",
-      script: "npm",
-      args: "run dev",
-      cwd: path.join(ROOT_DIR, "frontend"),
-      interpreter: "none",
-      env: {
-        PORT: "3000",
-        HOST: "0.0.0.0",
-      },
-      autorestart: true,
-      max_restarts: 10,
-      restart_delay: 2000,
-      log_date_format: "YYYY-MM-DD HH:mm:ss",
-    },
   ],
 };

@@ -1,4 +1,4 @@
-﻿import { FastifyInstance } from "fastify";
+import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import prisma from "../lib/prisma.js";
 import {
@@ -7,6 +7,7 @@ import {
   getStreamStatus,
 } from "../services/rtmp-streamer.js";
 import { livePlatformConnector } from "../services/live-platform-connector.js";
+import { startPodAndWait, stopPod } from "../services/runpod-manager.js";
 
 const liveSessionSchema = z.object({
   productId: z.string().min(1),
@@ -86,6 +87,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: "product or avatar not found" };
     }
 
+    try {
+      // Start the GPU Pod and wait for it to be ready
+      await startPodAndWait();
+    } catch (err: any) {
+      reply.code(500);
+      return { error: `Gagal menyalakan GPU RunPod: ${err.message}` };
+    }
+
     const autoPromotionValue = parsed.data.autoPromotion ?? parsed.data.autoPromo ?? true;
 
     const session = await prisma.liveSession.create({
@@ -142,6 +151,9 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     stopBroadcast();
     const liveMetrics = livePlatformConnector.getMetricsSnapshot();
     livePlatformConnector.stopSession();
+
+    // Stop the GPU Pod automatically to save costs
+    stopPod().catch(err => console.error("Failed to stop GPU Pod:", err));
 
     const { durationSeconds, viewers, comments, clicks, sales, productSold } = parsed.data;
     const finalDuration = Math.max(durationSeconds, liveMetrics.durationSeconds);

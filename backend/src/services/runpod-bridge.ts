@@ -19,10 +19,12 @@ export interface RunPod2DStreamResult {
   status: string;
 }
 
+import { getWorkerUrl } from "./runpod-manager.js";
+
 export async function forwardToRunPodGPU(
   params: RunPod2DStreamParams
 ): Promise<RunPod2DStreamResult> {
-  const workerUrl = process.env.RUNPOD_WORKER_URL || process.env.AVATAR_WORKER_URL || "http://localhost:8000";
+  const workerUrl = getWorkerUrl();
 
   try {
     const controller = new AbortController();

@@ -9,6 +9,7 @@
  */
 
 import crypto from "crypto";
+import { startPodAndWait, getWorkerUrl } from "./runpod-manager.js";
 
 export type VideoJobStatus = "queued" | "processing" | "done" | "error";
 
@@ -111,9 +112,18 @@ async function runGeneration(
 // ---------------------------------------------------------------------------
 
 async function runLivePortrait(jobId: string, params: GenerateVideoParams): Promise<void> {
-  const workerUrl = (process.env.RUNPOD_WORKER_URL || process.env.AVATAR_WORKER_URL || "http://localhost:8000").replace(/\/$/, "");
+  updateJob(jobId, { status: "processing", progress: 5, stage: "Menunggu GPU RunPod siap (bisa 30-60 dtk)..." });
 
-  updateJob(jobId, { status: "processing", progress: 10, stage: "Menginisialisasi SadTalker Neural Engine..." });
+  try {
+    await startPodAndWait();
+  } catch (err: any) {
+    updateJob(jobId, { status: "error", stage: "Gagal menyalakan GPU", error: err.message });
+    throw err;
+  }
+
+  const workerUrl = getWorkerUrl();
+
+  updateJob(jobId, { progress: 10, stage: "Menginisialisasi SadTalker Neural Engine..." });
 
   try {
     // Extract avatar name from image path (e.g. "avatars/luna-3d.jpg" -> "Luna")
