@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+
+# Next.js Build
+frontend/.next/
+frontend/out/
+frontend/*.tsbuildinfo
+
+# Backend Build & Local SQLite
+backend/dist/
+*.db
+*.db-journal
+dev.db
+
+# Python AI Model weights & temp videos
+deploy/SadTalker/
+deploy/live_videos/*.mp4
+!deploy/live_videos/.gitkeep
+
+# System & IDE
+.DS_Store
+*.log

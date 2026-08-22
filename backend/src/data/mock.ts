@@ -1,0 +1,241 @@
+export type Product = {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  stock: number;
+  sku: string;
+  category: string;
+  imageUrl: string;
+  featured: boolean;
+};
+
+export const products: Product[] = [
+  {
+    id: "prod-1",
+    name: "Serum Brightening Premium",
+    description:
+      "Brightening serum with niacinamide and hydration boost for daily glow.",
+    price: 99000,
+    stock: 120,
+    sku: "SBP-001",
+    category: "Skincare",
+    imageUrl: "/product-serum.png",
+    featured: true,
+  },
+  {
+    id: "prod-2",
+    name: "Moisturizer Glow Natural",
+    description:
+      "Lightweight moisturizer designed for a healthy and hydrated skin barrier.",
+    price: 129000,
+    stock: 80,
+    sku: "MGN-002",
+    category: "Skincare",
+    imageUrl: "/product-cream.png",
+    featured: false,
+  },
+  {
+    id: "prod-3",
+    name: "Sunscreen Day Protection",
+    description:
+      "Daily SPF protection with anti-blue-light and longwear finish.",
+    price: 79000,
+    stock: 200,
+    sku: "SDP-003",
+    category: "Skincare",
+    imageUrl: "/product-sunscreen.png",
+    featured: true,
+  },
+  {
+    id: "prod-4",
+    name: "Hydrating Essence",
+    description:
+      "Hydrating essence with fermented ingredients and deep moisture retention.",
+    price: 110000,
+    stock: 70,
+    sku: "HE-004",
+    category: "Beauty",
+    imageUrl: "/product-essence.png",
+    featured: false,
+  },
+];
+
+export const avatars = [
+  {
+    id: "alya",
+    name: "Alya",
+    style: "Friendly",
+    language: "Indonesia",
+    voice: "Wanita Natural",
+  },
+  {
+    id: "luna",
+    name: "Luna",
+    style: "Energetic",
+    language: "Indonesia",
+    voice: "Energetic Promo",
+  },
+  {
+    id: "cinta",
+    name: "Cinta",
+    style: "Professional",
+    language: "Indonesia",
+    voice: "Soft Professional",
+  },
+];
+
+export const pricing = {
+  live: [
+    {
+      id: "express-live",
+      title: "Express Live",
+      duration: "2 Jam",
+      price: 99000,
+      specs: [
+        "1 live session",
+        "2 jam nonstop",
+        "auto-reply chat",
+        "auto-pin product",
+      ],
+      popular: false,
+    },
+    {
+      id: "shift-live",
+      title: "Shift Live",
+      duration: "8 Jam",
+      price: 299000,
+      specs: [
+        "1 live session",
+        "8 jam nonstop",
+        "cocok untuk malam-pagi",
+        "full automation",
+      ],
+      popular: true,
+    },
+    {
+      id: "marathon-live",
+      title: "Marathon 24/7",
+      duration: "24 Jam",
+      price: 699000,
+      specs: ["24 jam live", "full catalog rotation", "priority queue"],
+      popular: false,
+    },
+  ],
+  video: [
+    {
+      id: "short-hook",
+      title: "Short Hook",
+      duration: "15 Detik",
+      price: 19000,
+      specs: ["vertical 9:16", "high-impact script", "voiceover", "subtitle"],
+      popular: false,
+    },
+    {
+      id: "standard-showcase",
+      title: "Standard Showcase",
+      duration: "30 Detik",
+      price: 35000,
+      specs: ["vertical 9:16", "benefit breakdown", "CTA promotion"],
+      popular: true,
+    },
+    {
+      id: "deep-review",
+      title: "Deep Review",
+      duration: "60 Detik",
+      price: 59000,
+      specs: ["vertical 9:16", "unboxing/storytelling", "review script"],
+      popular: false,
+    },
+  ],
+};
+
+export const dashboardSummary = {
+  totalProducts: 12,
+  activeAvatar: "Alya",
+  sessions: 3,
+  totalRevenue: 4235000,
+  estimatedCost: 875000,
+  liveViewers: 1234,
+  comments: 156,
+  conversion: 12,
+};
+
+export const liveWorkflowSteps = [
+  {
+    id: 1,
+    title: "Data Produk",
+    description: "Unggah foto produk, deskripsi, stok, dan harga.",
+  },
+  {
+    id: 2,
+    title: "AI Host",
+    description: "Pilih avatar, voice, bahasa, dan gaya bicara.",
+  },
+  {
+    id: 3,
+    title: "Atur Live",
+    description: "Pilih produk, durasi, platform, dan automation.",
+  },
+  {
+    id: 4,
+    title: "Preview & Test",
+    description: "Simulasi komentar, script, dan preview sebelum live.",
+  },
+  {
+    id: 5,
+    title: "Go Live",
+    description: "Jalankan pipeline dan monitor performa real-time.",
+  },
+];
+
+export const inventoryRows = [
+  {
+    name: "Serum Brightening Premium",
+    harga: 99000,
+    stok: 120,
+    aksi: "Aktif",
+  },
+  {
+    name: "Moisturizer Glow Natural",
+    harga: 129000,
+    stok: 80,
+    aksi: "Aktif",
+  },
+  {
+    name: "Sunscreen Day Protection",
+    harga: 79000,
+    stok: 200,
+    aksi: "Draft",
+  },
+  {
+    name: "Hydrating Essence",
+    harga: 110000,
+    stok: 70,
+    aksi: "Aktif",
+  },
+];
+
+export const hostOptions = [
+  {
+    id: "alya",
+    name: "Alya",
+    role: "Friendly",
+    language: "Indonesia",
+    voice: "Wanita Natural",
+  },
+  {
+    id: "luna",
+    name: "Luna",
+    role: "Energetic",
+    language: "Indonesia",
+    voice: "Energetic Promo",
+  },
+  {
+    id: "cinta",
+    name: "Cinta",
+    role: "Professional",
+    language: "Indonesia",
+    voice: "Soft Professional",
+  },
+];
