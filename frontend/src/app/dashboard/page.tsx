@@ -7,110 +7,16 @@ import Link from "next/link";
 import RealtimeLivePortraitView from "@/components/avatar/RealtimeLivePortraitView";
 import { LiveMetricsBar } from "@/components/dashboard/LiveMetricsBar";
 
-interface Product {
-  id?: string;
-  name: string;
-  price: string | number;
-  stock: number;
-  tag: string;
-  sku?: string;
-  image?: string;
-  link?: string;
-  description?: string;
-  benefits?: string;
-  usage?: string;
-  faq?: string;
-  targetAudience?: string;
-}
-
-interface BackendProduct {
-  id: string;
-  name: string;
-  price: number | string;
-  stock?: number;
-  category?: string;
-  sku?: string;
-  image?: string;
-  link?: string;
-  description?: string;
-  benefits?: string;
-  usage?: string;
-  faq?: string;
-  targetAudience?: string;
-}
-
-interface CsvRawItem {
-  name: string;
-  price: number;
-  stock: number;
-  category: string;
-  description: string;
-  link: string;
-  image: string;
-  benefits?: string;
-  usage?: string;
-  faq?: string;
-}
-
-interface LiveSalesScript {
-  hook?: string;
-  problem?: string;
-  solution?: string;
-  showcase?: string;
-  cta?: string;
-  fullScript?: string;
-  fullVoiceover?: string;
-}
-
-interface SessionSummaryData {
-  sessionId?: string;
-  durationSeconds: number;
-  durationFormatted: string;
-  totalSeconds?: number;
-  platform?: string;
-  viewers?: number;
-  totalViewers: number;
-  peakViewers: number;
-  comments?: number;
-  totalComments: number;
-  aiRepliesCount: number;
-  clicks?: number;
-  totalClicks: number;
-  sales?: number;
-  grossRevenue: number;
-  grossRevenueFormatted: string;
-  estimatedGpuCost: number;
-  estimatedGpuCostFormatted: string;
-  netProfit: number;
-  netProfitFormatted: string;
-  roiPercentage: string;
-  activeProductClicks?: number;
-  activeProductSold?: number;
-  totalProductSold: number;
-  endedAt: string;
-}
-
-interface Avatar {
-  id: string;
-  name: string;
-  role: string;
-  type: "2D" | "3D";
-  language: string;
-  voice: string;
-  voiceId?: string;
-  image: string;
-  modelUrl3d?: string;
-  specialty?: string;
-}
-
-interface ChatMessage {
-  id: string;
-  sender: string;
-  isAi: boolean;
-  avatarColor: string;
-  text: string;
-  time: string;
-}
+import {
+  Product,
+  BackendProduct,
+  CsvRawItem,
+  LiveSalesScript,
+  SessionSummaryData,
+  Avatar,
+  ChatMessage,
+} from "./types";
+import { avatars } from "./constants";
 
 export default function Dashboard() {
   // --- STATE MANAGEMENT ---
@@ -171,60 +77,7 @@ export default function Dashboard() {
 
   // STEP 2: Avatars State & Voice TTS Controls
   const [avatarTab, setAvatarTab] = useState<"2D" | "3D" | "ALL">("3D");
-  const avatars: Avatar[] = [
-    {
-      id: "1",
-      name: "Alya",
-      role: "Warm & Friendly",
-      type: "2D",
-      language: "Bahasa Indonesia",
-      voice: "id-ID-GadisNeural",
-      image: "/avatars/alya-2d.jpg",
-      specialty: "Skincare & Beauty",
-    },
-    {
-      id: "2",
-      name: "Luna",
-      role: "Energetic Live Host",
-      type: "3D",
-      language: "Bahasa Indonesia",
-      voice: "id-ID-SitiNeural",
-      image: "/avatars/luna-3d.jpg",
-      modelUrl3d: "/models/TufrillaVRM.vrm",
-      specialty: "Hard-Selling TikTok Live",
-    },
-    {
-      id: "3",
-      name: "Cinta",
-      role: "Professional & Elegant",
-      type: "3D",
-      language: "Bahasa Indonesia",
-      voice: "id-ID-DahliaNeural",
-      image: "/avatars/cinta-3d.jpg",
-      modelUrl3d: "/models/brunette-realistic.glb",
-      specialty: "Premium Branding & Fashion",
-    },
-    {
-      id: "4",
-      name: "Ardi",
-      role: "Confident Tech Host",
-      type: "2D",
-      language: "Bahasa Indonesia",
-      voice: "id-ID-ArdiNeural",
-      image: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=400&fit=crop&q=80",
-      specialty: "Gadget, Otomotif & Pria",
-    },
-    {
-      id: "5",
-      name: "Maya",
-      role: "Modest Fashion Host",
-      type: "2D",
-      language: "Bahasa Indonesia",
-      voice: "id-ID-GadisNeural",
-      image: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=400&fit=crop&q=80",
-      specialty: "Hijab & Muslimah Fashion",
-    },
-  ];
+  // avatars array is imported from constants.ts
 
   const [selectedAvatar, setSelectedAvatar] = useState<Avatar>(avatars[1]);
   const [selectedTone, setSelectedTone] = useState<string>("Persuasif");

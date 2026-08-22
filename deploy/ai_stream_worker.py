@@ -237,11 +237,27 @@ class StopRTMPRequest(BaseModel):
 
 # ─── Lifecycle ───────────────────────────────────────────────────────────────
 
+async def cleanup_old_videos_task():
+    """Periodically cleans up old generated videos to prevent disk exhaustion."""
+    while True:
+        try:
+            now = time.time()
+            for f in STATIC_OUTPUT_DIR.glob("*.mp4"):
+                if f.is_file() and (now - f.stat().st_mtime) > 86400: # 24 hours
+                    f.unlink()
+            for f in TEMP_DIR.glob("*.mp3"):
+                if f.is_file() and (now - f.stat().st_mtime) > 86400:
+                    f.unlink()
+        except Exception as e:
+            print(f"[Cleanup] Error: {e}")
+        await asyncio.sleep(3600) # Check every hour
+
 @app.on_event("startup")
 async def startup_event():
     check_sadtalker()
     mode = "SadTalker ACTIVE" if SADTALKER_AVAILABLE else "FFmpeg fallback"
     print(f"[Worker] LiveStreamerAI Neural Worker started | Lip-sync: {mode}")
+    asyncio.create_task(cleanup_old_videos_task())
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -337,6 +353,15 @@ async def live_utterance(req: LiveRTMPRequest):
 
         if req.rtmp_url and req.stream_key:
             full_rtmp = f"{req.rtmp_url.rstrip('/')}/{req.stream_key}"
+            
+            # Kill existing process for this stream key if it exists
+            if req.stream_key in active_rtmp_processes:
+                old_p = active_rtmp_processes.pop(req.stream_key)
+                try:
+                    old_p.terminate()
+                except Exception:
+                    pass
+
             stream_proc = subprocess.Popen(
                 ["ffmpeg", "-re", "-i", output_video, "-c", "copy", "-f", "flv", full_rtmp],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
