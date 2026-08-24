@@ -945,6 +945,7 @@ export default function Dashboard() {
     setInputChat("");
 
     if (isAiAutoReplyOn) {
+      setIsAvatarSpeaking(true);
       let aiReplyText = "";
 
       try {
@@ -983,19 +984,22 @@ export default function Dashboard() {
               }
             } else {
               // Fallback URL = RunPod worker offline/unavailable
+              setIsAvatarSpeaking(false);
               if (aiWorkerStatus === "unknown") {
                 setAiWorkerStatus("offline");
-                showToast("⚠️ AI Worker GPU belum aktif — AI Host tampil mode foto statis. Jalankan RunPod worker untuk animasi wajah nyata.");
+                showToast("⚠️ AI Worker GPU belum aktif — AI Host tampil mode foto statis.");
               }
             }
           }
         } else {
           // HTTP error from backend
+          setIsAvatarSpeaking(false);
           setAiWorkerStatus("error");
-          showToast(`❌ AI Host error: Backend mengembalikan status ${res.status}. Periksa koneksi backend.`);
+          showToast(`❌ AI Host error: Backend mengembalikan status ${res.status}.`);
         }
       } catch {
         // Network error = backend tidak jalan
+        setIsAvatarSpeaking(false);
         setAiWorkerStatus("error");
         showToast("❌ AI Host tidak dapat dijangkau — pastikan backend server berjalan di port 4000.");
       }
@@ -1017,20 +1021,15 @@ export default function Dashboard() {
         }
       }
 
-      setTimeout(() => {
-        const aiMsg: ChatMessage = {
-          id: String(Date.now() + 1),
-          sender: `AI Host (${selectedAvatar.name})`,
-          isAi: true,
-          avatarColor: "bg-[#4148e2]",
-          text: aiReplyText,
-          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        };
-        setChatMessages((prev) => [...prev, aiMsg]);
-        if (isSoundOn) {
-          speakText(aiReplyText);
-        }
-      }, 350);
+      const aiMsg: ChatMessage = {
+        id: String(Date.now() + 1),
+        sender: `AI Host (${selectedAvatar.name})`,
+        isAi: true,
+        avatarColor: "bg-[#4148e2]",
+        text: aiReplyText,
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+      setChatMessages((prev) => [...prev, aiMsg]);
     }
   };
 
