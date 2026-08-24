@@ -10,9 +10,10 @@ mkdir -p /workspace/ai_live_worker/assets/voice_refs
 mkdir -p /workspace/ai_live_worker/temp
 mkdir -p /workspace/ai_live_worker/output
 
-echo "2. Menyalin Skrip Python ke ruang kerja..."
+echo "2. Menyalin Skrip Python & Aset ke ruang kerja..."
 cp *.py /workspace/ai_live_worker/
 cp requirements-worker.txt /workspace/ai_live_worker/
+cp -r assets/* /workspace/ai_live_worker/assets/ 2>/dev/null || true
 
 echo "3. Menghapus folder Frontend & Backend dari Clone untuk menghemat disk..."
 rm -rf ../frontend ../backend

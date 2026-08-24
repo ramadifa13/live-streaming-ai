@@ -27,8 +27,9 @@ Setiap kali Anda membuat atau mereset Pod baru di RunPod:
 1. Buka [runpod.io/console/pods](https://www.runpod.io/console/pods) → **+ Deploy Pod**
 2. Pilih GPU: **NVIDIA RTX 4090**
 3. Template: **RunPod PyTorch 2.1 (CUDA 12.1)**
-4. Volume Disk: Minimal **30 GB**
-5. Klik **Deploy On-Demand**
+4. Container Disk: Minimal **20 GB**
+5. Volume Disk: Minimal **40 GB**
+6. Klik **Deploy On-Demand**
 
 Tunggu 1-2 menit sampai statusnya Running, lalu buka **Terminal / JupyterLab**.
 
@@ -38,9 +39,6 @@ Langkah pertama adalah **meng-clone (mengunduh) repositori ini** ke dalam RunPod
 cd /workspace
 git clone https://github.com/ramadifa13/live-streaming-ai.git
 cd live-streaming-ai/deploy
-
-# Hapus folder frontend & backend agar tidak memenuhi disk RunPod
-rm -rf ../frontend ../backend
 
 # Jalankan skrip instalasi utama (Untuk Wav2Lip & Folder)
 bash setup.sh
@@ -55,18 +53,13 @@ pip install -r requirements-worker.txt --ignore-installed blinker
 
 ## TAHAP 2: Mengunggah File Aset Video & Suara
 
-Setelah struktur folder `/workspace/ai_live_worker/` selesai dibuat oleh skrip, langkah selanjutnya adalah menyiapkan aset ke dalam RunPod Anda (via FileZilla/JupyterLab):
+Setelah struktur folder `/workspace/ai_live_worker/` selesai dibuat oleh skrip, langkah selanjutnya adalah menyiapkan aset Video ke dalam RunPod Anda (via FileZilla/JupyterLab):
 
 1. **Upload Aset Video Idle**:
-   - Masukkan video idle host 2D ke `/workspace/ai_live_worker/assets/2d/` (misal: `host_2d_statis.mp4`)
-   - Masukkan video idle host 3D ke `/workspace/ai_live_worker/assets/3d/` (misal: `host_3d_dinamis.mp4`)
+   - Masukkan video idle host 2D ke `/workspace/ai_live_worker/assets/2d/` (Wajib bernama `host_2d_statis_nana.mp4`)
+   - Masukkan video idle host 3D ke `/workspace/ai_live_worker/assets/3d/` (Wajib bernama `host_3d_dinamis_namira.mp4`)
 
-2. **Upload Aset Suara XTTSv2 (PENTING)**:
-   - Buat folder `/workspace/ai_live_worker/assets/voice_refs/` jika belum ada.
-   - Unggah audio referensi bersih berdurasi ~10 detik (format WAV) dengan nama host (misal: `nana.wav`, `namira.wav`, atau `default.wav`).
-   - *Catatan: Tanpa file referensi suara ini, AI XTTSv2 akan error karena kehilangan acuan suara.*
-
-*(Catatan: Anda tidak perlu lagi memindahkan skrip Python seperti `api_server.py` secara manual karena kita sudah menggunakan `git clone` dan skrip `setup.sh` otomatis menyalin skrip tersebut ke folder kerja).*
+*(Catatan: Anda tidak perlu mengunggah file suara referensi (`.wav`) karena repositori ini sudah menyertakan `default.wav` yang akan dipakai otomatis oleh sistem! Anda juga tidak perlu menyalin skrip Python karena `setup.sh` telah menatanya untuk Anda).*
 
 ---
 
