@@ -13,14 +13,14 @@ class AILiveWorker:
         self.temp_dir = os.path.join(self.base_dir, "temp")
         self.output_dir = os.path.join(self.base_dir, "output")
         
-        # Konfigurasi Wav2Lip
-        self.wav2lip_script = os.path.join(self.base_dir, "Wav2Lip", "inference.py")
-        self.checkpoint = os.path.join(self.base_dir, "Wav2Lip", "checkpoints", "wav2lip_gan.pth")
+        # Konfigurasi MuseTalk
+        self.musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
+        self.musetalk_checkpoint = os.path.join(self.musetalk_dir, "models", "musetalk", "musetalk.json")
         
-        if not os.path.exists(self.checkpoint):
-            print(f"[ERROR] Model Wav2Lip tidak ditemukan di {self.checkpoint}")
+        if not os.path.exists(self.musetalk_checkpoint):
+            print(f"[WARNING] Model MuseTalk belum terunduh di {self.musetalk_checkpoint}. Pastikan setup.sh sudah dijalankan.")
             
-        print("[INFO] Worker siap dengan sistem TTS baru (Edge-TTS)...")
+        print("[INFO] Worker siap dengan sistem TTS Edge-TTS dan Lipsync MuseTalk...")
 
     async def _generate_voice(self, text, task_id, host_name):
         """Ubah Teks menjadi Suara Indonesia Natural menggunakan Edge-TTS (Lebih Cepat, Hemat VRAM)"""
@@ -59,24 +59,74 @@ class AILiveWorker:
         return video_path if os.path.exists(video_path) else None
 
     def _sync_lips(self, idle_video, audio_path, task_id):
-        """Render Sinkronisasi Bibir"""
-        output_video = os.path.join(self.output_dir, f"{task_id}.mp4")
+        """Render Sinkronisasi Bibir dengan MuseTalk (Kecepatan Tinggi)"""
+        import yaml
+        
+        # 1. Buat file konfigurasi YAML dinamis untuk tugas ini
+        yaml_path = os.path.join(self.temp_dir, f"{task_id}.yaml")
+        config_data = {
+            "task_0": {
+                "video_path": idle_video,
+                "audio_path": audio_path,
+                "bbox_shift": 0
+            }
+        }
+        with open(yaml_path, 'w') as f:
+            yaml.dump(config_data, f)
+            
+        # 2. Siapkan perintah eksekusi MuseTalk
+        # Asumsi worker sedang berada di dalam direktori /workspace/ai_live_worker/MuseTalk
+        # (seperti yang di-setup di setup.sh)
+        musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
+        output_dir = os.path.join(self.base_dir, "output")
         
         command = [
-            "python", self.wav2lip_script,
-            "--checkpoint_path", self.checkpoint,
-            "--face", idle_video,
-            "--audio", audio_path,
-            "--outfile", output_video,
-            "--pads", "0", "15", "0", "0" 
+            "python", "-m", "scripts.inference",
+            "--inference_config", yaml_path,
+            "--result_dir", output_dir
         ]
         
         try:
-            # Render video dan biarkan log tampil di terminal agar kita tahu kalau ada error
-            subprocess.run(command, check=True)
-            return output_video
-        except subprocess.CalledProcessError:
-            print(f"[GAGAL] Error saat merender video {task_id}.")
+            print(f"[INFO] Mengeksekusi MuseTalk untuk {task_id}...")
+            # Kita jalankan dari dalam folder MuseTalk agar module 'scripts' terbaca
+            subprocess.run(command, cwd=musetalk_dir, check=True)
+            
+            # MuseTalk biasanya menyimpan hasilnya di result_dir/nama_video/nama_audio.mp4
+            # Kita asumsikan nama file akhirnya bisa sedikit rumit, mari cari file .mp4 terbaru di output_dir
+            # atau kita asumsikan output path secara manual
+            
+            # Karena MuseTalk membuat subfolder, kita cari video mp4 terbaru di output_dir
+            list_of_files = []
+            for root, dirs, files in os.walk(output_dir):
+                for file in files:
+                    if file.endswith(".mp4"):
+                        list_of_files.append(os.path.join(root, file))
+            
+            if not list_of_files:
+                raise FileNotFoundError("Output video dari MuseTalk tidak ditemukan.")
+                
+            latest_file = max(list_of_files, key=os.path.getctime)
+            
+            # Rename (pindahkan) ke target path final
+            final_output = os.path.join(self.output_dir, f"{task_id}.mp4")
+            os.rename(latest_file, final_output)
+            
+            # Hapus file yaml
+            if os.path.exists(yaml_path):
+                os.remove(yaml_path)
+                
+            return final_output
+            
+        except subprocess.CalledProcessError as e:
+            print(f"[GAGAL] Error saat merender video {task_id}. Kode: {e.returncode}")
+            # Catat error ke file log jika terjadi kegagalan
+            with open(os.path.join(self.base_dir, "worker_error.log"), "a") as err_log:
+                err_log.write(f"[{time.ctime()}] MuseTalk Error (Task {task_id}): {e}\n")
+            return None
+        except Exception as e:
+            print(f"[GAGAL] Error sistem: {e}")
+            with open(os.path.join(self.base_dir, "worker_error.log"), "a") as err_log:
+                err_log.write(f"[{time.ctime()}] Worker Error (Task {task_id}): {e}\n")
             return None
 
     async def run_pipeline(self, host_type, host_name, text_answer, task_id):
@@ -95,7 +145,7 @@ class AILiveWorker:
             print(f"[ERROR] Gagal membuat suara: {e}")
             return None
         
-        print(" -> Generating Video Lipsync (Wav2Lip)...")
+        print(" -> Generating Video Lipsync (MuseTalk)...")
         final_video = self._sync_lips(idle_video, audio_file, task_id)
         
         if os.path.exists(audio_file):
