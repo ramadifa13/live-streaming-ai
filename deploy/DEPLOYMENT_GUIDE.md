@@ -31,36 +31,39 @@ Setiap kali Anda membuat atau mereset Pod baru di RunPod:
 5. Klik **Deploy On-Demand**
 
 Tunggu 1-2 menit sampai statusnya Running, lalu buka **Terminal / JupyterLab**.
-Jalankan skrip instalasi untuk memasang seluruh dependensi (termasuk FastAPI dan XTTSv2):
+
+Langkah pertama adalah **meng-clone (mengunduh) repositori ini** ke dalam RunPod agar semua skrip otomatis tersedia:
 
 ```bash
 cd /workspace
-# Copy atau jalankan file setup.sh yang ada di folder deploy/
+git clone https://github.com/ramadifa13/live-streaming-ai.git
+cd live-streaming-ai/deploy
+
+# Jalankan skrip instalasi utama (Untuk Wav2Lip & Folder)
 bash setup.sh
 
-# Install dependensi tambahan untuk AI Worker
+# Install dependensi tambahan AI Worker (Untuk FastAPI & XTTSv2)
 pip install -r requirements-worker.txt
 ```
 
-*(Proses ini akan mengunduh model XTTSv2, Wav2Lip, PyTorch, dan FastAPI).*
+*(Proses ini akan mengunduh repositori Anda, model XTTSv2, Wav2Lip, PyTorch, dan FastAPI).*
 
 ---
 
-## TAHAP 2: Mengunggah File dan Aset
+## TAHAP 2: Mengunggah File Aset Video & Suara
 
-Setelah struktur folder `/workspace/ai_live_worker/` selesai dibuat oleh skrip, transfer aset dan skrip Python dari laptop Anda ke RunPod (bisa via web JupyterLab atau SFTP FileZilla):
+Setelah struktur folder `/workspace/ai_live_worker/` selesai dibuat oleh skrip, langkah selanjutnya adalah menyiapkan aset ke dalam RunPod Anda (via FileZilla/JupyterLab):
 
 1. **Upload Aset Video Idle**:
-   - Masukkan video idle 2D ke `/workspace/ai_live_worker/assets/2d/` (misal: `host_2d_statis.mp4`)
-   - Masukkan video idle 3D ke `/workspace/ai_live_worker/assets/3d/` (misal: `host_3d_dinamis.mp4`)
+   - Masukkan video idle host 2D ke `/workspace/ai_live_worker/assets/2d/` (misal: `host_2d_statis.mp4`)
+   - Masukkan video idle host 3D ke `/workspace/ai_live_worker/assets/3d/` (misal: `host_3d_dinamis.mp4`)
 
 2. **Upload Aset Suara XTTSv2 (PENTING)**:
    - Buat folder `/workspace/ai_live_worker/assets/voice_refs/` jika belum ada.
-   - Unggah audio referensi berdurasi ~10 detik format WAV dengan nama host (misal: `nana.wav`, `namira.wav`, dan `default.wav`).
-   - Tanpa ini, kloning suara XTTSv2 tidak akan berbunyi dengan benar.
+   - Unggah audio referensi bersih berdurasi ~10 detik (format WAV) dengan nama host (misal: `nana.wav`, `namira.wav`, atau `default.wav`).
+   - *Catatan: Tanpa file referensi suara ini, AI XTTSv2 akan error karena kehilangan acuan suara.*
 
-3. **Upload Skrip Python**:
-   - Pindahkan `live_worker.py`, `api_server.py`, `broadcaster.py`, dan `requirements-worker.txt` ke `/workspace/ai_live_worker/`
+*(Catatan: Anda tidak perlu lagi memindahkan skrip Python seperti `api_server.py` secara manual karena kita sudah menggunakan `git clone` dan skrip `setup.sh` otomatis menyalin skrip tersebut ke folder kerja).*
 
 ---
 
