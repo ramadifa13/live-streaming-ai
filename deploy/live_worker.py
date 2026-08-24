@@ -83,7 +83,10 @@ class AILiveWorker:
         command = [
             "python", "-m", "scripts.inference",
             "--inference_config", yaml_path,
-            "--result_dir", output_dir
+            "--result_dir", output_dir,
+            "--vae_type", "sd-vae-ft-mse",
+            "--unet_config", "./models/musetalk/musetalk/musetalk.json",
+            "--unet_model_path", "./models/musetalk/musetalk/pytorch_model.bin"
         ]
         
         try:
