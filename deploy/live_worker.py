@@ -197,6 +197,7 @@ class AILiveWorker:
 
             expected_output = os.path.join(
                 self.output_dir,
+                "v15",
                 f"{task_id}.mp4"
             )
 
