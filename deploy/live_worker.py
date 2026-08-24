@@ -93,7 +93,7 @@ class AILiveWorker:
         musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
         output_dir = os.path.join(self.base_dir, "output")
 
-        # Pastikan cross_attention_dim = 384 agar cocok dengan bobot checkpoint pytorch_model.bin ([320, 384])
+        # Auto-fix: pastikan cross_attention_dim = 384 agar cocok dengan bobot checkpoint pytorch_model.bin ([320, 384])
         for root, _, files in os.walk(musetalk_dir):
             for file in files:
                 if file == "musetalk.json":
@@ -108,6 +108,35 @@ class AILiveWorker:
                                 json.dump(cfg, jf, indent=2)
                     except Exception:
                         pass
+
+        # Auto-patch MuseTalk scripts/inference.py: terapkan pe(whisper_batch) agar 768 -> 384
+        inf_py = os.path.join(musetalk_dir, "scripts", "inference.py")
+        if os.path.exists(inf_py):
+            try:
+                with open(inf_py, "r", encoding="utf-8") as f:
+                    inf_code = f.read()
+                
+                modified = False
+                if "encoder_hidden_states=whisper_batch" in inf_code and "pe(whisper_batch)" not in inf_code:
+                    inf_code = inf_code.replace(
+                        "encoder_hidden_states=whisper_batch",
+                        "encoder_hidden_states=pe(whisper_batch) if (hasattr(pe, '__call__') and whisper_batch.shape[-1] == 768) else whisper_batch"
+                    )
+                    modified = True
+                
+                if "whisper_batch = pe(whisper_batch)" not in inf_code and "whisper_batch = torch.from_numpy(whisper_batch)" in inf_code:
+                    inf_code = inf_code.replace(
+                        "whisper_batch = torch.from_numpy(whisper_batch).to(device=unet.device, dtype=unet.dtype)",
+                        "whisper_batch = torch.from_numpy(whisper_batch).to(device=unet.device, dtype=unet.dtype)\n            if whisper_batch.shape[-1] == 768 and 'pe' in locals() and pe is not None:\n                whisper_batch = pe(whisper_batch)"
+                    )
+                    modified = True
+                    
+                if modified:
+                    with open(inf_py, "w", encoding="utf-8") as f:
+                        f.write(inf_code)
+                    print("[INFO] Berhasil menerapkan patch auto-projection 768 -> 384 ke MuseTalk inference.py")
+            except Exception as patch_err:
+                print(f"[WARNING] Gagal patch inference.py: {patch_err}")
 
         # Cari lokasi unet_config dan unet_model_path yang ada di disk
         unet_config = "./models/musetalk/musetalk/musetalk.json"
