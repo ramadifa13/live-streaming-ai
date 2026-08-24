@@ -86,95 +86,71 @@ class AILiveWorker:
                 "bbox_shift": 0
             }
         }
-        with open(yaml_path, 'w') as f:
+        
+        with open(yaml_path, "w") as f:
             yaml.dump(config_data, f)
             
-        # 2. Siapkan perintah eksekusi MuseTalk
         musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
         output_dir = os.path.join(self.base_dir, "output")
 
-        # 1. Pastikan cross_attention_dim = 384 agar cocok dengan bobot checkpoint pytorch_model.bin ([320, 384])
-        for root, _, files in os.walk(musetalk_dir):
-            for file in files:
-                if file == "musetalk.json":
-                    fp = os.path.join(root, file)
-                    try:
-                        import json
-                        with open(fp, "r") as jf:
-                            cfg = json.load(jf)
-                        if cfg.get("cross_attention_dim") != 384:
-                            cfg["cross_attention_dim"] = 384
-                            with open(fp, "w") as jf:
-                                json.dump(cfg, jf, indent=2)
-                    except Exception:
-                        pass
+        # Cari config
+        unet_config = os.path.join(
+            musetalk_dir,
+            "models",
+            "musetalk",
+            "musetalk",
+            "musetalk.json"
+        )
 
-        # 2. Buat Universal Wrapper Script untuk mem-patch dimensi di memory (Anti Gagal)
-        wrapper_path = os.path.join(musetalk_dir, "run_wrapper.py")
-        wrapper_code = """import sys
-import os
-import torch
+        if not os.path.exists(unet_config):
+            unet_config = os.path.join(
+                musetalk_dir,
+                "models",
+                "musetalk",
+                "musetalk.json"
+            )
 
-# Pastikan MuseTalk bisa di-import
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+        # Cari checkpoint
+        unet_model_path = os.path.join(
+            musetalk_dir,
+            "models",
+            "musetalk",
+            "musetalk",
+            "pytorch_model.bin"
+        )
 
-# PATCH 1: diffusers UNet2DConditionModel
-from diffusers import UNet2DConditionModel
-orig_unet_forward = UNet2DConditionModel.forward
-def patched_unet_forward(self, sample, timestep, encoder_hidden_states, *args, **kwargs):
-    if encoder_hidden_states is not None and hasattr(self, "config"):
-        target_dim = getattr(self.config, "cross_attention_dim", None)
-        if target_dim is not None and encoder_hidden_states.shape[-1] != target_dim:
-            if encoder_hidden_states.shape[-1] == 768 and target_dim == 384:
-                # Reshape (B, T, 768) -> (B, T*2, 384)
-                s = encoder_hidden_states.shape
-                if len(s) == 3:
-                    encoder_hidden_states = encoder_hidden_states.reshape(s[0], -1, 384)
-                elif len(s) == 2:
-                    encoder_hidden_states = encoder_hidden_states.reshape(s[0], -1, 384)
-    return orig_unet_forward(self, sample, timestep, encoder_hidden_states, *args, **kwargs)
-UNet2DConditionModel.forward = patched_unet_forward
+        if not os.path.exists(unet_model_path):
+            unet_model_path = os.path.join(
+                musetalk_dir,
+                "models",
+                "musetalk",
+                "pytorch_model.bin"
+            )
 
-# PATCH 2: MuseTalk PositionalEncoding
-try:
-    from musetalk.models.pe import PositionalEncoding
-    orig_pe_forward = PositionalEncoding.forward
-    def patched_pe_forward(self, x):
-        if hasattr(x, "shape") and x.shape[-1] == 768:
-            s = x.shape
-            if len(s) == 3:
-                x = x.reshape(s[0], -1, 384)
-            elif len(s) == 2:
-                x = x.reshape(s[0], -1, 384)
-        return orig_pe_forward(self, x)
-    PositionalEncoding.forward = patched_pe_forward
-except Exception as e:
-    print(f"[Wrapper] Gagal patch PositionalEncoding (Bisa diabaikan jika pe tidak dipakai): {e}")
+        print(f"[MuseTalk] Config : {unet_config}")
+        print(f"[MuseTalk] Model  : {unet_model_path}")
 
-# Jalankan skrip asli menggunakan runpy agar berjalan persis seperti dipanggil dari command line
-import runpy
-runpy.run_module("scripts.inference", run_name="__main__")
-"""
-        with open(wrapper_path, "w", encoding="utf-8") as f:
-            f.write(wrapper_code)
+        if not os.path.exists(unet_config):
+            print(f"[ERROR] MuseTalk config tidak ditemukan: {unet_config}")
+            return None
 
-        # Cari lokasi unet_config dan unet_model_path yang ada di disk
-        unet_config = "./models/musetalk/musetalk/musetalk.json"
-        if not os.path.exists(os.path.join(musetalk_dir, unet_config)):
-            unet_config = "./models/musetalk/musetalk.json"
+        if not os.path.exists(unet_model_path):
+            print(f"[ERROR] MuseTalk checkpoint tidak ditemukan: {unet_model_path}")
+            return None
 
-        unet_model_path = "./models/musetalk/musetalk/pytorch_model.bin"
-        if not os.path.exists(os.path.join(musetalk_dir, unet_model_path)):
-            unet_model_path = "./models/musetalk/pytorch_model.bin"
-        
-        # Eksekusi Wrapper
         command = [
-            "python", "run_wrapper.py",
-            "--inference_config", yaml_path,
-            "--result_dir", output_dir,
-            "--vae_type", "sd-vae-ft-mse",
-            "--unet_config", unet_config,
-            "--unet_model_path", unet_model_path,
+            "python",
+            "scripts/inference.py",
+            "--inference_config",
+            yaml_path,
+            "--result_dir",
+            output_dir,
+            "--vae_type",
+            "sd-vae-ft-mse",
+            "--unet_config",
+            unet_config,
+            "--unet_model_path",
+            unet_model_path,
             "--use_float16",
             "--use_saved_coord",
             "--saved_coord"
@@ -182,10 +158,22 @@ runpy.run_module("scripts.inference", run_name="__main__")
         
         try:
             print(f"[INFO] Mengeksekusi MuseTalk untuk {task_id}...")
-            # Kita jalankan dari dalam folder MuseTalk agar module 'scripts' terbaca
-            subprocess.run(command, cwd=musetalk_dir, check=True)
             
-            # Cari video mp4 hasil render khusus untuk task_id ini
+            result = subprocess.run(
+                command,
+                cwd=musetalk_dir,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            
+            print(result.stdout)
+            
+            if result.stderr:
+                print("[MuseTalk STDERR]")
+                print(result.stderr)
+            
+            # Cari output
             list_of_files = []
             for root, dirs, files in os.walk(output_dir):
                 for file in files:
@@ -197,26 +185,19 @@ runpy.run_module("scripts.inference", run_name="__main__")
                 
             latest_file = max(list_of_files, key=os.path.getctime)
             
-            # Rename (pindahkan) ke target path final
             final_output = os.path.join(self.output_dir, f"{task_id}.mp4")
             if latest_file != final_output:
-                os.rename(latest_file, final_output)
-            
-            # Hapus file yaml
-            if os.path.exists(yaml_path):
-                os.remove(yaml_path)
+                os.replace(latest_file, final_output)
                 
             return final_output
             
         except subprocess.CalledProcessError as e:
-            print(f"[GAGAL] Error saat merender video {task_id}. Kode: {e.returncode}")
-            # Catat error ke file log jika terjadi kegagalan
-            with open(os.path.join(self.base_dir, "worker_error.log"), "a") as err_log:
-                err_log.write(f"[{time.ctime()}] MuseTalk Error (Task {task_id}): {e}\n")
+            print("[MUSEtalk ERROR]")
+            print(e.stdout)
+            print(e.stderr)
             return None
         except Exception as e:
             print(f"[GAGAL] Error sistem: {e}")
-            with open(os.path.join(self.base_dir, "worker_error.log"), "a") as err_log:
                 err_log.write(f"[{time.ctime()}] Worker Error (Task {task_id}): {e}\n")
             return None
 
