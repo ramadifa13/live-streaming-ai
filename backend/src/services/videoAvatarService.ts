@@ -162,13 +162,13 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
       tone: params.tone || "Persuasif",
     };
 
-    updateJob(jobId, { progress: 20, stage: "Synthesizing TTS audio (Edge-TTS)..." });
+    updateJob(jobId, { progress: 20, stage: "Synthesizing TTS audio (Edge-TTS) & starting job..." });
 
     const res = await fetch(`${workerUrl}/stream/generate-neural-video`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(200_000), // 200s timeout for SadTalker on GPU
+      signal: AbortSignal.timeout(30_000), // Quick timeout for the initial request
     });
 
     if (!res.ok) {
@@ -176,19 +176,57 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
       throw new Error(`Worker returned status ${res.status}: ${errorText}`);
     }
 
-    updateGpuActivity(); // Reset idle timer since GPU just processed successfully
+    const initialData = await res.json() as { success?: boolean; job_id?: string; status?: string };
+    const workerJobId = initialData.job_id;
+    if (!workerJobId) {
+       throw new Error("Worker did not return a job_id");
+    }
 
-    updateJob(jobId, { progress: 60, stage: "SadTalker generating lip-sync video..." });
+    updateGpuActivity(); // Reset idle timer
 
-    const data = await res.json() as {
-      success?: boolean;
-      video_url?: string;
-      job_id?: string;
-      lip_sync_active?: boolean;
-      engine?: string;
-    };
+    updateJob(jobId, { progress: 30, stage: "SadTalker generating lip-sync video (polling)..." });
 
-    const rawUrl = data.video_url;
+    // Poll for status
+    let finalData: any = null;
+    let pollCount = 0;
+    while (true) {
+      await sleep(3000); // 3 seconds interval
+      pollCount++;
+      
+      try {
+        const statusRes = await fetch(`${workerUrl}/stream/status/${workerJobId}`, {
+           signal: AbortSignal.timeout(10_000)
+        });
+        
+        if (!statusRes.ok) continue; // retry on transient error
+        
+        const statusData = await statusRes.json();
+        if (statusData.status === "error") {
+            throw new Error(statusData.error || "Unknown worker error");
+        }
+        
+        if (statusData.status === "done") {
+            finalData = statusData;
+            break;
+        }
+        
+        // Still processing
+        const pct = Math.min(30 + pollCount * 2, 95);
+        updateJob(jobId, { progress: pct });
+        updateGpuActivity(); // Keep GPU awake while polling
+        
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+           console.warn(`[Poll Warn] Worker poll failed: ${err.message}`);
+        }
+      }
+      
+      if (pollCount > 100) { // 5 minutes max
+         throw new Error("Worker processing timeout (5 minutes)");
+      }
+    }
+
+    const rawUrl = finalData.video_url;
     if (!rawUrl) {
       throw new Error("Worker did not return a video_url");
     }
@@ -198,7 +236,7 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
       ? rawUrl
       : `${workerUrl}${rawUrl}`;
 
-    const engineLabel = data.engine || (data.lip_sync_active ? "SadTalker Neural Lip-Sync" : "FFmpeg Motion");
+    const engineLabel = finalData.engine || (finalData.lip_sync_active ? "SadTalker Neural Lip-Sync" : "FFmpeg Motion");
 
     updateJob(jobId, {
       status: "done",
