@@ -77,7 +77,7 @@ PANDUAN AKSI & GESTURE (action):
 ATURAN OUTPUT:
 Kamu WAJIB mengembalikan output HANYA dalam format JSON valid sesuai schema berikut:
 {
-  "speech": "Jawaban verbal ${avatarName} maksimal 2-3 kalimat",
+  "speech": "Jawaban verbal ${avatarName} MAKSIMAL 1 KALIMAT PENDEK saja (sangat penting agar latensi video cepat)",
   "action": "HOLD_PRODUCT" | "POINT_CART" | "LAUGH" | "NOD" | "SHRUG" | "TALK_EXPRESSIVE" | "IDLE",
   "emotion": "happy" | "neutral" | "surprised" | "thinking",
   "target_product_id": "${productContext ? productContext.id : "null"}" atau null
@@ -183,7 +183,7 @@ function generateLocalRuleBasedLunaResponse(
   // Lelucon / Gombalan / Candaan
   if (/lucu|jodoh|pacar|cantik|cakep|ganteng|nikah|gombal|manis|kangen|sayang|love/i.test(q)) {
     return {
-      speech: `Aduh kakak bisa aja bikin ${avatarName} salting! Hehe terima kasih yaa. Tapi yang bikin makin glowing dan percaya diri itu ${prodName} nih kak, wajib checkout ya!`,
+      speech: `Hehe makasih kak! Jangan lupa checkout ${prodName} ya!`,
       action: "LAUGH",
       emotion: "happy",
       target_product_id: prodId,
@@ -193,7 +193,7 @@ function generateLocalRuleBasedLunaResponse(
   // Tanya Harga / Promo / Diskon / Voucher
   if (/harga|berapa|price|promo|diskon|voucher|murah|ongkir|potongan/i.test(q)) {
     return {
-      speech: `Khusus sesi live ${avatarName} saat ini, ${prodName} harganya cuma ${prodPrice} aja kak plus gratis ongkir! Yuk langsung checkout di keranjang kuning sekarang!`,
+      speech: `Lagi promo jadi ${prodPrice} aja kak, buruan di-checkout!`,
       action: "POINT_CART",
       emotion: "happy",
       target_product_id: prodId,
@@ -203,7 +203,7 @@ function generateLocalRuleBasedLunaResponse(
   // Tanya COD / Pengiriman / Keaslian / Garansi
   if (/cod|bayar di tempat|asli|ori|original|bpom|aman|nyampe|garansi/i.test(q)) {
     return {
-      speech: `Bisa COD (Bayar di Tempat) ke seluruh Indonesia ya kak, dan produk ini 100% original resmi BPOM! Kakak bayar pas barang sampai dengan aman.`,
+      speech: `Bisa COD ke seluruh Indonesia dan dijamin 100% original kak!`,
       action: "NOD",
       emotion: "happy",
       target_product_id: prodId,
@@ -213,7 +213,7 @@ function generateLocalRuleBasedLunaResponse(
   // Tanya Detail / Khasiat / Kulit / Penggunaan
   if (/kulit|jerawat|kering|berminyak|sensitif|manfaat|khasiat|cara|pakai|bagus/i.test(q)) {
     return {
-      speech: `Nah untuk ${prodName} ini formulanya super ringan, cepat meresap, dan sudah teruji aman untuk merawat kulit tetap sehat dan cerah sepanjang hari kak!`,
+      speech: `Bagus banget kak, formulanya super ringan dan cepat meresap lho!`,
       action: "HOLD_PRODUCT",
       emotion: "happy",
       target_product_id: prodId,
@@ -223,7 +223,7 @@ function generateLocalRuleBasedLunaResponse(
   // Sapaan / Halo / Hadir
   if (/halo|hai|pagi|siang|sore|malam|ass|hadir|tes|absen/i.test(q)) {
     return {
-      speech: `Halo juga kakak! Selamat bergabung di live streaming ${avatarName} yaa. Senang banget kakak mampir hari ini. Mau tanya-tanya tentang ${prodName} yang lagi promo?`,
+      speech: `Halo kak, selamat bergabung! Boleh langsung cek keranjang kuning kita ya.`,
       action: "TALK_EXPRESSIVE",
       emotion: "happy",
       target_product_id: prodId,
@@ -232,7 +232,7 @@ function generateLocalRuleBasedLunaResponse(
 
   // Default General Chat
   return {
-    speech: `Wah pertanyaan menarik nih kak! Ngomong-ngomong, mumpung stok promo ${prodName} masih aktif di harga ${prodPrice}, jangan sampai kehabisan diskonnya ya kak!`,
+    speech: `Wah mantap kak! Mumpung promo ${prodPrice}, jangan sampai kehabisan ya.`,
     action: "TALK_EXPRESSIVE",
     emotion: "happy",
     target_product_id: prodId,
