@@ -41,6 +41,17 @@ export default function RealtimeLivePortraitView({
     Maya: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=400&fit=crop&q=80",
   };
 
+  const defaultLiveVideos: Record<string, string> = {
+    Namira: "/avatars/host_3d_dinamis_namira.mp4",
+    Nana: "/avatars/host_2d_statis_nana.mp4",
+  };
+
+  const resolvedFillerSrc =
+    defaultLiveVideos[avatarName] ||
+    (avatarName.toLowerCase().includes("nana")
+      ? "/avatars/host_2d_statis_nana.mp4"
+      : "/avatars/host_3d_dinamis_namira.mp4");
+
   const resolvedImageSrc = mode === "video_ads"
     ? (cleanUgcImages[avatarName] || avatarImage || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=720&h=1280&fit=crop&q=80")
     : ((avatarImage && avatarImage !== "/avatars/ardi-2d.jpg" && avatarImage !== "/avatars/maya-2d.jpg")
@@ -74,14 +85,15 @@ export default function RealtimeLivePortraitView({
           className="w-full h-full object-cover"
         />
       ) : isSpeaking ? (
-        // FILLER VIDEO STRATEGY: Dimainkan saat menunggu GPU RunPod merender jawaban
+        // FILLER VIDEO STRATEGY: Dimainkan dari aset lokal avatar saat menunggu GPU RunPod merender jawaban
         <video
-          src="https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4"
+          key={`filler-${avatarName}`}
+          src={resolvedFillerSrc}
           autoPlay
           loop
           playsInline
           muted
-          className="w-full h-full object-cover filter brightness-90"
+          className="w-full h-full object-cover"
         />
       ) : (
         <div className="w-full h-full relative">
