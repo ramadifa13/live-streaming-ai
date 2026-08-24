@@ -104,13 +104,14 @@ class AILiveWorker:
         unet_config = os.path.join(
             musetalk_dir,
             "models",
-            "musetalkV15",
+            "musetalk",
             "musetalk.json"
         )
 
         unet_model_path = os.path.join(
             musetalk_dir,
             "models",
+            "musetalk",
             "musetalkV15",
             "unet.pth"
         )
