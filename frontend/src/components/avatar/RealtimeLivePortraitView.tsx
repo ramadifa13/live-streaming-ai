@@ -9,6 +9,7 @@ interface RealtimeLivePortraitViewProps {
   avatarRole?: string;
   isSpeaking?: boolean;
   videoUrl?: string;
+  onVideoEnded?: () => void;
   mode?: "live" | "video_ads";
   soundOn?: boolean;
   className?: string;
@@ -19,6 +20,7 @@ export default function RealtimeLivePortraitView({
   avatarImage,
   isSpeaking = false,
   videoUrl,
+  onVideoEnded,
   mode = "live",
   soundOn = false,
   className = "",
@@ -68,7 +70,7 @@ export default function RealtimeLivePortraitView({
           autoPlay
           playsInline
           muted={!soundOn}
-          loop
+          onEnded={onVideoEnded}
           className="w-full h-full object-cover"
         />
       ) : (

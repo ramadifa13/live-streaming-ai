@@ -1969,6 +1969,7 @@ export default function Dashboard() {
                     avatarRole={selectedAvatar.role}
                     isSpeaking={isAvatarSpeaking}
                     videoUrl={currentLiveVideoUrl || undefined}
+                    onVideoEnded={() => setCurrentLiveVideoUrl(null)}
                     soundOn={isSoundOn}
                     className="w-full h-full"
                   />
