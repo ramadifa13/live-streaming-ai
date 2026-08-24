@@ -978,25 +978,6 @@ export default function Dashboard() {
     setCsvText("");
     showToast(`✅ ${imported.length} produk berhasil diimpor ke RAG Knowledge Base!`);
 
-    // Fallback in-memory
-    const fallbackList = rawItems.map((r, idx) => ({
-      id: `prod_csv_${Date.now()}_${idx}`,
-      name: r.name,
-      price: `Rp${r.price.toLocaleString("id-ID")}`,
-      stock: r.stock,
-      tag: r.category,
-      image: r.image,
-      link: r.link,
-      description: r.description,
-      benefits: r.benefits,
-      usage: r.usage,
-      faq: r.faq,
-    }));
-    setProducts((prev) => [...fallbackList, ...prev]);
-    if (fallbackList.length > 0) setActiveFeaturedProduct(fallbackList[0]);
-    setShowCsvModal(false);
-    setCsvText("");
-    showToast(`✅ ${fallbackList.length} produk diimpor secara lokal!`);
   };
 
   // Handle AI Script Generation for Video Ads with Tier & Duration Sync
@@ -1303,47 +1284,6 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Active Featured Product Banner */}
-              {activeFeaturedProduct && activeFeaturedProduct.name !== "Memuat Produk..." && (
-                <div className="mb-3 rounded-xl border border-blue-500/40 bg-gradient-to-r from-blue-950/60 via-[#0c1630] to-[#0c1221] p-2.5 shadow-sm flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="h-10 w-10 rounded-lg overflow-hidden border border-blue-400/50 bg-[#162038] shrink-0 relative shadow-inner">
-                      {activeFeaturedProduct.image?.startsWith("http") || activeFeaturedProduct.image?.startsWith("/") || activeFeaturedProduct.image?.startsWith("data:") ? (
-                        <img src={activeFeaturedProduct.image} alt={activeFeaturedProduct.name} className="h-full w-full object-cover" />
-                      ) : (
-                        <div className={`h-full w-full ${activeFeaturedProduct.image || "bg-[#e5cbbb]"}`} />
-                      )}
-                      <span className="absolute bottom-0 inset-x-0 bg-blue-600 text-white text-[7px] text-center font-black">
-                        PROMO
-                      </span>
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                        <span className="text-[10px] font-bold text-blue-300 uppercase tracking-wider">Produk Aktif di Live Stream AI</span>
-                      </div>
-                      <p className="text-xs font-bold text-white truncate">{activeFeaturedProduct.name}</p>
-                      <div className="flex items-center gap-2 text-[10px]">
-                        <span className="text-emerald-400 font-extrabold">{activeFeaturedProduct.price}</span>
-                        <span className="text-slate-500">•</span>
-                        <span className="text-slate-400 font-medium">Stok: {activeFeaturedProduct.stock} pcs</span>
-                        <span className="text-slate-500">•</span>
-                        <span className="text-emerald-300 font-medium bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20">🧠 RAG Terhubung</span>
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setSelectedProductForEdit(activeFeaturedProduct);
-                      setEditModalTab("RAG");
-                      setShowEditProductModal(true);
-                    }}
-                    className="shrink-0 text-[10px] font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-2.5 py-1.5 rounded-lg border border-blue-500/30 transition"
-                  >
-                    Edit RAG Data ⚙️
-                  </button>
-                </div>
-              )}
 
               {/* Search & Category Filter Row */}
               <div className="mb-3 flex flex-wrap items-center gap-2">
