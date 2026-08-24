@@ -292,19 +292,34 @@ export default function Dashboard() {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  // Text-To-Speech Synthesis helper with Dynamic Acoustic & Voice Modulation
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Text-To-Speech Synthesis helper using Edge TTS Backend Stream
   const speakText = async (
     text: string,
     opts?: { voice?: string; lang?: string; tone?: string; avatar?: string }
   ) => {
+    if (!isSoundOn) {
+      setIsAvatarSpeaking(true);
+      setTimeout(() => setIsAvatarSpeaking(false), 3500);
+      return;
+    }
+
     const curVoice = opts?.voice || selectedVoice;
     const curLang = opts?.lang || selectedLang;
     const curTone = opts?.tone || selectedTone;
     const curAvatar = opts?.avatar || selectedAvatar.name;
 
-    // Notify Backend TTS Service asynchronously
+    // Stop current playing audio
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.currentTime = 0;
+    }
+
+    setIsAvatarSpeaking(true);
+
     try {
-      fetch("/api/tts/synthesize", {
+      const res = await fetch("/api/tts/synthesize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -314,114 +329,29 @@ export default function Dashboard() {
           speed: curTone === "Energetic" ? 1.15 : curTone === "Professional" ? 0.94 : 1.0,
           pitch: curVoice.includes("Pria") ? 0.72 : curTone === "Energetic" ? 1.25 : 1.05,
         }),
-      }).catch(() => {});
-    } catch {}
+      });
 
-    if (!isSoundOn || typeof window === "undefined" || !("speechSynthesis" in window)) {
-      setIsAvatarSpeaking(true);
-      setTimeout(() => setIsAvatarSpeaking(false), 3500);
-      return;
-    }
+      if (!res.ok) throw new Error("TTS Request failed");
 
-    try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      
+      const audio = new Audio(url);
+      currentAudioRef.current = audio;
 
-      // 1. Language Mapping
-      let targetLocale = "id-ID";
-      if (curLang.includes("English") || curLang.includes("US")) {
-        targetLocale = "en-US";
-      } else if (curLang.includes("Melayu")) {
-        targetLocale = "ms-MY";
-      }
-      utterance.lang = targetLocale;
+      audio.onended = () => {
+        setIsAvatarSpeaking(false);
+        URL.revokeObjectURL(url);
+      };
+      
+      audio.onerror = () => {
+        setIsAvatarSpeaking(false);
+        URL.revokeObjectURL(url);
+      };
 
-      // 2. Base Pitch & Rate by Voice Type
-      let basePitch = 1.0;
-      let baseRate = 1.0;
-      const isMale = curVoice.toLowerCase().includes("pria") || curVoice.toLowerCase().includes("male");
-
-      if (isMale) {
-        basePitch = 0.72; // Deep, solid masculine pitch
-        baseRate = 0.95;
-      } else if (curVoice.toLowerCase().includes("energetik") || curAvatar === "Namira") {
-        basePitch = 1.25; // High, vibrant pitch
-        baseRate = 1.14;
-      } else if (curVoice.toLowerCase().includes("natural") || curAvatar === "Nana") {
-        basePitch = 1.05; // Warm, friendly pitch
-        baseRate = 1.02;
-      } else {
-        basePitch = 0.96; // Elegant, professional pitch
-        baseRate = 0.95;
-      }
-
-      // 3. Tone Modulation
-      if (curTone === "Energetic") {
-        basePitch += 0.15;
-        baseRate += 0.15;
-      } else if (curTone === "Professional") {
-        basePitch -= 0.08;
-        baseRate -= 0.08;
-      } else if (curTone === "Casual") {
-        baseRate += 0.02;
-      } else if (curTone === "Persuasif") {
-        basePitch += 0.08;
-        baseRate += 0.05;
-      }
-
-      utterance.pitch = Math.max(0.5, Math.min(2.0, basePitch));
-      utterance.rate = Math.max(0.7, Math.min(2.0, baseRate));
-
-      // 4. Voice Selection Matching from Browser Voice Registry
-      const voices = window.speechSynthesis.getVoices();
-      if (voices.length > 0) {
-        let matchedVoice: SpeechSynthesisVoice | undefined;
-
-        if (isMale) {
-          matchedVoice = voices.find(
-            (v) =>
-              v.lang.startsWith(targetLocale.split("-")[0]) &&
-              (v.name.toLowerCase().includes("male") ||
-                v.name.toLowerCase().includes("david") ||
-                v.name.toLowerCase().includes("ardi") ||
-                v.name.toLowerCase().includes("george") ||
-                v.name.toLowerCase().includes("guy"))
-          );
-          if (!matchedVoice) {
-            matchedVoice = voices.find(
-              (v) =>
-                v.name.toLowerCase().includes("male") ||
-                v.name.toLowerCase().includes("david") ||
-                v.name.toLowerCase().includes("ardi")
-            );
-          }
-        } else {
-          matchedVoice = voices.find(
-            (v) =>
-              v.lang.startsWith(targetLocale.split("-")[0]) &&
-              (v.name.toLowerCase().includes("female") ||
-                v.name.toLowerCase().includes("zira") ||
-                v.name.toLowerCase().includes("gadis") ||
-                v.name.toLowerCase().includes("siti"))
-          );
-        }
-
-        if (!matchedVoice) {
-          matchedVoice = voices.find((v) => v.lang.startsWith(targetLocale.split("-")[0]));
-        }
-
-        if (matchedVoice) {
-          utterance.voice = matchedVoice;
-        }
-      }
-
-      utterance.onstart = () => setIsAvatarSpeaking(true);
-      utterance.onend = () => setIsAvatarSpeaking(false);
-      utterance.onerror = () => setIsAvatarSpeaking(false);
-
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      setIsAvatarSpeaking(true);
+      await audio.play();
+    } catch (err) {
+      console.error("Audio streaming error:", err);
       setTimeout(() => setIsAvatarSpeaking(false), 3500);
     }
   };
@@ -648,7 +578,7 @@ export default function Dashboard() {
   // Audio Speech Synthesis Engine for Step 2 Voice Testing
   const audioUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-  const handlePlayAudioPreview = (
+  const handlePlayAudioPreview = async (
     voice: string = selectedVoice,
     lang: string = selectedLang,
     tone: string = selectedTone,
@@ -656,8 +586,9 @@ export default function Dashboard() {
   ) => {
     // If currently playing, stop it
     if (isPlayingAudio) {
-      if (typeof window !== "undefined" && window.speechSynthesis) {
-        window.speechSynthesis.cancel();
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current.currentTime = 0;
       }
       setIsPlayingAudio(false);
       setIsAvatarSpeaking(false);
@@ -668,7 +599,7 @@ export default function Dashboard() {
     let previewText = "";
     const prodName = activeFeaturedProduct?.name && activeFeaturedProduct.name !== "Memuat Produk..."
       ? activeFeaturedProduct.name
-      : "Serum Brightening Collagen";
+      : "Produk";
 
     switch (tone) {
       case "Persuasif":
@@ -693,51 +624,47 @@ export default function Dashboard() {
     setIsPlayingAudio(true);
     setIsAvatarSpeaking(true);
 
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(previewText);
+    try {
+      const res = await fetch("/api/tts/synthesize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: previewText,
+          voice,
+          speed,
+        }),
+      });
 
-      // Locale mapping
-      if (lang === "English (US)") {
-        utterance.lang = "en-US";
-      } else if (lang === "Bahasa Melayu") {
-        utterance.lang = "ms-MY";
-      } else {
-        utterance.lang = "id-ID";
-      }
+      if (!res.ok) throw new Error("TTS Request failed");
 
-      // Speed & Pitch
-      utterance.rate = speed || 1.0;
-      utterance.pitch = 1.0;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      
+      const audio = new Audio(url);
+      currentAudioRef.current = audio;
 
-      // Find matching browser voice if available
-      const browserVoices = window.speechSynthesis.getVoices();
-      const match = browserVoices.find(
-        (v) =>
-          v.lang.startsWith(utterance.lang.slice(0, 2)) &&
-          (voice.toLowerCase().includes("ardi") ? v.name.toLowerCase().includes("male") || v.name.toLowerCase().includes("david") : true)
-      );
-      if (match) utterance.voice = match;
-
-      utterance.onend = () => {
+      audio.onended = () => {
         setIsPlayingAudio(false);
         setIsAvatarSpeaking(false);
+        URL.revokeObjectURL(url);
       };
-      utterance.onerror = () => {
+      
+      audio.onerror = () => {
         setIsPlayingAudio(false);
         setIsAvatarSpeaking(false);
+        URL.revokeObjectURL(url);
       };
 
-      audioUtteranceRef.current = utterance;
-      window.speechSynthesis.speak(utterance);
-    } else {
-      // Fallback timer simulation
+      await audio.play();
+    } catch (err) {
+      console.error("Audio preview failed:", err);
+      // Fallback
       setTimeout(() => {
         setIsPlayingAudio(false);
         setIsAvatarSpeaking(false);
       }, 5000);
     }
-
+    
     showToast(`🔊 Memutar suara ${selectedAvatar.name} (${tone} • ${speed}x)`);
   };
 
@@ -932,7 +859,7 @@ export default function Dashboard() {
   // Handle CSV Import with Bulk API
   const handleImportCsv = async () => {
     if (!csvText.trim()) return;
-    const lines = csvText.trim().split("\n");
+    const lines = csvText.trim().split("n");
     const rawItems: CsvRawItem[] = [];
 
     for (let idx = 0; idx < lines.length; idx++) {

@@ -1,7 +1,11 @@
 /**
  * TTS (Text-To-Speech) Service for LiveStreamerAI
- * Provides natural Indonesian neural voice synthesis for Nana and Namira.
+ * Provides natural Indonesian neural voice synthesis using node-edge-tts.
  */
+import { EdgeTTS } from 'node-edge-tts';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
 
 export interface TTSVoice {
   id: string;
@@ -56,6 +60,7 @@ export interface SynthesizeResponse {
   audioFormat: string;
   engine: string;
   message: string;
+  audioBuffer?: Buffer;
 }
 
 export async function synthesizeSpeech(
@@ -76,6 +81,26 @@ export async function synthesizeSpeech(
   const wordCount = text.trim().split(/\s+/).length;
   const estimatedSeconds = Math.max(1.5, Math.round((wordCount / ((140 * speed) / 60)) * 10) / 10);
 
+  let audioBuffer: Buffer | undefined;
+
+  try {
+    const tts = new EdgeTTS({
+      voice: matchedVoice.id,
+      lang: matchedVoice.locale,
+      outputFormat: 'audio-24khz-48kbitrate-mono-mp3',
+    });
+
+    const tmpPath = path.join(process.cwd(), `tmp-tts-${crypto.randomUUID()}.mp3`);
+    await tts.ttsPromise(text, tmpPath);
+
+    if (fs.existsSync(tmpPath)) {
+      audioBuffer = fs.readFileSync(tmpPath);
+      fs.unlinkSync(tmpPath);
+    }
+  } catch (err) {
+    console.error("Failed to synthesize speech via Edge TTS:", err);
+  }
+
   return {
     success: true,
     voice: matchedVoice.id,
@@ -84,6 +109,7 @@ export async function synthesizeSpeech(
     durationEstimateSeconds: estimatedSeconds,
     audioFormat: "audio/mp3",
     engine: "Edge-TTS Neural Pipeline",
-    message: "TTS synthesis stream ready",
+    message: audioBuffer ? "TTS synthesis success" : "TTS synthesis fallback",
+    audioBuffer
   };
 }
