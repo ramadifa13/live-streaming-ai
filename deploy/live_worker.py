@@ -3,6 +3,10 @@ import os
 import time
 import asyncio
 import torch
+
+# Otomatis menyetujui lisensi XTTSv2 agar tidak nyangkut minta input [y/n]
+os.environ["COQUI_TOS_AGREED"] = "1"
+
 from TTS.api import TTS
 
 class AILiveWorker:
