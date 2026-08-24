@@ -46,7 +46,7 @@ rm -rf ../frontend ../backend
 bash setup.sh
 
 # Install dependensi tambahan AI Worker (Untuk FastAPI & XTTSv2)
-pip install -r requirements-worker.txt
+pip install -r requirements-worker.txt --ignore-installed blinker
 ```
 
 *(Proses ini akan mengunduh repositori Anda, model XTTSv2, Wav2Lip, PyTorch, dan FastAPI).*
