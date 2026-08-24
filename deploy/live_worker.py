@@ -265,7 +265,6 @@ class AILiveWorker:
                     os.remove(yaml_path)
                 except Exception:
                     pass
-            return None
 
     async def run_pipeline(self, host_type, host_name, text_answer, task_id):
         """Fungsi Pemicu Utama"""
