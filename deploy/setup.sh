@@ -44,10 +44,10 @@ echo "6. Mengunduh Bobot Model (Weights) dari HuggingFace (Proses 5-10 GB)..."
 mkdir -p models/musetalk models/sd-vae-ft-mse models/whisper models/dwpose
 
 # Menggunakan Python murni untuk mengunduh agar terhindar dari error "hf command not found" di bash script
-# Memaksa penggunaan Mirror secara internal di dalam Python untuk menghindari 429 Too Many Requests
-python -c "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='TMElyralab/MuseTalk', local_dir='models/musetalk')"
-python -c "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='stabilityai/sd-vae-ft-mse', local_dir='models/sd-vae-ft-mse')"
-python -c "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='openai/whisper-small', local_dir='models/whisper')"
-python -c "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='yzd-v/DWPose', local_dir='models/dwpose')"
+# Memaksa penggunaan Mirror secara agresif untuk menghindari 429 Too Many Requests
+python -c "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; import huggingface_hub.constants; huggingface_hub.constants.ENDPOINT='https://hf-mirror.com'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='TMElyralab/MuseTalk', local_dir='models/musetalk')"
+python -c "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; import huggingface_hub.constants; huggingface_hub.constants.ENDPOINT='https://hf-mirror.com'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='stabilityai/sd-vae-ft-mse', local_dir='models/sd-vae-ft-mse')"
+python -c "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; import huggingface_hub.constants; huggingface_hub.constants.ENDPOINT='https://hf-mirror.com'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='openai/whisper-small', local_dir='models/whisper')"
+python -c "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; import huggingface_hub.constants; huggingface_hub.constants.ENDPOINT='https://hf-mirror.com'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='yzd-v/DWPose', local_dir='models/dwpose')"
 
 echo "SETUP SELESAI! MESIN MUSETALK SIAP DIGUNAKAN PADA $(date)."
