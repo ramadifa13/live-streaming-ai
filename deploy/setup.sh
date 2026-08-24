@@ -40,14 +40,28 @@ mim install "mmdet>=3.1.0"
 mim install "mmpose>=1.1.0"
 
 echo "6. Mengunduh Bobot Model (Weights) dari HuggingFace (Proses 5-10 GB)..."
-# Struktur folder models yang dibutuhkan MuseTalk
+
+if [ -z "$HF_TOKEN" ]; then
+    echo "============================================================"
+    echo "                      ERROR 429 TREETECTED                   "
+    echo "============================================================"
+    echo "IP RunPod Anda masuk daftar hitam (Error 429) oleh HuggingFace."
+    echo "Satu-satunya cara untuk mengunduh adalah dengan menggunakan Token Anda."
+    echo ""
+    echo "LANGKAH:"
+    echo "1. Buka https://huggingface.co/settings/tokens"
+    echo "2. Buat token baru (tipe READ) lalu Copy."
+    echo "3. Jalankan ulang setup ini dengan perintah:"
+    echo "   HF_TOKEN=\"hf_xxxx_token_anda\" bash setup.sh"
+    echo "============================================================"
+    exit 1
+fi
+
 mkdir -p models/musetalk models/sd-vae-ft-mse models/whisper models/dwpose
 
-# Menggunakan Python murni untuk mengunduh agar terhindar dari error "hf command not found" di bash script
-# Memaksa penggunaan Mirror secara agresif untuk menghindari 429 Too Many Requests
-python -c "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; import huggingface_hub.constants; huggingface_hub.constants.ENDPOINT='https://hf-mirror.com'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='TMElyralab/MuseTalk', local_dir='models/musetalk')"
-python -c "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; import huggingface_hub.constants; huggingface_hub.constants.ENDPOINT='https://hf-mirror.com'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='stabilityai/sd-vae-ft-mse', local_dir='models/sd-vae-ft-mse')"
-python -c "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; import huggingface_hub.constants; huggingface_hub.constants.ENDPOINT='https://hf-mirror.com'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='openai/whisper-small', local_dir='models/whisper')"
-python -c "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; import huggingface_hub.constants; huggingface_hub.constants.ENDPOINT='https://hf-mirror.com'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='yzd-v/DWPose', local_dir='models/dwpose')"
+python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='TMElyralab/MuseTalk', local_dir='models/musetalk', token=os.environ['HF_TOKEN'])"
+python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='stabilityai/sd-vae-ft-mse', local_dir='models/sd-vae-ft-mse', token=os.environ['HF_TOKEN'])"
+python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='openai/whisper-small', local_dir='models/whisper', token=os.environ['HF_TOKEN'])"
+python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='yzd-v/DWPose', local_dir='models/dwpose', token=os.environ['HF_TOKEN'])"
 
 echo "SETUP SELESAI! MESIN MUSETALK SIAP DIGUNAKAN PADA $(date)."
