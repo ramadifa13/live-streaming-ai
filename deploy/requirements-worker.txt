@@ -7,3 +7,4 @@ librosa
 fastapi
 uvicorn
 pydantic
+transformers==4.36.0
