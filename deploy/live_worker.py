@@ -115,7 +115,7 @@ class AILiveWorker:
 import torch
 
 # PATCH 1: diffusers UNet2DConditionModel
-from diffusers.models.unet_2d_condition import UNet2DConditionModel
+from diffusers import UNet2DConditionModel
 orig_unet_forward = UNet2DConditionModel.forward
 def patched_unet_forward(self, sample, timestep, encoder_hidden_states, *args, **kwargs):
     if encoder_hidden_states is not None and hasattr(self, "config"):
