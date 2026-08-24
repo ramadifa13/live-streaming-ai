@@ -470,9 +470,13 @@ export default function Dashboard() {
       }
       setRunpodStatus(payload.data?.desiredStatus || "UNKNOWN");
       setAiWorkerStatus(action === "start" ? "online" : "offline");
-      showToast(action === "start" ? "GPU RunPod aktif" : "GPU RunPod dimatikan");
+      showToast(
+        action === "start" ? "GPU RunPod aktif" : "GPU RunPod dimatikan",
+      );
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Kontrol RunPod gagal");
+      showToast(
+        error instanceof Error ? error.message : "Kontrol RunPod gagal",
+      );
     } finally {
       setRunpodBusy(false);
     }
@@ -2566,17 +2570,31 @@ export default function Dashboard() {
                                 ? "Error!"
                                 : "Menunggu..."}
                         </span>
-                          <span className="text-slate-500">|</span>
-                          <span className="font-mono text-slate-300">{runpodStatus}</span>
-                          <button
-                            type="button"
-                            disabled={runpodBusy || isLiveActive}
-                            onClick={() => handleRunpodControl(runpodStatus === "RUNNING" ? "stop" : "start")}
-                            className="ml-1 rounded bg-white/10 px-1.5 py-0.5 text-[8px] text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
-                            title={isLiveActive ? "RunPod dikontrol otomatis selama live" : "Kontrol daya RunPod"}
-                          >
-                            {runpodBusy ? "..." : runpodStatus === "RUNNING" ? "OFF" : "ON"}
-                          </button>
+                        <span className="text-slate-500">|</span>
+                        <span className="font-mono text-slate-300">
+                          {runpodStatus}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={runpodBusy || isLiveActive}
+                          onClick={() =>
+                            handleRunpodControl(
+                              runpodStatus === "RUNNING" ? "stop" : "start",
+                            )
+                          }
+                          className="ml-1 rounded bg-white/10 px-1.5 py-0.5 text-[8px] text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
+                          title={
+                            isLiveActive
+                              ? "RunPod dikontrol otomatis selama live"
+                              : "Kontrol daya RunPod"
+                          }
+                        >
+                          {runpodBusy
+                            ? "..."
+                            : runpodStatus === "RUNNING"
+                              ? "OFF"
+                              : "ON"}
+                        </button>
                       </div>
                     </div>
 
@@ -3451,27 +3469,34 @@ export default function Dashboard() {
 
                         try {
                           // 1. Start live session record in DB with full automation settings
-                          const sessionRes = await fetch("/api/live-session/start", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                              productId: activeFeaturedProduct.id || "1",
-                              avatarId: selectedAvatar.id || "1",
-                              platform: selectedPlatform,
-                              durationHours: selectedDuration,
-                              autoReply: automations.autoReply,
-                              autoPin: automations.autoPin,
-                              autoPromotion: automations.autoPromo,
-                              autoModeration: automations.autoModeration,
-                              accessToken: connectedAccount?.accessToken,
-                              liveChatId: connectedAccount?.liveChatId,
-                              liveVideoId: connectedAccount?.liveVideoId,
-                            }),
-                          });
+                          const sessionRes = await fetch(
+                            "/api/live-session/start",
+                            {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                productId: activeFeaturedProduct.id || "1",
+                                avatarId: selectedAvatar.id || "1",
+                                platform: selectedPlatform,
+                                durationHours: selectedDuration,
+                                autoReply: automations.autoReply,
+                                autoPin: automations.autoPin,
+                                autoPromotion: automations.autoPromo,
+                                autoModeration: automations.autoModeration,
+                                accessToken: connectedAccount?.accessToken,
+                                liveChatId: connectedAccount?.liveChatId,
+                                liveVideoId: connectedAccount?.liveVideoId,
+                              }),
+                            },
+                          );
 
                           if (!sessionRes.ok) {
-                            const sessionError = await sessionRes.json().catch(() => ({}));
-                            throw new Error(sessionError.error || "Gagal membuat sesi live");
+                            const sessionError = await sessionRes
+                              .json()
+                              .catch(() => ({}));
+                            throw new Error(
+                              sessionError.error || "Gagal membuat sesi live",
+                            );
                           }
                           const sessionJson = await sessionRes.json();
 
@@ -3518,11 +3543,11 @@ export default function Dashboard() {
                             );
                           }
                         } catch {
-                            await fetch("/api/live-session/stop", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({}),
-                            }).catch(() => {});
+                          await fetch("/api/live-session/stop", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({}),
+                          }).catch(() => {});
                           setIsConnectingLive(false);
                           showToast(
                             `❌ Error koneksi: Pastikan server backend online dan Stream Key valid.`,
@@ -3820,7 +3845,10 @@ export default function Dashboard() {
                             );
                             const pauseJson = await pauseRes.json();
                             if (!pauseRes.ok || !pauseJson.success) {
-                              throw new Error(pauseJson.data?.message || "Perubahan status stream gagal");
+                              throw new Error(
+                                pauseJson.data?.message ||
+                                  "Perubahan status stream gagal",
+                              );
                             }
                             setIsLivePaused(nextPause);
                             showToast(
@@ -3829,7 +3857,11 @@ export default function Dashboard() {
                                 : "▶️ Live Streaming Dilanjutkan",
                             );
                           } catch (error) {
-                            showToast(error instanceof Error ? error.message : "Perubahan status stream gagal");
+                            showToast(
+                              error instanceof Error
+                                ? error.message
+                                : "Perubahan status stream gagal",
+                            );
                           }
                         }}
                         className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-[#232c42] bg-[#111827] py-2 text-[9.5px] font-medium text-slate-300 hover:bg-white/5 transition"

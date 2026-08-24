@@ -40,36 +40,54 @@ export function updateGpuActivity() {
 
 export function startIdleMonitor() {
   if (idleMonitorInterval) return;
-  
-  const timeoutMinutes = parseInt(process.env.GPU_IDLE_TIMEOUT_MINUTES || "30", 10);
+
+  const timeoutMinutes = parseInt(
+    process.env.GPU_IDLE_TIMEOUT_MINUTES || "30",
+    10,
+  );
   if (timeoutMinutes <= 0) {
-    console.log("[RunPodManager] GPU_IDLE_TIMEOUT_MINUTES is 0 or invalid, auto-shutdown disabled.");
+    console.log(
+      "[RunPodManager] GPU_IDLE_TIMEOUT_MINUTES is 0 or invalid, auto-shutdown disabled.",
+    );
     return;
   }
-  
-  console.log(`[RunPodManager] Starting GPU Idle Monitor (Timeout: ${timeoutMinutes} minutes)`);
-  
+
+  console.log(
+    `[RunPodManager] Starting GPU Idle Monitor (Timeout: ${timeoutMinutes} minutes)`,
+  );
+
   // Check every 5 minutes
-  idleMonitorInterval = setInterval(async () => {
-    const elapsedMinutes = (Date.now() - lastGpuActivityTimestamp) / 1000 / 60;
-    
-    if (elapsedMinutes >= timeoutMinutes) {
-      console.log(`[RunPodManager] GPU has been idle for ${Math.round(elapsedMinutes)} minutes. Initiating auto-shutdown...`);
-      try {
-        const podId = process.env.RUNPOD_POD_ID;
-        if (podId) {
-          const status = await getPodStatus();
-          // Only stop if it's actually running
-          if (status && status.desiredStatus === "RUNNING") {
-            await stopPod();
-            console.log(`[RunPodManager] Auto-shutdown successful for Pod ${podId}`);
+  idleMonitorInterval = setInterval(
+    async () => {
+      const elapsedMinutes =
+        (Date.now() - lastGpuActivityTimestamp) / 1000 / 60;
+
+      if (elapsedMinutes >= timeoutMinutes) {
+        console.log(
+          `[RunPodManager] GPU has been idle for ${Math.round(elapsedMinutes)} minutes. Initiating auto-shutdown...`,
+        );
+        try {
+          const podId = process.env.RUNPOD_POD_ID;
+          if (podId) {
+            const status = await getPodStatus();
+            // Only stop if it's actually running
+            if (status && status.desiredStatus === "RUNNING") {
+              await stopPod();
+              console.log(
+                `[RunPodManager] Auto-shutdown successful for Pod ${podId}`,
+              );
+            }
           }
+        } catch (err) {
+          console.error(
+            `[RunPodManager] Failed to auto-shutdown GPU Pod:`,
+            err,
+          );
         }
-      } catch (err) {
-        console.error(`[RunPodManager] Failed to auto-shutdown GPU Pod:`, err);
       }
-    }
-  }, 5 * 60 * 1000); // 5 minutes interval
+    },
+    5 * 60 * 1000,
+  ); // 5 minutes interval
 }
 
 /**
@@ -78,7 +96,9 @@ export function startIdleMonitor() {
 async function runpodGraphQL(query: string, variables: any) {
   const apiKey = process.env.RUNPOD_API_KEY;
   if (!apiKey) {
-    console.warn("[RunPodManager] RUNPOD_API_KEY is not set. Assuming local/mock environment.");
+    console.warn(
+      "[RunPodManager] RUNPOD_API_KEY is not set. Assuming local/mock environment.",
+    );
     return null; // Gracefully fail if no API key is provided
   }
 
@@ -86,12 +106,12 @@ async function runpodGraphQL(query: string, variables: any) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       query,
-      variables
-    })
+      variables,
+    }),
   });
 
   if (!response.ok) {
@@ -99,7 +119,7 @@ async function runpodGraphQL(query: string, variables: any) {
     throw new Error(`RunPod API Error: ${response.status} - ${err}`);
   }
 
-  const result = await response.json() as any;
+  const result = (await response.json()) as any;
   if (result.errors) {
     throw new Error(`RunPod GraphQL Error: ${JSON.stringify(result.errors)}`);
   }
@@ -192,9 +212,9 @@ export async function startPodAndWait(timeoutMs = 120000): Promise<boolean> {
   }
 
   updateGpuActivity();
-  
+
   let status = await getPodStatus();
-  
+
   // If it's already running, we're good
   if (status && status.desiredStatus === "RUNNING") {
     console.log("[RunPodManager] Pod is already running.");
@@ -209,30 +229,35 @@ export async function startPodAndWait(timeoutMs = 120000): Promise<boolean> {
   while (Date.now() - startTime < timeoutMs) {
     status = await getPodStatus();
     if (status && status.desiredStatus === "RUNNING") {
-      console.log(`[RunPodManager] Pod is now RUNNING (took ${Math.round((Date.now() - startTime)/1000)}s)`);
-      
+      console.log(
+        `[RunPodManager] Pod is now RUNNING (took ${Math.round((Date.now() - startTime) / 1000)}s)`,
+      );
+
       // Wait a few extra seconds for the internal Fastapi/PM2 services to actually boot up
       // after the container is marked as running by RunPod
-      await new Promise(r => setTimeout(r, 10000));
+      await new Promise((r) => setTimeout(r, 10000));
       return true;
     }
-    
+
     // Wait 3 seconds before polling again
-    await new Promise(r => setTimeout(r, 3000));
+    await new Promise((r) => setTimeout(r, 3000));
   }
 
-  throw new Error(`[RunPodManager] Timeout waiting for pod ${podId} to start after ${timeoutMs}ms`);
+  throw new Error(
+    `[RunPodManager] Timeout waiting for pod ${podId} to start after ${timeoutMs}ms`,
+  );
 }
 
 /**
  * Gets the worker URL, prioritizing the proxy URL based on the POD_ID
  */
 export function getWorkerUrl(): string {
-  const workerUrl = process.env.RUNPOD_WORKER_URL || process.env.AVATAR_WORKER_URL;
+  const workerUrl =
+    process.env.RUNPOD_WORKER_URL || process.env.AVATAR_WORKER_URL;
   const podId = process.env.RUNPOD_POD_ID;
-  
+
   if (workerUrl) return workerUrl.replace(/\/$/, "");
   if (podId) return `https://${podId}-8000.proxy.runpod.net`;
-  
+
   return "http://localhost:8000";
 }

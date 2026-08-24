@@ -9,7 +9,11 @@ import {
   getStreamStatus,
 } from "../services/rtmp-streamer.js";
 import { livePlatformConnector } from "../services/live-platform-connector.js";
-import { setLiveSessionActive, startPodAndWait, stopPod } from "../services/runpod-manager.js";
+import {
+  setLiveSessionActive,
+  startPodAndWait,
+  stopPod,
+} from "../services/runpod-manager.js";
 
 const liveSessionSchema = z.object({
   productId: z.string().min(1),
@@ -39,8 +43,17 @@ const liveStopSchema = z.object({
 });
 
 const broadcastSchema = z.object({
-  rtmpUrl: z.string().url().refine((value) => /^rtmps?:\/\//i.test(value), "RTMP URL harus diawali rtmp:// atau rtmps://"),
-  streamKey: z.string().min(1).refine((value) => !/[\r\n/]/.test(value), "Stream key tidak valid"),
+  rtmpUrl: z
+    .string()
+    .url()
+    .refine(
+      (value) => /^rtmps?:\/\//i.test(value),
+      "RTMP URL harus diawali rtmp:// atau rtmps://",
+    ),
+  streamKey: z
+    .string()
+    .min(1)
+    .refine((value) => !/[\r\n/]/.test(value), "Stream key tidak valid"),
   sessionId: z.string().optional(),
   avatarImage: z.string().optional(),
   avatarVideo: z.string().optional(),
@@ -221,7 +234,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
-    const { rtmpUrl, streamKey, avatarImage, avatarVideo, sessionId } = parsed.data;
+    const { rtmpUrl, streamKey, avatarImage, avatarVideo, sessionId } =
+      parsed.data;
     const result = await startInstagramBroadcast(
       rtmpUrl,
       streamKey,

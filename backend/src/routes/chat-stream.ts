@@ -4,7 +4,10 @@ import prisma from "../lib/prisma.js";
 import { generateLunaResponse } from "../services/luna-brain.js";
 import { generateVisemesFromText } from "../services/viseme-generator.js";
 import { forwardToRunPodGPU } from "../services/runpod-bridge.js";
-import { acquireGpuForJob, releaseGpuForJob } from "../services/runpod-manager.js";
+import {
+  acquireGpuForJob,
+  releaseGpuForJob,
+} from "../services/runpod-manager.js";
 
 const chatStreamRequestSchema = z.object({
   comment: z.string().min(1, "Comment is required"),
@@ -13,7 +16,10 @@ const chatStreamRequestSchema = z.object({
   tone: z.string().optional().default("Persuasif"),
   voice: z.string().optional().default("id-ID-GadisNeural"),
   mode: z.enum(["2D", "3D"]).default("3D"),
-  avatarImagePath: z.string().optional().default("avatars/host_3d_dinamis_namira.png"),
+  avatarImagePath: z
+    .string()
+    .optional()
+    .default("avatars/host_3d_dinamis_namira.png"),
 });
 
 export async function chatStreamRoutes(server: FastifyInstance) {
@@ -33,18 +39,35 @@ export async function chatStreamRoutes(server: FastifyInstance) {
       return { success: false, error: parsed.error.flatten() };
     }
 
-    const { comment, activeProduct, avatarName, tone, voice, mode, avatarImagePath } = parsed.data;
+    const {
+      comment,
+      activeProduct,
+      avatarName,
+      tone,
+      voice,
+      mode,
+      avatarImagePath,
+    } = parsed.data;
 
     try {
       // Step 1: Generate Structured Persona Host Response via LLM
-      const lunaResponse = await generateLunaResponse(comment, activeProduct, avatarName, tone);
+      const lunaResponse = await generateLunaResponse(
+        comment,
+        activeProduct,
+        avatarName,
+        tone,
+      );
 
       // Step 2: Generate Visemes & Timestamps for 3D WebGL / Three.js
       const visemeData = generateVisemesFromText(lunaResponse.speech);
 
       // Step 3: Map linked product (Frontend manages DB now)
       let linkedProduct = null;
-      if (lunaResponse.target_product_id && activeProduct && activeProduct.id === lunaResponse.target_product_id) {
+      if (
+        lunaResponse.target_product_id &&
+        activeProduct &&
+        activeProduct.id === lunaResponse.target_product_id
+      ) {
         linkedProduct = activeProduct;
       }
 

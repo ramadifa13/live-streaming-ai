@@ -33,7 +33,12 @@ export async function startInstagramBroadcast(
   avatarVideoPath?: string,
 ) {
   stopBroadcast();
-  activeStreamConfig = { rtmpBaseUrl, streamKey, avatarImagePath, avatarVideoPath };
+  activeStreamConfig = {
+    rtmpBaseUrl,
+    streamKey,
+    avatarImagePath,
+    avatarVideoPath,
+  };
 
   const normalizedBaseUrl = rtmpBaseUrl.replace(/\/+$/, "");
   const fullTargetUrl = normalizedBaseUrl.endsWith(`/${streamKey}`)
@@ -183,7 +188,10 @@ export async function startInstagramBroadcast(
     });
 
     const startedAt = Date.now();
-    while (activeStreamInfo.status === "connecting" && Date.now() - startedAt < 10000) {
+    while (
+      activeStreamInfo.status === "connecting" &&
+      Date.now() - startedAt < 10000
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
 
@@ -193,7 +201,8 @@ export async function startInstagramBroadcast(
         success: false,
         status: activeStreamInfo.status,
         handshakeVerified: false,
-        error: activeStreamInfo.error || "RTMP belum terverifikasi dalam 10 detik.",
+        error:
+          activeStreamInfo.error || "RTMP belum terverifikasi dalam 10 detik.",
         target: fullTargetUrl,
       };
     }
@@ -238,7 +247,11 @@ export function stopBroadcast() {
 
 export function pauseBroadcast() {
   if (!activeStreamProcess || activeStreamInfo.status !== "streaming") {
-    return { success: false, status: activeStreamInfo.status, message: "No active stream" };
+    return {
+      success: false,
+      status: activeStreamInfo.status,
+      message: "No active stream",
+    };
   }
 
   try {
@@ -256,13 +269,21 @@ export function pauseBroadcast() {
     return { success: true, status: "paused", message: "RTMP stream paused" };
   } catch (error) {
     activeStreamInfo.error = String(error);
-    return { success: false, status: activeStreamInfo.status, message: activeStreamInfo.error };
+    return {
+      success: false,
+      status: activeStreamInfo.status,
+      message: activeStreamInfo.error,
+    };
   }
 }
 
 export async function resumeBroadcast() {
   if (!activeStreamInfo.paused || !activeStreamConfig) {
-    return { success: false, status: activeStreamInfo.status, message: "No paused stream" };
+    return {
+      success: false,
+      status: activeStreamInfo.status,
+      message: "No paused stream",
+    };
   }
 
   if (process.platform !== "win32" && activeStreamProcess?.pid) {
@@ -271,7 +292,11 @@ export async function resumeBroadcast() {
       activeStreamInfo.status = "streaming";
       activeStreamInfo.paused = false;
       activeStreamInfo.handshakeVerified = true;
-      return { success: true, status: "streaming", message: "RTMP stream resumed" };
+      return {
+        success: true,
+        status: "streaming",
+        message: "RTMP stream resumed",
+      };
     } catch (error) {
       activeStreamInfo.error = String(error);
     }

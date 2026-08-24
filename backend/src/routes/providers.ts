@@ -32,7 +32,10 @@ export async function providersRoutes(server: FastifyInstance) {
       return { success: true, data: await getGpuControlStatus() };
     } catch (error) {
       reply.code(502);
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   });
 
@@ -46,7 +49,10 @@ export async function providersRoutes(server: FastifyInstance) {
       return { success: true, data: await getGpuControlStatus() };
     } catch (error) {
       reply.code(502);
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   });
 
