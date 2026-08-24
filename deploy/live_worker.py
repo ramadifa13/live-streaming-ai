@@ -78,7 +78,7 @@ class AILiveWorker:
         musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
         output_dir = os.path.join(self.base_dir, "output")
 
-        # Auto-fix: pastikan cross_attention_dim = 768 agar sesuai dengan feature whisper
+        # Pastikan cross_attention_dim = 384 agar cocok dengan bobot checkpoint pytorch_model.bin ([320, 384])
         for root, _, files in os.walk(musetalk_dir):
             for file in files:
                 if file == "musetalk.json":
@@ -87,8 +87,8 @@ class AILiveWorker:
                         import json
                         with open(fp, "r") as jf:
                             cfg = json.load(jf)
-                        if cfg.get("cross_attention_dim") != 768:
-                            cfg["cross_attention_dim"] = 768
+                        if cfg.get("cross_attention_dim") != 384:
+                            cfg["cross_attention_dim"] = 384
                             with open(fp, "w") as jf:
                                 json.dump(cfg, jf, indent=2)
                     except Exception:
