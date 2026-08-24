@@ -5,18 +5,17 @@ Arsitektur baru ini **jauh lebih stabil dan cepat** karena memisahkan antara pro
 
 ---
 
-## 🗺️ Arsitektur Sistem Baru
+## 🗺️ Arsitektur Sistem Baru (FastAPI + XTTSv2)
 
 ```
-[ Terminal 1 (RunPod) ]                [ Terminal 2 (RunPod) ]
-          │                                        │
-          ▼                                        ▼
-   live_worker.py  ───────────────►        broadcaster.py
- (AI Generates Video)  (Simpan ke /output)  (Membaca /output)
-                                                   │
-                                                   ▼
-                                           Platform Live Streaming
-                                              (TikTok/Shopee)
+[ Terminal 1 (AI Worker / Server API) ]                [ Terminal 2 (Broadcaster) ]
+                  │                                                 │
+                  ▼                                                 ▼
+       python api_server.py  ──────────────────────►          broadcaster.py
+ (Mendengarkan instruksi Backend via      (Tugas: Memutar /output secara real-time
+  FastAPI di Port 8000. Merender suara           ke Platform TikTok/Shopee)
+  via XTTSv2 dan Lipsync Wav2Lip, 
+  lalu menyimpan hasilnya ke /output)
 ```
 
 ---
@@ -32,15 +31,18 @@ Setiap kali Anda membuat atau mereset Pod baru di RunPod:
 5. Klik **Deploy On-Demand**
 
 Tunggu 1-2 menit sampai statusnya Running, lalu buka **Terminal / JupyterLab**.
-Jalankan skrip `setup.sh` untuk menginstal seluruh dependensi secara otomatis:
+Jalankan skrip instalasi untuk memasang seluruh dependensi (termasuk FastAPI dan XTTSv2):
 
 ```bash
 cd /workspace
 # Copy atau jalankan file setup.sh yang ada di folder deploy/
 bash setup.sh
+
+# Install dependensi tambahan untuk AI Worker
+pip install -r requirements-worker.txt
 ```
 
-*(Skrip ini akan mengunduh Wav2Lip, model AI, dan mengatur semua folder yang dibutuhkan dalam 2-3 menit).*
+*(Proses ini akan mengunduh model XTTSv2, Wav2Lip, PyTorch, dan FastAPI).*
 
 ---
 
@@ -52,9 +54,13 @@ Setelah struktur folder `/workspace/ai_live_worker/` selesai dibuat oleh skrip, 
    - Masukkan video idle 2D ke `/workspace/ai_live_worker/assets/2d/` (misal: `host_2d_statis.mp4`)
    - Masukkan video idle 3D ke `/workspace/ai_live_worker/assets/3d/` (misal: `host_3d_dinamis.mp4`)
 
-2. **Upload Skrip Python**:
-   - Pindahkan `live_worker.py` ke `/workspace/ai_live_worker/`
-   - Pindahkan `broadcaster.py` ke `/workspace/ai_live_worker/`
+2. **Upload Aset Suara XTTSv2 (PENTING)**:
+   - Buat folder `/workspace/ai_live_worker/assets/voice_refs/` jika belum ada.
+   - Unggah audio referensi berdurasi ~10 detik format WAV dengan nama host (misal: `nana.wav`, `namira.wav`, dan `default.wav`).
+   - Tanpa ini, kloning suara XTTSv2 tidak akan berbunyi dengan benar.
+
+3. **Upload Skrip Python**:
+   - Pindahkan `live_worker.py`, `api_server.py`, `broadcaster.py`, dan `requirements-worker.txt` ke `/workspace/ai_live_worker/`
 
 ---
 
@@ -62,20 +68,20 @@ Setelah struktur folder `/workspace/ai_live_worker/` selesai dibuat oleh skrip, 
 
 Buka dua tab Terminal di RunPod Anda.
 
-**Terminal 1 (Jalankan Broadcaster):**
-Skrip ini akan langsung terhubung ke RTMP dan memutar video idle jika belum ada jawaban dari AI.
+**Terminal 1 (Jalankan AI Worker API Server):**
+Skrip ini akan membuka Port 8000 dan bersiap menerima instruksi / perintah teks dari Backend (Dashboard/Laptop Anda) untuk diproses menjadi suara XTTSv2 dan lipsync Wav2Lip.
+```bash
+cd /workspace/ai_live_worker
+python api_server.py
+```
+
+**Terminal 2 (Jalankan Broadcaster):**
+Skrip ini akan langsung terhubung ke RTMP (Tiktok/Shopee) dan memutar video idle jika belum ada video render-an baru. Saat Terminal 1 selesai me-render video baru, Terminal 2 akan otomatis menayangkannya.
 ```bash
 cd /workspace/ai_live_worker
 python broadcaster.py
 ```
-*(Jangan lupa edit URL RTMP dan Stream Key pelanggan di dalam file `broadcaster.py` terlebih dahulu).*
-
-**Terminal 2 (Jalankan AI Worker):**
-Skrip ini digunakan untuk merender suara dan video ketika ada pemicu/pertanyaan dari penonton.
-```bash
-cd /workspace/ai_live_worker
-python live_worker.py
-```
+*(Pastikan mengedit URL RTMP dan Stream Key pelanggan di dalam file `broadcaster.py` terlebih dahulu sebelum dijalankan).*
 
 ---
 
