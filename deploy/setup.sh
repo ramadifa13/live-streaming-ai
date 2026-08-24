@@ -29,7 +29,7 @@ wget -O Wav2Lip/checkpoints/wav2lip_gan.pth "https://huggingface.co/camenduru/Wa
 echo "5. Menginstal Python Library (Mohon tunggu sebentar)..."
 sed -i 's/==.*//g' Wav2Lip/requirements.txt
 pip install -r Wav2Lip/requirements.txt
-pip install opencv-python-headless librosa==0.9.2 "numpy<2.0.0"
+pip install "opencv-python-headless<4.10" "opencv-python<4.10" "opencv-contrib-python<4.10" librosa==0.9.2 "numpy<2.0.0"
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
 echo "SETUP SELESAI! MESIN SIAP DIGUNAKAN."
