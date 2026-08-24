@@ -799,7 +799,7 @@ export default function Dashboard() {
       stock: 50,
       tag: "Skincare",
       sku: "",
-      image: "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
+      image: "",
       link: "",
       description: "",
       benefits: "",
