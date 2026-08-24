@@ -1,10 +1,18 @@
 import { spawn, ChildProcess } from "child_process";
+import fs from "fs";
 import path from "path";
 
 let activeStreamProcess: ChildProcess | null = null;
+let activeStreamConfig: {
+  rtmpBaseUrl: string;
+  streamKey: string;
+  avatarImagePath?: string;
+  avatarVideoPath?: string;
+} | null = null;
 let activeStreamInfo: {
   rtmpUrl: string;
   status: "idle" | "connecting" | "streaming" | "error";
+  paused: boolean;
   handshakeVerified: boolean;
   startedAt?: string;
   fps?: number;
@@ -13,80 +21,125 @@ let activeStreamInfo: {
 } = {
   rtmpUrl: "",
   status: "idle",
+  paused: false,
   handshakeVerified: false,
   error: null,
 };
 
-export function startInstagramBroadcast(
+export async function startInstagramBroadcast(
   rtmpBaseUrl: string,
   streamKey: string,
-  avatarImagePath?: string
+  avatarImagePath?: string,
+  avatarVideoPath?: string,
 ) {
-  if (activeStreamProcess) {
-    try {
-      activeStreamProcess.kill();
-    } catch (e) {}
-    activeStreamProcess = null;
-  }
+  stopBroadcast();
+  activeStreamConfig = { rtmpBaseUrl, streamKey, avatarImagePath, avatarVideoPath };
 
-  // Build full RTMP endpoint
-  let fullTargetUrl = "";
-  if (rtmpBaseUrl.endsWith("/")) {
-    fullTargetUrl = `${rtmpBaseUrl}${streamKey}`;
-  } else {
-    fullTargetUrl = `${rtmpBaseUrl}/${streamKey}`;
-  }
+  const normalizedBaseUrl = rtmpBaseUrl.replace(/\/+$/, "");
+  const fullTargetUrl = normalizedBaseUrl.endsWith(`/${streamKey}`)
+    ? normalizedBaseUrl
+    : `${normalizedBaseUrl}/${streamKey}`;
 
-  // Resolve avatar background image
-  const defaultImage = path.resolve(
-    process.cwd(),
-    "../frontend/public/avatars/luna-3d.jpg"
+  // The frontend sends public URLs; FFmpeg needs an actual local file path.
+  const publicRoot = path.resolve(process.cwd(), "../frontend/public");
+  const resolvePublicAsset = (assetPath: string | undefined) => {
+    if (
+      !assetPath ||
+      assetPath.startsWith("http://") ||
+      assetPath.startsWith("https://")
+    )
+      return undefined;
+    const relativePath = assetPath.replace(/^[/\\]+/, "");
+    return path.resolve(publicRoot, relativePath);
+  };
+  const defaultVideo = path.resolve(
+    publicRoot,
+    "avatars/host_3d_dinamis_namira.mp4",
   );
-  const imageToUse = avatarImagePath || defaultImage;
+  const mediaToUse =
+    resolvePublicAsset(avatarVideoPath) ||
+    resolvePublicAsset(avatarImagePath) ||
+    defaultVideo;
 
-  console.log(`[RTMP Streamer] Starting Live Stream to: ${fullTargetUrl.substring(0, 50)}...`);
-  console.log(`[RTMP Streamer] Using presenter image: ${imageToUse}`);
+  if (!fs.existsSync(mediaToUse)) {
+    activeStreamInfo = {
+      rtmpUrl: fullTargetUrl,
+      status: "error",
+      paused: false,
+      handshakeVerified: false,
+      error: `Media avatar tidak ditemukan: ${mediaToUse}`,
+    };
+    return {
+      success: false,
+      status: "error",
+      handshakeVerified: false,
+      error: activeStreamInfo.error,
+    };
+  }
+
+  console.log(
+    `[RTMP Streamer] Starting Live Stream to: ${fullTargetUrl.substring(0, 50)}...`,
+  );
+  console.log(`[RTMP Streamer] Using presenter media: ${mediaToUse}`);
 
   activeStreamInfo = {
     rtmpUrl: fullTargetUrl,
     status: "connecting",
+    paused: false,
     handshakeVerified: false,
     startedAt: new Date().toISOString(),
     error: null,
   };
 
-  // FFmpeg command to loop image, scale to 720x1280 (9:16 vertical), generate AAC audio, and stream via RTMP
+  const isVideo = /\.(mp4|mov|webm|mkv)$/i.test(mediaToUse);
+
+  // Keep the idle avatar moving when no AI response video is available.
   const ffmpegArgs = [
     "-re",
-    "-loop", "1",
-    "-i", imageToUse,
-    "-f", "lavfi",
-    "-i", "anullsrc=r=44100:cl=stereo",
-    "-c:v", "libx264",
-    "-preset", "veryfast",
-    "-tune", "stillimage",
-    "-b:v", "2500k",
-    "-maxrate", "2500k",
-    "-bufsize", "5000k",
-    "-pix_fmt", "yuv420p",
-    "-g", "60",
-    "-r", "30",
-    "-vf", "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280",
-    "-c:a", "aac",
-    "-b:a", "128k",
-    "-ar", "44100",
-    "-f", "flv",
+    ...(isVideo ? ["-stream_loop", "-1"] : ["-loop", "1"]),
+    "-i",
+    mediaToUse,
+    "-f",
+    "lavfi",
+    "-i",
+    "anullsrc=r=44100:cl=stereo",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    ...(isVideo ? [] : ["-tune", "stillimage"]),
+    "-b:v",
+    "2500k",
+    "-maxrate",
+    "2500k",
+    "-bufsize",
+    "5000k",
+    "-pix_fmt",
+    "yuv420p",
+    "-g",
+    "60",
+    "-r",
+    "30",
+    "-vf",
+    "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "128k",
+    "-ar",
+    "44100",
+    "-f",
+    "flv",
     fullTargetUrl,
   ];
-
   try {
     activeStreamProcess = spawn("ffmpeg", ffmpegArgs, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    // Mark as streaming / verified once process successfully spawns
-    activeStreamInfo.status = "streaming";
-    activeStreamInfo.handshakeVerified = true;
+    // FFmpeg can spawn successfully while the input or RTMP endpoint fails.
+    // Progress plus a live process is the practical confirmation available from
+    // the RTMP publisher without a platform-specific ingest API.
 
     activeStreamProcess.stdout?.on("data", (data) => {
       console.log(`[FFmpeg stdout]: ${data}`);
@@ -97,34 +150,66 @@ export function startInstagramBroadcast(
       if (msg.includes("frame=") || msg.includes("fps=")) {
         activeStreamInfo.status = "streaming";
         activeStreamInfo.handshakeVerified = true;
-        process.stdout.write(`\r[FFmpeg Streaming] ${msg.trim().split("\n")[0]}`);
+        process.stdout.write(
+          `\r[FFmpeg Streaming] ${msg.trim().split("\n")[0]}`,
+        );
       }
     });
 
     activeStreamProcess.on("close", (code) => {
       console.log(`\n[RTMP Streamer] Process exited with code ${code}`);
-      activeStreamInfo.status = "idle";
+      if (activeStreamInfo.paused) {
+        activeStreamProcess = null;
+        return;
+      }
+      if (activeStreamInfo.status === "connecting") {
+        activeStreamInfo.status = "error";
+        activeStreamInfo.error = `FFmpeg berhenti sebelum streaming dimulai (kode ${code ?? "unknown"}).`;
+      } else {
+        activeStreamInfo.status = "idle";
+      }
       activeStreamInfo.handshakeVerified = false;
+      activeStreamInfo.paused = false;
       activeStreamProcess = null;
+      activeStreamConfig = null;
     });
 
     activeStreamProcess.on("error", (err) => {
       console.error("[RTMP Streamer] Error:", err);
       activeStreamInfo.status = "error";
       activeStreamInfo.handshakeVerified = false;
+      activeStreamInfo.paused = false;
       activeStreamInfo.error = String(err.message || err);
     });
+
+    const startedAt = Date.now();
+    while (activeStreamInfo.status === "connecting" && Date.now() - startedAt < 10000) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    if (activeStreamInfo.status !== "streaming") {
+      stopBroadcast();
+      return {
+        success: false,
+        status: activeStreamInfo.status,
+        handshakeVerified: false,
+        error: activeStreamInfo.error || "RTMP belum terverifikasi dalam 10 detik.",
+        target: fullTargetUrl,
+      };
+    }
 
     return {
       success: true,
       status: "streaming",
       handshakeVerified: true,
-      message: "Live Streaming successfully connected via RTMP!",
+      message: "RTMP stream aktif.",
       target: fullTargetUrl,
     };
   } catch (err: any) {
     activeStreamInfo.status = "error";
     activeStreamInfo.handshakeVerified = false;
+    activeStreamInfo.paused = false;
+    activeStreamConfig = null;
     activeStreamInfo.error = String(err.message || err);
     return {
       success: false,
@@ -143,9 +228,63 @@ export function stopBroadcast() {
     activeStreamProcess = null;
     activeStreamInfo.status = "idle";
     activeStreamInfo.handshakeVerified = false;
+    activeStreamInfo.paused = false;
+    activeStreamConfig = null;
     return { success: true, message: "Stream stopped" };
   }
+  activeStreamConfig = null;
   return { success: false, message: "No active stream" };
+}
+
+export function pauseBroadcast() {
+  if (!activeStreamProcess || activeStreamInfo.status !== "streaming") {
+    return { success: false, status: activeStreamInfo.status, message: "No active stream" };
+  }
+
+  try {
+    if (process.platform === "win32") {
+      activeStreamInfo.paused = true;
+      activeStreamInfo.status = "connecting";
+      activeStreamInfo.handshakeVerified = false;
+      activeStreamProcess.kill();
+    } else {
+      process.kill(activeStreamProcess.pid!, "SIGSTOP");
+      activeStreamInfo.status = "connecting";
+      activeStreamInfo.paused = true;
+      activeStreamInfo.handshakeVerified = false;
+    }
+    return { success: true, status: "paused", message: "RTMP stream paused" };
+  } catch (error) {
+    activeStreamInfo.error = String(error);
+    return { success: false, status: activeStreamInfo.status, message: activeStreamInfo.error };
+  }
+}
+
+export async function resumeBroadcast() {
+  if (!activeStreamInfo.paused || !activeStreamConfig) {
+    return { success: false, status: activeStreamInfo.status, message: "No paused stream" };
+  }
+
+  if (process.platform !== "win32" && activeStreamProcess?.pid) {
+    try {
+      process.kill(activeStreamProcess.pid, "SIGCONT");
+      activeStreamInfo.status = "streaming";
+      activeStreamInfo.paused = false;
+      activeStreamInfo.handshakeVerified = true;
+      return { success: true, status: "streaming", message: "RTMP stream resumed" };
+    } catch (error) {
+      activeStreamInfo.error = String(error);
+    }
+  }
+
+  const config = activeStreamConfig;
+  activeStreamProcess = null;
+  return startInstagramBroadcast(
+    config.rtmpBaseUrl,
+    config.streamKey,
+    config.avatarImagePath,
+    config.avatarVideoPath,
+  );
 }
 
 export function getStreamStatus() {

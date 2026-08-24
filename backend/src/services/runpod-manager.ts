@@ -9,6 +9,30 @@ export interface PodStatus {
 
 let lastGpuActivityTimestamp = Date.now();
 let idleMonitorInterval: NodeJS.Timeout | null = null;
+let liveSessionActive = false;
+let activeJobLeases = 0;
+
+export function setLiveSessionActive(active: boolean) {
+  liveSessionActive = active;
+  if (active) updateGpuActivity();
+}
+
+export async function acquireGpuForJob(): Promise<void> {
+  activeJobLeases += 1;
+  try {
+    await startPodAndWait();
+  } catch (error) {
+    activeJobLeases = Math.max(0, activeJobLeases - 1);
+    throw error;
+  }
+}
+
+export async function releaseGpuForJob(): Promise<void> {
+  activeJobLeases = Math.max(0, activeJobLeases - 1);
+  if (!liveSessionActive && activeJobLeases === 0) {
+    await stopPod();
+  }
+}
 
 export function updateGpuActivity() {
   lastGpuActivityTimestamp = Date.now();
@@ -143,6 +167,18 @@ export async function stopPod(): Promise<boolean> {
   const data = await runpodGraphQL(mutation, { input: { podId } });
   console.log(`[RunPodManager] Stopping Pod ${podId}...`);
   return !!data?.podStop;
+}
+
+export async function getGpuControlStatus() {
+  const pod = await getPodStatus();
+  return {
+    configured: Boolean(process.env.RUNPOD_POD_ID),
+    podId: process.env.RUNPOD_POD_ID || null,
+    desiredStatus: pod?.desiredStatus || "UNKNOWN",
+    liveSessionActive,
+    activeJobLeases,
+    workerUrl: getWorkerUrl(),
+  };
 }
 
 /**

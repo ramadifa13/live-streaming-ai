@@ -9,7 +9,7 @@
  */
 
 import crypto from "crypto";
-import { startPodAndWait, getWorkerUrl, updateGpuActivity } from "./runpod-manager.js";
+import { acquireGpuForJob, getWorkerUrl, releaseGpuForJob, updateGpuActivity } from "./runpod-manager.js";
 
 export type VideoJobStatus = "queued" | "processing" | "done" | "error";
 
@@ -113,9 +113,11 @@ async function runGeneration(
 
 async function runLivePortrait(jobId: string, params: GenerateVideoParams): Promise<void> {
   updateJob(jobId, { status: "processing", progress: 5, stage: "Menunggu GPU RunPod siap (bisa 30-60 dtk)..." });
+  let gpuLeaseAcquired = false;
 
   try {
-    await startPodAndWait();
+    await acquireGpuForJob();
+    gpuLeaseAcquired = true;
   } catch (err: any) {
     updateJob(jobId, { status: "error", stage: "Gagal menyalakan GPU", error: err.message });
     throw err;
@@ -244,10 +246,13 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
       stage: `${engineLabel} — Video siap!`,
       videoUrl: finalVideoUrl,
     });
+    await releaseGpuForJob();
+    gpuLeaseAcquired = false;
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : String(e);
     console.error(`[Worker Catch Error]:`, errMsg);
     updateJob(jobId, { status: "error", stage: "Error pada AI Worker", error: errMsg });
+    if (gpuLeaseAcquired) await releaseGpuForJob();
     throw e;
   }
 }

@@ -4,10 +4,12 @@ import prisma from "../lib/prisma.js";
 import {
   startInstagramBroadcast,
   stopBroadcast,
+  pauseBroadcast,
+  resumeBroadcast,
   getStreamStatus,
 } from "../services/rtmp-streamer.js";
 import { livePlatformConnector } from "../services/live-platform-connector.js";
-import { startPodAndWait, stopPod } from "../services/runpod-manager.js";
+import { setLiveSessionActive, startPodAndWait, stopPod } from "../services/runpod-manager.js";
 
 const liveSessionSchema = z.object({
   productId: z.string().min(1),
@@ -37,9 +39,11 @@ const liveStopSchema = z.object({
 });
 
 const broadcastSchema = z.object({
-  rtmpUrl: z.string().min(1),
-  streamKey: z.string().min(1),
+  rtmpUrl: z.string().url().refine((value) => /^rtmps?:\/\//i.test(value), "RTMP URL harus diawali rtmp:// atau rtmps://"),
+  streamKey: z.string().min(1).refine((value) => !/[\r\n/]/.test(value), "Stream key tidak valid"),
+  sessionId: z.string().optional(),
   avatarImage: z.string().optional(),
+  avatarVideo: z.string().optional(),
 });
 
 export async function liveSessionRoutes(server: FastifyInstance) {
@@ -85,12 +89,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     try {
       // Start the GPU Pod and wait for it to be ready
       await startPodAndWait();
+      setLiveSessionActive(true);
     } catch (err: any) {
       reply.code(500);
       return { error: `Gagal menyalakan GPU RunPod: ${err.message}` };
     }
 
-    const autoPromotionValue = parsed.data.autoPromotion ?? parsed.data.autoPromo ?? true;
+    const autoPromotionValue =
+      parsed.data.autoPromotion ?? parsed.data.autoPromo ?? true;
 
     const session = await prisma.liveSession.create({
       data: {
@@ -102,7 +108,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         autoPin: parsed.data.autoPin ?? true,
         autoPromotion: autoPromotionValue,
         autoModeration: parsed.data.autoModeration ?? true,
-        status: "live",
+        status: "starting",
         estimatedCost: Math.round(parsed.data.durationHours * 12500),
       },
     });
@@ -144,15 +150,29 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     stopBroadcast();
+    setLiveSessionActive(false);
     const liveMetrics = livePlatformConnector.getMetricsSnapshot();
     livePlatformConnector.stopSession();
 
-    // Stop the GPU Pod automatically to save costs
-    stopPod().catch(err => console.error("Failed to stop GPU Pod:", err));
+    await prisma.liveSession.updateMany({
+      where: { status: { in: ["live", "starting"] } },
+      data: { status: "ended" },
+    });
 
-    const { durationSeconds, viewers, comments, clicks, sales, productSold } = parsed.data;
-    const finalDuration = Math.max(durationSeconds, liveMetrics.durationSeconds);
-    const finalViewers = Math.max(viewers, liveMetrics.viewers, liveMetrics.peakViewers);
+    // Stop the GPU Pod automatically to save costs
+    stopPod().catch((err) => console.error("Failed to stop GPU Pod:", err));
+
+    const { durationSeconds, viewers, comments, clicks, sales, productSold } =
+      parsed.data;
+    const finalDuration = Math.max(
+      durationSeconds,
+      liveMetrics.durationSeconds,
+    );
+    const finalViewers = Math.max(
+      viewers,
+      liveMetrics.viewers,
+      liveMetrics.peakViewers,
+    );
     const finalComments = Math.max(comments, liveMetrics.comments);
     const finalClicks = Math.max(clicks, liveMetrics.clicks);
     const finalSales = Math.max(sales, liveMetrics.sales);
@@ -161,7 +181,10 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     const durationHours = Math.max(0.1, finalDuration / 3600);
     const estimatedGpuCost = Math.round(durationHours * 12500);
     const netProfit = Math.max(0, finalSales - estimatedGpuCost);
-    const roiPercentage = estimatedGpuCost > 0 ? Math.round((netProfit / estimatedGpuCost) * 100) : 0;
+    const roiPercentage =
+      estimatedGpuCost > 0
+        ? Math.round((netProfit / estimatedGpuCost) * 100)
+        : 0;
 
     return {
       success: true,
@@ -171,7 +194,10 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         totalViewers: finalViewers,
         peakViewers: Math.round(finalViewers * 1.25),
         totalComments: finalComments,
-        aiRepliesCount: Math.max(liveMetrics.aiReplies, Math.round(finalComments * 0.95)),
+        aiRepliesCount: Math.max(
+          liveMetrics.aiReplies,
+          Math.round(finalComments * 0.95),
+        ),
         totalClicks: finalClicks,
         totalProductSold: finalProductSold,
         grossRevenue: finalSales,
@@ -195,11 +221,32 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
-    const { rtmpUrl, streamKey, avatarImage } = parsed.data;
-    const result = startInstagramBroadcast(rtmpUrl, streamKey, avatarImage);
+    const { rtmpUrl, streamKey, avatarImage, avatarVideo, sessionId } = parsed.data;
+    const result = await startInstagramBroadcast(
+      rtmpUrl,
+      streamKey,
+      avatarImage,
+      avatarVideo,
+    );
+
+    if (!result.success) {
+      reply.code(502);
+      setLiveSessionActive(false);
+      if (sessionId) {
+        await prisma.liveSession.updateMany({
+          where: { id: sessionId, status: "starting" },
+          data: { status: "ended" },
+        });
+      }
+    } else if (sessionId) {
+      await prisma.liveSession.updateMany({
+        where: { id: sessionId, status: "starting" },
+        data: { status: "live" },
+      });
+    }
 
     return {
-      success: true,
+      success: result.success,
       data: result,
     };
   });
@@ -215,19 +262,25 @@ export async function liveSessionRoutes(server: FastifyInstance) {
 
   // POST /api/live-stream/pause
   server.post("/api/live-stream/pause", async () => {
+    const result = pauseBroadcast();
+    if (!result.success) {
+      return { success: false, data: result };
+    }
     return {
-      success: true,
-      status: "paused",
-      message: "Live stream transmission paused successfully",
+      success: result.success,
+      data: result,
     };
   });
 
   // POST /api/live-stream/resume
   server.post("/api/live-stream/resume", async () => {
+    const result = await resumeBroadcast();
+    if (!result.success) {
+      return { success: false, data: result };
+    }
     return {
-      success: true,
-      status: "streaming",
-      message: "Live stream transmission resumed successfully",
+      success: result.success,
+      data: result,
     };
   });
 
@@ -267,7 +320,12 @@ export async function liveSessionRoutes(server: FastifyInstance) {
   server.post("/api/webhooks/platform-events", async (request, reply) => {
     const webhookSchema = z.object({
       platform: z.string(),
-      eventType: z.enum(["comment", "order_paid", "cart_click", "viewer_update"]),
+      eventType: z.enum([
+        "comment",
+        "order_paid",
+        "cart_click",
+        "viewer_update",
+      ]),
       data: z.record(z.string(), z.unknown()),
     });
 
@@ -310,11 +368,16 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       data: {
         isStreaming: streamStatus.status === "streaming",
         handshakeVerified: streamStatus.handshakeVerified,
-        sessionStatus: session?.status || (streamStatus.status === "streaming" ? "live" : "idle"),
+        sessionStatus:
+          session?.status ||
+          (streamStatus.status === "streaming" ? "live" : "idle"),
         platform: session?.platform || "TikTok LIVE",
         product: null,
         avatar: session?.avatar || null,
-        startedAt: session?.createdAt || streamStatus.startedAt || new Date().toISOString(),
+        startedAt:
+          session?.createdAt ||
+          streamStatus.startedAt ||
+          new Date().toISOString(),
         metrics,
         serverTimestamp: Date.now(),
       },

@@ -57,9 +57,26 @@ export async function forwardToRunPodGPU(
     clearTimeout(timeoutId);
 
     if (res.ok) {
-      const data = (await res.json()) as { video_url?: string; audio_path?: string; status?: string };
+      const data = (await res.json()) as { video_url?: string; audio_path?: string; status?: string; job_id?: string };
+      let completedData = data;
+      if (data.job_id) {
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          const statusRes = await fetch(`${workerUrl}/stream/status/${data.job_id}`, {
+            signal: AbortSignal.timeout(10000),
+          });
+          if (!statusRes.ok) continue;
+          const statusData = await statusRes.json() as typeof data & { error?: string };
+          if (statusData.status === "error") throw new Error(statusData.error || "RunPod video job gagal");
+          if (statusData.status === "done") {
+            completedData = statusData;
+            break;
+          }
+          if (attempt === 99) throw new Error("RunPod video job timeout");
+        }
+      }
       
-      let finalVideoUrl = data.video_url;
+      let finalVideoUrl = completedData.video_url;
       if (finalVideoUrl && !finalVideoUrl.startsWith("http")) {
         finalVideoUrl = `${workerUrl}${finalVideoUrl}`;
       }
@@ -67,8 +84,8 @@ export async function forwardToRunPodGPU(
       return {
         success: true,
         videoUrl: finalVideoUrl || "https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4",
-        audioPath: data.audio_path,
-        status: data.status || "rendered",
+        audioPath: completedData.audio_path,
+        status: completedData.status || "rendered",
       };
     }
   } catch (err) {

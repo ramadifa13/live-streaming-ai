@@ -39,18 +39,24 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       tone = "Persuasif",
       avatarName = "Namira",
     } = parsed.data;
+    let productDescription = "";
+    let productCategory = "Skincare";
+    let productBenefits = "";
+    let productUsage = "";
+    let productFaq = "";
+    let productStock = 50;
 
-      if (parsed.data.activeProduct) {
-        const p = parsed.data.activeProduct;
-        productName = p.name || productName;
-        productPrice = p.price || productPrice;
-        productDescription = p.description || "";
-        productCategory = p.tag || p.category || "Skincare";
-        productBenefits = p.benefits || "";
-        productUsage = p.usage || "";
-        productFaq = p.faq || "";
-        productStock = p.stock || 50;
-      }
+    if (parsed.data.activeProduct) {
+      const p = parsed.data.activeProduct as Record<string, any>;
+      productName = p.name || productName;
+      productPrice = p.price || productPrice;
+      productDescription = p.description || "";
+      productCategory = p.tag || p.category || "Skincare";
+      productBenefits = p.benefits || "";
+      productUsage = p.usage || "";
+      productFaq = p.faq || "";
+      productStock = p.stock || 50;
+    }
 
     // Call Autonomous LLM Sales Brain with RAG Knowledge
     const aiResult = await generateDynamicSalesResponse({
@@ -91,12 +97,33 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
-    const { productName, productPrice, productCategory, durationType, style = "Viral TikTok" } = parsed.data;
+    const {
+      productName,
+      productPrice,
+      productCategory,
+      durationType,
+      style = "Viral TikTok",
+    } = parsed.data;
 
     let script = {
-      tierName: durationType === "15s" ? "Short Hook (15 Detik)" : durationType === "30s" ? "Standard Showcase (30 Detik)" : "Deep Review (60 Detik)",
-      tierPrice: durationType === "15s" ? "Rp19.000" : durationType === "30s" ? "Rp35.000" : "Rp59.000",
-      estimatedCogs: durationType === "15s" ? "~Rp200" : durationType === "30s" ? "~Rp350" : "~Rp600",
+      tierName:
+        durationType === "15s"
+          ? "Short Hook (15 Detik)"
+          : durationType === "30s"
+            ? "Standard Showcase (30 Detik)"
+            : "Deep Review (60 Detik)",
+      tierPrice:
+        durationType === "15s"
+          ? "Rp19.000"
+          : durationType === "30s"
+            ? "Rp35.000"
+            : "Rp59.000",
+      estimatedCogs:
+        durationType === "15s"
+          ? "~Rp200"
+          : durationType === "30s"
+            ? "~Rp350"
+            : "~Rp600",
       hookHeadline: "",
       hook: "",
       problem: "",
@@ -104,7 +131,8 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       cta: "",
       fullVoiceover: "",
       badges: ["✨ 100% BPOM Resmi", "⚡ Cepat Meresap", "💧 24H Glowing"],
-      durationSeconds: durationType === "15s" ? 15 : durationType === "30s" ? 30 : 60,
+      durationSeconds:
+        durationType === "15s" ? 15 : durationType === "30s" ? 30 : 60,
     };
 
     if (durationType === "15s") {
@@ -210,4 +238,3 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     };
   });
 }
-

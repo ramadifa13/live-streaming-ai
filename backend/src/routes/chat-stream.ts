@@ -4,6 +4,7 @@ import prisma from "../lib/prisma.js";
 import { generateLunaResponse } from "../services/luna-brain.js";
 import { generateVisemesFromText } from "../services/viseme-generator.js";
 import { forwardToRunPodGPU } from "../services/runpod-bridge.js";
+import { acquireGpuForJob, releaseGpuForJob } from "../services/runpod-manager.js";
 
 const chatStreamRequestSchema = z.object({
   comment: z.string().min(1, "Comment is required"),
@@ -50,13 +51,23 @@ export async function chatStreamRoutes(server: FastifyInstance) {
       // Step 4: If Mode 2D, forward to GPU RunPod Worker (LivePortrait / MuseTalk)
       let videoUrl: string | undefined = undefined;
       if (mode === "2D") {
-        const gpuRes = await forwardToRunPodGPU({
-          avatarImagePath,
-          text: lunaResponse.speech,
-          voice: voice || "id-ID-GadisNeural",
-          speed: lunaResponse.action === "TALK_EXPRESSIVE" ? 1.08 : 1.0,
+        const liveSession = await prisma.liveSession.findFirst({
+          where: { status: { in: ["starting", "live"] } },
+          select: { id: true },
         });
-        videoUrl = gpuRes.videoUrl;
+        const temporaryGpuJob = !liveSession;
+        if (temporaryGpuJob) await acquireGpuForJob();
+        try {
+          const gpuRes = await forwardToRunPodGPU({
+            avatarImagePath,
+            text: lunaResponse.speech,
+            voice: voice || "id-ID-GadisNeural",
+            speed: lunaResponse.action === "TALK_EXPRESSIVE" ? 1.08 : 1.0,
+          });
+          videoUrl = gpuRes.videoUrl;
+        } finally {
+          if (temporaryGpuJob) await releaseGpuForJob();
+        }
       }
 
       // Step 5: Return unified structured response

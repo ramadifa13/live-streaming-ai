@@ -6,6 +6,11 @@ import {
   llmProvider,
   ttsProvider,
 } from "../providers/mock-providers.js";
+import {
+  getGpuControlStatus,
+  startPodAndWait,
+  stopPod,
+} from "../services/runpod-manager.js";
 
 const orchestrationSchema = z.object({
   prompt: z.string().min(1),
@@ -16,6 +21,35 @@ const orchestrationSchema = z.object({
 });
 
 export async function providersRoutes(server: FastifyInstance) {
+  server.get("/api/runpod/status", async () => ({
+    success: true,
+    data: await getGpuControlStatus(),
+  }));
+
+  server.post("/api/runpod/start", async (_request, reply) => {
+    try {
+      await startPodAndWait();
+      return { success: true, data: await getGpuControlStatus() };
+    } catch (error) {
+      reply.code(502);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  server.post("/api/runpod/stop", async (_request, reply) => {
+    try {
+      const stopped = await stopPod();
+      if (!stopped) {
+        reply.code(502);
+        return { success: false, error: "RunPod menolak permintaan stop" };
+      }
+      return { success: true, data: await getGpuControlStatus() };
+    } catch (error) {
+      reply.code(502);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   server.get("/api/providers/status", async () => {
     const [llm, tts, avatar, gpu] = await Promise.all([
       llmProvider.getHealth(),

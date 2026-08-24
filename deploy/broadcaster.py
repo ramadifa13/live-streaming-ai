@@ -15,7 +15,8 @@ class AIBroadcaster:
         master_command = [
             "ffmpeg",
             "-y",
-            "-i", "pipe:0",             
+            "-f", "mpegts",
+            "-i", "pipe:0",
             "-c:v", "libx264",          
             "-preset", "ultrafast",     
             "-b:v", "2500k",            
@@ -51,8 +52,11 @@ class AIBroadcaster:
         
         while True:
             # Cek folder output apakah ada video jawaban baru dari AI Worker
-            search_pattern = os.path.join(self.output_folder, "*.mp4")
-            new_videos = sorted(glob.glob(search_pattern), key=os.path.getctime)
+            search_pattern = os.path.join(self.output_folder, "**", "*.mp4")
+            new_videos = sorted(
+                glob.glob(search_pattern, recursive=True),
+                key=os.path.getctime,
+            )
             
             if new_videos:
                 video_to_play = new_videos[0]
@@ -69,13 +73,16 @@ class AIBroadcaster:
 # --- KONFIGURASI DAN EKSEKUSI ---
 if __name__ == "__main__":
     
-    # 1. Ganti dengan URL dan KEY Stream Pelanggan Anda
-    RTMP_URL = "rtmp://live.shopee.co.id/live/KODE_STREAM_KEY_UMKM"
+    RTMP_BASE_URL = os.environ.get("RTMP_URL", "").rstrip("/")
+    STREAM_KEY = os.environ.get("STREAM_KEY", "")
+    if not RTMP_BASE_URL or not STREAM_KEY:
+        raise RuntimeError("RTMP_URL dan STREAM_KEY wajib diisi melalui environment")
+    RTMP_URL = f"{RTMP_BASE_URL}/{STREAM_KEY}"
     
     # 2. Tentukan video Idle (Sesuai dengan host yang dipilih pelanggan)
     IDLE_VIDEO = "/workspace/ai_live_worker/assets/2d/host_2d_statis.mp4" 
     
-    OUTPUT_FOLDER = "/workspace/ai_live_worker/output"
+    OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "/workspace/ai_live_worker/output")
     
     try:
         broadcaster = AIBroadcaster(RTMP_URL, IDLE_VIDEO, OUTPUT_FOLDER)
