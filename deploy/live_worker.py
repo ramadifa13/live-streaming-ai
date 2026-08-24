@@ -105,6 +105,7 @@ class AILiveWorker:
             musetalk_dir,
             "models",
             "musetalk",
+            "musetalk",
             "musetalk.json"
         )
 
