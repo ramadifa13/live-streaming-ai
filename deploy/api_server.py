@@ -26,6 +26,9 @@ app.mount("/output", StaticFiles(directory=output_dir), name="output")
 
 @app.post("/stream/generate-neural-video")
 async def generate_neural_video(req: GenerateVideoRequest):
+    print(f"\n=======================================================")
+    print(f"[API INCOMING] Menerima request dari Backend")
+    print(f"[DATA] Avatar: {req.avatar_name}, Teks: '{req.text[:30]}...'")
     try:
         task_id = f"task_{int(asyncio.get_event_loop().time() * 1000)}"
         
@@ -44,11 +47,15 @@ async def generate_neural_video(req: GenerateVideoRequest):
         )
         
         if not final_video_path:
+            print(f"[API ERROR] Gagal memproses video untuk task {task_id}")
             raise HTTPException(status_code=500, detail="Gagal me-render video")
             
         # Return URL to the served file
         filename = os.path.basename(final_video_path)
         video_url = f"/output/{filename}"
+        
+        print(f"[API SUCCESS] Video berhasil dibuat dan dikirim ke Backend: {video_url}")
+        print(f"=======================================================\n")
         
         return {
             "success": True,
@@ -58,6 +65,8 @@ async def generate_neural_video(req: GenerateVideoRequest):
             "lip_sync_active": True
         }
     except Exception as e:
+        print(f"[API FATAL ERROR] Terjadi kesalahan sistem: {str(e)}")
+        print(f"=======================================================\n")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
