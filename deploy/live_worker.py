@@ -54,9 +54,24 @@ class AILiveWorker:
 
     def _get_idle_video(self, host_type, host_name):
         """Cari file bahan baku video di folder 2D/3D"""
-        target_dir = self.assets_2d if host_type.lower() == "2d" else self.assets_3d
+        target_dir = self.assets_2d if str(host_type).lower() == "2d" else self.assets_3d
+        
+        # 1. Cek nama persis
         video_path = os.path.join(target_dir, f"{host_name}.mp4")
-        return video_path if os.path.exists(video_path) else None
+        if os.path.exists(video_path):
+            return video_path
+            
+        # 2. Cek variasi nama (misal nana / host_2d_statis_nana)
+        if os.path.exists(target_dir):
+            for f in os.listdir(target_dir):
+                if f.endswith(".mp4") and (host_name.lower() in f.lower() or f.lower().replace(".mp4", "") in host_name.lower()):
+                    return os.path.join(target_dir, f)
+            # 3. Ambil file mp4 pertama di folder yang sesuai tipe (2D / 3D)
+            mp4s = [f for f in os.listdir(target_dir) if f.endswith(".mp4")]
+            if mp4s:
+                return os.path.join(target_dir, mp4s[0])
+                
+        return None
 
     def _sync_lips(self, idle_video, audio_path, task_id):
         """Render Sinkronisasi Bibir dengan MuseTalk (Kecepatan Tinggi)"""
@@ -120,7 +135,7 @@ class AILiveWorker:
             # Kita jalankan dari dalam folder MuseTalk agar module 'scripts' terbaca
             subprocess.run(command, cwd=musetalk_dir, check=True)
             
-            # Cari video mp4 terbaru di output_dir
+            # Cari video mp4 hasil render khusus untuk task_id ini
             list_of_files = []
             for root, dirs, files in os.walk(output_dir):
                 for file in files:
@@ -128,19 +143,14 @@ class AILiveWorker:
                         list_of_files.append(os.path.join(root, file))
             
             if not list_of_files:
-                for root, dirs, files in os.walk(output_dir):
-                    for file in files:
-                        if file.endswith(".mp4"):
-                            list_of_files.append(os.path.join(root, file))
-
-            if not list_of_files:
-                raise FileNotFoundError("Output video dari MuseTalk tidak ditemukan.")
+                raise FileNotFoundError(f"Output video dari MuseTalk untuk task {task_id} tidak ditemukan.")
                 
             latest_file = max(list_of_files, key=os.path.getctime)
             
             # Rename (pindahkan) ke target path final
             final_output = os.path.join(self.output_dir, f"{task_id}.mp4")
-            os.rename(latest_file, final_output)
+            if latest_file != final_output:
+                os.rename(latest_file, final_output)
             
             # Hapus file yaml
             if os.path.exists(yaml_path):
