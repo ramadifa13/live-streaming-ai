@@ -24,6 +24,10 @@ output_dir = worker.output_dir
 os.makedirs(output_dir, exist_ok=True)
 app.mount("/output", StaticFiles(directory=output_dir), name="output")
 
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "AI Live Worker API is running"}
+
 @app.post("/stream/generate-neural-video")
 async def generate_neural_video(req: GenerateVideoRequest):
     print(f"\n=======================================================")

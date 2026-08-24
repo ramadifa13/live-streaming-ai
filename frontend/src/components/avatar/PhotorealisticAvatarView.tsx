@@ -277,7 +277,6 @@ export default function PhotorealisticAvatarView({
             autoPlay
             loop
             playsInline
-            muted
             src={videoUrl.replace(/^http:\/\/localhost:4000/, "")}
             style={{ objectPosition: "center top" }}
             onError={(e) => {

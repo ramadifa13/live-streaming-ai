@@ -4,7 +4,6 @@ const RUNPOD_GRAPHQL_URL = "https://api.runpod.io/graphql";
 
 export interface PodStatus {
   id: string;
-  lastStatus: string;
   desiredStatus: string;
 }
 
@@ -37,7 +36,7 @@ export function startIdleMonitor() {
         if (podId) {
           const status = await getPodStatus();
           // Only stop if it's actually running
-          if (status && status.lastStatus === "RUNNING") {
+          if (status && status.desiredStatus === "RUNNING") {
             await stopPod();
             console.log(`[RunPodManager] Auto-shutdown successful for Pod ${podId}`);
           }
@@ -95,7 +94,6 @@ export async function getPodStatus(): Promise<PodStatus | null> {
     query pod($input: PodFilter!) {
       pod(input: $input) {
         id
-        lastStatus
         desiredStatus
       }
     }
@@ -162,7 +160,7 @@ export async function startPodAndWait(timeoutMs = 120000): Promise<boolean> {
   let status = await getPodStatus();
   
   // If it's already running, we're good
-  if (status && status.lastStatus === "RUNNING") {
+  if (status && status.desiredStatus === "RUNNING") {
     console.log("[RunPodManager] Pod is already running.");
     return true;
   }
@@ -174,7 +172,7 @@ export async function startPodAndWait(timeoutMs = 120000): Promise<boolean> {
   const startTime = Date.now();
   while (Date.now() - startTime < timeoutMs) {
     status = await getPodStatus();
-    if (status && status.lastStatus === "RUNNING") {
+    if (status && status.desiredStatus === "RUNNING") {
       console.log(`[RunPodManager] Pod is now RUNNING (took ${Math.round((Date.now() - startTime)/1000)}s)`);
       
       // Wait a few extra seconds for the internal Fastapi/PM2 services to actually boot up

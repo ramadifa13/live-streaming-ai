@@ -94,3 +94,31 @@ Jika Anda hanya men-stop pod, Anda tetap ditagih biaya sewa penyimpanan (storage
 3. Konfirmasi penghapusan.
 
 Dengan ini, argo tagihan Anda benar-benar Rp 0 / jam. Anda bisa membangun ulang sistem keesokan harinya menggunakan panduan ini hanya dalam waktu 5 menit!
+
+---
+
+## 🛠️ Troubleshooting (Solusi Error Umum)
+
+Jika Anda menemui error saat merender video, berikut adalah solusinya:
+
+### 1. `Error: RunPod API Error: 400 - Cannot query field "lastStatus"`
+Ini terjadi karena backend lokal belum diperbarui ke versi terbaru. Pastikan Anda telah mem-pull repositori terbaru yang sudah menggunakan `desiredStatus` pada file `runpod-manager.ts`.
+
+### 2. `[ERROR] Video '...' tidak ada di folder assets/...`
+Pastikan Anda mengunggah file `.mp4` dengan huruf kecil semua dan **tanpa ekstensi tambahan** di namanya (contoh: `namira.mp4`, bukan `namira.png.mp4`).
+
+### 3. `[ERROR] Gagal membuat suara: Language id is not supported`
+Model suara AI XTTSv2 bawaan tidak mendukung bahasa `id`. Pastikan file `live_worker.py` (pada baris ke-56) sudah di-set ke `language="en"`.
+
+### 4. `EOFError: Ran out of input` saat meload Wav2Lip
+Ini artinya file model `wav2lip_gan.pth` Anda korup/tidak utuh. Jalankan perintah ini di RunPod untuk mendownload ulang:
+```bash
+rm -f /workspace/ai_live_worker/Wav2Lip/checkpoints/wav2lip_gan.pth
+wget -O /workspace/ai_live_worker/Wav2Lip/checkpoints/wav2lip_gan.pth https://huggingface.co/camenduru/Wav2Lip/resolve/main/checkpoints/wav2lip_gan.pth
+```
+
+### 5. Video berhasil digenerate tapi tidak ada suara atau Error `ffmpeg: not found`
+Ini terjadi jika RunPod tidak memiliki `ffmpeg`. Pastikan Anda telah menjalankan:
+```bash
+apt update && apt install -y ffmpeg
+```

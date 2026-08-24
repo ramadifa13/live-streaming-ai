@@ -53,7 +53,7 @@ class AILiveWorker:
             text=text,
             file_path=audio_path,
             speaker_wav=speaker_wav,
-            language="id"
+            language="en"
         )
         return audio_path
 
@@ -77,8 +77,8 @@ class AILiveWorker:
         ]
         
         try:
-            # Render video diam-diam tanpa spam log di terminal
-            subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Render video dan biarkan log tampil di terminal agar kita tahu kalau ada error
+            subprocess.run(command, check=True)
             return output_video
         except subprocess.CalledProcessError:
             print(f"[GAGAL] Error saat merender video {task_id}.")

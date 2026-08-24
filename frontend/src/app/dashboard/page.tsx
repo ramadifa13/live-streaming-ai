@@ -2007,13 +2007,14 @@ export default function Dashboard() {
                 </div>
 
                 {/* 2. Real-time LivePortrait Neural Stream Player */}
-                <div className="relative flex-1 overflow-hidden rounded-xl border border-[#232c42] bg-[#0c0919] shadow-inner">
+                <div className="relative aspect-[9/16] h-full mx-auto overflow-hidden rounded-xl border border-[#232c42] bg-[#0c0919] shadow-inner">
                   <RealtimeLivePortraitView
                     avatarName={selectedAvatar.name}
                     avatarImage={selectedAvatar.image}
                     avatarRole={selectedAvatar.role}
                     isSpeaking={isAvatarSpeaking}
                     videoUrl={currentLiveVideoUrl || undefined}
+                    soundOn={isSoundOn}
                     className="w-full h-full"
                   />
 

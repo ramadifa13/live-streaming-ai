@@ -128,19 +128,33 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
   try {
     // Extract avatar name from image path (e.g. "avatars/host_3d_dinamis_namira.png" -> "Namira")
     const avatarName = params.avatarName || "Namira";
+    const cleanAvatarName = avatarName.replace(/\.(png|jpg|jpeg|mp4|webm|webp)$/i, "");
 
     // Convert http://localhost:3000/avatars/x.jpg -> just the path part
     // so the worker can resolve it from its local filesystem
-    let avatarImagePath = params.avatarImageUrl;
+    let avatarImagePath = params.avatarImageUrl || "";
     try {
-      const parsed = new URL(params.avatarImageUrl);
-      avatarImagePath = parsed.pathname; // e.g. "/avatars/host_3d_dinamis_namira.png"
+      if (params.avatarImageUrl) {
+        const parsed = new URL(params.avatarImageUrl);
+        avatarImagePath = parsed.pathname; // e.g. "/avatars/host_3d_dinamis_namira.png"
+      }
     } catch {
       // Not a full URL — use as-is
     }
 
+    // Extract avatar name from the image path to ensure we get the actual filename
+    // e.g. "/avatars/host_3d_dinamis_namira.png" -> "host_3d_dinamis_namira"
+    let finalAvatarFileName = cleanAvatarName;
+    if (avatarImagePath) {
+      const parts = avatarImagePath.split('/');
+      const filename = parts[parts.length - 1];
+      if (filename) {
+        finalAvatarFileName = filename.replace(/\.(png|jpg|jpeg|mp4|webm|webp)$/i, "");
+      }
+    }
+
     const payload = {
-      avatar_name: avatarName,
+      avatar_name: finalAvatarFileName,
       avatar_image_path: avatarImagePath,
       text: params.scriptText,
       voice: "id-ID-GadisNeural",

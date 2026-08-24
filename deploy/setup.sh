@@ -3,7 +3,8 @@
 # SKRIP SETUP INSTAN AI WORKER RUNPOD
 # ==========================================
 
-echo "1. Membuat struktur folder..."
+echo "1. Mempersiapkan Sistem & Folder..."
+apt-get update && apt-get install -y ffmpeg
 mkdir -p /workspace/ai_live_worker/assets/2d
 mkdir -p /workspace/ai_live_worker/assets/3d
 mkdir -p /workspace/ai_live_worker/assets/voice_refs
