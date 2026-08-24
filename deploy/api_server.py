@@ -56,8 +56,8 @@ async def generate_neural_video(req: GenerateVideoRequest):
             raise HTTPException(status_code=500, detail="Gagal me-render video")
             
         # Return URL to the served file
-        filename = os.path.basename(final_video_path)
-        video_url = f"/output/{filename}"
+        rel_path = os.path.relpath(final_video_path, os.path.abspath("output"))
+        video_url = f"/output/{rel_path}".replace("\\", "/")
         
         print(f"[API SUCCESS] Video berhasil dibuat dan dikirim ke Backend: {video_url}")
         print(f"=======================================================\n")
