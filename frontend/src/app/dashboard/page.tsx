@@ -308,7 +308,7 @@ export default function Dashboard() {
     const curVoice = opts?.voice || selectedVoice;
     const curLang = opts?.lang || selectedLang;
     const curTone = opts?.tone || selectedTone;
-    const curAvatar = opts?.avatar || selectedAvatar.name;
+    const curAvatar = opts?.avatar || selectedAvatar.id;
 
     // Stop current playing audio
     if (currentAudioRef.current) {
@@ -376,7 +376,7 @@ export default function Dashboard() {
             ? activeFeaturedProduct.image
             : undefined,
           scriptText: script,
-          avatarName: selectedAvatar.name,
+          avatarName: selectedAvatar.id,
           tone: selectedTone,
         }),
       });
@@ -719,7 +719,7 @@ export default function Dashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           activeProduct: activeFeaturedProduct,
-          avatarName: selectedAvatar.name,
+          avatarName: selectedAvatar.id,
           tone: selectedTone,
         }),
       });
@@ -999,7 +999,7 @@ export default function Dashboard() {
           body: JSON.stringify({
             comment: currentInput,
             activeProduct: activeFeaturedProduct,
-            avatarName: selectedAvatar.name,
+            avatarName: selectedAvatar.id,
             tone: selectedTone,
             voice: selectedVoice,
             mode: "2D",

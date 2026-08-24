@@ -63,15 +63,15 @@ export const products: Product[] = [
 
 export const avatars = [
   {
-    id: "alya",
-    name: "Alya",
+    id: "host_2d_statis_nana",
+    name: "Nana",
     style: "Friendly",
     language: "Indonesia",
     voice: "Wanita Natural",
   },
   {
-    id: "luna",
-    name: "Luna",
+    id: "host_3d_dinamis_namira",
+    name: "Namira",
     style: "Energetic",
     language: "Indonesia",
     voice: "Energetic Promo",
@@ -152,7 +152,7 @@ export const pricing = {
 
 export const dashboardSummary = {
   totalProducts: 12,
-  activeAvatar: "Alya",
+  activeAvatar: "Nana",
   sessions: 3,
   totalRevenue: 4235000,
   estimatedCost: 875000,
@@ -218,15 +218,15 @@ export const inventoryRows = [
 
 export const hostOptions = [
   {
-    id: "alya",
-    name: "Alya",
+    id: "host_2d_statis_nana",
+    name: "Nana",
     role: "Friendly",
     language: "Indonesia",
     voice: "Wanita Natural",
   },
   {
-    id: "luna",
-    name: "Luna",
+    id: "host_3d_dinamis_namira",
+    name: "Namira",
     role: "Energetic",
     language: "Indonesia",
     voice: "Energetic Promo",
