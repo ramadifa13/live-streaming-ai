@@ -2,7 +2,8 @@ import subprocess
 import os
 import time
 import asyncio
-import edge_tts
+import torch
+from TTS.api import TTS
 
 class AILiveWorker:
     def __init__(self):
@@ -17,16 +18,39 @@ class AILiveWorker:
         self.wav2lip_script = os.path.join(self.base_dir, "Wav2Lip", "inference.py")
         self.checkpoint = os.path.join(self.base_dir, "Wav2Lip", "checkpoints", "wav2lip_gan.pth")
         
-        if not os.path.exists(self.checkpoint):
-            print(f"[ERROR] Model AI tidak ditemukan di {self.checkpoint}")
-
-    async def _generate_voice(self, text, task_id):
-        """Ubah Teks menjadi Suara"""
-        audio_path = os.path.join(self.temp_dir, f"{task_id}.wav")
-        voice = "id-ID-GadisNeural" # Suara wanita Indonesia
+        # Konfigurasi XTTSv2
+        self.voice_refs = os.path.join(self.base_dir, "assets", "voice_refs")
+        os.makedirs(self.voice_refs, exist_ok=True)
         
-        communicate = edge_tts.Communicate(text, voice)
-        await communicate.save(audio_path)
+        if not os.path.exists(self.checkpoint):
+            print(f"[ERROR] Model Wav2Lip tidak ditemukan di {self.checkpoint}")
+            
+        print("[INFO] Memuat Model Suara XTTSv2 (Ini membutuhkan VRAM GPU minimal 8GB)...")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+        print("[INFO] Model Suara XTTSv2 siap!")
+
+    async def _generate_voice(self, text, task_id, host_name):
+        """Ubah Teks menjadi Suara Ekstra Natural menggunakan XTTSv2 (GPU Required)"""
+        audio_path = os.path.join(self.temp_dir, f"{task_id}.wav")
+        
+        # Cari file referensi suara berdasarkan nama host (misal: nana.wav)
+        speaker_wav = os.path.join(self.voice_refs, f"{host_name}.wav")
+        if not os.path.exists(speaker_wav):
+            print(f"[WARNING] Sampel suara {speaker_wav} tidak ditemukan! Menggunakan suara bawaan/default.")
+            # Default ke suara reference apa saja yang ada, atau throw error
+            # Untuk keamanan, kita wajib punya setidaknya 1 suara default
+            speaker_wav = os.path.join(self.voice_refs, "default.wav")
+            if not os.path.exists(speaker_wav):
+                raise FileNotFoundError(f"Tolong masukkan file suara 10 detik {host_name}.wav ke dalam {self.voice_refs}")
+        
+        # XTTSv2 butuh file diselamatkan secara sinkronous, bisa di-wrap kalau perlu
+        self.tts.tts_to_file(
+            text=text,
+            file_path=audio_path,
+            speaker_wav=speaker_wav,
+            language="id"
+        )
         return audio_path
 
     def _get_idle_video(self, host_type, host_name):
@@ -65,10 +89,14 @@ class AILiveWorker:
             print(f"[ERROR] Video '{host_name}.mp4' tidak ada di folder assets/{host_type}")
             return None
             
-        print(" -> Generating Suara...")
-        audio_file = await self._generate_voice(text_answer, task_id)
+        print(" -> Generating Suara (XTTSv2)...")
+        try:
+            audio_file = await self._generate_voice(text_answer, task_id, host_name)
+        except Exception as e:
+            print(f"[ERROR] Gagal membuat suara: {e}")
+            return None
         
-        print(" -> Generating Video Lipsync...")
+        print(" -> Generating Video Lipsync (Wav2Lip)...")
         final_video = self._sync_lips(idle_video, audio_file, task_id)
         
         if os.path.exists(audio_file):

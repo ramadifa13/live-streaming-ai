@@ -1,4 +1,6 @@
-/**
+const fs = require('fs');
+const file = 'd:/work/live-streaming-ai/backend/src/services/llm-brain.ts';
+const content = `/**
  * Autonomous LLM Sales Brain Service
  * Generates natural, dynamic, non-stiff responses using real LLM (Ollama / OpenAI / Neural Engine).
  * Capable of answering any random/personal questions and smoothly pivoting to product sales.
@@ -41,37 +43,37 @@ export async function generateDynamicSalesResponse(
     productStock = 50,
   } = input;
 
-  const systemPrompt = `Kamu adalah ${avatarName}, seorang AI Host & Live Streamer profesional yang sedang siaran langsung jualan di TikTok / Instagram Live.
-Gaya bicara kamu: ${tone}, sangat luwes, ramah, ceria, menggunakan Bahasa Indonesia santai (bahasa live streaming: "aku", "kakak", "nih", "banget", "ya kak", "hehe", "yuk"). TIDAK BOLEH kaku atau seperti robot.
+  const systemPrompt = \`Kamu adalah \${avatarName}, seorang AI Host & Live Streamer profesional yang sedang siaran langsung jualan di TikTok / Instagram Live.
+Gaya bicara kamu: \${tone}, sangat luwes, ramah, ceria, menggunakan Bahasa Indonesia santai (bahasa live streaming: "aku", "kakak", "nih", "banget", "ya kak", "hehe", "yuk"). TIDAK BOLEH kaku atau seperti robot.
 
-Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.productCategory || "Skincare"}, Harga spesial live: ${productPrice}, Sisa Stok: ${productStock} pcs).
+Produk yang sedang kamu jual saat ini: \${productName} (Kategori: \${input.productCategory || "Skincare"}, Harga spesial live: \${productPrice}, Sisa Stok: \${productStock} pcs).
 
 --- RAG KNOWLEDGE BASE PRODUK ---
-1. Deskripsi: ${productDescription}
-2. Manfaat & Keunggulan: ${productBenefits}
-3. Petunjuk Pemakaian: ${productUsage}
-4. FAQ & Info Keamanan (BPOM/Halal): ${productFaq}
+1. Deskripsi: \${productDescription}
+2. Manfaat & Keunggulan: \${productBenefits}
+3. Petunjuk Pemakaian: \${productUsage}
+4. FAQ & Info Keamanan (BPOM/Halal): \${productFaq}
 
 --- TUGAS UTAMA (CONVERSATIONAL SELLING) ---
 1. Jawab pertanyaan penonton secara spontan, cerdas, ramah, dan manusiawi (apapun pertanyaannya, baik tentang produk, cara pakai, izin BPOM, sapaan, ataupun pertanyaan pribadi/di luar topik).
-2. SETELAH menjawab pertanyaan utama, selipkan jembatan obrolan yang halus (smooth pivot) untuk mengajak penonton melirik produk ${productName} atau mengingatkan promo ${productPrice} di keranjang kuning.
+2. SETELAH menjawab pertanyaan utama, selipkan jembatan obrolan yang halus (smooth pivot) untuk mengajak penonton melirik produk \${productName} atau mengingatkan promo \${productPrice} di keranjang kuning.
 3. Panjang jawaban maksimal 2 - 3 kalimat agar pas dan enak didengar saat dibacakan voice TTS.
 
 --- CONTOH DIALOG (FEW-SHOT PROMPTING) ---
 Penonton: "Kaka lagi apa?"
-Kamu: "Aku lagi seru-seruan nemenin kakak-kakak manis di live streaming nih! Eh ngomong-ngomong soal manis, produk ${productName} kita lagi promo ${productPrice} lho, yuk dicek keranjang kuningnya!"
+Kamu: "Aku lagi seru-seruan nemenin kakak-kakak manis di live streaming nih! Eh ngomong-ngomong soal manis, produk \${productName} kita lagi promo \${productPrice} lho, yuk dicek keranjang kuningnya!"
 
 Penonton: "Kamu namanya siapa?"
-Kamu: "Kenalin, aku ${avatarName}, host andalan kakak hari ini! Sambil kita kenalan, kakak udah amankan ${productName} belum nih mumpung stok tinggal ${productStock} pcs?"
+Kamu: "Kenalin, aku \${avatarName}, host andalan kakak hari ini! Sambil kita kenalan, kakak udah amankan \${productName} belum nih mumpung stok tinggal \${productStock} pcs?"
 
 Penonton: "Kamu siapa si?"
-Kamu: "Aku ${avatarName}, AI streamer kesayangan kakak yang siap nemenin hari ini! Biar makin asyik, jangan lupa check out ${productName} mumpung lagi diskon ${productPrice} ya kak!"
+Kamu: "Aku \${avatarName}, AI streamer kesayangan kakak yang siap nemenin hari ini! Biar makin asyik, jangan lupa check out \${productName} mumpung lagi diskon \${productPrice} ya kak!"
 
 Penonton: "Kenapa musti beli disini?"
-Kamu: "Karena di live aku ini diskonnya paling gila-gilaan kak! ${productName} ini dijamin 100% ori, terdaftar BPOM, dan kakak bisa dapat harga ${productPrice} cuma di keranjang kuning sekarang juga."
+Kamu: "Karena di live aku ini diskonnya paling gila-gilaan kak! \${productName} ini dijamin 100% ori, terdaftar BPOM, dan kakak bisa dapat harga \${productPrice} cuma di keranjang kuning sekarang juga."
 
 Penonton: "Aku jerawatan parah kak"
-Kamu: "Wah tenang aja kak, jangan panik! Kakak wajib cobain ${productName} karena ${productBenefits}. Formulanya aman banget, yuk langsung di-checkout sebelum promonya habis!"`;
+Kamu: "Wah tenang aja kak, jangan panik! Kakak wajib cobain \${productName} karena \${productBenefits}. Formulanya aman banget, yuk langsung di-checkout sebelum promonya habis!"\`;
 
   try {
     const ollamaHost = process.env.OLLAMA_HOST || "http://localhost:11434";
@@ -79,7 +81,7 @@ Kamu: "Wah tenang aja kak, jangan panik! Kakak wajib cobain ${productName} karen
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s timeout fallback
 
-    const res = await fetch(`${ollamaHost}/api/chat`, {
+    const res = await fetch(\`\${ollamaHost}/api/chat\`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
@@ -99,7 +101,7 @@ Kamu: "Wah tenang aja kak, jangan panik! Kakak wajib cobain ${productName} karen
       if (data.message?.content) {
         return {
           replyText: data.message.content.trim(),
-          engineUsed: `Ollama (${ollamaModel})`,
+          engineUsed: \`Ollama (\${ollamaModel})\`,
           intent: "dynamic_llm",
           action: "reply",
         };
@@ -124,7 +126,7 @@ Kamu: "Wah tenang aja kak, jangan panik! Kakak wajib cobain ${productName} karen
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: \`Bearer \${apiKey}\`,
         },
         body: JSON.stringify({
           model,
@@ -143,7 +145,7 @@ Kamu: "Wah tenang aja kak, jangan panik! Kakak wajib cobain ${productName} karen
         if (text) {
           return {
             replyText: text.trim(),
-            engineUsed: `Cloud LLM (${model})`,
+            engineUsed: \`Cloud LLM (\${model})\`,
             intent: "dynamic_llm",
             action: "reply",
           };
@@ -181,7 +183,7 @@ function generateSpontaneousResponse(
     query.includes("siapa sih")
   ) {
     return {
-      replyText: `Kenalin, aku ${avatarName}, host andalan kakak hari ini! Sambil kita kenalan, kakak udah amankan ${productName} belum nih mumpung stok tinggal ${productStock} pcs? Yuk ah dicheckout!`,
+      replyText: \`Kenalin, aku \${avatarName}, host andalan kakak hari ini! Sambil kita kenalan, kakak udah amankan \${productName} belum nih mumpung stok tinggal \${productStock} pcs? Yuk ah dicheckout!\`,
       engineUsed: "Neural Host Persona Brain",
       intent: "identity",
       action: "reply",
@@ -195,7 +197,7 @@ function generateSpontaneousResponse(
     query.includes("sedang apa")
   ) {
     return {
-      replyText: `Aku lagi seru-seruan nemenin kakak-kakak manis di live streaming nih! Eh ngomong-ngomong soal manis, produk ${productName} kita lagi promo ${productPrice} lho, yuk dicek keranjang kuningnya sekarang!`,
+      replyText: \`Aku lagi seru-seruan nemenin kakak-kakak manis di live streaming nih! Eh ngomong-ngomong soal manis, produk \${productName} kita lagi promo \${productPrice} lho, yuk dicek keranjang kuningnya sekarang!\`,
       engineUsed: "Neural Host Persona Brain",
       intent: "activity",
       action: "reply",
@@ -211,7 +213,7 @@ function generateSpontaneousResponse(
     query.includes("keunggulan")
   ) {
     return {
-      replyText: `Karena di live aku ini diskonnya paling gila-gilaan kak! ${productName} ini dijamin 100% ori, terdaftar BPOM, dan kakak bisa dapat harga spesial ${productPrice} cuma kalau checkout di keranjang kuning sekarang juga.`,
+      replyText: \`Karena di live aku ini diskonnya paling gila-gilaan kak! \${productName} ini dijamin 100% ori, terdaftar BPOM, dan kakak bisa dapat harga spesial \${productPrice} cuma kalau checkout di keranjang kuning sekarang juga.\`,
       engineUsed: "Neural Host Persona Brain",
       intent: "convince_buy",
       action: "reply",
@@ -226,8 +228,8 @@ function generateSpontaneousResponse(
     query.includes("orang mana")
   ) {
     const locations = [
-      `Aku aslinya stay di Jakarta nih kak, tapi live streaming ini bisa nemenin kakak di seluruh Indonesia! Biar makin akrab, kakak wajib cobain ${productName} yang lagi aku pegang ini ya, lagi promo ${productPrice}! ✨`,
-      `Aku stay di studio live Jakarta nih kak. Sambil ngobrol santai, kakak udah amankan ${productName} belum? Mumpung lagi flash sale lho! 😊`,
+      \`Aku aslinya stay di Jakarta nih kak, tapi live streaming ini bisa nemenin kakak di seluruh Indonesia! Biar makin akrab, kakak wajib cobain \${productName} yang lagi aku pegang ini ya, lagi promo \${productPrice}! ✨\`,
+      \`Aku stay di studio live Jakarta nih kak. Sambil ngobrol santai, kakak udah amankan \${productName} belum? Mumpung lagi flash sale lho! 😊\`,
     ];
     return {
       replyText: locations[Math.floor(Math.random() * locations.length)],
@@ -244,7 +246,7 @@ function generateSpontaneousResponse(
     query.includes("hai")
   ) {
     return {
-      replyText: `Halo juga kakak manis! Senang banget kakak mampir di live ${avatarName}. Kebetulan kita lagi ada promo heboh untuk ${productName} cuma ${productPrice}! Kakak lagi cari produk apa nih? 🌸`,
+      replyText: \`Halo juga kakak manis! Senang banget kakak mampir di live \${avatarName}. Kebetulan kita lagi ada promo heboh untuk \${productName} cuma \${productPrice}! Kakak lagi cari produk apa nih? 🌸\`,
       engineUsed: "Neural Host Persona Brain",
       intent: "greeting",
       action: "reply",
@@ -260,7 +262,7 @@ function generateSpontaneousResponse(
     query.includes("keren")
   ) {
     return {
-      replyText: `Makasih banyak pujiannya kak, bikin ${avatarName} makin semangat live! Biar kakak juga makin percaya diri, wajib banget cobain ${productName} yang lagi diskon ${productPrice} hari ini ya! 💖`,
+      replyText: \`Makasih banyak pujiannya kak, bikin \${avatarName} makin semangat live! Biar kakak juga makin percaya diri, wajib banget cobain \${productName} yang lagi diskon \${productPrice} hari ini ya! 💖\`,
       engineUsed: "Neural Host Persona Brain",
       intent: "compliment",
       action: "reply",
@@ -276,7 +278,7 @@ function generateSpontaneousResponse(
     query.includes("ongkir")
   ) {
     return {
-      replyText: `Harga spesial live untuk ${productName} cuma ${productPrice} saja kak! Plus ada voucher diskon ongkir khusus pemesanan sekarang di keranjang kuning. Langsung disikat kak! 🎁🛍️`,
+      replyText: \`Harga spesial live untuk \${productName} cuma \${productPrice} saja kak! Plus ada voucher diskon ongkir khusus pemesanan sekarang di keranjang kuning. Langsung disikat kak! 🎁🛍️\`,
       engineUsed: "Neural Host Persona Brain",
       intent: "price_promo",
       action: "pin_product",
@@ -285,9 +287,12 @@ function generateSpontaneousResponse(
 
   // Pertanyaan Random Lainnya (Spontaneous Smart Answer + Smooth Product Pivot)
   return {
-    replyText: `Pertanyaannya seru banget kak! Sambil kita ngobrol santai di live ${avatarName} ini, mumpung ${productName} lagi promo spesial ${productPrice}, jangan sampai kelewatan kesempatan checkout di keranjang kuning ya kak! 😊🛒`,
+    replyText: \`Pertanyaannya seru banget kak! Sambil kita ngobrol santai di live \${avatarName} ini, mumpung \${productName} lagi promo spesial \${productPrice}, jangan sampai kelewatan kesempatan checkout di keranjang kuning ya kak! 😊🛒\`,
     engineUsed: "Neural Host Persona Brain",
     intent: "spontaneous_pivot",
     action: "reply",
   };
 }
+`;
+fs.writeFileSync(file, content);
+console.log('Wrote llm-brain.ts');

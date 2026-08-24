@@ -1,0 +1,6 @@
+TTS==0.22.0
+torch==2.1.2
+torchaudio==2.1.2
+# Include any existing dependencies from Wav2Lip if needed, e.g. librosa, numpy
+numpy
+librosa
