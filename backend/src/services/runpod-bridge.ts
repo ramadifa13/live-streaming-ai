@@ -47,9 +47,15 @@ export async function forwardToRunPodGPU(
 
     if (res.ok) {
       const data = (await res.json()) as { video_url?: string; audio_path?: string; status?: string };
+      
+      let finalVideoUrl = data.video_url;
+      if (finalVideoUrl && !finalVideoUrl.startsWith("http")) {
+        finalVideoUrl = `${workerUrl}${finalVideoUrl}`;
+      }
+
       return {
         success: true,
-        videoUrl: data.video_url || "https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4",
+        videoUrl: finalVideoUrl || "https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4",
         audioPath: data.audio_path,
         status: data.status || "rendered",
       };
