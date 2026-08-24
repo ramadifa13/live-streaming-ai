@@ -1739,7 +1739,7 @@ export default function Dashboard() {
                           {av.type}
                         </div>
                         <div
-                          className="absolute inset-0 bg-cover bg-center transition-transform duration-500 group-hover/card:scale-110"
+                          className="absolute inset-0 bg-contain bg-bottom bg-no-repeat transition-transform duration-500 group-hover/card:scale-110"
                           style={{ backgroundImage: `url('${av.image}')` }}
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-transparent z-10 flex flex-col justify-end p-2">

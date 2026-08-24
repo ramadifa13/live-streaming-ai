@@ -76,7 +76,7 @@ export default function RealtimeLivePortraitView({
           <img
             src={resolvedImageSrc}
             alt={avatarName}
-            className={`w-full h-full object-cover transition-transform duration-700 ${
+            className={`w-full h-full object-contain object-bottom transition-transform duration-700 ${
               isSpeaking ? "scale-105" : "scale-100"
             }`}
           />
