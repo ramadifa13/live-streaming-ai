@@ -28,9 +28,9 @@ if [ ! -d "MuseTalk" ]; then
 fi
 cd MuseTalk
 
-echo "4. Menginstal Library Inti MuseTalk..."
+echo "4. Menginstal Library Inti MuseTalk & Worker AI..."
 pip install -r requirements.txt
-pip install huggingface_hub
+pip install -r ../requirements-worker.txt
 
 echo "5. Menginstal Library MMPose & MMCV via OpenMIM (Proses ini mungkin memakan waktu)..."
 pip install --no-cache-dir -U openmim
@@ -54,5 +54,6 @@ python -c "import os; from huggingface_hub import snapshot_download; snapshot_do
 python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='stabilityai/sd-vae-ft-mse', local_dir='models/sd-vae-ft-mse', token=os.environ['HF_TOKEN'])"
 python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='openai/whisper-small', local_dir='models/whisper', token=os.environ['HF_TOKEN'])"
 python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='yzd-v/DWPose', local_dir='models/dwpose', token=os.environ['HF_TOKEN'])"
+python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='ManyOtherFunctions/face-parse-bisent', local_dir='models/face-parse-bisent', token=os.environ['HF_TOKEN'])"
 
 echo "SETUP SELESAI! MESIN MUSETALK SIAP DIGUNAKAN PADA $(date)."
