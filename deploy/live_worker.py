@@ -86,7 +86,8 @@ class AILiveWorker:
             "--result_dir", output_dir,
             "--vae_type", "sd-vae-ft-mse",
             "--unet_config", "./models/musetalk/musetalk/musetalk.json",
-            "--unet_model_path", "./models/musetalk/musetalk/pytorch_model.bin"
+            "--unet_model_path", "./models/musetalk/musetalk/pytorch_model.bin",
+            "--use_float16"
         ]
         
         try:
