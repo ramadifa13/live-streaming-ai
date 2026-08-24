@@ -42,9 +42,11 @@ mim install "mmpose>=1.1.0"
 echo "6. Mengunduh Bobot Model (Weights) dari HuggingFace (Proses 5-10 GB)..."
 # Struktur folder models yang dibutuhkan MuseTalk
 mkdir -p models/musetalk models/sd-vae-ft-mse models/whisper models/dwpose
-hf download TMElyralab/MuseTalk --local-dir models/musetalk
-hf download stabilityai/sd-vae-ft-mse --local-dir models/sd-vae-ft-mse
-hf download openai/whisper-small --local-dir models/whisper
-hf download yzd-v/DWPose --local-dir models/dwpose
+
+# Menggunakan Python murni untuk mengunduh agar terhindar dari error "hf command not found" di bash script
+python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='TMElyralab/MuseTalk', local_dir='models/musetalk')"
+python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='stabilityai/sd-vae-ft-mse', local_dir='models/sd-vae-ft-mse')"
+python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='openai/whisper-small', local_dir='models/whisper')"
+python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='yzd-v/DWPose', local_dir='models/dwpose')"
 
 echo "SETUP SELESAI! MESIN MUSETALK SIAP DIGUNAKAN PADA $(date)."
