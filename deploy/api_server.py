@@ -29,6 +29,7 @@ async def root():
     return {"status": "ok", "message": "AI Live Worker API is running"}
 
 @app.post("/stream/generate-neural-video")
+@app.post("/stream/live-utterance")
 async def generate_neural_video(req: GenerateVideoRequest):
     print(f"\n=======================================================")
     print(f"[API INCOMING] Menerima request dari Backend")
