@@ -72,7 +72,7 @@ export default function RealtimeLivePortraitView({
 
   return (
     <div className={`relative w-full h-full overflow-hidden bg-[#07050f] select-none ${className}`}>
-      {/* ── Visual Output (Video or Photo) ── */}
+      {/* ── Visual Output (Video Lipsync or Continuous Idle Video) ── */}
       {videoUrl ? (
         <video
           key={videoUrl}           // Force remount when URL changes (new lip-sync video)
@@ -84,29 +84,18 @@ export default function RealtimeLivePortraitView({
           onEnded={onVideoEnded}
           className="w-full h-full object-cover"
         />
-      ) : isSpeaking ? (
-        // FILLER VIDEO STRATEGY: Dimainkan dari aset lokal avatar saat menunggu GPU RunPod merender jawaban
+      ) : (
+        // CONTINUOUS IDLE & FILLER VIDEO: Selalu memutar video avatar dinamis secara mulus
         <video
-          key={`filler-${avatarName}`}
+          key={`idle-${avatarName}`}
           src={resolvedFillerSrc}
           autoPlay
           loop
           playsInline
           muted
+          poster={resolvedImageSrc}
           className="w-full h-full object-cover"
         />
-      ) : (
-        <div className="w-full h-full relative">
-          <img
-            src={resolvedImageSrc}
-            alt={avatarName}
-            className={`w-full h-full object-contain object-bottom transition-transform duration-700 ${
-              isSpeaking ? "scale-105" : "scale-100"
-            }`}
-          />
-          {/* Subtle studio ambient gradient */}
-          <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/70 pointer-events-none" />
-        </div>
       )}
 
       {/* ── SPEAKING WAVEFORM OVERLAY (Floating safely above bottom e-commerce card) ── */}
