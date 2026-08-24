@@ -42,9 +42,9 @@ mim install "mmpose>=1.1.0"
 echo "6. Mengunduh Bobot Model (Weights) dari HuggingFace (Proses 5-10 GB)..."
 # Struktur folder models yang dibutuhkan MuseTalk
 mkdir -p models/musetalk models/sd-vae-ft-mse models/whisper models/dwpose
-huggingface-cli download TencentARC/MuseTalk --local-dir models/musetalk
-huggingface-cli download stabilityai/sd-vae-ft-mse --local-dir models/sd-vae-ft-mse
-huggingface-cli download openai/whisper-small --local-dir models/whisper
-huggingface-cli download yzd-v/DWPose --local-dir models/dwpose
+hf download TMElyralab/MuseTalk --local-dir models/musetalk
+hf download stabilityai/sd-vae-ft-mse --local-dir models/sd-vae-ft-mse
+hf download openai/whisper-small --local-dir models/whisper
+hf download yzd-v/DWPose --local-dir models/dwpose
 
 echo "SETUP SELESAI! MESIN MUSETALK SIAP DIGUNAKAN PADA $(date)."
