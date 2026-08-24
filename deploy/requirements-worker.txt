@@ -17,5 +17,5 @@ librosa
 soundfile
 einops
 timm
-huggingface_hub
+huggingface_hub<0.26.0,>=0.25.0
 PyYAML

@@ -28,7 +28,7 @@ cd /workspace/ai_live_worker
 
 echo "3. Menginstal Dependensi Python Utama..."
 pip install --upgrade pip
-pip install --force-reinstall "numpy==1.26.4" "opencv-python==4.8.0.76" "opencv-python-headless==4.8.0.76"
+pip install --force-reinstall "numpy==1.26.4" "opencv-python==4.8.0.76" "opencv-python-headless==4.8.0.76" "huggingface_hub<0.26.0,>=0.25.0"
 pip install -r requirements-worker.txt
 
 echo "4. Mengunduh & Menyiapkan Repositori MuseTalk..."
