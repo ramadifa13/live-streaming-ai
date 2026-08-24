@@ -116,6 +116,9 @@ try {
   }
   await server.listen({ port, host });
   console.log(`Backend ready at http://${host}:${port}`);
+  
+  // Start GPU idle monitor
+  import("./services/runpod-manager.js").then((m) => m.startIdleMonitor());
 } catch (error) {
   server.log.error(error);
   process.exit(1);

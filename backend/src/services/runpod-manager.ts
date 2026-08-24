@@ -8,6 +8,47 @@ export interface PodStatus {
   desiredStatus: string;
 }
 
+let lastGpuActivityTimestamp = Date.now();
+let idleMonitorInterval: NodeJS.Timeout | null = null;
+
+export function updateGpuActivity() {
+  lastGpuActivityTimestamp = Date.now();
+}
+
+export function startIdleMonitor() {
+  if (idleMonitorInterval) return;
+  
+  const timeoutMinutes = parseInt(process.env.GPU_IDLE_TIMEOUT_MINUTES || "30", 10);
+  if (timeoutMinutes <= 0) {
+    console.log("[RunPodManager] GPU_IDLE_TIMEOUT_MINUTES is 0 or invalid, auto-shutdown disabled.");
+    return;
+  }
+  
+  console.log(`[RunPodManager] Starting GPU Idle Monitor (Timeout: ${timeoutMinutes} minutes)`);
+  
+  // Check every 5 minutes
+  idleMonitorInterval = setInterval(async () => {
+    const elapsedMinutes = (Date.now() - lastGpuActivityTimestamp) / 1000 / 60;
+    
+    if (elapsedMinutes >= timeoutMinutes) {
+      console.log(`[RunPodManager] GPU has been idle for ${Math.round(elapsedMinutes)} minutes. Initiating auto-shutdown...`);
+      try {
+        const podId = process.env.RUNPOD_POD_ID;
+        if (podId) {
+          const status = await getPodStatus();
+          // Only stop if it's actually running
+          if (status && status.lastStatus === "RUNNING") {
+            await stopPod();
+            console.log(`[RunPodManager] Auto-shutdown successful for Pod ${podId}`);
+          }
+        }
+      } catch (err) {
+        console.error(`[RunPodManager] Failed to auto-shutdown GPU Pod:`, err);
+      }
+    }
+  }, 5 * 60 * 1000); // 5 minutes interval
+}
+
 /**
  * Executes a GraphQL query against the RunPod API
  */
@@ -116,6 +157,8 @@ export async function startPodAndWait(timeoutMs = 120000): Promise<boolean> {
     return true;
   }
 
+  updateGpuActivity();
+  
   let status = await getPodStatus();
   
   // If it's already running, we're good

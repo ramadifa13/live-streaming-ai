@@ -9,7 +9,7 @@
  */
 
 import crypto from "crypto";
-import { startPodAndWait, getWorkerUrl } from "./runpod-manager.js";
+import { startPodAndWait, getWorkerUrl, updateGpuActivity } from "./runpod-manager.js";
 
 export type VideoJobStatus = "queued" | "processing" | "done" | "error";
 
@@ -161,6 +161,8 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
       const errorText = await res.text().catch(() => "No text body");
       throw new Error(`Worker returned status ${res.status}: ${errorText}`);
     }
+
+    updateGpuActivity(); // Reset idle timer since GPU just processed successfully
 
     updateJob(jobId, { progress: 60, stage: "SadTalker generating lip-sync video..." });
 
