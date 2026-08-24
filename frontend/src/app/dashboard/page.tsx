@@ -16,7 +16,7 @@ import {
   Avatar,
   ChatMessage,
 } from "./types";
-import { avatars } from "./constants";
+import { avatars, defaultProducts } from "./constants";
 
 export default function Dashboard() {
   // --- STATE MANAGEMENT ---
@@ -118,34 +118,34 @@ export default function Dashboard() {
   );
 
   useEffect(() => {
-    fetch("/api/products")
-      .then((res) => res.json())
-      .then((json) => {
-        if (json && json.data && Array.isArray(json.data)) {
-          // Format backend data to match Product interface with full RAG knowledge
-          const formattedProducts: Product[] = json.data.map((p: BackendProduct) => ({
-            id: p.id,
-            name: p.name,
-            price: typeof p.price === "number" ? `Rp${p.price.toLocaleString("id-ID")}` : String(p.price || "Rp0"),
-            stock: Number(p.stock) || 0,
-            tag: p.category || "General",
-            sku: p.sku || "",
-            image: p.image || "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
-            link: p.link || "",
-            description: p.description || "",
-            benefits: p.benefits || "",
-            usage: p.usage || "",
-            faq: p.faq || "",
-            targetAudience: p.targetAudience || "",
-          }));
-          setProducts(formattedProducts);
-          if (formattedProducts.length > 0) {
-            setActiveFeaturedProduct(formattedProducts[0]);
-          }
+    try {
+      const stored = localStorage.getItem("ai_host_products");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && Array.isArray(parsed) && parsed.length > 0) {
+          setProducts(parsed);
+          setActiveFeaturedProduct(parsed[0]);
+          return;
         }
-      })
-      .catch((err) => console.error("Failed to load products:", err));
+      }
+      
+      // If empty or invalid, set to defaults
+      setProducts(defaultProducts as any);
+      setActiveFeaturedProduct(defaultProducts[0] as any);
+      localStorage.setItem("ai_host_products", JSON.stringify(defaultProducts));
+    } catch (err) {
+      console.error("Failed to load products from local storage:", err);
+      setProducts(defaultProducts as any);
+      setActiveFeaturedProduct(defaultProducts[0] as any);
+    }
   }, []);
+
+  // Sync products state to localStorage
+  useEffect(() => {
+    if (products.length > 0) {
+      localStorage.setItem("ai_host_products", JSON.stringify(products));
+    }
+  }, [products]);
   const [isAvatarSpeaking, setIsAvatarSpeaking] = useState(false);
   const [currentLiveVideoUrl, setCurrentLiveVideoUrl] = useState<string | null>(null);
   const [aiWorkerStatus, setAiWorkerStatus] = useState<"unknown" | "online" | "offline" | "error">("unknown");
@@ -782,10 +782,7 @@ export default function Dashboard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          productId: activeFeaturedProduct.id,
-          productName: activeFeaturedProduct.name,
-          productPrice: activeFeaturedProduct.price,
-          category: activeFeaturedProduct.tag,
+          activeProduct: activeFeaturedProduct,
           avatarName: selectedAvatar.name,
           tone: selectedTone,
         }),
@@ -829,22 +826,7 @@ export default function Dashboard() {
       targetAudience: newProductForm.targetAudience || "",
     };
 
-    try {
-      const res = await fetch("/api/products", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (res.ok) {
-        const json = await res.json();
-        if (json.data?.id) {
-          createdId = json.data.id;
-        }
-      }
-    } catch (err) {
-      console.error("Backend add product error:", err);
-    }
+    // Replaced DB call with local generation
 
     const newProd: Product = {
       id: createdId,
@@ -918,30 +900,7 @@ export default function Dashboard() {
     setShowEditProductModal(false);
     showToast("✅ RAG Knowledge Base produk berhasil diperbarui!");
 
-    // Persist to backend database via PATCH
-    try {
-      if (selectedProductForEdit.id) {
-        await fetch(`/api/products/${selectedProductForEdit.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: formattedProduct.name,
-            price: numPrice,
-            stock: formattedProduct.stock,
-            category: formattedProduct.tag,
-            image: formattedProduct.image,
-            link: formattedProduct.link,
-            description: formattedProduct.description,
-            benefits: formattedProduct.benefits,
-            usage: formattedProduct.usage,
-            faq: formattedProduct.faq,
-            targetAudience: formattedProduct.targetAudience,
-          }),
-        });
-      }
-    } catch (err) {
-      console.error("Failed to persist product update to backend:", err);
-    }
+    // Persist to backend database logic removed
   };
 
   // Handle Delete Product (Deletes directly from Database)
@@ -956,12 +915,7 @@ export default function Dashboard() {
         return next;
       });
       showToast("Produk telah dihapus dari database");
-
-      try {
-        await fetch(`/api/products/${id}`, { method: "DELETE" });
-      } catch (err) {
-        console.error("Failed to delete product from database:", err);
-      }
+      // Database delete call removed
     }
   };
 
@@ -1004,41 +958,25 @@ export default function Dashboard() {
       return;
     }
 
-    try {
-      const res = await fetch("/api/products/bulk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ products: rawItems }),
-      });
-
-      if (res.ok) {
-        const json = await res.json();
-        if (json.data && Array.isArray(json.data)) {
-          const imported = json.data.map((p: BackendProduct) => ({
-            id: p.id,
-            name: p.name,
-            price: typeof p.price === "number" ? `Rp${p.price.toLocaleString("id-ID")}` : String(p.price || "Rp0"),
-            stock: Number(p.stock) || 0,
-            tag: p.category || "General",
-            image: p.image,
-            link: p.link,
-            description: p.description,
-            benefits: p.benefits,
-            usage: p.usage,
-            faq: p.faq,
-            targetAudience: p.targetAudience,
-          }));
-          setProducts((prev) => [...imported, ...prev]);
-          if (imported.length > 0) setActiveFeaturedProduct(imported[0]);
-          setShowCsvModal(false);
-          setCsvText("");
-          showToast(`✅ ${imported.length} produk berhasil diimpor ke RAG Knowledge Base!`);
-          return;
-        }
-      }
-    } catch (err) {
-      console.error("Bulk CSV import failed:", err);
-    }
+    const imported = rawItems.map((p: any) => ({
+      id: `prod_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      name: p.name,
+      price: `Rp${p.price.toLocaleString("id-ID")}`,
+      stock: Number(p.stock) || 0,
+      tag: p.category || "General",
+      image: p.image,
+      link: p.link,
+      description: p.description,
+      benefits: p.benefits,
+      usage: p.usage,
+      faq: p.faq,
+      targetAudience: p.targetAudience,
+    }));
+    setProducts((prev) => [...imported, ...prev]);
+    if (imported.length > 0) setActiveFeaturedProduct(imported[0] as any);
+    setShowCsvModal(false);
+    setCsvText("");
+    showToast(`✅ ${imported.length} produk berhasil diimpor ke RAG Knowledge Base!`);
 
     // Fallback in-memory
     const fallbackList = rawItems.map((r, idx) => ({
@@ -1133,7 +1071,7 @@ export default function Dashboard() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             comment: currentInput,
-            activeProductId: activeFeaturedProduct.id,
+            activeProduct: activeFeaturedProduct,
             avatarName: selectedAvatar.name,
             tone: selectedTone,
             voice: selectedVoice,

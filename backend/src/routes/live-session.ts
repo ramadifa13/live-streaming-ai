@@ -48,7 +48,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     const session = await prisma.liveSession.findFirst({
       orderBy: { createdAt: "desc" },
       include: {
-        product: true,
         avatar: true,
       },
     });
@@ -74,17 +73,13 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
-    const product = await prisma.product.findUnique({
-      where: { id: parsed.data.productId },
-    });
-
     const avatar = await prisma.avatar.findUnique({
       where: { id: parsed.data.avatarId },
     });
 
-    if (!product || !avatar) {
+    if (!avatar) {
       reply.code(404);
-      return { error: "product or avatar not found" };
+      return { error: "avatar not found" };
     }
 
     try {
@@ -99,7 +94,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
 
     const session = await prisma.liveSession.create({
       data: {
-        productId: product.id,
+        productId: parsed.data.productId,
         avatarId: avatar.id,
         platform: parsed.data.platform,
         durationHours: parsed.data.durationHours,
@@ -119,7 +114,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       liveChatId: parsed.data.liveChatId,
       liveVideoId: parsed.data.liveVideoId,
       autoReply: parsed.data.autoReply ?? true,
-      productId: product.id,
+      productId: parsed.data.productId,
       avatarName: avatar.name,
       tone: parsed.data.tone || "Persuasif",
     });
@@ -304,7 +299,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     const session = await prisma.liveSession.findFirst({
       where: { status: "live" },
       orderBy: { createdAt: "desc" },
-      include: { product: true, avatar: true },
+      include: { avatar: true },
     });
 
     const streamStatus = getStreamStatus();
@@ -317,7 +312,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         handshakeVerified: streamStatus.handshakeVerified,
         sessionStatus: session?.status || (streamStatus.status === "streaming" ? "live" : "idle"),
         platform: session?.platform || "TikTok LIVE",
-        product: session?.product || null,
+        product: null,
         avatar: session?.avatar || null,
         startedAt: session?.createdAt || streamStatus.startedAt || new Date().toISOString(),
         metrics,

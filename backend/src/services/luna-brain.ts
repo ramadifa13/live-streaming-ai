@@ -1,5 +1,5 @@
 import { z } from "zod";
-import prisma from "../lib/prisma.js";
+
 
 // ==============================================================================
 // 1. ZOD SCHEMA: STRUCTURED LUNA OUTPUT
@@ -89,22 +89,10 @@ Kamu WAJIB mengembalikan output HANYA dalam format JSON valid sesuai schema beri
 // ==============================================================================
 export async function generateLunaResponse(
   userComment: string,
-  activeProductId?: string,
+  product?: any,
   avatarName: string = "Namira",
   tone: string = "Persuasif"
 ): Promise<LunaStructuredOutput> {
-  // 1. Fetch Product context from DB if activeProductId provided
-  let product = null;
-  if (activeProductId) {
-    try {
-      product = await prisma.product.findUnique({ where: { id: activeProductId } });
-    } catch {}
-  }
-  if (!product) {
-    try {
-      product = await prisma.product.findFirst({ orderBy: { createdAt: "desc" } });
-    } catch {}
-  }
 
   const systemPrompt = buildLunaSystemPrompt(product ? {
     id: product.id,

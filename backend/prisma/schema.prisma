@@ -23,8 +23,6 @@ model Product {
   targetAudience String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-
-  liveSessions LiveSession[]
 }
 
 model Avatar {
@@ -58,7 +56,6 @@ model LiveSession {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  product Product @relation(fields: [productId], references: [id])
   avatar  Avatar  @relation(fields: [avatarId], references: [id])
 }
 

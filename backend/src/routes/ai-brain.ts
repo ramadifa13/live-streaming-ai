@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import prisma from "../lib/prisma.js";
+
 import { generateDynamicSalesResponse } from "../services/llm-brain.js";
 
 const salesResponseSchema = z.object({
@@ -10,6 +10,7 @@ const salesResponseSchema = z.object({
   userQuestion: z.string().min(1),
   tone: z.string().optional().default("Persuasif"),
   avatarName: z.string().optional().default("Namira"),
+  activeProduct: z.any().optional(),
 });
 
 const videoScriptSchema = z.object({
@@ -39,33 +40,17 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       avatarName = "Namira",
     } = parsed.data;
 
-    // RAG: Load real product details from database if available
-    let productDescription = "";
-    let productCategory = "Skincare";
-    let productBenefits = "";
-    let productUsage = "";
-    let productFaq = "";
-    let productStock = 50;
-
-    try {
-      if (productId) {
-        const dbProduct = await prisma.product.findUnique({
-          where: { id: productId },
-        });
-        if (dbProduct) {
-          productName = dbProduct.name;
-          productPrice = `Rp${dbProduct.price.toLocaleString("id-ID")}`;
-          productDescription = dbProduct.description || "";
-          productCategory = dbProduct.category || "Skincare";
-          productBenefits = dbProduct.benefits || "";
-          productUsage = dbProduct.usage || "";
-          productFaq = dbProduct.faq || "";
-          productStock = dbProduct.stock;
-        }
+      if (parsed.data.activeProduct) {
+        const p = parsed.data.activeProduct;
+        productName = p.name || productName;
+        productPrice = p.price || productPrice;
+        productDescription = p.description || "";
+        productCategory = p.tag || p.category || "Skincare";
+        productBenefits = p.benefits || "";
+        productUsage = p.usage || "";
+        productFaq = p.faq || "";
+        productStock = p.stock || 50;
       }
-    } catch (e) {
-      // Gracefully continue with parameters
-    }
 
     // Call Autonomous LLM Sales Brain with RAG Knowledge
     const aiResult = await generateDynamicSalesResponse({
@@ -165,6 +150,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       category?: string;
       avatarName?: string;
       tone?: string;
+      activeProduct?: any;
     };
 
     let name = body.productName || "Serum Brightening Premium";
@@ -175,19 +161,15 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     let faq = "100% Original BPOM resmi & aman untuk ibu hamil/menyusui";
     let stock = 50;
 
-    if (body.productId) {
-      try {
-        const p = await prisma.product.findUnique({ where: { id: body.productId } });
-        if (p) {
-          name = p.name;
-          price = `Rp${p.price.toLocaleString("id-ID")}`;
-          category = p.category || category;
-          if (p.benefits) benefits = p.benefits;
-          if (p.usage) usage = p.usage;
-          if (p.faq) faq = p.faq;
-          stock = p.stock;
-        }
-      } catch {}
+    if (body.activeProduct) {
+      const p = body.activeProduct;
+      name = p.name || name;
+      price = p.price || price;
+      category = p.tag || p.category || category;
+      if (p.benefits) benefits = p.benefits;
+      if (p.usage) usage = p.usage;
+      if (p.faq) faq = p.faq;
+      stock = p.stock || stock;
     }
 
     const hostName = body.avatarName || "Namira";

@@ -9,7 +9,7 @@ import {
   pricing,
 } from "./data/mock.js";
 import prisma from "./lib/prisma.js";
-import { productsRoutes } from "./routes/products.js";
+
 import { avatarsRoutes } from "./routes/avatars.js";
 import { liveSessionRoutes } from "./routes/live-session.js";
 import { providersRoutes } from "./routes/providers.js";
@@ -58,7 +58,7 @@ server.get("/api/workflow", async () => ({
   data: liveWorkflowSteps,
 }));
 
-await productsRoutes(server);
+
 await avatarsRoutes(server);
 await liveSessionRoutes(server);
 await providersRoutes(server);
@@ -69,33 +69,7 @@ await chatStreamRoutes(server);
 await oauthRoutes(server);
 
 async function seedDatabase() {
-  const productCount = await prisma.product.count();
-  if (productCount === 0) {
-    await prisma.product.createMany({
-      data: [
-        {
-          name: "Serum Brightening Premium",
-          description:
-            "Brightening serum with niacinamide and hydration boost for daily glow.",
-          price: 99000,
-          stock: 120,
-          sku: "SBP-001",
-          category: "Skincare",
-          image: "/product-serum.png",
-        },
-        {
-          name: "Moisturizer Glow Natural",
-          description:
-            "Lightweight moisturizer designed for a healthy and hydrated skin barrier.",
-          price: 129000,
-          stock: 80,
-          sku: "MGN-002",
-          category: "Skincare",
-          image: "/product-cream.png",
-        },
-      ],
-    });
-  }
+
 
   const avatarCount = await prisma.avatar.count();
   if (avatarCount === 0) {
