@@ -635,7 +635,16 @@ export default function Dashboard() {
         }),
       });
 
-      if (!res.ok) throw new Error("TTS Request failed");
+      if (!res.ok) {
+        throw new Error(`Error ${res.status}: Gagal memanggil API TTS.`);
+      }
+
+      // Jika EdgeTTS timeout, backend me-return JSON { success: true, message: "TTS synthesis fallback" }
+      const contentType = res.headers.get("Content-Type");
+      if (contentType && contentType.includes("application/json")) {
+        const data = await res.json();
+        throw new Error(`TTS Error: ${data.message || data.error || "Gagal menghasilkan suara"}`);
+      }
 
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
