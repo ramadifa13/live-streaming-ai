@@ -803,8 +803,18 @@ export default function Dashboard() {
   // Handle Add Product with Database Persistence & RAG Knowledge Base
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newProductForm.name || !newProductForm.price) {
-      showToast("❌ Nama dan harga produk wajib diisi!");
+    if (
+      !newProductForm.name ||
+      !newProductForm.price ||
+      !newProductForm.stock ||
+      !newProductForm.tag ||
+      !newProductForm.description ||
+      !newProductForm.benefits ||
+      !newProductForm.usage ||
+      !newProductForm.faq ||
+      !newProductForm.targetAudience
+    ) {
+      showToast("❌ Semua kolom wajib diisi (kecuali SKU dan Link) untuk melatih AI!");
       return;
     }
 
