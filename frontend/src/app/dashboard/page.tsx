@@ -294,20 +294,34 @@ export default function Dashboard() {
 
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Memanggil RunPod Video Generation (Wav2Lip) alih-alih Voice Only (Edge-TTS)
+  // TTS Audio playback helper (tidak merender video ulang)
   const speakText = async (
     text: string,
     opts?: { voice?: string; lang?: string; tone?: string; avatar?: string }
   ) => {
-    if (!isSoundOn) {
-      return; // Jangan membalas jika suara dimatikan
-    }
+    if (!isSoundOn || !text.trim()) return;
 
     try {
-      showToast("⏳ Mengirim balasan ke RunPod (Proses ~30 detik)...");
-      await handleGenerateAvatarVideo(text);
+      const res = await fetch("/api/tts/synthesize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text,
+          voice: opts?.voice || selectedVoice,
+          speed: speechSpeed,
+        }),
+      });
+
+      if (res.ok && res.headers.get("Content-Type")?.includes("audio")) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        currentAudioRef.current = audio;
+        audio.onended = () => URL.revokeObjectURL(url);
+        await audio.play().catch(() => {});
+      }
     } catch (err) {
-      console.error("Gagal men-generate video balasan", err);
+      console.warn("[speakText] Audio playback fallback notice:", err);
     }
   };
 
