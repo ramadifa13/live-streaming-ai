@@ -294,65 +294,20 @@ export default function Dashboard() {
 
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Text-To-Speech Synthesis helper using Edge TTS Backend Stream
+  // Memanggil RunPod Video Generation (Wav2Lip) alih-alih Voice Only (Edge-TTS)
   const speakText = async (
     text: string,
     opts?: { voice?: string; lang?: string; tone?: string; avatar?: string }
   ) => {
     if (!isSoundOn) {
-      setIsAvatarSpeaking(true);
-      setTimeout(() => setIsAvatarSpeaking(false), 3500);
-      return;
+      return; // Jangan membalas jika suara dimatikan
     }
-
-    const curVoice = opts?.voice || selectedVoice;
-    const curLang = opts?.lang || selectedLang;
-    const curTone = opts?.tone || selectedTone;
-    const curAvatar = opts?.avatar || selectedAvatar.id;
-
-    // Stop current playing audio
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current.currentTime = 0;
-    }
-
-    setIsAvatarSpeaking(true);
 
     try {
-      const res = await fetch("/api/tts/synthesize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
-          voice: curVoice,
-          avatarName: curAvatar,
-          speed: curTone === "Energetic" ? 1.15 : curTone === "Professional" ? 0.94 : 1.0,
-          pitch: curVoice.includes("Pria") ? 0.72 : curTone === "Energetic" ? 1.25 : 1.05,
-        }),
-      });
-
-      if (!res.ok) throw new Error("TTS Request failed");
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      
-      const audio = new Audio(url);
-      currentAudioRef.current = audio;
-
-      audio.onended = () => {
-        setIsAvatarSpeaking(false);
-        URL.revokeObjectURL(url);
-      };
-      
-      audio.onerror = () => {
-        setIsAvatarSpeaking(false);
-        URL.revokeObjectURL(url);
-      };
-
-      await audio.play();
+      showToast("⏳ Mengirim balasan ke RunPod (Proses ~30 detik)...");
+      await handleGenerateAvatarVideo(text);
     } catch (err) {
-      console.error("Audio streaming error:", err);
-      setTimeout(() => setIsAvatarSpeaking(false), 3500);
+      console.error("Gagal men-generate video balasan", err);
     }
   };
 
