@@ -1,0 +1,84 @@
+import subprocess
+import os
+import glob
+import time
+
+class AIBroadcaster:
+    def __init__(self, rtmp_url, idle_video_path, output_folder):
+        self.rtmp_url = rtmp_url
+        self.idle_video = idle_video_path
+        self.output_folder = output_folder
+        
+        print("[BROADCASTER] Menginisialisasi Koneksi ke Server RTMP...")
+        
+        # Master Pipa FFmpeg (Menjaga koneksi tetap hidup)
+        master_command = [
+            "ffmpeg",
+            "-y",
+            "-i", "pipe:0",             
+            "-c:v", "libx264",          
+            "-preset", "ultrafast",     
+            "-b:v", "2500k",            
+            "-c:a", "aac",              
+            "-ar", "44100",             
+            "-f", "flv",                
+            self.rtmp_url
+        ]
+        
+        self.master_process = subprocess.Popen(master_command, stdin=subprocess.PIPE)
+        print("[SUKSES] Terhubung ke Platform Live Streaming!")
+
+    def _stream_file(self, video_path):
+        """Memasukkan video ke dalam Pipa Master"""
+        worker_command = [
+            "ffmpeg",
+            "-re",                      # Baca secara real-time
+            "-i", video_path,
+            "-c", "copy",
+            "-f", "mpegts",             # Format streaming stabil
+            "pipe:1"                    
+        ]
+        
+        try:
+            worker_process = subprocess.Popen(worker_command, stdout=self.master_process.stdin)
+            worker_process.wait() 
+        except Exception as e:
+            print(f"[ERROR] Gagal memutar {video_path}: {e}")
+
+    def start_loop(self):
+        """Loop Siaran 24 Jam"""
+        print(f"\n[BROADCASTER] Menyiarkan secara Live (Tekan Ctrl+C untuk berhenti)...\n")
+        
+        while True:
+            # Cek folder output apakah ada video jawaban baru dari AI Worker
+            search_pattern = os.path.join(self.output_folder, "*.mp4")
+            new_videos = sorted(glob.glob(search_pattern), key=os.path.getctime)
+            
+            if new_videos:
+                video_to_play = new_videos[0]
+                print(f"[>] MEMUTAR RESPON AI: {os.path.basename(video_to_play)}")
+                self._stream_file(video_to_play)
+                
+                # Hapus video setelah tayang agar tidak diulang
+                os.remove(video_to_play)
+                
+            else:
+                # Jika tidak ada yang nanya, putar video diam (Idle)
+                self._stream_file(self.idle_video)
+
+# --- KONFIGURASI DAN EKSEKUSI ---
+if __name__ == "__main__":
+    
+    # 1. Ganti dengan URL dan KEY Stream Pelanggan Anda
+    RTMP_URL = "rtmp://live.shopee.co.id/live/KODE_STREAM_KEY_UMKM"
+    
+    # 2. Tentukan video Idle (Sesuai dengan host yang dipilih pelanggan)
+    IDLE_VIDEO = "/workspace/ai_live_worker/assets/2d/host_2d_statis.mp4" 
+    
+    OUTPUT_FOLDER = "/workspace/ai_live_worker/output"
+    
+    try:
+        broadcaster = AIBroadcaster(RTMP_URL, IDLE_VIDEO, OUTPUT_FOLDER)
+        broadcaster.start_loop()
+    except KeyboardInterrupt:
+        print("\n[BROADCASTER] Siaran dimatikan.")
