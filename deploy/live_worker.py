@@ -109,34 +109,45 @@ class AILiveWorker:
                     except Exception:
                         pass
 
-        # Auto-patch MuseTalk scripts/inference.py: terapkan pe(whisper_batch) agar 768 -> 384
+        # Injeksi Universal UNet Adapter ke scripts/inference.py (Mencegah 768 vs 384 mismatch selamanya)
         inf_py = os.path.join(musetalk_dir, "scripts", "inference.py")
         if os.path.exists(inf_py):
             try:
                 with open(inf_py, "r", encoding="utf-8") as f:
-                    inf_code = f.read()
+                    code = f.read()
                 
-                modified = False
-                if "encoder_hidden_states=whisper_batch" in inf_code and "pe(whisper_batch)" not in inf_code:
-                    inf_code = inf_code.replace(
-                        "encoder_hidden_states=whisper_batch",
-                        "encoder_hidden_states=pe(whisper_batch) if (hasattr(pe, '__call__') and whisper_batch.shape[-1] == 768) else whisper_batch"
-                    )
-                    modified = True
-                
-                if "whisper_batch = pe(whisper_batch)" not in inf_code and "whisper_batch = torch.from_numpy(whisper_batch)" in inf_code:
-                    inf_code = inf_code.replace(
-                        "whisper_batch = torch.from_numpy(whisper_batch).to(device=unet.device, dtype=unet.dtype)",
-                        "whisper_batch = torch.from_numpy(whisper_batch).to(device=unet.device, dtype=unet.dtype)\n            if whisper_batch.shape[-1] == 768 and 'pe' in locals() and pe is not None:\n                whisper_batch = pe(whisper_batch)"
-                    )
-                    modified = True
-                    
-                if modified:
+                adapter_code = """# ─── UNIVERSAL TENSOR DIMENSION ADAPTER (768 <-> 384) ───
+import torch
+import torch.nn as nn
+try:
+    from diffusers import UNet2DConditionModel
+    _orig_unet_forward = UNet2DConditionModel.forward
+    def _adapted_unet_forward(self, sample, timestep, encoder_hidden_states, *args, **kwargs):
+        if encoder_hidden_states is not None and hasattr(self, "config"):
+            target_dim = getattr(self.config, "cross_attention_dim", 384)
+            if encoder_hidden_states.shape[-1] != target_dim:
+                if encoder_hidden_states.shape[-1] == 768 and target_dim == 384:
+                    if not hasattr(self, "_auto_audio_proj"):
+                        self._auto_audio_proj = nn.Linear(768, 384).to(device=encoder_hidden_states.device, dtype=encoder_hidden_states.dtype)
+                    encoder_hidden_states = self._auto_audio_proj(encoder_hidden_states)
+                elif encoder_hidden_states.shape[-1] == 384 and target_dim == 768:
+                    if not hasattr(self, "_auto_audio_proj_expand"):
+                        self._auto_audio_proj_expand = nn.Linear(384, 768).to(device=encoder_hidden_states.device, dtype=encoder_hidden_states.dtype)
+                    encoder_hidden_states = self._auto_audio_proj_expand(encoder_hidden_states)
+        return _orig_unet_forward(self, sample, timestep, encoder_hidden_states=encoder_hidden_states, *args, **kwargs)
+
+    UNet2DConditionModel.forward = _adapted_unet_forward
+except Exception as _e:
+    pass
+# ──────────────────────────────────────────────────────────
+"""
+                if "_adapted_unet_forward" not in code:
+                    code = adapter_code + "\n" + code
                     with open(inf_py, "w", encoding="utf-8") as f:
-                        f.write(inf_code)
-                    print("[INFO] Berhasil menerapkan patch auto-projection 768 -> 384 ke MuseTalk inference.py")
-            except Exception as patch_err:
-                print(f"[WARNING] Gagal patch inference.py: {patch_err}")
+                        f.write(code)
+                    print("[INFO] Berhasil memasang Universal UNet Adapter ke MuseTalk inference.py")
+            except Exception as e:
+                print(f"[WARNING] Gagal memasang adapter ke inference.py: {e}")
 
         # Cari lokasi unet_config dan unet_model_path yang ada di disk
         unet_config = "./models/musetalk/musetalk/musetalk.json"
