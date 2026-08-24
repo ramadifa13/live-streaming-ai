@@ -4,11 +4,6 @@ import time
 import asyncio
 import torch
 
-# Otomatis menyetujui lisensi XTTSv2 agar tidak nyangkut minta input [y/n]
-os.environ["COQUI_TOS_AGREED"] = "1"
-
-from TTS.api import TTS
-
 class AILiveWorker:
     def __init__(self):
         # Konfigurasi Direktori Server RunPod
@@ -22,39 +17,39 @@ class AILiveWorker:
         self.wav2lip_script = os.path.join(self.base_dir, "Wav2Lip", "inference.py")
         self.checkpoint = os.path.join(self.base_dir, "Wav2Lip", "checkpoints", "wav2lip_gan.pth")
         
-        # Konfigurasi XTTSv2
-        self.voice_refs = os.path.join(self.base_dir, "assets", "voice_refs")
-        os.makedirs(self.voice_refs, exist_ok=True)
-        
         if not os.path.exists(self.checkpoint):
             print(f"[ERROR] Model Wav2Lip tidak ditemukan di {self.checkpoint}")
             
-        print("[INFO] Memuat Model Suara XTTSv2 (Ini membutuhkan VRAM GPU minimal 8GB)...")
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
-        print("[INFO] Model Suara XTTSv2 siap!")
+        print("[INFO] Worker siap dengan sistem TTS baru (Edge-TTS)...")
 
     async def _generate_voice(self, text, task_id, host_name):
-        """Ubah Teks menjadi Suara Ekstra Natural menggunakan XTTSv2 (GPU Required)"""
-        audio_path = os.path.join(self.temp_dir, f"{task_id}.wav")
+        """Ubah Teks menjadi Suara Indonesia Natural menggunakan Edge-TTS (Lebih Cepat, Hemat VRAM)"""
+        audio_path = os.path.join(self.temp_dir, f"{task_id}.mp3")
         
-        # Cari file referensi suara berdasarkan nama host (misal: nana.wav)
-        speaker_wav = os.path.join(self.voice_refs, f"{host_name}.wav")
-        if not os.path.exists(speaker_wav):
-            print(f"[WARNING] Sampel suara {speaker_wav} tidak ditemukan! Menggunakan suara bawaan/default.")
-            # Default ke suara reference apa saja yang ada, atau throw error
-            # Untuk keamanan, kita wajib punya setidaknya 1 suara default
-            speaker_wav = os.path.join(self.voice_refs, "default.wav")
-            if not os.path.exists(speaker_wav):
-                raise FileNotFoundError(f"Tolong masukkan file suara 10 detik {host_name}.wav ke dalam {self.voice_refs}")
+        # Penentuan gender suara sederhana dari nama host
+        is_male = any(word in host_name.lower() for word in ["pria", "cowo", "budi", "ardi", "laki"])
+        voice = "id-ID-ArdiNeural" if is_male else "id-ID-GadisNeural"
         
-        # XTTSv2 butuh file diselamatkan secara sinkronous, bisa di-wrap kalau perlu
-        self.tts.tts_to_file(
-            text=text,
-            file_path=audio_path,
-            speaker_wav=speaker_wav,
-            language="en"
-        )
+        print(f"[INFO] Men-generate suara menggunakan Edge-TTS ({voice})...")
+        
+        # Jalankan edge-tts via command line
+        cmd = ["edge-tts", "--voice", voice, "--text", text, "--write-media", audio_path]
+        try:
+            # Gunakan asyncio untuk subprocess agar tidak memblokir FastAPI
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await process.communicate()
+            
+            if process.returncode != 0:
+                raise Exception(f"Edge-TTS gagal dengan kode {process.returncode}")
+                
+        except Exception as e:
+            print(f"[ERROR] Gagal memanggil edge-tts: {e}")
+            raise e
+            
         return audio_path
 
     def _get_idle_video(self, host_type, host_name):
