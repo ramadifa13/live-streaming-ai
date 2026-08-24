@@ -9,7 +9,7 @@ const salesResponseSchema = z.object({
   productPrice: z.string().optional(),
   userQuestion: z.string().min(1),
   tone: z.string().optional().default("Persuasif"),
-  avatarName: z.string().optional().default("Luna"),
+  avatarName: z.string().optional().default("Namira"),
 });
 
 const videoScriptSchema = z.object({
@@ -36,7 +36,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       productPrice = "Rp99.000",
       userQuestion,
       tone = "Persuasif",
-      avatarName = "Luna",
+      avatarName = "Namira",
     } = parsed.data;
 
     // RAG: Load real product details from database if available
@@ -190,7 +190,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       } catch {}
     }
 
-    const hostName = body.avatarName || "Luna";
+    const hostName = body.avatarName || "Namira";
     const tone = body.tone || "Persuasif";
 
     let hook = `Halo kakak-kakak semuanya! Selamat datang di live streaming ${hostName} hari ini! Kakak yang lagi cari solusi ${category.toLowerCase()} terbaik, pas banget lagi mampir di sini!`;

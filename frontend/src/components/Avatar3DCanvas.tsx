@@ -17,11 +17,11 @@ interface Avatar3DCanvasProps {
 
 /**
  * Avatar3DCanvas / Photorealistic Presenter Component
- * Renders high-quality AI Live Hosts (Alya, Luna, Cinta) with real-time speech visualizer.
+ * Renders high-quality AI Live Hosts (Namira, Nana) with real-time speech visualizer.
  */
 export default function Avatar3DCanvas({
   isSpeaking,
-  avatarName = "Luna",
+  avatarName = "Namira",
   avatarImage,
   avatarRole,
   mode = "3D",

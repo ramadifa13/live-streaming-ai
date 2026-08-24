@@ -344,10 +344,10 @@ export default function Dashboard() {
       if (isMale) {
         basePitch = 0.72; // Deep, solid masculine pitch
         baseRate = 0.95;
-      } else if (curVoice.toLowerCase().includes("energetik") || curAvatar === "Luna") {
+      } else if (curVoice.toLowerCase().includes("energetik") || curAvatar === "Namira") {
         basePitch = 1.25; // High, vibrant pitch
         baseRate = 1.14;
-      } else if (curVoice.toLowerCase().includes("natural") || curAvatar === "Alya") {
+      } else if (curVoice.toLowerCase().includes("natural") || curAvatar === "Nana") {
         basePitch = 1.05; // Warm, friendly pitch
         baseRate = 1.02;
       } else {

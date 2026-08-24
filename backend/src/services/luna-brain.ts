@@ -45,7 +45,7 @@ export function buildLunaSystemPrompt(
     stock: number;
     description?: string;
   } | null,
-  avatarName: string = "Luna",
+  avatarName: string = "Namira",
   tone: string = "Persuasif"
 ): string {
   const productSection = productContext
@@ -90,7 +90,7 @@ Kamu WAJIB mengembalikan output HANYA dalam format JSON valid sesuai schema beri
 export async function generateLunaResponse(
   userComment: string,
   activeProductId?: string,
-  avatarName: string = "Luna",
+  avatarName: string = "Namira",
   tone: string = "Persuasif"
 ): Promise<LunaStructuredOutput> {
   // 1. Fetch Product context from DB if activeProductId provided
@@ -184,7 +184,7 @@ export async function generateLunaResponse(
 function generateLocalRuleBasedLunaResponse(
   comment: string,
   product?: { id?: string | null; name?: string | null; price?: number | string | null; category?: string | null; description?: string | null } | null,
-  avatarName: string = "Luna",
+  avatarName: string = "Namira",
   _tone: string = "Persuasif"
 ): LunaStructuredOutput {
   const q = comment.toLowerCase();

@@ -583,7 +583,7 @@ export default function Home() {
               </div>
             </div>
             <p className="mb-6 text-xs leading-relaxed text-slate-300">
-              Anda dapat mencoba langsung alur 5 langkah setup live streaming: upload produk, pilih avatar 2D/3D (Alya, Luna, Cinta), atur durasi, uji preview chat respons AI, dan lihat Control Center real-time.
+              Anda dapat mencoba langsung alur 5 langkah setup live streaming: upload produk, pilih avatar 2D/3D (Nana, Namira), atur durasi, uji preview chat respons AI, dan lihat Control Center real-time.
             </p>
             <div className="flex justify-end gap-3">
               <button

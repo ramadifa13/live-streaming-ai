@@ -1,6 +1,6 @@
 /**
  * TTS (Text-To-Speech) Service for LiveStreamerAI
- * Provides natural Indonesian neural voice synthesis for Alya, Luna, and Cinta.
+ * Provides natural Indonesian neural voice synthesis for Nana and Namira.
  */
 
 export interface TTSVoice {
@@ -19,7 +19,7 @@ export const INDONESIAN_VOICES: TTSVoice[] = [
     gender: "female",
     locale: "id-ID",
     style: "Friendly",
-    avatarMatch: "Alya",
+    avatarMatch: "Nana",
   },
   {
     id: "id-ID-SitiNeural",
@@ -27,15 +27,7 @@ export const INDONESIAN_VOICES: TTSVoice[] = [
     gender: "female",
     locale: "id-ID",
     style: "Energetic",
-    avatarMatch: "Luna",
-  },
-  {
-    id: "id-ID-DahliaNeural",
-    name: "Dahlia (Professional & Clear)",
-    gender: "female",
-    locale: "id-ID",
-    style: "Professional",
-    avatarMatch: "Cinta",
+    avatarMatch: "Namira",
   },
   {
     id: "id-ID-ArdiNeural",
@@ -69,12 +61,12 @@ export interface SynthesizeResponse {
 export async function synthesizeSpeech(
   req: SynthesizeRequest
 ): Promise<SynthesizeResponse> {
-  const { text, avatarName = "Luna", speed = 1.0, pitch: _pitch = 1.0 } = req;
+  const { text, avatarName = "Namira", speed = 1.0, pitch: _pitch = 1.0 } = req;
 
   // Determine best matching voice based on avatarName or style
   let matchedVoice = INDONESIAN_VOICES.find(
     (v) => v.avatarMatch.toLowerCase() === avatarName.toLowerCase()
-  ) || INDONESIAN_VOICES[1]; // Default to Siti/Luna
+  ) || INDONESIAN_VOICES[1]; // Default to Siti/Namira
 
   if (req.voice) {
     const customVoice = INDONESIAN_VOICES.find((v) => v.id === req.voice);

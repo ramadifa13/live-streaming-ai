@@ -35,7 +35,7 @@ export async function forwardToRunPodGPU(
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
       body: JSON.stringify({
-        avatar_image_path: params.avatarImagePath || "avatars/luna-3d.jpg",
+        avatar_image_path: params.avatarImagePath || "avatars/host_3d_dinamis_namira.png",
         text: params.text,
         voice: params.voice || "id-ID-GadisNeural",
         speed: params.speed || 1.0,

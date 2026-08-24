@@ -16,7 +16,7 @@ interface AvatarRendererProps {
 
 export default function AvatarRenderer({
   mode = "3D",
-  avatarName = "Luna",
+  avatarName = "Namira",
   avatarImage,
   avatarRole,
   isSpeaking = false,

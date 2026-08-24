@@ -75,15 +75,14 @@ export default function PhotorealisticAvatarView({
 
   // Fallback photo map
   const defaultImages: Record<string, string> = {
-    Alya:  "/avatars/alya-2d.jpg",
-    Luna:  "/avatars/luna-3d.jpg",
-    Cinta: "/avatars/cinta-3d.jpg",
+    Nana:  "/avatars/host_2d_statis_nana.png",
+    Namira:  "/avatars/host_3d_dinamis_namira.png",
     Ardi:  "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=400&fit=crop&q=80",
     Maya:  "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=400&fit=crop&q=80",
   };
   const imageSrc = (avatarImage && avatarImage !== "/avatars/ardi-2d.jpg" && avatarImage !== "/avatars/maya-2d.jpg")
     ? avatarImage
-    : defaultImages[avatarName] || "/avatars/luna-3d.jpg";
+    : defaultImages[avatarName] || "/avatars/host_3d_dinamis_namira.png";
 
   // Auto-play video when URL arrives
   useEffect(() => {
@@ -119,10 +118,8 @@ export default function PhotorealisticAvatarView({
             muted
             playsInline
             src={
-              avatarName.toLowerCase().includes("alya")
+              avatarName.toLowerCase().includes("nana")
                 ? "https://assets.mixkit.co/videos/preview/mixkit-woman-talking-on-a-video-call-42898-large.mp4"
-                : avatarName.toLowerCase().includes("cinta")
-                ? "https://videos.pexels.com/video-files/3209828/3209828-uhd_2560_1440_25fps.mp4"
                 : "https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4"
             }
             poster={imageSrc}

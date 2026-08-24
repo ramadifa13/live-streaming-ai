@@ -126,15 +126,15 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
   updateJob(jobId, { progress: 10, stage: "Menginisialisasi SadTalker Neural Engine..." });
 
   try {
-    // Extract avatar name from image path (e.g. "avatars/luna-3d.jpg" -> "Luna")
-    const avatarName = params.avatarName || "Luna";
+    // Extract avatar name from image path (e.g. "avatars/host_3d_dinamis_namira.png" -> "Namira")
+    const avatarName = params.avatarName || "Namira";
 
     // Convert http://localhost:3000/avatars/x.jpg -> just the path part
     // so the worker can resolve it from its local filesystem
     let avatarImagePath = params.avatarImageUrl;
     try {
       const parsed = new URL(params.avatarImageUrl);
-      avatarImagePath = parsed.pathname; // e.g. "/avatars/luna-3d.jpg"
+      avatarImagePath = parsed.pathname; // e.g. "/avatars/host_3d_dinamis_namira.png"
     } catch {
       // Not a full URL — use as-is
     }
@@ -226,12 +226,10 @@ async function runMock(jobId: string, params: GenerateVideoParams): Promise<void
   let videoUrl = "https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4";
   const nameLow = (params.avatarName || "").toLowerCase();
 
-  if (nameLow.includes("alya") || nameLow.includes("2d")) {
+  if (nameLow.includes("nana") || nameLow.includes("2d")) {
     videoUrl = "https://assets.mixkit.co/videos/preview/mixkit-woman-talking-on-a-video-call-42898-large.mp4";
-  } else if (nameLow.includes("cinta")) {
-    videoUrl = "https://videos.pexels.com/video-files/3209828/3209828-uhd_2560_1440_25fps.mp4";
   } else {
-    // Luna (3D Energetic)
+    // Namira (3D Energetic)
     videoUrl = "https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4";
   }
 

@@ -15,7 +15,7 @@ interface RealtimeLivePortraitViewProps {
 }
 
 export default function RealtimeLivePortraitView({
-  avatarName = "Luna",
+  avatarName = "Namira",
   avatarImage,
   isSpeaking = false,
   videoUrl,
@@ -26,17 +26,15 @@ export default function RealtimeLivePortraitView({
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const cleanUgcImages: Record<string, string> = {
-    Luna: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=720&h=1280&fit=crop&q=80",
-    Alya: "/avatars/alya-2d.jpg",
-    Cinta: "/avatars/cinta-3d.jpg",
+    Namira: "/avatars/host_3d_dinamis_namira.png",
+    Nana: "/avatars/host_2d_statis_nana.png",
     Ardi: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=720&h=1280&fit=crop&q=80",
     Maya: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=720&h=1280&fit=crop&q=80",
   };
 
   const defaultLiveImages: Record<string, string> = {
-    Luna: "/avatars/luna-3d.jpg",
-    Alya: "/avatars/alya-2d.jpg",
-    Cinta: "/avatars/cinta-3d.jpg",
+    Namira: "/avatars/host_3d_dinamis_namira.png",
+    Nana: "/avatars/host_2d_statis_nana.png",
     Ardi: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=400&fit=crop&q=80",
     Maya: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=400&fit=crop&q=80",
   };
@@ -45,7 +43,7 @@ export default function RealtimeLivePortraitView({
     ? (cleanUgcImages[avatarName] || avatarImage || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=720&h=1280&fit=crop&q=80")
     : ((avatarImage && avatarImage !== "/avatars/ardi-2d.jpg" && avatarImage !== "/avatars/maya-2d.jpg")
       ? avatarImage
-      : defaultLiveImages[avatarName] || "/avatars/luna-3d.jpg");
+      : defaultLiveImages[avatarName] || "/avatars/host_3d_dinamis_namira.png");
 
   // When videoUrl changes, safely play the video
   useEffect(() => {

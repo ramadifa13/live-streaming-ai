@@ -8,11 +8,11 @@ import { forwardToRunPodGPU } from "../services/runpod-bridge.js";
 const chatStreamRequestSchema = z.object({
   comment: z.string().min(1, "Comment is required"),
   activeProductId: z.string().optional(),
-  avatarName: z.string().optional().default("Luna"),
+  avatarName: z.string().optional().default("Namira"),
   tone: z.string().optional().default("Persuasif"),
   voice: z.string().optional().default("id-ID-GadisNeural"),
   mode: z.enum(["2D", "3D"]).default("3D"),
-  avatarImagePath: z.string().optional().default("avatars/luna-3d.jpg"),
+  avatarImagePath: z.string().optional().default("avatars/host_3d_dinamis_namira.png"),
 });
 
 export async function chatStreamRoutes(server: FastifyInstance) {
