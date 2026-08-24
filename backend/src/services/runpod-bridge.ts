@@ -28,13 +28,24 @@ export async function forwardToRunPodGPU(
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    // Tingkatkan timeout menjadi 60 detik (60000ms) agar Backend sabar menunggu RunPod
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+    let avatarName = "host_3d_dinamis_namira";
+    if (params.avatarImagePath) {
+      const parts = params.avatarImagePath.split('/');
+      const filename = parts[parts.length - 1];
+      if (filename) {
+        avatarName = filename.replace(/\.(png|jpg|jpeg|mp4|webm|webp)$/i, "");
+      }
+    }
 
     const res = await fetch(`${workerUrl}/stream/live-utterance`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
       body: JSON.stringify({
+        avatar_name: avatarName,
         avatar_image_path: params.avatarImagePath || "avatars/host_3d_dinamis_namira.png",
         text: params.text,
         voice: params.voice || "id-ID-GadisNeural",

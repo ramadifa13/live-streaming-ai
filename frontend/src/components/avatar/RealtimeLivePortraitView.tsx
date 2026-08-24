@@ -73,6 +73,16 @@ export default function RealtimeLivePortraitView({
           onEnded={onVideoEnded}
           className="w-full h-full object-cover"
         />
+      ) : isSpeaking ? (
+        // FILLER VIDEO STRATEGY: Dimainkan saat menunggu GPU RunPod merender jawaban
+        <video
+          src="https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4"
+          autoPlay
+          loop
+          playsInline
+          muted
+          className="w-full h-full object-cover filter brightness-90"
+        />
       ) : (
         <div className="w-full h-full relative">
           <img
