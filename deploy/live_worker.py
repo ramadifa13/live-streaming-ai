@@ -87,7 +87,9 @@ class AILiveWorker:
             "--vae_type", "sd-vae-ft-mse",
             "--unet_config", "./models/musetalk/musetalk/musetalk.json",
             "--unet_model_path", "./models/musetalk/musetalk/pytorch_model.bin",
-            "--use_float16"
+            "--use_float16",
+            "--use_saved_coord",
+            "--saved_coord"
         ]
         
         try:
