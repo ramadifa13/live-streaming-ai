@@ -39,6 +39,9 @@ cd /workspace
 git clone https://github.com/ramadifa13/live-streaming-ai.git
 cd live-streaming-ai/deploy
 
+# Hapus folder frontend & backend agar tidak memenuhi disk RunPod
+rm -rf ../frontend ../backend
+
 # Jalankan skrip instalasi utama (Untuk Wav2Lip & Folder)
 bash setup.sh
 

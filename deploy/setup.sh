@@ -14,15 +14,18 @@ echo "2. Menyalin Skrip Python ke ruang kerja..."
 cp *.py /workspace/ai_live_worker/
 cp requirements-worker.txt /workspace/ai_live_worker/
 
+echo "3. Menghapus folder Frontend & Backend dari Clone untuk menghemat disk..."
+rm -rf ../frontend ../backend
+
 cd /workspace/ai_live_worker
 
-echo "2. Mengunduh Wav2Lip dan Model AI..."
+echo "4. Mengunduh Wav2Lip dan Model AI..."
 git clone https://github.com/Rudrabha/Wav2Lip.git
 mkdir -p Wav2Lip/checkpoints
 # Mengunduh otak Wav2Lip langsung dari server HuggingFace
 wget -O Wav2Lip/checkpoints/wav2lip_gan.pth "https://huggingface.co/camenduru/Wav2Lip/resolve/main/checkpoints/wav2lip_gan.pth"
 
-echo "3. Menginstal Python Library (Mohon tunggu sebentar)..."
+echo "5. Menginstal Python Library (Mohon tunggu sebentar)..."
 pip install -r Wav2Lip/requirements.txt
 pip install opencv-python-headless librosa==0.9.2
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
