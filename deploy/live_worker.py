@@ -112,7 +112,11 @@ class AILiveWorker:
         # 2. Buat Universal Wrapper Script untuk mem-patch dimensi di memory (Anti Gagal)
         wrapper_path = os.path.join(musetalk_dir, "run_wrapper.py")
         wrapper_code = """import sys
+import os
 import torch
+
+# Pastikan MuseTalk bisa di-import
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 # PATCH 1: diffusers UNet2DConditionModel
 from diffusers import UNet2DConditionModel
@@ -144,13 +148,11 @@ try:
                 x = x.reshape(s[0], -1, 384)
         return orig_pe_forward(self, x)
     PositionalEncoding.forward = patched_pe_forward
-except Exception:
-    pass
+except Exception as e:
+    print(f"[Wrapper] Gagal patch PositionalEncoding (Bisa diabaikan jika pe tidak dipakai): {e}")
 
 # Jalankan skrip asli menggunakan runpy agar berjalan persis seperti dipanggil dari command line
 import runpy
-import sys
-# sys.argv sudah terisi dengan argumen dari command subprocess
 runpy.run_module("scripts.inference", run_name="__main__")
 """
         with open(wrapper_path, "w", encoding="utf-8") as f:
