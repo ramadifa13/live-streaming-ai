@@ -109,38 +109,42 @@ class AILiveWorker:
                     except Exception:
                         pass
 
-        # 2. Patch musetalk/utils/utils.py agar UNet model menyimpan pe layer
-        utils_py = os.path.join(musetalk_dir, "musetalk", "utils", "utils.py")
-        if os.path.exists(utils_py):
-            try:
-                with open(utils_py, "r", encoding="utf-8") as f:
-                    u_code = f.read()
-                if "unet.pe = pe" not in u_code and "return vae, unet, pe" in u_code:
-                    u_code = u_code.replace("return vae, unet, pe", "unet.pe = pe\n    unet.model.pe = pe\n    return vae, unet, pe")
-                    with open(utils_py, "w", encoding="utf-8") as f:
-                        f.write(u_code)
-                    print("[INFO] Berhasil memasang unet.pe di musetalk/utils/utils.py")
-            except Exception as e:
-                print(f"[WARNING] Gagal patch utils.py: {e}")
+        # 2. Patch musetalk/models/pe.py agar otomatis menangani tensor 768 -> (2, 384)
+        for root, _, files in os.walk(musetalk_dir):
+            for file in files:
+                if file == "pe.py":
+                    fp = os.path.join(root, file)
+                    try:
+                        with open(fp, "r", encoding="utf-8") as f:
+                            pe_code = f.read()
+                        if "x.shape[-1] == 768" not in pe_code and "x = x + self.pe" in pe_code:
+                            pe_code = pe_code.replace(
+                                "x = x + self.pe[:, :x.size(1)]",
+                                "if x.shape[-1] == 768:\n            x = x.view(x.shape[0], -1, 384) if x.dim() >= 2 else x.view(-1, 2, 384)\n        x = x + self.pe[:, :x.size(1)]"
+                            )
+                            with open(fp, "w", encoding="utf-8") as f:
+                                f.write(pe_code)
+                            print(f"[INFO] Berhasil mem-patch PositionalEncoding di {fp}")
+                    except Exception as e:
+                        print(f"[WARNING] Gagal patch pe.py: {e}")
 
-        # 3. Patch scripts/inference.py: bungkus whisper_batch dengan pe() secara regex
+        # 3. Patch scripts/inference.py: reshape whisper_batch ke (B, -1, 384) dan terapkan pe
         inf_py = os.path.join(musetalk_dir, "scripts", "inference.py")
         if os.path.exists(inf_py):
             try:
                 with open(inf_py, "r", encoding="utf-8") as f:
                     inf_code = f.read()
                 
-                import re
-                # Ganti semua variasi pemanggilan encoder_hidden_states=whisper_batch menjadi pe(whisper_batch)
-                new_inf_code = re.sub(
-                    r"encoder_hidden_states\s*=\s*whisper_batch(?!\s*\))",
-                    "encoder_hidden_states=pe(whisper_batch)",
-                    inf_code
-                )
-                if new_inf_code != inf_code:
+                # Auto-reshape whisper_batch saat dimuat
+                if "whisper_batch.shape[-1] == 768" not in inf_code:
+                    if "whisper_batch = torch.from_numpy(whisper_batch)" in inf_code:
+                        inf_code = inf_code.replace(
+                            "whisper_batch = torch.from_numpy(whisper_batch).to(device=unet.device, dtype=unet.dtype)",
+                            "whisper_batch = torch.from_numpy(whisper_batch).to(device=unet.device, dtype=unet.dtype)\n            if whisper_batch.shape[-1] == 768:\n                whisper_batch = whisper_batch.view(whisper_batch.shape[0], -1, 384)\n            if 'pe' in locals() and pe is not None:\n                whisper_batch = pe(whisper_batch)"
+                        )
                     with open(inf_py, "w", encoding="utf-8") as f:
-                        f.write(new_inf_code)
-                    print("[INFO] Berhasil menerapkan encoder_hidden_states=pe(whisper_batch) di MuseTalk inference.py")
+                        f.write(inf_code)
+                    print("[INFO] Berhasil menerapkan patch whisper reshape 384 ke scripts/inference.py")
             except Exception as e:
                 print(f"[WARNING] Gagal patch inference.py: {e}")
 
