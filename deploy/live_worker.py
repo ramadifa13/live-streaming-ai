@@ -147,10 +147,11 @@ try:
 except Exception:
     pass
 
-# Jalankan skrip asli
-from scripts.inference import main, parser
-args = parser.parse_args()
-main(args)
+# Jalankan skrip asli menggunakan runpy agar berjalan persis seperti dipanggil dari command line
+import runpy
+import sys
+# sys.argv sudah terisi dengan argumen dari command subprocess
+runpy.run_module("scripts.inference", run_name="__main__")
 """
         with open(wrapper_path, "w", encoding="utf-8") as f:
             f.write(wrapper_code)
