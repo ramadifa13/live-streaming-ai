@@ -32,12 +32,12 @@ export async function generateDynamicSalesResponse(
     userQuestion,
     avatarName = "Luna",
     tone = "Persuasif",
-    productName = "Serum Brightening Premium",
-    productPrice = "Rp99.000",
-    productDescription = "Serum pencerah dan pelembap wajah alami",
-    productBenefits = "Mencerahkan noda hitam, menghidrasi 24 jam, mengencangkan skin barrier",
-    productUsage = "Oleskan 2-3 tetes secara merata pada wajah bersih setiap pagi dan malam sebelum moisturizer",
-    productFaq = "100% Original BPOM resmi, aman untuk semua jenis kulit termasuk kulit sensitif dan bumil/busui",
+    productName = "Produk",
+    productPrice = "Harga Spesial",
+    productDescription = "Deskripsi produk",
+    productBenefits = "Banyak manfaat dan keunggulan",
+    productUsage = "Mudah digunakan",
+    productFaq = "Terjamin kualitasnya",
     productStock = 50,
   } = input;
 

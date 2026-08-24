@@ -15,8 +15,8 @@ const salesResponseSchema = z.object({
 
 const videoScriptSchema = z.object({
   productName: z.string().min(1),
-  productPrice: z.string().optional().default("Rp99.000"),
-  productCategory: z.string().optional().default("Skincare"),
+  productPrice: z.string().optional().default("Harga Spesial"),
+  productCategory: z.string().optional().default("General"),
   durationType: z.enum(["15s", "30s", "60s"]).default("30s"),
   style: z.string().optional().default("Viral TikTok"),
 });
@@ -33,8 +33,8 @@ export async function aiBrainRoutes(server: FastifyInstance) {
 
     let {
       productId,
-      productName = "Serum Brightening Premium",
-      productPrice = "Rp99.000",
+      productName = "Produk",
+      productPrice = "Harga Spesial",
       userQuestion,
       tone = "Persuasif",
       avatarName = "Namira",
@@ -153,12 +153,12 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       activeProduct?: any;
     };
 
-    let name = body.productName || "Serum Brightening Premium";
-    let price = body.productPrice || "Rp99.000";
-    let category = body.category || "Skincare";
-    let benefits = "Mencerahkan dan melembapkan kulit secara mendalam";
-    let usage = "Gunakan 2-3 tetes setiap pagi dan malam hari";
-    let faq = "100% Original BPOM resmi & aman untuk ibu hamil/menyusui";
+    let name = body.productName || "Produk";
+    let price = body.productPrice || "Harga Spesial";
+    let category = body.category || "General";
+    let benefits = "Banyak manfaat dan keunggulan";
+    let usage = "Sangat mudah digunakan";
+    let faq = "Terjamin kualitasnya";
     let stock = 50;
 
     if (body.activeProduct) {

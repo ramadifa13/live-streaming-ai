@@ -16,7 +16,7 @@ import {
   Avatar,
   ChatMessage,
 } from "./types";
-import { avatars, defaultProducts } from "./constants";
+import { avatars } from "./constants";
 
 export default function Dashboard() {
   // --- STATE MANAGEMENT ---
@@ -129,14 +129,14 @@ export default function Dashboard() {
         }
       }
       
-      // If empty or invalid, set to defaults
-      setProducts(defaultProducts as any);
-      setActiveFeaturedProduct(defaultProducts[0] as any);
-      localStorage.setItem("ai_host_products", JSON.stringify(defaultProducts));
+      // If empty or invalid, set to empty
+      setProducts([]);
+      setActiveFeaturedProduct({} as any);
+      localStorage.setItem("ai_host_products", JSON.stringify([]));
     } catch (err) {
       console.error("Failed to load products from local storage:", err);
-      setProducts(defaultProducts as any);
-      setActiveFeaturedProduct(defaultProducts[0] as any);
+      setProducts([]);
+      setActiveFeaturedProduct({} as any);
     }
   }, []);
 
@@ -261,11 +261,11 @@ export default function Dashboard() {
   const [appMode, setAppMode] = useState<"LIVE_STUDIO" | "VIDEO_GENERATOR">("LIVE_STUDIO");
   const [videoDuration, setVideoDuration] = useState<"15s" | "30s" | "60s">("30s");
   const [videoScript, setVideoScript] = useState({
-    hook: "Rahasia kulit cerah dan glowing natural tanpa filter akhirnya kebongkar!",
-    problem: "Sering ngerasa kulit kering, kusam, dan bekas noda susah hilang?",
-    solution: "Kenalin Serum Brightening Premium. Mengandung formula pencerah premium yang cepat meresap dan aman untuk kulit sensitif.",
-    cta: "Spesial promo hari ini cuma Rp99.000 + GRATIS ONGKIR! Klik link di bio / keranjang kuning sekarang ya!",
-    fullVoiceover: "Rahasia kulit cerah dan glowing natural tanpa filter akhirnya kebongkar! Sering ngerasa kulit kering, kusam, dan bekas noda susah hilang? Kenalin Serum Brightening Premium. Mengandung formula pencerah premium yang cepat meresap dan aman untuk kulit sensitif. Spesial promo hari ini cuma Rp99.000 + GRATIS ONGKIR! Klik keranjang kuning sekarang ya!",
+    hook: "Kaitkan perhatian penonton di sini!",
+    problem: "Jelaskan masalah yang dialami penonton.",
+    solution: "Tawarkan produk Anda sebagai solusinya.",
+    cta: "Ajak penonton untuk membeli sekarang!",
+    fullVoiceover: "Naskah lengkap akan muncul di sini setelah Anda menekan tombol Generate Script.",
   });
   const [tutorialPlatformTab, setTutorialPlatformTab] = useState<string>("TikTok LIVE");
   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
@@ -3384,56 +3384,6 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Fast Template Inserter */}
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] text-slate-400">Preset:</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewProductForm({
-                      name: "Serum Brightening Vitamin C + Collagen",
-                      price: "99000",
-                      stock: 120,
-                      tag: "Skincare",
-                      sku: `SKU-SERUM-${Date.now().toString().slice(-4)}`,
-                      image: "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
-                      link: "https://shopee.co.id/tokoberkah/serum-brightening",
-                      description: "Serum pencerah wajah dengan 10% Vitamin C Ethyl & Marine Collagen untuk kulit glowing alami tanpa kusam.",
-                      benefits: "Mencerahkan noda hitam dalam 14 hari, merawat elastisitas kulit, 24 jam hidrasi intensif tanpa lengket.",
-                      usage: "Teteskan 2-3 tetes ke telapak tangan atau wajah yang bersih, ratakan dan tepuk lembut setiap pagi dan malam sebelum pelembap.",
-                      faq: "100% Original resmi BPOM NA18230104921, Halal MUI, bebas alkohol & paraben, aman untuk kulit sensitif dan ibu hamil/menyusui.",
-                      targetAudience: "Pria & wanita usia 18-45 tahun dengan kulit kusam, bekas jerawat, atau dehidrasi.",
-                    });
-                    showToast("✨ Template Skincare RAG berhasil dimuat!");
-                  }}
-                  className="rounded bg-blue-500/20 px-2 py-1 text-[10px] font-bold text-blue-300 hover:bg-blue-500/30 border border-blue-500/30 transition"
-                >
-                  Skincare
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewProductForm({
-                      name: "Hijab Pashmina Silk Premium Flowy",
-                      price: "65000",
-                      stock: 80,
-                      tag: "Fashion",
-                      sku: `SKU-PASH-${Date.now().toString().slice(-4)}`,
-                      image: "https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=400&h=400&fit=crop&q=80",
-                      link: "https://tiktok.com/@tokoberkah/pashmina-silk",
-                      description: "Pashmina bahan premium silk cradle yang lembut, adem, mudah dibentuk, dan tidak menerawang.",
-                      benefits: "Bahan shiny elegan tapi tidak licin, jatuh lembut (flowy), jahitan tepi tepi rapi standar butik.",
-                      usage: "Dapat dikenakan dengan gaya clean hijab atau loose casual, cukup disematkan 1 jarum pentul.",
-                      faq: "Ukuran 180 x 75 cm, ready 12 pilihan warna pastel & earth tone, garansi tukar warna jika tidak sesuai.",
-                      targetAudience: "Wanita muslimah untuk daily wear, ngantor, pesta, maupun acara formal.",
-                    });
-                    showToast("✨ Template Fashion RAG berhasil dimuat!");
-                  }}
-                  className="rounded bg-purple-500/20 px-2 py-1 text-[10px] font-bold text-purple-300 hover:bg-purple-500/30 border border-purple-500/30 transition"
-                >
-                  Fashion
-                </button>
-              </div>
             </div>
 
             {/* Modal Tabs */}

@@ -57,7 +57,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         status: "ready",
         platform: "TikTok LIVE",
         durationHours: 8,
-        currentProduct: "Serum Brightening Premium",
+        currentProduct: "Produk",
         estimatedCost: 90000,
         gpuMode: "on-demand",
       },
