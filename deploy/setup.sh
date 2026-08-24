@@ -24,7 +24,7 @@ cd /workspace/ai_live_worker
 
 echo "3. Mengunduh Repositori MuseTalk..."
 if [ ! -d "MuseTalk" ]; then
-    git clone https://github.com/Tencent/MuseTalk.git
+    git clone https://github.com/TMElyralab/MuseTalk.git
 fi
 cd MuseTalk
 
