@@ -1,8 +1,21 @@
-edge-tts
-torch==2.1.2
-torchaudio==2.1.2
-fastapi
-uvicorn
-pydantic
+# ==========================================
+# RUNPOD WORKER DEPENDENCIES (Pinned & Tested)
+# ==========================================
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.0.0
+edge-tts>=6.1.9
+numpy==1.26.4
+opencv-python==4.8.0.76
+opencv-python-headless==4.8.0.76
+transformers==4.38.2
+diffusers==0.27.2
+accelerate==0.28.0
+omegaconf>=2.3.0
+ffmpeg-python
+librosa
+soundfile
+einops
+timm
 huggingface_hub
-# MuseTalk dependencies will be installed directly from their requirements.txt in setup.sh
+PyYAML
