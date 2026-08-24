@@ -75,18 +75,41 @@ class AILiveWorker:
             yaml.dump(config_data, f)
             
         # 2. Siapkan perintah eksekusi MuseTalk
-        # Asumsi worker sedang berada di dalam direktori /workspace/ai_live_worker/MuseTalk
-        # (seperti yang di-setup di setup.sh)
         musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
         output_dir = os.path.join(self.base_dir, "output")
+
+        # Auto-fix: pastikan cross_attention_dim = 768 agar sesuai dengan feature whisper
+        for root, _, files in os.walk(musetalk_dir):
+            for file in files:
+                if file == "musetalk.json":
+                    fp = os.path.join(root, file)
+                    try:
+                        import json
+                        with open(fp, "r") as jf:
+                            cfg = json.load(jf)
+                        if cfg.get("cross_attention_dim") != 768:
+                            cfg["cross_attention_dim"] = 768
+                            with open(fp, "w") as jf:
+                                json.dump(cfg, jf, indent=2)
+                    except Exception:
+                        pass
+
+        # Cari lokasi unet_config dan unet_model_path yang ada di disk
+        unet_config = "./models/musetalk/musetalk/musetalk.json"
+        if not os.path.exists(os.path.join(musetalk_dir, unet_config)):
+            unet_config = "./models/musetalk/musetalk.json"
+
+        unet_model_path = "./models/musetalk/musetalk/pytorch_model.bin"
+        if not os.path.exists(os.path.join(musetalk_dir, unet_model_path)):
+            unet_model_path = "./models/musetalk/pytorch_model.bin"
         
         command = [
             "python", "-m", "scripts.inference",
             "--inference_config", yaml_path,
             "--result_dir", output_dir,
             "--vae_type", "sd-vae-ft-mse",
-            "--unet_config", "./models/musetalk/musetalk/musetalk.json",
-            "--unet_model_path", "./models/musetalk/musetalk/pytorch_model.bin",
+            "--unet_config", unet_config,
+            "--unet_model_path", unet_model_path,
             "--use_float16",
             "--use_saved_coord",
             "--saved_coord"
@@ -97,17 +120,19 @@ class AILiveWorker:
             # Kita jalankan dari dalam folder MuseTalk agar module 'scripts' terbaca
             subprocess.run(command, cwd=musetalk_dir, check=True)
             
-            # MuseTalk biasanya menyimpan hasilnya di result_dir/nama_video/nama_audio.mp4
-            # Kita asumsikan nama file akhirnya bisa sedikit rumit, mari cari file .mp4 terbaru di output_dir
-            # atau kita asumsikan output path secara manual
-            
-            # Karena MuseTalk membuat subfolder, kita cari video mp4 terbaru di output_dir
+            # Cari video mp4 terbaru di output_dir
             list_of_files = []
             for root, dirs, files in os.walk(output_dir):
                 for file in files:
-                    if file.endswith(".mp4"):
+                    if file.endswith(".mp4") and task_id in file:
                         list_of_files.append(os.path.join(root, file))
             
+            if not list_of_files:
+                for root, dirs, files in os.walk(output_dir):
+                    for file in files:
+                        if file.endswith(".mp4"):
+                            list_of_files.append(os.path.join(root, file))
+
             if not list_of_files:
                 raise FileNotFoundError("Output video dari MuseTalk tidak ditemukan.")
                 
