@@ -58,13 +58,25 @@ fi
 
 cd "$WORKER_DIR"
 
-echo "2. Menginstal Dependensi Python Utama..."
+echo "2. Menyetel stack PyTorch 2.1 (wajib untuk MuseTalk/MMCV)..."
+python - <<'PY' || true
+import torch
+v = torch.__version__
+if not v.startswith("2.1."):
+    print(f"[PERINGATAN] Template RunPod memakai PyTorch {v}, bukan 2.1.x.")
+    print("             Setup akan memasang ulang torch 2.1.0+cu118.")
+PY
+pip install --no-cache-dir --force-reinstall \
+	torch==2.1.0+cu118 torchvision==0.16.0+cu118 torchaudio==2.1.0+cu118 \
+	--index-url https://download.pytorch.org/whl/cu118
+
+echo "2.1. Menginstal Dependensi Python Utama..."
 pip install --no-cache-dir --upgrade pip
 pip install --no-cache-dir --force-reinstall \
 	"numpy==1.26.4" "opencv-python-headless==4.8.0.76" "huggingface_hub<0.26.0,>=0.25.0"
 pip install --no-cache-dir -r requirements-worker.txt
 
-echo "2.1. Memverifikasi FFmpeg..."
+echo "2.2. Memverifikasi FFmpeg..."
 if ! command -v ffmpeg &> /dev/null; then
 	echo "[PERINGATAN] FFmpeg tidak ditemukan di PATH. MuseTalk membutuhkan ffmpeg untuk encoding video."
 	echo "           Pastikan image RunPod Anda menyertakan ffmpeg, atau instal manual:"
@@ -85,17 +97,35 @@ sed -i 's/^tensorflow==.*/# tensorflow dihapus: tidak dibutuhkan untuk inferensi
 sed -i 's/^tensorboard==.*/# tensorboard dihapus: tidak dibutuhkan untuk inferensi MuseTalk/g' requirements.txt || true
 pip install --no-cache-dir -r requirements.txt
 pip install --no-cache-dir --force-reinstall \
+	"numpy==1.26.4" \
 	"transformers==4.38.2" "diffusers==0.27.2" "accelerate==0.28.0"
 
 echo "4.1. Memperbaiki Dependensi Build Tools untuk MMCV/MMPose..."
-pip install --no-cache-dir --upgrade "pip<24.1" "setuptools<71.0" "wheel<0.42"
+pip install --no-cache-dir --force-reinstall "pip<24.1" "setuptools>=65,<71" "wheel<0.42"
+python -c "import pkg_resources; print('pkg_resources OK')"
 
 echo "4.2. Menginstal OpenMIM (MMPose, MMCV, MMDetection)..."
 pip install --no-cache-dir -U openmim
 mim install mmengine
-mim install "mmcv>=2.0.1"
+
+MMCV_WHEEL_INDEX="https://download.openmmlab.com/mmcv/dist/cu118/torch2.1.0/index.html"
+if ! pip install --no-cache-dir "mmcv==2.1.0" -f "$MMCV_WHEEL_INDEX"; then
+	echo "[PERINGATAN] Wheel mmcv prebuilt gagal, mencoba mim install..."
+	mim install "mmcv==2.1.0" || pip install --no-cache-dir --no-build-isolation "mmcv==2.1.0" -f "$MMCV_WHEEL_INDEX"
+fi
+
 mim install "mmdet>=3.1.0"
 mim install "mmpose>=1.1.0"
+
+echo "4.3. Memastikan NumPy/PyTorch tetap kompatibel..."
+pip install --no-cache-dir --force-reinstall "numpy==1.26.4"
+python - <<'PY'
+import torch
+v = torch.__version__
+if not v.startswith("2.1."):
+    raise SystemExit(f"PyTorch {v} tidak kompatibel; diharapkan 2.1.x")
+print("PyTorch", v, "OK")
+PY
 
 echo "5. Mengunduh Bobot Model (Weights) dari HuggingFace..."
 if [ -z "${HF_TOKEN:-}" ]; then

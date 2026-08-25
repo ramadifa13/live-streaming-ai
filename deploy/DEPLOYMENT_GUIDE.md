@@ -41,6 +41,30 @@ bash setup.sh
 ```
 Perbesar **Container Disk** RunPod ke minimal 30–50 GB jika masih penuh.
 
+### Troubleshooting: dependency conflicts & MMCV build error
+Pesan seperti ini **bukan error fatal** (hanya peringatan pip):
+```text
+ERROR: pip's dependency resolver does not currently take into account...
+gradio ... pillow ... incompatible
+tensorflow ... numpy ... incompatible
+```
+
+Error **fatal** yang menghentikan setup biasanya:
+```text
+ModuleNotFoundError: No module named 'pkg_resources'
+ERROR: Failed to build 'mmcv'
+```
+
+Penyebab umum: template RunPod memakai **PyTorch 2.13** sementara worker ini ditest dengan **PyTorch 2.1 + CUDA 11.8**.
+
+Solusi:
+1. Gunakan template RunPod **PyTorch 2.1** (bukan 2.13), atau
+2. Pull versi setup terbaru — skrip akan memasang ulang `torch==2.1.0+cu118` dan mmcv dari wheel prebuilt:
+   ```bash
+   cd /workspace/live-streaming-ai && git pull
+   cd deploy && bash setup.sh
+   ```
+
 ---
 
 ### 3. Sambungkan ke Backend Komputer Anda
