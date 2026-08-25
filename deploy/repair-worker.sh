@@ -179,11 +179,28 @@ PY
 
 echo "5. Restart api_server..."
 pkill -f api_server.py 2>/dev/null || true
-sleep 1
-python api_server.py > "$WORKER_DIR/api_server.log" 2>&1 &
-sleep 5
-if ! pgrep -f api_server.py >/dev/null; then
-	echo "[ERROR] api_server gagal start. Lihat: tail -50 $WORKER_DIR/api_server.log"
+sleep 2
+cd "$WORKER_DIR"
+nohup python api_server.py > "$WORKER_DIR/api_server.log" 2>&1 &
+API_PID=$!
+
+echo "   Menunggu API online (max 30 detik)..."
+for i in $(seq 1 15); do
+	if curl -sf http://localhost:8000/ >/dev/null 2>&1; then
+		echo "   API online (PID $API_PID)"
+		break
+	fi
+	if ! kill -0 "$API_PID" 2>/dev/null; then
+		echo "[ERROR] api_server crash saat startup:"
+		tail -50 "$WORKER_DIR/api_server.log" || true
+		exit 1
+	fi
+	sleep 2
+done
+
+if ! curl -sf http://localhost:8000/ >/dev/null 2>&1; then
+	echo "[ERROR] api_server tidak merespons di port 8000:"
+	tail -50 "$WORKER_DIR/api_server.log" || true
 	exit 1
 fi
 

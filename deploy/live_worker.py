@@ -32,13 +32,22 @@ class AILiveWorker:
         
         self._ensure_musetalk_layout()
         
-        # Pre-load MuseTalk modules agar model hanya dimuat SEKALI saat startup
-        try:
-            self._warmup_musetalk()
-        except Exception as e:
-            print(f"[WARMUP] Gagal pre-load MuseTalk: {e}")
+        # Warmup berat (load ~3GB model) — default lazy agar API cepat online
+        self._warmed_up = False
+        if os.environ.get("MUSETALK_WARMUP_ON_START", "0") == "1":
+            try:
+                self._warmup_musetalk()
+                self._warmed_up = True
+            except Exception as e:
+                print(f"[WARMUP] Gagal pre-load MuseTalk: {e}")
             
         print("[INFO] Worker siap dengan sistem TTS Edge-TTS dan Lipsync MuseTalk...")
+    
+    def _ensure_warmup(self):
+        if self._warmed_up:
+            return
+        self._warmup_musetalk()
+        self._warmed_up = True
     
     def _ensure_musetalk_layout(self):
         """MuseTalk pakai path relatif ./musetalk dan ./models — buat symlink dari worker root."""
@@ -69,28 +78,32 @@ class AILiveWorker:
         }
     
     def _warmup_musetalk(self):
-        musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
+        musetalk_dir = self.musetalk_dir
         if musetalk_dir not in sys.path:
             sys.path.insert(0, musetalk_dir)
-        
-        from scripts.inference import _load_models_cached
-        from argparse import Namespace
-        
-        paths = self._musetalk_paths()
-        dummy_args = Namespace(
-            gpu_id=0,
-            use_float16=True,
-            version="v15",
-            left_cheek_width=90,
-            right_cheek_width=90,
-            unet_model_path=paths["unet_model_path"],
-            unet_config=paths["unet_config"],
-            whisper_dir=paths["whisper_dir"],
-            vae_type="sd-vae-ft-mse",
-            batch_size=self.batch_size,
-        )
-        _load_models_cached(dummy_args)
-        print("[WARMUP] MuseTalk models pre-loaded successfully")
+
+        original_cwd = os.getcwd()
+        os.chdir(musetalk_dir)
+        try:
+            from scripts.inference import _load_models_cached
+
+            paths = self._musetalk_paths()
+            dummy_args = Namespace(
+                gpu_id=0,
+                use_float16=True,
+                version="v15",
+                left_cheek_width=90,
+                right_cheek_width=90,
+                unet_model_path=paths["unet_model_path"],
+                unet_config=paths["unet_config"],
+                whisper_dir=paths["whisper_dir"],
+                vae_type="sd-vae-ft-mse",
+                batch_size=self.batch_size,
+            )
+            _load_models_cached(dummy_args)
+            print("[WARMUP] MuseTalk models pre-loaded successfully")
+        finally:
+            os.chdir(original_cwd)
 
     async def _generate_voice(self, text, task_id, host_name):
         """Ubah Teks menjadi Suara Indonesia Natural menggunakan Edge-TTS (Lebih Cepat, Hemat VRAM)"""
@@ -149,6 +162,7 @@ class AILiveWorker:
 
     def _sync_lips(self, idle_video, audio_path, task_id):
         with self._inference_lock:
+            self._ensure_warmup()
             import yaml
 
             yaml_path = os.path.join(
@@ -170,7 +184,7 @@ class AILiveWorker:
             with open(yaml_path, "w") as f:
                 yaml.dump(config_data, f)
 
-            musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
+            musetalk_dir = self.musetalk_dir
             paths = self._musetalk_paths()
             unet_config = paths["unet_config"]
             unet_model_path = paths["unet_model_path"]
@@ -200,40 +214,43 @@ class AILiveWorker:
             if musetalk_dir not in sys.path:
                 sys.path.insert(0, musetalk_dir)
 
-            from scripts.inference import main as musetalk_main
-
-            args = Namespace(
-                ffmpeg_path="",
-                gpu_id=0,
-                vae_type="sd-vae-ft-mse",
-                unet_config=unet_config,
-                unet_model_path=unet_model_path,
-                whisper_dir=whisper_dir,
-                inference_config=yaml_path,
-                bbox_shift=0,
-                result_dir=self.output_dir,
-                extra_margin=10,
-                fps=25,
-                audio_padding_length_left=2,
-                audio_padding_length_right=2,
-                batch_size=self.batch_size,
-                output_vid_name=f"{task_id}.mp4",
-                use_saved_coord=True,
-                saved_coord=True,
-                use_float16=True,
-                parsing_mode="jaw",
-                left_cheek_width=90,
-                right_cheek_width=90,
-                version="v15",
-            )
-
+            original_cwd = os.getcwd()
+            os.chdir(musetalk_dir)
             try:
+                from scripts.inference import main as musetalk_main
+
+                args = Namespace(
+                    ffmpeg_path="",
+                    gpu_id=0,
+                    vae_type="sd-vae-ft-mse",
+                    unet_config=unet_config,
+                    unet_model_path=unet_model_path,
+                    whisper_dir=whisper_dir,
+                    inference_config=yaml_path,
+                    bbox_shift=0,
+                    result_dir=self.output_dir,
+                    extra_margin=10,
+                    fps=25,
+                    audio_padding_length_left=2,
+                    audio_padding_length_right=2,
+                    batch_size=self.batch_size,
+                    output_vid_name=f"{task_id}.mp4",
+                    use_saved_coord=True,
+                    saved_coord=True,
+                    use_float16=True,
+                    parsing_mode="jaw",
+                    left_cheek_width=90,
+                    right_cheek_width=90,
+                    version="v15",
+                )
+
                 print(f"[MuseTalk] Starting V1.5 inference: {task_id}")
                 musetalk_main(args)
             except Exception as e:
                 print(f"[MuseTalk ERROR] {type(e).__name__}: {e}")
                 return None
             finally:
+                os.chdir(original_cwd)
                 if os.path.exists(yaml_path):
                     try:
                         os.remove(yaml_path)
