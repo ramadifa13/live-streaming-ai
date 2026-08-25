@@ -3557,6 +3557,7 @@ export default function Dashboard() {
                                       : undefined,
                                 productName: activeFeaturedProduct.name,
                                 productPrice: String(activeFeaturedProduct.price).replace(/[^0-9]/g, ""),
+                                productImageUrl: activeFeaturedProduct.image,
                               }),
                             },
                           );

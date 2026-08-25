@@ -59,6 +59,7 @@ const broadcastSchema = z.object({
   avatarVideo: z.string().optional(),
   productName: z.string().optional(),
   productPrice: z.string().optional(),
+  productImageUrl: z.string().optional(),
 });
 
 export async function liveSessionRoutes(server: FastifyInstance) {
@@ -184,6 +185,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       avatarVideo,
       productName,
       productPrice,
+      parsed.data.productImageUrl,
     );
 
     if (!result.success) {

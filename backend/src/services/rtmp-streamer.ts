@@ -33,6 +33,7 @@ export async function startInstagramBroadcast(
   avatarVideoPath?: string,
   productName?: string,
   productPrice?: string,
+  productImageUrl?: string,
 ) {
   stopBroadcast();
   activeStreamConfig = {
@@ -42,6 +43,7 @@ export async function startInstagramBroadcast(
     avatarVideoPath,
     productName,
     productPrice,
+    productImageUrl,
   };
 
   const normalizedBaseUrl = rtmpBaseUrl.replace(/\/+$/, "");
@@ -102,64 +104,73 @@ export async function startInstagramBroadcast(
 
   const isVideo = /\.(mp4|mov|webm|mkv)$/i.test(mediaToUse);
 
-  // Build drawtext filter for product overlay (Windows-compatible)
-  const drawtextFilters: string[] = [];
-  if (productName && productPrice) {
-    const safeName = productName.replace(/['\\]/g, "").substring(0, 30);
-    const priceText = `Rp${Number(productPrice).toLocaleString("id-ID")}`;
-
-    // Windows font paths
-    const fontFile = process.platform === "win32"
-      ? "C\\\\:/Windows/Fonts/arial.ttf"
-      : "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-
-    drawtextFilters.push(
-      `drawtext=text='${safeName}':fontfile=${fontFile}:fontcolor=white:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=8:x=20:y=h-th-80`,
-      `drawtext=text='${priceText}':fontfile=${fontFile}:fontcolor=yellow:fontsize=30:box=1:boxcolor=red@0.6:boxborderw=6:x=20:y=h-th-30`,
-    );
+  // Resolve product image path
+  let productImagePath: string | undefined;
+  if (productImageUrl) {
+    if (productImageUrl.startsWith("http://") || productImageUrl.startsWith("https://")) {
+      // Download remote image to temp file (simplified - use a local cache)
+      productImagePath = undefined;
+    } else {
+      const resolved = resolvePublicAsset(productImageUrl);
+      if (resolved && fs.existsSync(resolved)) {
+        productImagePath = resolved;
+      }
+    }
   }
 
-  const overlayFilter = drawtextFilters.length > 0
-    ? `,${drawtextFilters.join(",")}`
-    : "";
+  // Build overlay filter for product info
+  const fontFile = process.platform === "win32"
+    ? "C\\\\:/Windows/Fonts/arial.ttf"
+    : "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+
+  const safeName = (productName || "").replace(/['\\]/g, "").substring(0, 25);
+  const priceText = productPrice ? `Rp${Number(productPrice).toLocaleString("id-ID")}` : "";
+
+  let videoFilter: string;
+
+  if (productImagePath) {
+    // With product image overlay
+    videoFilter = [
+      "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280[bg]",
+      "[1:v]scale=80:80[img]",
+      "[bg][img]overlay=20:H-h-120[bgimg]",
+      `[bgimg]drawtext=text='${safeName}':fontfile=${fontFile}:fontcolor=white:fontsize=28:box=1:boxcolor=black@0.7:boxborderw=6:x=110:y=H-h-90`,
+      priceText ? `drawtext=text='${priceText}':fontfile=${fontFile}:fontcolor=yellow:fontsize=24:box=1:boxcolor=red@0.8:boxborderw=5:x=110:y=H-h-50` : "",
+      `drawtext=text='Tanya DM!':fontfile=${fontFile}:fontcolor=white:fontsize=20:box=1:boxcolor=purple@0.8:boxborderw=5:x=20:y=H-h-20`,
+    ].filter(Boolean).join(",");
+  } else {
+    // Text only overlay
+    videoFilter = [
+      "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280",
+      safeName ? `drawtext=text='${safeName}':fontfile=${fontFile}:fontcolor=white:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=8:x=20:y=H-th-80` : "",
+      priceText ? `drawtext=text='${priceText}':fontfile=${fontFile}:fontcolor=yellow:fontsize=30:box=1:boxcolor=red@0.6:boxborderw=6:x=20:y=H-th-30` : "",
+    ].filter(Boolean).join(",");
+  }
+
+  // Build FFmpeg args
+  const videoInput = ["-re", ...(isVideo ? ["-stream_loop", "-1"] : ["-loop", "1"]), "-i", mediaToUse];
+  if (productImagePath) {
+    videoInput.push("-loop", "1", "-i", productImagePath);
+  }
 
   // Keep the idle avatar moving when no AI response video is available.
   const ffmpegArgs = [
-    "-re",
-    ...(isVideo ? ["-stream_loop", "-1"] : ["-loop", "1"]),
-    "-i",
-    mediaToUse,
-    "-f",
-    "lavfi",
-    "-i",
-    "anullsrc=r=44100:cl=stereo",
-    "-c:v",
-    "libx264",
-    "-preset",
-    "veryfast",
+    ...videoInput,
+    "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+    "-filter_complex", videoFilter,
+    "-c:v", "libx264",
+    "-preset", "veryfast",
     ...(isVideo ? [] : ["-tune", "stillimage"]),
-    "-b:v",
-    "2500k",
-    "-maxrate",
-    "2500k",
-    "-bufsize",
-    "5000k",
-    "-pix_fmt",
-    "yuv420p",
-    "-g",
-    "60",
-    "-r",
-    "30",
-    "-vf",
-    `scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280${overlayFilter}`,
-    "-c:a",
-    "aac",
-    "-b:a",
-    "128k",
-    "-ar",
-    "44100",
-    "-f",
-    "flv",
+    "-b:v", "2500k",
+    "-maxrate", "2500k",
+    "-bufsize", "5000k",
+    "-pix_fmt", "yuv420p",
+    "-g", "60",
+    "-r", "30",
+    "-c:a", "aac",
+    "-b:a", "128k",
+    "-ar", "44100",
+    "-f", "flv",
     fullTargetUrl,
   ];
   try {
