@@ -53,12 +53,17 @@ sed -i 's/^tensorboard==.*/# tensorboard dihapus: tidak dibutuhkan untuk inferen
 pip install -r requirements.txt
 pip install --force-reinstall "transformers==4.38.2" "diffusers==0.27.2" "accelerate==0.28.0"
 
-echo "5. Menginstal OpenMIM (MMPose, MMCV, MMDetection)..."
+echo "5.1. Memperbaiki Dependensi Build Tools untuk MMCV/MMPose..."
+pip install --upgrade "pip<24.1" "setuptools<71.0" "wheel<0.42"
+
+echo "5.2. Menginstal OpenMIM (MMPose, MMCV, MMDetection)..."
 pip install --no-cache-dir -U openmim
 mim install mmengine
 mim install "mmcv>=2.0.1"
 mim install "mmdet>=3.1.0"
 mim install "mmpose>=1.1.0"
+
+echo "6. Mengunduh & Menyiapkan Repositori MuseTalk..."
 
 echo "6. Mengunduh Bobot Model (Weights) dari HuggingFace..."
 P1="hf_YgKHALP"
