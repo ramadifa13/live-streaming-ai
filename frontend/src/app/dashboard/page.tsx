@@ -3555,6 +3555,8 @@ export default function Dashboard() {
                                     : selectedAvatar.name === "Namira"
                                       ? "/avatars/host_3d_dinamis_namira.mp4"
                                       : undefined,
+                                productName: activeFeaturedProduct.name,
+                                productPrice: String(activeFeaturedProduct.price).replace(/[^0-9]/g, ""),
                               }),
                             },
                           );
