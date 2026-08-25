@@ -102,14 +102,20 @@ export async function startInstagramBroadcast(
 
   const isVideo = /\.(mp4|mov|webm|mkv)$/i.test(mediaToUse);
 
-  // Build drawtext filter for product overlay (simplified for compatibility)
+  // Build drawtext filter for product overlay (Windows-compatible)
   const drawtextFilters: string[] = [];
   if (productName && productPrice) {
     const safeName = productName.replace(/['\\]/g, "").substring(0, 30);
     const priceText = `Rp${Number(productPrice).toLocaleString("id-ID")}`;
+
+    // Windows font paths
+    const fontFile = process.platform === "win32"
+      ? "C\\\\:/Windows/Fonts/arial.ttf"
+      : "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+
     drawtextFilters.push(
-      `drawtext=text='${safeName}':fontcolor=white:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=8:x=20:y=h-th-80`,
-      `drawtext=text='${priceText}':fontcolor=yellow:fontsize=30:box=1:boxcolor=red@0.6:boxborderw=6:x=20:y=h-th-30`,
+      `drawtext=text='${safeName}':fontfile=${fontFile}:fontcolor=white:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=8:x=20:y=h-th-80`,
+      `drawtext=text='${priceText}':fontfile=${fontFile}:fontcolor=yellow:fontsize=30:box=1:boxcolor=red@0.6:boxborderw=6:x=20:y=h-th-30`,
     );
   }
 
