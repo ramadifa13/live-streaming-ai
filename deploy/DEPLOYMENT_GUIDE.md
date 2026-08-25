@@ -24,8 +24,22 @@ bash setup.sh
 Setelah skrip setup selesai (muncul tulisan `SETUP SELESAI 100%!`), jalankan:
 ```bash
 bash start.sh
+# atau dari folder worker setelah setup:
+# cd /workspace/ai_live_worker && bash start.sh
 ```
 *Server FastAPI akan menyala di port 8000 dan siap menerima request dari backend.*
+
+> **Penting:** `setup.sh` dan `start.sh` ada di folder `deploy/`. Jangan jalankan dari `/workspace/ai_live_worker` sebelum setup pertama selesai — folder itu baru diisi otomatis oleh `setup.sh`.
+
+### Troubleshooting: No space left on device
+Jika pip gagal dengan `Errno 28`:
+```bash
+pip cache purge
+export PIP_NO_CACHE_DIR=1
+cd /workspace/live-streaming-ai/deploy
+bash setup.sh
+```
+Perbesar **Container Disk** RunPod ke minimal 30–50 GB jika masih penuh.
 
 ---
 

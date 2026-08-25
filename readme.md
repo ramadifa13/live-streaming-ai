@@ -47,9 +47,12 @@ npm run dev
 *Buka browser Anda di `http://localhost:3000`.*
 
 ### 3. Menjalankan Worker AI di RunPod
-1. Buka instance Pod GPU RunPod Anda (RTX 4090 / 3090).
-2. Jalankan perintah instalasi di terminal RunPod:
+1. Buka instance Pod GPU RunPod Anda (RTX 4090 / 3090, Container Disk disarankan 30–50 GB).
+2. Clone repo dan jalankan setup dari folder `deploy` (bukan dari `/workspace/ai_live_worker`):
    ```bash
+   cd /workspace
+   git clone https://github.com/ramadifa13/live-streaming-ai.git
+   cd live-streaming-ai/deploy
    bash setup.sh
    bash start.sh
    ```
