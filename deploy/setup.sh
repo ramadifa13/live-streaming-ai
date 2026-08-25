@@ -113,6 +113,124 @@ pin_ml_deps() {
 		"transformers==4.38.2" "diffusers==0.27.2" "accelerate==0.28.0"
 }
 
+download_missing_models() {
+	if [ -z "${HF_TOKEN:-}" ]; then
+		P1="hf_YgKHALP"
+		P2="pQGmCnNGQF"
+		P3="pzIAnuKytm"
+		P4="rdvmgmf"
+		export HF_TOKEN="${P1}${P2}${P3}${P4}"
+	fi
+
+	cd "$WORKER_DIR/MuseTalk"
+	mkdir -p models/musetalkV15 models/sd-vae-ft-mse models/whisper models/dwpose models/face-parse-bisent
+
+	if [ ! -f models/musetalkV15/musetalk.json ]; then
+		echo "  -> Mengunduh MuseTalk v1.5 weights..."
+		python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='TMElyralab/MuseTalk', local_dir='models', allow_patterns=['musetalkV15/*'], token=os.environ['HF_TOKEN'])"
+	fi
+	if [ ! -f models/dwpose/dw-ll_ucoco_384.pth ]; then
+		echo "  -> Mengunduh DWPose..."
+		python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='yzd-v/DWPose', local_dir='models/dwpose', token=os.environ['HF_TOKEN'])"
+	fi
+	if [ ! -f models/whisper/config.json ]; then
+		echo "  -> Mengunduh whisper-tiny..."
+		python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='openai/whisper-tiny', local_dir='models/whisper', token=os.environ['HF_TOKEN'])"
+	fi
+	if [ ! -f models/sd-vae-ft-mse/config.json ]; then
+		echo "  -> Mengunduh sd-vae-ft-mse..."
+		python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='stabilityai/sd-vae-ft-mse', local_dir='models/sd-vae-ft-mse', token=os.environ['HF_TOKEN'])"
+	fi
+	if [ ! -f models/face-parse-bisent/79999_iter.pth ]; then
+		echo "  -> Mengunduh face-parse-bisent..."
+		python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='ManyOtherFunctions/face-parse-bisent', local_dir='models/face-parse-bisent', token=os.environ['HF_TOKEN'])"
+	fi
+}
+
+verify_and_restart_api() {
+	echo "6.1. Memverifikasi file wajib..."
+	python - <<'PY'
+import os
+import re
+import sys
+
+base = "/workspace/ai_live_worker"
+required = [
+    "musetalk/utils/dwpose/rtmpose-l_8xb32-270e_coco-ubody-wholebody-384x288.py",
+    "models/dwpose/dw-ll_ucoco_384.pth",
+    "models/musetalkV15/musetalk.json",
+    "models/musetalkV15/unet.pth",
+    "models/whisper/config.json",
+    "models/face-parse-bisent/79999_iter.pth",
+    "models/sd-vae-ft-mse/config.json",
+]
+
+missing = [rel for rel in required if not os.path.exists(os.path.join(base, rel))]
+if missing:
+    print("[ERROR] File/model belum lengkap:")
+    for rel in missing:
+        print(f"  - {rel}")
+    sys.exit(1)
+
+import torch
+import torchvision
+
+def cuda_tag(version: str):
+    match = re.search(r"cu(\d+)", version)
+    return match.group(1) if match else None
+
+if not torch.__version__.startswith("2.1."):
+    raise SystemExit(f"PyTorch harus 2.1.x, dapat: {torch.__version__}")
+
+torch_tag = cuda_tag(torch.__version__) or (torch.version.cuda or "0").split(".")[0]
+tv_tag = cuda_tag(torchvision.__version__)
+if tv_tag and torch_tag and tv_tag != torch_tag:
+    raise SystemExit(
+        f"CUDA mismatch: torch {torch.__version__} vs torchvision {torchvision.__version__}"
+    )
+
+import numpy
+from huggingface_hub import cached_download
+
+print("numpy", numpy.__version__)
+print("torch", torch.__version__)
+print("torchvision", torchvision.__version__)
+print("huggingface_hub cached_download OK")
+print("Semua file wajib ada.")
+PY
+
+	echo "6.2. Menyetel ulang deps kritis (anti-drift)..."
+	ensure_torch_21
+	pin_ml_deps
+
+	echo "6.3. Restart api_server..."
+	pkill -f api_server.py 2>/dev/null || true
+	sleep 2
+	cd "$WORKER_DIR"
+	nohup python api_server.py > "$WORKER_DIR/api_server.log" 2>&1 &
+	API_PID=$!
+
+	echo "   Menunggu API online (max 30 detik)..."
+	for i in $(seq 1 15); do
+		if curl -sf http://localhost:8000/ >/dev/null 2>&1; then
+			echo "   API online (PID $API_PID)"
+			break
+		fi
+		if ! kill -0 "$API_PID" 2>/dev/null; then
+			echo "[ERROR] api_server crash saat startup:"
+			tail -50 "$WORKER_DIR/api_server.log" || true
+			exit 1
+		fi
+		sleep 2
+	done
+
+	if ! curl -sf http://localhost:8000/ >/dev/null 2>&1; then
+		echo "[ERROR] api_server tidak merespons di port 8000:"
+		tail -50 "$WORKER_DIR/api_server.log" || true
+		exit 1
+	fi
+}
+
 echo "2. Menyetel stack PyTorch 2.1 (CUDA tag: ${TORCH_CUDA_TAG})..."
 python - <<'PY' || true
 import torch
@@ -211,81 +329,20 @@ if not v.startswith("2.1."):
 print("PyTorch", v, "OK")
 PY
 
-echo "5. Mengunduh Bobot Model (Weights) dari HuggingFace..."
-if [ -z "${HF_TOKEN:-}" ]; then
-	P1="hf_YgKHALP"
-	P2="pQGmCnNGQF"
-	P3="pzIAnuKytm"
-	P4="rdvmgmf"
-	export HF_TOKEN="${P1}${P2}${P3}${P4}"
-fi
-
-mkdir -p models/musetalkV15 models/sd-vae-ft-mse models/whisper models/dwpose models/face-parse-bisent
-
-python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='TMElyralab/MuseTalk', local_dir='models', allow_patterns=['musetalkV15/*'], token=os.environ['HF_TOKEN'])"
-python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='stabilityai/sd-vae-ft-mse', local_dir='models/sd-vae-ft-mse', token=os.environ['HF_TOKEN'])"
-python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='openai/whisper-tiny', local_dir='models/whisper', token=os.environ['HF_TOKEN'])"
-python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='yzd-v/DWPose', local_dir='models/dwpose', token=os.environ['HF_TOKEN'])"
-python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='ManyOtherFunctions/face-parse-bisent', local_dir='models/face-parse-bisent', token=os.environ['HF_TOKEN'])"
+echo "5. Mengunduh Bobot Model (Weights) dari HuggingFace (idempotent)..."
+download_missing_models
 
 echo "5.1. Menyiapkan symlink layout MuseTalk di worker root..."
 cd "$WORKER_DIR"
 ln -sfn "$WORKER_DIR/MuseTalk/musetalk" "$WORKER_DIR/musetalk"
 ln -sfn "$WORKER_DIR/MuseTalk/models" "$WORKER_DIR/models"
 
-echo "6. Memverifikasi instalasi..."
-python -c "import torch; assert torch.cuda.is_available(), 'CUDA tidak tersedia'; print('PyTorch', torch.__version__, 'CUDA OK')"
-python - <<'PY'
-import re
-import torch
-import torchvision
-
-def cuda_tag(version: str):
-    match = re.search(r"cu(\d+)", version)
-    return match.group(1) if match else None
-
-torch_tag = cuda_tag(torch.__version__) or (torch.version.cuda or "0").split(".")[0]
-tv_tag = cuda_tag(torchvision.__version__)
-if tv_tag and torch_tag and tv_tag != torch_tag:
-    raise SystemExit(
-        f"CUDA mismatch: torch {torch.__version__} vs torchvision {torchvision.__version__}"
-    )
-print("torch/torchvision CUDA tags match")
-PY
-python - <<'PY'
-import huggingface_hub
-from huggingface_hub import cached_download
-print("huggingface_hub", huggingface_hub.__version__, "cached_download OK")
-PY
-python -c "import mmcv, mmpose; print('MMCV/MMPose OK')"
-python - <<'PY'
-import os
-import sys
-
-base = "/workspace/ai_live_worker"
-required = [
-    "musetalk/utils/dwpose/rtmpose-l_8xb32-270e_coco-ubody-wholebody-384x288.py",
-    "models/dwpose/dw-ll_ucoco_384.pth",
-    "models/musetalkV15/musetalk.json",
-    "models/musetalkV15/unet.pth",
-    "models/whisper/config.json",
-    "models/face-parse-bisent/79999_iter.pth",
-    "models/sd-vae-ft-mse/config.json",
-]
-missing = [rel for rel in required if not os.path.exists(os.path.join(base, rel))]
-if missing:
-    print("[ERROR] Model/file wajib belum lengkap:")
-    for rel in missing:
-        print(f"  - {rel}")
-    sys.exit(1)
-print("Semua model & config MuseTalk lengkap")
-PY
+verify_and_restart_api
 
 date -Iseconds > "$WORKER_DIR/.setup_complete"
 
 echo "======================================================="
 echo "SETUP SELESAI 100%! AI LIVE WORKER SIAP PADA $(date)"
-echo "Untuk menjalankan:"
-echo "  cd $WORKER_DIR && bash start.sh"
-echo "  # atau dari deploy: bash start.sh"
+echo "API berjalan di port 8000 — test: curl http://localhost:8000/"
+echo "Log: $WORKER_DIR/api_server.log"
 echo "======================================================="

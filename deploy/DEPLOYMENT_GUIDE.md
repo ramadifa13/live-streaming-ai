@@ -46,9 +46,9 @@ Jika worker error (CUDA mismatch, numpy, huggingface_hub, dwpose file not found)
 ```bash
 cd /workspace/live-streaming-ai
 git pull
-bash deploy/repair-worker.sh
+bash deploy/setup.sh
 ```
-Skrip ini: symlink `./musetalk` + `./models`, pin deps Python, verifikasi model, restart API.
+Skrip setup sekarang mencakup seluruh langkah repair: symlink, pin deps, verifikasi model, dan restart API.
 
 ### Troubleshooting: dependency conflicts & MMCV build error
 Pesan seperti ini **bukan error fatal** (hanya peringatan pip):
