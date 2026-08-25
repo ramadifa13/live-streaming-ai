@@ -29,9 +29,7 @@ export async function acquireGpuForJob(): Promise<void> {
 
 export async function releaseGpuForJob(): Promise<void> {
   activeJobLeases = Math.max(0, activeJobLeases - 1);
-  if (!liveSessionActive && activeJobLeases === 0) {
-    await stopPod();
-  }
+  // Pod will be stopped by idle monitor, not immediately after job completes
 }
 
 export function updateGpuActivity() {
