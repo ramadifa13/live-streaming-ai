@@ -270,7 +270,7 @@ echo "2.1. Menginstal Dependensi Python Utama..."
 pip install --no-cache-dir --upgrade pip
 pip install --no-cache-dir --force-reinstall \
 	"numpy==1.26.4" "opencv-python-headless==4.8.0.76" "huggingface_hub<0.26.0,>=0.25.0"
-pip install --no-cache-dir --no-deps -r requirements-worker.txt
+pip install --no-cache-dir -r requirements-worker.txt
 
 echo "2.2. Memverifikasi FFmpeg..."
 if ! command -v ffmpeg &> /dev/null; then
@@ -301,9 +301,9 @@ sed -i 's/^transformers==.*/transformers==4.38.2/g' requirements.txt || true
 sed -i 's/^diffusers==.*/diffusers==0.27.2/g' requirements.txt || true
 sed -i 's/^huggingface_hub==.*/huggingface_hub>=0.25.0,<0.26.0/g' requirements.txt || true
 
-pip install --no-cache-dir --no-deps -r requirements.txt
-# --no-deps: jangan tarik torch 2.13 saat re-pin paket ML
-pip install --no-cache-dir --force-reinstall --no-deps \
+pip install --no-cache-dir -r requirements.txt
+# Re-pin ML deps tanpa --no-deps, lalu pastikan torch tetap 2.1
+pip install --no-cache-dir --force-reinstall \
 	"numpy==1.26.4" \
 	"transformers==4.38.2" "diffusers==0.27.2" "accelerate==0.28.0"
 ensure_torch_21
@@ -328,7 +328,7 @@ mim install "mmpose>=1.1.0"
 echo "4.3. Memastikan NumPy/PyTorch tetap kompatibel..."
 ensure_torch_21
 pin_ml_deps
-pip install --no-cache-dir --no-deps "tokenizers>=0.14,<0.19" "safetensors>=0.4.1"
+pip install --no-cache-dir "tokenizers>=0.14,<0.19" "safetensors>=0.4.1"
 ensure_torch_21
 python - <<'PY'
 import torch
