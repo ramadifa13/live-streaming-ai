@@ -101,6 +101,8 @@ ensure_torch_21() {
 		"torchvision==0.16.0+${TORCH_CUDA_TAG}" \
 		"torchaudio==2.1.0+${TORCH_CUDA_TAG}" \
 		--index-url "$TORCH_INDEX_URL"
+	# torch cu121 menarik numpy 2.x — MuseTalk butuh numpy 1.26.4
+	pip install --no-cache-dir --force-reinstall "numpy==1.26.4"
 }
 
 echo "2. Menyetel stack PyTorch 2.1 (CUDA tag: ${TORCH_CUDA_TAG})..."
