@@ -284,11 +284,19 @@ else
 	echo "FFmpeg sudah terinstal: $(ffmpeg -version | head -n1)"
 fi
 
-echo "3. Mengunduh & Menyiapkan Repositori MuseTalk..."
-if [ ! -d "MuseTalk" ]; then
-	git clone https://github.com/TMElyralab/MuseTalk.git
+echo "3. Menyiapkan Repositori MuseTalk..."
+# Use bundled MuseTalk from repo (has _load_models_cached), don't clone upstream
+if [ ! -d "$WORKER_DIR/MuseTalk/musetalk" ]; then
+	mkdir -p "$WORKER_DIR/MuseTalk"
+	cp -r "$SCRIPT_DIR"/../MuseTalk/* "$WORKER_DIR/MuseTalk/" 2>/dev/null || true
 fi
-cd MuseTalk
+if [ ! -d "$WORKER_DIR/MuseTalk/musetalk" ]; then
+	echo "[FATAL] MuseTalk source tidak ditemukan di repo lokal."
+	echo "        Pastikan folder MuseTalk/ ada di root repo."
+	exit 1
+fi
+
+cd "$WORKER_DIR/MuseTalk"
 
 # Sesuaikan requirements upstream agar kompatibel inferensi headless + PyTorch 2.1
 sed -i 's/^numpy==.*/numpy==1.26.4/g' requirements.txt || true
