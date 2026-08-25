@@ -16,67 +16,60 @@ cd live-streaming-ai/deploy
 bash setup.sh
 ```
 
-*(Skrip `setup.sh` otomatis memasang seluruh dependensi Python yang sudah dikunci versinya, menginstal MMCV/MMPose, dan mengunduh model AI dari Hugging Face secara otomatis).*
+*(Skrip `setup.sh` otomatis memasang seluruh dependensi Python yang sudah dikunci versinya, menginstal MMCV/MMPose, mengunduh model AI dari Hugging Face, dan menjalankan API server di port 8000).*
+
+> **Catatan:** Setup pertama kali memakan waktu ~15-20 menit karena MMCV harus di-compile dari source. Pastikan sampai muncul `SETUP SELESAI 100%!` sebelum lanjut.
 
 ---
 
-### 2. Jalankan Worker AI
-Setelah skrip setup selesai (muncul tulisan `SETUP SELESAI 100%!`), jalankan:
+### 2. Upload Video Avatar (WAJIB)
+
+Setelah setup selesai, upload file video avatar ke RunPod. Tanpa file ini, worker tidak bisa generate video.
+
+**Upload via SCP dari komputer lokal:**
 ```bash
-bash start.sh
-# atau dari folder worker setelah setup:
-# cd /workspace/ai_live_worker && bash start.sh
+# Dari terminal komputer lokal
+scp path/to/your/host_3d_dinamis_namira.mp4 root@<RUNPOD_IP>:/workspace/ai_live_worker/assets/3d/
+scp path/to/your/host_2d_statis_nana.mp4 root@<RUNPOD_IP>:/workspace/ai_live_worker/assets/2d/
 ```
-*Server FastAPI akan menyala di port 8000 dan siap menerima request dari backend.*
 
-> **Penting:** `setup.sh` dan `start.sh` ada di folder `deploy/`. Jangan jalankan dari `/workspace/ai_live_worker` sebelum setup pertama selesai — folder itu baru diisi otomatis oleh `setup.sh`.
-
-### Troubleshooting: No space left on device
-Jika pip gagal dengan `Errno 28`:
+**Atau download langsung di RunPod:**
 ```bash
-pip cache purge
-export PIP_NO_CACHE_DIR=1
-cd /workspace/live-streaming-ai/deploy
-bash setup.sh
-```
-Perbesar **Container Disk** RunPod ke minimal 30–50 GB jika masih penuh.
+cd /workspace/ai_live_worker/assets/3d
+wget "https://your-url.com/host_3d_dinamis_namira.mp4"
 
-### Troubleshooting: repair cepat tanpa setup ulang
-Jika worker error (CUDA mismatch, numpy, huggingface_hub, dwpose file not found):
-```bash
-cd /workspace/live-streaming-ai
-git pull
-bash deploy/setup.sh
-```
-Skrip setup sekarang mencakup seluruh langkah repair: symlink, pin deps, verifikasi model, dan restart API.
-
-### Troubleshooting: dependency conflicts & MMCV build error
-Pesan seperti ini **bukan error fatal** (hanya peringatan pip):
-```text
-ERROR: pip's dependency resolver does not currently take into account...
-gradio ... pillow ... incompatible
-tensorflow ... numpy ... incompatible
+cd /workspace/ai_live_worker/assets/2d
+wget "https://your-url.com/host_2d_statis_nana.mp4"
 ```
 
-Error **fatal** yang menghentikan setup biasanya:
-```text
-ModuleNotFoundError: No module named 'pkg_resources'
-ERROR: Failed to build 'mmcv'
+**Struktur folder yang benar:**
 ```
-
-Penyebab umum: template RunPod memakai **PyTorch 2.13** sementara worker ini ditest dengan **PyTorch 2.1 + CUDA 11.8**.
-
-Solusi:
-1. Gunakan template RunPod **PyTorch 2.1** (bukan 2.13), atau
-2. Pull versi setup terbaru — skrip akan memasang ulang `torch==2.1.0+cu118` dan mmcv dari wheel prebuilt:
-   ```bash
-   cd /workspace/live-streaming-ai && git pull
-   cd deploy && bash setup.sh
-   ```
+/workspace/ai_live_worker/
+├── assets/
+│   ├── 2d/
+│   │   └── host_2d_statis_nana.mp4    ← Video avatar 2D
+│   └── 3d/
+│       └── host_3d_dinamis_namira.mp4  ← Video avatar 3D
+```
 
 ---
 
-### 3. Sambungkan ke Backend Komputer Anda
+### 3. Cek API Worker Berjalan
+
+```bash
+# Health check
+curl http://localhost:8000/
+
+# Response: {"status":"ok","message":"AI Live Worker API is running"}
+
+# Cek proses
+ps aux | grep api_server
+```
+
+---
+
+### 4. Sambungkan ke Backend Komputer Anda
+
 1. Buka file `backend/.env` di komputer Anda.
 2. Isi konfigurasi RunPod:
     ```env
@@ -91,11 +84,48 @@ Solusi:
 
 ---
 
-## 📁 Struktur File & Aset di RunPod
+## 📋 Cek Status & Debug
 
-Pastikan file video avatar dasar ditaruh di folder yang sesuai di server RunPod:
-- **Host 2D:** `/workspace/ai_live_worker/assets/2d/host_2d_statis_nana.mp4`
-- **Host 3D:** `/workspace/ai_live_worker/assets/3d/host_3d_dinamis_namira.mp4`
+### Cek Log Setup
+```bash
+# Log proses setup
+cat /workspace/ai_live_worker/setup_log.txt
+```
+
+### Cek Log API Worker
+```bash
+# Real-time log
+tail -f /workspace/ai_live_worker/api_server.log
+
+# 100 baris terakhir
+tail -100 /workspace/ai_live_worker/api_server.log
+```
+
+### Cek Status Job Video
+```bash
+# Ganti <job_id> dengan job_id yang dikembalikan worker
+curl http://localhost:8000/stream/status/<job_id>
+```
+
+**Response yang mungkin:**
+
+| Status | Artinya |
+|--------|---------|
+| `{"status": "processing"}` | Masih diproses, tunggu |
+| `{"status": "done", "video_url": "/output/..."}` | Selesai, video siap |
+| `{"status": "error", "error": "..."}` | Gagal, lihat pesan error |
+
+### Test Generate Video Manual
+```bash
+curl -X POST http://localhost:8000/stream/live-utterance \
+  -H "Content-Type: application/json" \
+  -d '{
+    "avatar_name": "host_3d_dinamis_namira",
+    "text": "Halo testing worker!",
+    "voice": "id-ID-GadisNeural",
+    "speed": 1.0
+  }'
+```
 
 ---
 
@@ -128,19 +158,55 @@ Setelah worker berjalan di RunPod, endpoint yang tersedia:
 | `/stream/generate-neural-video` | POST | Alias untuk `/stream/live-utterance` |
 | `/stream/status/{job_id}` | GET | Cek status job video |
 
-Contoh request generate video:
-```bash
-curl -X POST "https://<POD_ID>-8000.proxy.runpod.net/stream/live-utterance" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "avatar_name": "host_3d_dinamis_namira",
-    "text": "Halo selamat malam!",
-    "voice": "id-ID-GadisNeural",
-    "speed": 1.0
-  }'
-```
+---
 
-Response akan berisi `job_id`. Gunakan `/stream/status/{job_id}` untuk polling hingga status `"done"`.
+## 🛠️ Troubleshooting
+
+### No space left on device
+Jika pip gagal dengan `Errno 28`:
+```bash
+pip cache purge
+rm -rf ~/.cache/pip
+export PIP_NO_CACHE_DIR=1
+cd /workspace/live-streaming-ai/deploy
+bash setup.sh
+```
+Perbesar **Container Disk** RunPod ke minimal 30–50 GB jika masih penuh.
+
+### Repair / Setup Ulang
+Jika worker error (CUDA mismatch, numpy, huggingface_hub, mmcv undefined symbol, dll):
+```bash
+cd /workspace/live-streaming-ai
+git pull
+bash deploy/setup.sh
+```
+Skrip setup sekarang **idempotent** — bisa dijalankan berulang untuk repair. Langsung mencakup: symlink, pin deps, verifikasi model, dan restart API.
+
+### MMCV undefined symbol (ABI mismatch)
+Error: `/usr/local/lib/python3.10/dist-packages/mmcv/_ext.cpython-310-x86_64-linux-gnu.so: undefined symbol: _ZN2at4_ops10zeros_like4call...`
+
+**Penyebab:** MMCV compiled untuk PyTorch build berbeda.
+
+**Solusi:** Pastikan menggunakan versi setup terbaru, lalu jalankan:
+```bash
+cd /workspace/live-streaming-ai
+git pull
+bash deploy/setup.sh
+```
+Setup akan compile MMCV dari source sesuai PyTorch 2.1.
+
+### "Gagal me-render video"
+**Penyebab:** File video avatar tidak ditemukan di `assets/2d/` atau `assets/3d/`.
+
+**Solusi:** Upload file video avatar ke folder yang benar (lihat langkah 2 di atas).
+
+### Dependency conflicts (bukan fatal)
+Pesan seperti ini **bukan error fatal** (hanya peringatan pip):
+```text
+ERROR: pip's dependency resolver does not currently take into account...
+gradio ... pillow ... incompatible
+tensorflow ... numpy ... incompatible
+```
 
 ---
 
@@ -178,4 +244,5 @@ START_BROADCASTER=true RTMP_URL=rtmp://live.example.com/live STREAM_KEY=your_key
 - `Transformers`: 4.38.2
 - `Diffusers`: 0.27.2
 - `Accelerate`: 0.28.0
+- `MMCV`: 2.1.0 (compiled from source)
 - `Edge-TTS`: 6.1.9
