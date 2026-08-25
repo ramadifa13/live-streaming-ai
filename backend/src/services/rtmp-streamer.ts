@@ -89,6 +89,7 @@ export async function startInstagramBroadcast(
     `[RTMP Streamer] Starting Live Stream to: ${fullTargetUrl.substring(0, 50)}...`,
   );
   console.log(`[RTMP Streamer] Using presenter media: ${mediaToUse}`);
+  if (productName) console.log(`[RTMP Streamer] Product overlay: ${productName} - Rp${productPrice}`);
 
   activeStreamInfo = {
     rtmpUrl: fullTargetUrl,
@@ -101,18 +102,14 @@ export async function startInstagramBroadcast(
 
   const isVideo = /\.(mp4|mov|webm|mkv)$/i.test(mediaToUse);
 
-  // Build drawtext filter for product overlay
+  // Build drawtext filter for product overlay (simplified for compatibility)
   const drawtextFilters: string[] = [];
-  if (productName) {
-    const escapedName = productName.replace(/'/g, "\\'").replace(/:/g, "\\:");
-    drawtextFilters.push(
-      `drawtext=text='${escapedName}':fontcolor=white:fontsize=42:box=1:boxcolor=black@0.6:boxborderw=10:x=20:y=h-th-100`,
-    );
-  }
-  if (productPrice) {
+  if (productName && productPrice) {
+    const safeName = productName.replace(/['\\]/g, "").substring(0, 30);
     const priceText = `Rp${Number(productPrice).toLocaleString("id-ID")}`;
     drawtextFilters.push(
-      `drawtext=text='${priceText}':fontcolor=yellow:fontsize=36:box=1:boxcolor=red@0.7:boxborderw=8:x=20:y=h-th-40`,
+      `drawtext=text='${safeName}':fontcolor=white:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=8:x=20:y=h-th-80`,
+      `drawtext=text='${priceText}':fontcolor=yellow:fontsize=30:box=1:boxcolor=red@0.6:boxborderw=6:x=20:y=h-th-30`,
     );
   }
 
@@ -174,6 +171,10 @@ export async function startInstagramBroadcast(
 
     activeStreamProcess.stderr?.on("data", (data) => {
       const msg = data.toString();
+      // Log all FFmpeg output for debugging
+      if (msg.includes("error") || msg.includes("Error") || msg.includes("failed")) {
+        console.error(`[FFmpeg ERROR]: ${msg.trim()}`);
+      }
       if (msg.includes("frame=") || msg.includes("fps=")) {
         activeStreamInfo.status = "streaming";
         activeStreamInfo.handshakeVerified = true;
