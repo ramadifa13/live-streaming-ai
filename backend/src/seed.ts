@@ -117,6 +117,39 @@ async function main() {
   const all: any = await prisma.$queryRawUnsafe(`SELECT "id", "name", "price", "stock", "sku", "category", "image", "link" FROM "Product" ORDER BY "createdAt" ASC;`);
   console.log(`=== DATABASE AUDIT & SEED SUCCESS: Total ${all.length} products in DB ===`);
   console.log(all);
+
+  // 4. Seed avatars if none exist
+  const avatarCount = await prisma.avatar.count();
+  if (avatarCount === 0) {
+    console.log("Seeding avatars...");
+    await prisma.avatar.createMany({
+      data: [
+        {
+          id: "1",
+          name: "Namira",
+          type: "3d",
+          style: "realistic",
+          language: "id",
+          voice: "id-ID-GadisNeural",
+          isActive: true,
+          description: "Host 3D dinamis - Namira",
+        },
+        {
+          id: "2",
+          name: "Nana",
+          type: "2d",
+          style: "anime",
+          language: "id",
+          voice: "id-ID-GadisNeural",
+          isActive: true,
+          description: "Host 2D statis - Nana",
+        },
+      ],
+    });
+    console.log("✅ Seeded 2 avatars (id=1: Namira 3D, id=2: Nana 2D)");
+  } else {
+    console.log(`Avatars already exist: ${avatarCount} records`);
+  }
 }
 
 main()
