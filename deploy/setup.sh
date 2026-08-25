@@ -228,6 +228,11 @@ python -c "import os; from huggingface_hub import snapshot_download; snapshot_do
 python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='yzd-v/DWPose', local_dir='models/dwpose', token=os.environ['HF_TOKEN'])"
 python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='ManyOtherFunctions/face-parse-bisent', local_dir='models/face-parse-bisent', token=os.environ['HF_TOKEN'])"
 
+echo "5.1. Menyiapkan symlink layout MuseTalk di worker root..."
+cd "$WORKER_DIR"
+ln -sfn "$WORKER_DIR/MuseTalk/musetalk" "$WORKER_DIR/musetalk"
+ln -sfn "$WORKER_DIR/MuseTalk/models" "$WORKER_DIR/models"
+
 echo "6. Memverifikasi instalasi..."
 python -c "import torch; assert torch.cuda.is_available(), 'CUDA tidak tersedia'; print('PyTorch', torch.__version__, 'CUDA OK')"
 python - <<'PY'
@@ -253,6 +258,28 @@ from huggingface_hub import cached_download
 print("huggingface_hub", huggingface_hub.__version__, "cached_download OK")
 PY
 python -c "import mmcv, mmpose; print('MMCV/MMPose OK')"
+python - <<'PY'
+import os
+import sys
+
+base = "/workspace/ai_live_worker"
+required = [
+    "musetalk/utils/dwpose/rtmpose-l_8xb32-270e_coco-ubody-wholebody-384x288.py",
+    "models/dwpose/dw-ll_ucoco_384.pth",
+    "models/musetalk/musetalk.json",
+    "models/musetalk/musetalkV15/unet.pth",
+    "models/whisper/config.json",
+    "models/face-parse-bisent/79999_iter.pth",
+    "models/sd-vae-ft-mse/config.json",
+]
+missing = [rel for rel in required if not os.path.exists(os.path.join(base, rel))]
+if missing:
+    print("[ERROR] Model/file wajib belum lengkap:")
+    for rel in missing:
+        print(f"  - {rel}")
+    sys.exit(1)
+print("Semua model & config MuseTalk lengkap")
+PY
 
 date -Iseconds > "$WORKER_DIR/.setup_complete"
 

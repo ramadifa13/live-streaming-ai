@@ -41,6 +41,15 @@ bash setup.sh
 ```
 Perbesar **Container Disk** RunPod ke minimal 30–50 GB jika masih penuh.
 
+### Troubleshooting: repair cepat tanpa setup ulang
+Jika worker error (CUDA mismatch, numpy, huggingface_hub, dwpose file not found):
+```bash
+cd /workspace/live-streaming-ai
+git pull
+bash deploy/repair-worker.sh
+```
+Skrip ini: symlink `./musetalk` + `./models`, pin deps Python, verifikasi model, restart API.
+
 ### Troubleshooting: dependency conflicts & MMCV build error
 Pesan seperti ini **bukan error fatal** (hanya peringatan pip):
 ```text

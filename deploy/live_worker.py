@@ -29,6 +29,8 @@ class AILiveWorker:
         if not os.path.exists(self.musetalk_checkpoint):
             print(f"[WARNING] Model MuseTalk belum terunduh di {self.musetalk_checkpoint}. Pastikan setup.sh sudah dijalankan.")
         
+        self._ensure_musetalk_layout()
+        
         # Pre-load MuseTalk modules agar model hanya dimuat SEKALI saat startup
         try:
             self._warmup_musetalk()
@@ -36,6 +38,34 @@ class AILiveWorker:
             print(f"[WARMUP] Gagal pre-load MuseTalk: {e}")
             
         print("[INFO] Worker siap dengan sistem TTS Edge-TTS dan Lipsync MuseTalk...")
+    
+    def _ensure_musetalk_layout(self):
+        """MuseTalk pakai path relatif ./musetalk dan ./models — buat symlink dari worker root."""
+        links = {
+            os.path.join(self.base_dir, "musetalk"): os.path.join(self.musetalk_dir, "musetalk"),
+            os.path.join(self.base_dir, "models"): os.path.join(self.musetalk_dir, "models"),
+        }
+        for link_path, target_path in links.items():
+            if not os.path.isdir(target_path):
+                print(f"[WARNING] Target MuseTalk belum ada: {target_path}")
+                continue
+            if os.path.islink(link_path):
+                if os.path.realpath(link_path) == os.path.realpath(target_path):
+                    continue
+                os.unlink(link_path)
+            elif os.path.exists(link_path):
+                print(f"[WARNING] Lewati symlink {link_path} — path sudah ada (bukan symlink)")
+                continue
+            os.symlink(target_path, link_path)
+            print(f"[INFO] Symlink: {link_path} -> {target_path}")
+
+    def _musetalk_paths(self):
+        models_root = os.path.join(self.musetalk_dir, "models")
+        return {
+            "unet_config": os.path.join(models_root, "musetalk", "musetalk.json"),
+            "unet_model_path": os.path.join(models_root, "musetalk", "musetalkV15", "unet.pth"),
+            "whisper_dir": os.path.join(models_root, "whisper"),
+        }
     
     def _warmup_musetalk(self):
         musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
@@ -45,15 +75,16 @@ class AILiveWorker:
         from scripts.inference import _load_models_cached
         from argparse import Namespace
         
+        paths = self._musetalk_paths()
         dummy_args = Namespace(
             gpu_id=0,
             use_float16=True,
             version="v15",
             left_cheek_width=90,
             right_cheek_width=90,
-            unet_model_path=os.path.join(musetalk_dir, "models", "musetalk", "musetalkV15", "unet.pth"),
-            unet_config=os.path.join(musetalk_dir, "models", "musetalk", "musetalk.json"),
-            whisper_dir=os.path.join(musetalk_dir, "models", "whisper"),
+            unet_model_path=paths["unet_model_path"],
+            unet_config=paths["unet_config"],
+            whisper_dir=paths["whisper_dir"],
             vae_type="sd-vae-ft-mse",
             batch_size=self.batch_size,
         )
@@ -139,28 +170,10 @@ class AILiveWorker:
                 yaml.dump(config_data, f)
 
             musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
-
-            unet_config = os.path.join(
-                musetalk_dir,
-                "models",
-                "musetalk",
-                "musetalk",
-                "musetalk.json"
-            )
-
-            unet_model_path = os.path.join(
-                musetalk_dir,
-                "models",
-                "musetalk",
-                "musetalkV15",
-                "unet.pth"
-            )
-
-            whisper_dir = os.path.join(
-                musetalk_dir,
-                "models",
-                "whisper"
-            )
+            paths = self._musetalk_paths()
+            unet_config = paths["unet_config"]
+            unet_model_path = paths["unet_model_path"]
+            whisper_dir = paths["whisper_dir"]
 
             print("\n==============================================")
             print("[MuseTalk] VERSION : 1.5")

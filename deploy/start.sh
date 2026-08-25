@@ -30,6 +30,10 @@ fi
 
 export COQUI_TOS_AGREED=1
 
+echo "Menyiapkan symlink MuseTalk (./musetalk, ./models)..."
+ln -sfn "$WORKER_DIR/MuseTalk/musetalk" "$WORKER_DIR/musetalk"
+ln -sfn "$WORKER_DIR/MuseTalk/models" "$WORKER_DIR/models"
+
 echo "Memulai AI Worker API (Port 8000)..."
 python api_server.py > "$WORKER_DIR/api_server.log" 2>&1 &
 API_PID=$!
