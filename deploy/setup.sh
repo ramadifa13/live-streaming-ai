@@ -78,12 +78,21 @@ pip install --no-cache-dir -r requirements-worker.txt
 
 echo "2.2. Memverifikasi FFmpeg..."
 if ! command -v ffmpeg &> /dev/null; then
-	echo "[PERINGATAN] FFmpeg tidak ditemukan di PATH. MuseTalk membutuhkan ffmpeg untuk encoding video."
-	echo "           Pastikan image RunPod Anda menyertakan ffmpeg, atau instal manual:"
-	echo "           apt-get update && apt-get install -y ffmpeg"
+	echo "[PERINGATAN] FFmpeg tidak ditemukan. Mencoba instal otomatis..."
+	if apt-get update -qq && apt-get install -y -qq ffmpeg; then
+		echo "FFmpeg terinstal: $(ffmpeg -version | head -n1)"
+	else
+		echo "[PERINGATAN] Instal FFmpeg gagal. Jalankan manual: apt-get update && apt-get install -y ffmpeg"
+	fi
 else
 	echo "FFmpeg sudah terinstal: $(ffmpeg -version | head -n1)"
 fi
+
+ensure_torch_21() {
+	pip install --no-cache-dir --force-reinstall \
+		torch==2.1.0+cu118 torchvision==0.16.0+cu118 torchaudio==2.1.0+cu118 \
+		--index-url https://download.pytorch.org/whl/cu118
+}
 
 echo "3. Mengunduh & Menyiapkan Repositori MuseTalk..."
 if [ ! -d "MuseTalk" ]; then
@@ -91,14 +100,24 @@ if [ ! -d "MuseTalk" ]; then
 fi
 cd MuseTalk
 
-# Sesuaikan versi requirements agar kompatibel dengan PyTorch 2.1
+# Sesuaikan requirements upstream agar kompatibel inferensi headless + PyTorch 2.1
+sed -i 's/^numpy==.*/numpy==1.26.4/g' requirements.txt || true
+sed -i 's/^numpy>=.*/numpy==1.26.4/g' requirements.txt || true
 sed -i 's/opencv-python==.*/opencv-python==4.8.0.76/g' requirements.txt || true
 sed -i 's/^tensorflow==.*/# tensorflow dihapus: tidak dibutuhkan untuk inferensi MuseTalk/g' requirements.txt || true
 sed -i 's/^tensorboard==.*/# tensorboard dihapus: tidak dibutuhkan untuk inferensi MuseTalk/g' requirements.txt || true
+sed -i 's/^gradio==.*/# gradio dihapus: tidak dibutuhkan untuk inferensi headless/g' requirements.txt || true
+sed -i 's/^transformers==.*/transformers==4.38.2/g' requirements.txt || true
+sed -i 's/^diffusers==.*/diffusers==0.27.2/g' requirements.txt || true
+sed -i 's/^huggingface_hub==.*/huggingface_hub>=0.25.0,<0.26.0/g' requirements.txt || true
+
 pip install --no-cache-dir -r requirements.txt
-pip install --no-cache-dir --force-reinstall \
+# --no-deps: jangan tarik torch 2.13 saat re-pin paket ML
+pip install --no-cache-dir --force-reinstall --no-deps \
 	"numpy==1.26.4" \
 	"transformers==4.38.2" "diffusers==0.27.2" "accelerate==0.28.0"
+ensure_torch_21
+pip install --no-cache-dir "numpy==1.26.4" "tokenizers>=0.14,<0.19" "safetensors>=0.4.1"
 
 echo "4.1. Memperbaiki Dependensi Build Tools untuk MMCV/MMPose..."
 pip install --no-cache-dir --force-reinstall "pip<24.1" "setuptools>=65,<71" "wheel<0.42"
@@ -118,6 +137,7 @@ mim install "mmdet>=3.1.0"
 mim install "mmpose>=1.1.0"
 
 echo "4.3. Memastikan NumPy/PyTorch tetap kompatibel..."
+ensure_torch_21
 pip install --no-cache-dir --force-reinstall "numpy==1.26.4"
 python - <<'PY'
 import torch
