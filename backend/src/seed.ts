@@ -159,17 +159,3 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
-    console.log("✅ Seeded 2 avatars (id=1: Namira 3D, id=2: Nana 2D)");
-  } else {
-    console.log(`Avatars already exist: ${avatarCount} records`);
-  }
-}
-
-main()
-  .catch((e) => {
-    console.error("Migration/Seed error:", e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
