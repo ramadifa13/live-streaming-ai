@@ -55,39 +55,66 @@ function escapeDrawtext(str: string): string {
  * to values we can embed in FFmpeg drawbox/drawtext.
  */
 function getPlatformStyle(platform: string): {
-  badge: string;        // text shown in badge
-  badgeColor: string;   // hex colour for badge box (0xRRGGBB)
-  ctaColor: string;     // hex colour for CTA button box
+  badge: string; // text shown in badge
+  badgeColor: string; // hex colour for badge box (0xRRGGBB)
+  ctaColor: string; // hex colour for CTA button box
 } {
   switch (platform) {
     case "TikTok LIVE":
-      return { badge: "Keranjang Kuning", badgeColor: "0xB8860B", ctaColor: "0xB8860B" };
+      return {
+        badge: "Keranjang Kuning",
+        badgeColor: "0xB8860B",
+        ctaColor: "0xB8860B",
+      };
     case "Shopee Live":
-      return { badge: "Flash Sale", badgeColor: "0xC0392B", ctaColor: "0xC0392B" };
+      return {
+        badge: "Flash Sale",
+        badgeColor: "0xC0392B",
+        ctaColor: "0xC0392B",
+      };
     case "Instagram Live":
       return { badge: "IG Shop", badgeColor: "0x6A0DAD", ctaColor: "0x7B2FBE" };
     case "YouTube Live":
-      return { badge: "YouTube Live", badgeColor: "0xCC0000", ctaColor: "0xCC0000" };
+      return {
+        badge: "YouTube Live",
+        badgeColor: "0xCC0000",
+        ctaColor: "0xCC0000",
+      };
     case "Facebook Live":
-      return { badge: "Facebook Live", badgeColor: "0x1877F2", ctaColor: "0x1877F2" };
+      return {
+        badge: "Facebook Live",
+        badgeColor: "0x1877F2",
+        ctaColor: "0x1877F2",
+      };
     default:
-      return { badge: "Toko Live", badgeColor: "0x1A56DB", ctaColor: "0x1A56DB" };
+      return {
+        badge: "Toko Live",
+        badgeColor: "0x1A56DB",
+        ctaColor: "0x1A56DB",
+      };
   }
 }
 
 const downloadedTempFiles: string[] = [];
 
-async function downloadImageToTemp(imageUrl: string): Promise<string | undefined> {
+async function downloadImageToTemp(
+  imageUrl: string,
+): Promise<string | undefined> {
   return new Promise((resolve) => {
     const protocol = imageUrl.startsWith("https") ? https : http;
     const req = protocol.get(imageUrl, (res) => {
       if (res.statusCode !== 200) {
-        console.error(`[RTMP Streamer] Failed to download image: ${res.statusCode} ${imageUrl}`);
+        console.error(
+          `[RTMP Streamer] Failed to download image: ${res.statusCode} ${imageUrl}`,
+        );
         resolve(undefined);
         return;
       }
       const ext = path.extname(new URL(imageUrl).pathname) || ".jpg";
-      const tmpPath = path.join(process.cwd(), `tmp-product-${Date.now()}${ext}`);
+      const tmpPath = path.join(
+        process.cwd(),
+        `tmp-product-${Date.now()}${ext}`,
+      );
       const fileStream = fs.createWriteStream(tmpPath);
       res.pipe(fileStream);
       fileStream.on("finish", () => {
@@ -162,10 +189,7 @@ export async function startInstagramBroadcast(
     const relativePath = assetPath.replace(/^[/\\]+/, "");
     return path.resolve(publicRoot, relativePath);
   };
-  const defaultVideo = path.resolve(
-    publicRoot,
-    "avatars/host_3d_dinamis_namira.mp4",
-  );
+  const defaultVideo = path.resolve(publicRoot, "avatars/namira.mp4");
   const mediaToUse =
     resolvePublicAsset(avatarVideoPath) ||
     resolvePublicAsset(avatarImagePath) ||
@@ -191,7 +215,10 @@ export async function startInstagramBroadcast(
     `[RTMP Streamer] Starting Live Stream to: ${fullTargetUrl.substring(0, 50)}...`,
   );
   console.log(`[RTMP Streamer] Using presenter media: ${mediaToUse}`);
-  if (productName) console.log(`[RTMP Streamer] Product: ${productName} — Rp${productPrice} | Platform: ${platform || "default"}`);
+  if (productName)
+    console.log(
+      `[RTMP Streamer] Product: ${productName} — Rp${productPrice} | Platform: ${platform || "default"}`,
+    );
 
   activeStreamInfo = {
     rtmpUrl: fullTargetUrl,
@@ -237,12 +264,11 @@ export async function startInstagramBroadcast(
 
   // ── Text values ───────────────────────────────────────────────────────────
   const safeName = escapeDrawtext((productName || "").substring(0, 22));
-  const rawPrice = typeof productPrice === "string"
-    ? parseInt(productPrice.replace(/[^0-9]/g, ""), 10) || 0
-    : Number(productPrice) || 0;
-  const priceText = rawPrice
-    ? `Rp${rawPrice.toLocaleString("id-ID")}`
-    : "";
+  const rawPrice =
+    typeof productPrice === "string"
+      ? parseInt(productPrice.replace(/[^0-9]/g, ""), 10) || 0
+      : Number(productPrice) || 0;
+  const priceText = rawPrice ? `Rp${rawPrice.toLocaleString("id-ID")}` : "";
   const safePriceText = escapeDrawtext(priceText);
   const safeStockText = escapeDrawtext(`Sisa\\: ${stockCount ?? 0} pcs`);
   const safeCTA = escapeDrawtext(ctaLabel || "Beli");
@@ -325,13 +351,17 @@ export async function startInstagramBroadcast(
   let inputsBeforeAudio = [
     "-re",
     ...(isVideo ? ["-stream_loop", "-1"] : ["-loop", "1"]),
-    "-i", mediaToUse,
+    "-i",
+    mediaToUse,
   ];
 
   if (productImagePath) {
     inputsBeforeAudio = [
       ...inputsBeforeAudio,
-      "-loop", "1", "-i", productImagePath,
+      "-loop",
+      "1",
+      "-i",
+      productImagePath,
     ];
     // Shadow + thumbnail overlay combined so they execute sequentially
     thumbFilter = `[v${padIdx}]drawbox=x=${thumbX + 3}:y=${thumbY + 3}:w=${thumbSize}:h=${thumbSize}:color=0x000000@0.5:t=fill[v${padIdx + 1}];[1:v]scale=${thumbSize}:${thumbSize}[thumb];[v${padIdx + 1}][thumb]overlay=x=${thumbX}:y=${thumbY}[v${padIdx + 2}]`;
@@ -341,25 +371,22 @@ export async function startInstagramBroadcast(
   // Build drawtext chain for text overlays
   // Each drawtext filter takes [vN] in and produces [vN+1]
   const textFilters: string[] = [];
-  const addText = (
-    opts: {
-      text: string;
-      x: number;
-      y: number;
-      size: number;
-      color: string;
-      bold?: boolean;
-      box?: boolean;
-      boxColor?: string;
-      boxBorder?: number;
-    },
-  ) => {
+  const addText = (opts: {
+    text: string;
+    x: number;
+    y: number;
+    size: number;
+    color: string;
+    bold?: boolean;
+    box?: boolean;
+    boxColor?: string;
+    boxBorder?: number;
+  }) => {
     const fontPath = opts.bold ? fontFileBold : fontFile;
     const boxPart = opts.box
       ? `:box=1:boxcolor=${opts.boxColor || "0x000000@0.6"}:boxborderw=${opts.boxBorder ?? 6}`
       : "";
-    const filter =
-      `[v${padIdx}]drawtext=text='${opts.text}':fontfile=${fontPath}:fontcolor=${opts.color}:fontsize=${opts.size}:x=${opts.x}:y=${opts.y}${boxPart}[v${padIdx + 1}]`;
+    const filter = `[v${padIdx}]drawtext=text='${opts.text}':fontfile=${fontPath}:fontcolor=${opts.color}:fontsize=${opts.size}:x=${opts.x}:y=${opts.y}${boxPart}[v${padIdx + 1}]`;
     textFilters.push(filter);
     padIdx += 1;
   };
@@ -466,36 +493,56 @@ export async function startInstagramBroadcast(
   const ffmpegArgs = [
     ...inputsBeforeAudio,
     // Silent audio source
-    "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+    "-f",
+    "lavfi",
+    "-i",
+    "anullsrc=r=44100:cl=stereo",
 
-    "-filter_complex", filterChain,
-    "-map", finalPad,
-    "-map", `${productImagePath ? "2" : "1"}:a`,  // audio from anullsrc
+    "-filter_complex",
+    filterChain,
+    "-map",
+    finalPad,
+    "-map",
+    `${productImagePath ? "2" : "1"}:a`, // audio from anullsrc
 
     // Video encoding
-    "-c:v", "libx264",
-    "-preset", "veryfast",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
     ...(isVideo ? [] : ["-tune", "stillimage"]),
-    "-b:v", "2500k",
-    "-maxrate", "2500k",
-    "-bufsize", "5000k",
-    "-pix_fmt", "yuv420p",
-    "-g", "60",
-    "-r", "30",
+    "-b:v",
+    "2500k",
+    "-maxrate",
+    "2500k",
+    "-bufsize",
+    "5000k",
+    "-pix_fmt",
+    "yuv420p",
+    "-g",
+    "60",
+    "-r",
+    "30",
 
     // Audio encoding
-    "-c:a", "aac",
-    "-b:a", "128k",
-    "-ar", "44100",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "128k",
+    "-ar",
+    "44100",
 
     // Output
-    "-f", "flv",
+    "-f",
+    "flv",
     fullTargetUrl,
   ];
 
   try {
     console.log("[RTMP Streamer] FFmpeg filter_complex:");
-    console.log(filterChain.substring(0, 500) + (filterChain.length > 500 ? "..." : ""));
+    console.log(
+      filterChain.substring(0, 500) + (filterChain.length > 500 ? "..." : ""),
+    );
 
     activeStreamProcess = spawn("ffmpeg", ffmpegArgs, {
       stdio: ["ignore", "pipe", "pipe"],
@@ -512,7 +559,11 @@ export async function startInstagramBroadcast(
     activeStreamProcess.stderr?.on("data", (data) => {
       const msg = data.toString();
       // Log all FFmpeg output for debugging
-      if (msg.includes("error") || msg.includes("Error") || msg.includes("failed")) {
+      if (
+        msg.includes("error") ||
+        msg.includes("Error") ||
+        msg.includes("failed")
+      ) {
         console.error(`[FFmpeg ERROR]: ${msg.trim()}`);
       }
       if (msg.includes("frame=") || msg.includes("fps=")) {

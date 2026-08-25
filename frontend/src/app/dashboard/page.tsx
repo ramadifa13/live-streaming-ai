@@ -81,10 +81,9 @@ export default function Dashboard() {
   const [csvText, setCsvText] = useState("");
 
   // STEP 2: Avatars State & Voice TTS Controls
-  const [avatarTab, setAvatarTab] = useState<"2D" | "3D" | "ALL">("3D");
   // avatars array is imported from constants.ts
 
-  const [selectedAvatar, setSelectedAvatar] = useState<Avatar>(avatars[1]);
+  const [selectedAvatar, setSelectedAvatar] = useState<Avatar>(avatars[0]);
   const [selectedTone, setSelectedTone] = useState<string>("Persuasif");
   const [selectedVoice, setSelectedVoice] =
     useState<string>("id-ID-SitiNeural");
@@ -97,7 +96,7 @@ export default function Dashboard() {
   const avatarCarouselRef = useRef<HTMLDivElement>(null);
 
   // STEP 3: Setup Live State
-  const [selectedDuration, setSelectedDuration] = useState<number>(8); // 2, 8, 24
+  const [selectedDuration] = useState<number>(1);
   const [selectedPlatform, setSelectedPlatform] =
     useState<string>("TikTok LIVE");
   const [automations, setAutomations] = useState({
@@ -909,16 +908,9 @@ export default function Dashboard() {
       !newProductForm.name ||
       !newProductForm.price ||
       !newProductForm.stock ||
-      !newProductForm.tag ||
-      !newProductForm.description ||
-      !newProductForm.benefits ||
-      !newProductForm.usage ||
-      !newProductForm.faq ||
-      !newProductForm.targetAudience
+      !newProductForm.tag
     ) {
-      showToast(
-        "❌ Semua kolom wajib diisi (kecuali SKU dan Link) untuk melatih AI!",
-      );
+      showToast("❌ Nama, harga, stok, dan kategori wajib diisi.");
       return;
     }
 
@@ -942,8 +934,36 @@ export default function Dashboard() {
       faq: newProductForm.faq || "",
       targetAudience: newProductForm.targetAudience || "",
     };
+    let savedProduct: BackendProduct;
 
-    // Replaced DB call with local generation
+    try {
+      const response = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Gagal menyimpan produk");
+      }
+      savedProduct = result.data as BackendProduct;
+      createdId = savedProduct.id;
+      Object.assign(payload, {
+        description: savedProduct.description || payload.description,
+        benefits: savedProduct.benefits || payload.benefits,
+        usage: savedProduct.usage || payload.usage,
+        faq: savedProduct.faq || payload.faq,
+        targetAudience: savedProduct.targetAudience || payload.targetAudience,
+      });
+      showToast(
+        "✨ AI berhasil membuat knowledge produk dan copywriting host!",
+      );
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Gagal menyimpan produk",
+      );
+      return;
+    }
 
     const newProd: Product = {
       id: createdId,
@@ -959,6 +979,7 @@ export default function Dashboard() {
       usage: payload.usage,
       faq: payload.faq,
       targetAudience: payload.targetAudience,
+      copywriting: savedProduct.copywriting,
     };
 
     setProducts((prev) => [newProd, ...prev]);
@@ -1197,7 +1218,7 @@ export default function Dashboard() {
             avatarName: selectedAvatar.id,
             tone: selectedTone,
             voice: selectedVoice,
-            mode: "2D",
+            mode: "3D",
             avatarImagePath: selectedAvatar.image,
           }),
         });
@@ -1314,10 +1335,7 @@ export default function Dashboard() {
   };
 
   // Filtered Avatars
-  const filteredAvatars = avatars.filter((a) => {
-    if (avatarTab === "ALL") return true;
-    return a.type === avatarTab;
-  });
+  const filteredAvatars = avatars.filter((a) => a.type === "3D");
 
   return (
     <div className="min-h-screen bg-[#060a14] text-white p-4 font-sans selection:bg-blue-500/30">
@@ -1841,37 +1859,18 @@ export default function Dashboard() {
                       <span>Pilih AI Host &amp; Suara TTS</span>
                     </h3>
                     <p className="text-[11px] text-slate-400">
-                      Pilih presenter 2D/3D, karakter suara neural, tempo
-                      bicara, dan persona host.
+                      AI Host 3D dengan suara neural, tempo bicara, dan persona
+                      host.
                     </p>
                   </div>
                 </div>
 
-                {/* Avatar Type Tabs */}
                 <div className="mb-3 flex items-center justify-between border-b border-[#232c42] pb-2 text-xs font-medium">
-                  <div className="flex gap-4">
-                    {[
-                      { key: "ALL", label: `Semua (${avatars.length})` },
-                      { key: "2D", label: "2D LivePortrait" },
-                      { key: "3D", label: "3D VRM Host" },
-                    ].map((tab) => (
-                      <button
-                        key={tab.key}
-                        onClick={() =>
-                          setAvatarTab(tab.key as "ALL" | "2D" | "3D")
-                        }
-                        className={`transition pb-1.5 text-xs font-semibold ${
-                          avatarTab === tab.key
-                            ? "border-b-2 border-blue-500 text-blue-400"
-                            : "text-slate-400 hover:text-white"
-                        }`}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
-                  </div>
+                  <span className="text-blue-400 font-semibold">
+                    3D VRM AI Host
+                  </span>
                   <span className="text-[9.5px] text-slate-400 font-mono">
-                    Max 3 Host / Slide
+                    Mode demo aktif
                   </span>
                 </div>
 
@@ -2329,18 +2328,19 @@ export default function Dashboard() {
                       Durasi Live Siaran
                     </label>
                     <div className="grid grid-cols-3 gap-1">
-                      {[2, 8, 24].map((dur) => (
+                      {[1, 8, 24].map((dur) => (
                         <button
                           key={dur}
                           type="button"
-                          onClick={() => {
-                            setSelectedDuration(dur);
-                            showToast(`Durasi live diatur ke: ${dur} Jam`);
-                          }}
+                          onClick={() =>
+                            dur === 1 &&
+                            showToast("Durasi demo ditetapkan 1 jam")
+                          }
+                          disabled={dur !== 1}
                           className={`rounded-lg py-1.5 text-xs font-semibold border transition active:scale-95 ${
                             selectedDuration === dur
                               ? "border-blue-500 bg-blue-500/25 text-white shadow-sm font-bold"
-                              : "border-[#232c42] bg-[#111827] text-slate-400 hover:text-slate-200"
+                              : "border-[#232c42] bg-[#111827] text-slate-600 cursor-not-allowed"
                           }`}
                         >
                           {dur} Jam
@@ -2802,16 +2802,18 @@ export default function Dashboard() {
                               </p>
                               <p className="text-[8.5px] text-slate-500 line-through">
                                 Rp
-                                {(Number(
-                                  typeof activeFeaturedProduct.price ===
-                                    "number"
-                                    ? activeFeaturedProduct.price
-                                    : parseInt(
-                                        String(
-                                          activeFeaturedProduct.price,
-                                        ).replace(/[^0-9]/g, ""),
-                                      ) || 99000,
-                                ) * 1.3).toLocaleString("id-ID")}
+                                {(
+                                  Number(
+                                    typeof activeFeaturedProduct.price ===
+                                      "number"
+                                      ? activeFeaturedProduct.price
+                                      : parseInt(
+                                          String(
+                                            activeFeaturedProduct.price,
+                                          ).replace(/[^0-9]/g, ""),
+                                        ) || 99000,
+                                  ) * 1.3
+                                ).toLocaleString("id-ID")}
                               </p>
                             </div>
                           </div>
@@ -3613,11 +3615,13 @@ export default function Dashboard() {
                                 productId: activeFeaturedProduct.id || "1",
                                 avatarId: selectedAvatar.id || "1",
                                 platform: selectedPlatform,
-                                durationHours: selectedDuration,
+                                durationHours: 1,
                                 autoReply: automations.autoReply,
                                 autoPin: automations.autoPin,
                                 autoPromotion: automations.autoPromo,
                                 autoModeration: automations.autoModeration,
+                                avatarName: selectedAvatar.name,
+                                tone: selectedTone,
                                 accessToken: connectedAccount?.accessToken,
                                 liveChatId: connectedAccount?.liveChatId,
                                 liveVideoId: connectedAccount?.liveVideoId,
@@ -3646,12 +3650,7 @@ export default function Dashboard() {
                                 streamKey: streamKey,
                                 sessionId: sessionJson.data?.id,
                                 avatarImage: selectedAvatar.image,
-                                avatarVideo:
-                                  selectedAvatar.name === "Nana"
-                                    ? "/avatars/host_2d_statis_nana.mp4"
-                                    : selectedAvatar.name === "Namira"
-                                      ? "/avatars/host_3d_dinamis_namira.mp4"
-                                      : undefined,
+                                avatarVideo: "/avatars/namira.mp4",
                                 productName: activeFeaturedProduct.name,
                                 productPrice: String(
                                   activeFeaturedProduct.price,
@@ -4559,14 +4558,10 @@ export default function Dashboard() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setProductModalTab("RAG")}
-                  className={`pb-2 text-xs font-bold transition border-b-2 flex items-center gap-1.5 ${
-                    productModalTab === "RAG"
-                      ? "border-blue-500 text-blue-400"
-                      : "border-transparent text-slate-400 hover:text-slate-200"
-                  }`}
+                  disabled
+                  className={`pb-2 text-xs font-bold transition border-b-2 flex items-center gap-1.5 ${"border-transparent text-emerald-300 cursor-default"}`}
                 >
-                  <span>🧠 2. RAG Knowledge Base (AI Live Brain)</span>
+                  <span>🧠 RAG Knowledge Base (AI otomatis saat simpan)</span>
                   <span className="rounded bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 text-[9px] border border-emerald-500/30">
                     Penting
                   </span>
@@ -4919,10 +4914,10 @@ export default function Dashboard() {
                     {productModalTab === "BASIC" ? (
                       <button
                         type="button"
-                        onClick={() => setProductModalTab("RAG")}
-                        className="text-blue-400 hover:text-blue-300 font-semibold"
+                        disabled
+                        className="text-emerald-300 font-semibold cursor-default"
                       >
-                        Lanjut ke RAG Knowledge Base →
+                        🧠 RAG akan dibuat otomatis oleh AI saat disimpan
                       </button>
                     ) : (
                       <button

@@ -8,6 +8,7 @@ set -euo pipefail
 
 export TORCH_CUDA_TAG=cu118
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-11.8}"
+export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:7b}"
 export PIP_NO_CACHE_DIR=1
 
 WORKER_DIR="/workspace/ai_live_worker"
@@ -71,6 +72,33 @@ if [ "$PY_MAJOR_MINOR" != "3.10" ]; then
 fi
 
 echo "[OK] Python 3.10"
+
+# ------------------------------------------------------------
+# 1.1 OLLAMA
+# ------------------------------------------------------------
+
+echo ""
+echo "[1.1/10] Menyiapkan Ollama (${OLLAMA_MODEL})..."
+
+if ! command -v curl >/dev/null 2>&1; then
+    echo "curl belum ada. Installing..."
+    apt-get update -qq
+    apt-get install -y -qq curl
+fi
+
+if ! command -v ollama >/dev/null 2>&1; then
+    echo "Ollama belum ada. Installing..."
+    curl -fsSL https://ollama.com/install.sh | sh
+else
+    echo "Ollama sudah terinstall: $(ollama --version)"
+fi
+
+if ! command -v ollama >/dev/null 2>&1; then
+    echo "[ERROR] Ollama gagal diinstall."
+    exit 1
+fi
+
+echo "[OK] Ollama tersedia. Model akan dipastikan setelah setup dependensi selesai."
 
 # ------------------------------------------------------------
 # 2. VALIDATE CUDA TOOLKIT
@@ -232,11 +260,15 @@ PY
 echo ""
 echo "[8/10] Menyiapkan worker..."
 
-cp "$PWD"/*.py "$WORKER_DIR"/ 2>/dev/null || true
-cp "$PWD"/*.sh "$WORKER_DIR"/ 2>/dev/null || true
+cp "$SCRIPT_DIR"/*.py "$WORKER_DIR"/ 2>/dev/null || true
+cp "$SCRIPT_DIR"/*.sh "$WORKER_DIR"/ 2>/dev/null || true
 
-if [ -f "$PWD/requirements-worker.txt" ]; then
-    cp "$PWD/requirements-worker.txt" "$WORKER_DIR/"
+if [ -d "$SCRIPT_DIR/assets" ]; then
+    cp -r "$SCRIPT_DIR/assets"/* "$WORKER_DIR/assets"/ 2>/dev/null || true
+fi
+
+if [ -f "$SCRIPT_DIR/requirements-worker.txt" ]; then
+    cp "$SCRIPT_DIR/requirements-worker.txt" "$WORKER_DIR/"
 fi
 
 cd "$WORKER_DIR"

@@ -28,7 +28,7 @@ class AILiveWorker:
         self._inference_lock = threading.Lock()
         
         if not os.path.exists(self.musetalk_checkpoint):
-            print(f"[WARNING] Model MuseTalk belum terunduh di {self.musetalk_checkpoint}. Pastikan setup.sh sudah dijalankan.")
+            print(f"[WARNING] Model MuseTalk belum terunduh di {self.musetalk_checkpoint}. Pastikan setup-safe.sh sudah dijalankan.")
         
         self._ensure_musetalk_layout()
         

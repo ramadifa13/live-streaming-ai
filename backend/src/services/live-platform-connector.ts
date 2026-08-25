@@ -1,4 +1,5 @@
 ﻿import { generateLunaResponse, LunaStructuredOutput } from "./luna-brain.js";
+import prisma from "../lib/prisma.js";
 
 export interface LiveMetricsSnapshot {
   viewers: number;
@@ -9,7 +10,13 @@ export interface LiveMetricsSnapshot {
   sales: number;
   orders: number;
   durationSeconds: number;
-  recentComments: Array<{ id: string; sender: string; text: string; time: string; aiReply?: string }>;
+  recentComments: Array<{
+    id: string;
+    sender: string;
+    text: string;
+    time: string;
+    aiReply?: string;
+  }>;
 }
 
 export interface PollerSessionConfig {
@@ -24,6 +31,7 @@ export interface PollerSessionConfig {
 }
 
 type LiveDetectedCallback = () => Promise<void> | void;
+type SpeechCallback = (text: string) => void;
 
 class LivePlatformConnector {
   private isRunning: boolean = false;
@@ -39,6 +47,7 @@ class LivePlatformConnector {
 
   private liveDetectedCallback: LiveDetectedCallback | null = null;
   private liveDetectionAttempts: number = 0;
+  private speechCallback: SpeechCallback | null = null;
 
   private metrics: LiveMetricsSnapshot = {
     viewers: 0,
@@ -57,6 +66,10 @@ class LivePlatformConnector {
     this.liveDetectionAttempts = 0;
   }
 
+  public setSpeechCallback(callback: SpeechCallback | null) {
+    this.speechCallback = callback;
+  }
+
   public startSession(config: PollerSessionConfig) {
     this.stopSession();
     this.currentConfig = config;
@@ -68,6 +81,7 @@ class LivePlatformConnector {
     this.consecutiveErrors = 0;
     this.liveDetectedCallback = null;
     this.liveDetectionAttempts = 0;
+    this.speechCallback = null;
 
     this.metrics = {
       viewers: 0,
@@ -84,7 +98,10 @@ class LivePlatformConnector {
     const platformLower = config.platform.toLowerCase();
 
     // Start adaptive polling loop for pull-based platforms (YouTube / Instagram)
-    if (platformLower.includes("youtube") || platformLower.includes("instagram")) {
+    if (
+      platformLower.includes("youtube") ||
+      platformLower.includes("instagram")
+    ) {
       this.scheduleNextPoll(1000);
     }
   }
@@ -114,19 +131,31 @@ class LivePlatformConnector {
     }, wait);
   }
 
-  public async ingestEvent(platform: string, eventType: string, data: Record<string, unknown>) {
+  public async ingestEvent(
+    platform: string,
+    eventType: string,
+    data: Record<string, unknown>,
+  ) {
     if (eventType === "viewer_update") {
-      const v = typeof data.viewers === "number" ? data.viewers : Number(data.viewers) || 0;
+      const v =
+        typeof data.viewers === "number"
+          ? data.viewers
+          : Number(data.viewers) || 0;
       this.metrics.viewers = v;
       if (v > this.metrics.peakViewers) this.metrics.peakViewers = v;
     } else if (eventType === "cart_click") {
       this.metrics.clicks += 1;
     } else if (eventType === "order_paid") {
       this.metrics.orders += 1;
-      const amt = typeof data.amount === "number" ? data.amount : Number(data.amount) || 0;
+      const amt =
+        typeof data.amount === "number"
+          ? data.amount
+          : Number(data.amount) || 0;
       this.metrics.sales += amt;
     } else if (eventType === "comment") {
-      const sender = String(data.sender || data.username || data.author || "Penonton");
+      const sender = String(
+        data.sender || data.username || data.author || "Penonton",
+      );
       const text = String(data.text || data.message || data.comment || "");
       const commentId = String(data.id || data.commentId || Date.now());
 
@@ -139,7 +168,8 @@ class LivePlatformConnector {
 
   private async pollActivePlatform() {
     if (!this.isRunning || !this.currentConfig) return;
-    const { platform, accessToken, liveChatId, liveVideoId } = this.currentConfig;
+    const { platform, accessToken, liveChatId, liveVideoId } =
+      this.currentConfig;
     const p = platform.toLowerCase();
 
     try {
@@ -151,16 +181,25 @@ class LivePlatformConnector {
       }
     } catch (err) {
       this.consecutiveErrors++;
-      this.pollDelayMs = Math.min(30000, 2500 * Math.pow(1.5, this.consecutiveErrors));
-      console.warn(`[LivePlatformConnector] Polling warning for ${platform} (Backoff: ${this.pollDelayMs}ms):`, err);
+      this.pollDelayMs = Math.min(
+        30000,
+        2500 * Math.pow(1.5, this.consecutiveErrors),
+      );
+      console.warn(
+        `[LivePlatformConnector] Polling warning for ${platform} (Backoff: ${this.pollDelayMs}ms):`,
+        err,
+      );
     }
   }
 
   private async pollYouTubeChat(liveChatId: string, accessToken: string) {
-    const url = new URL("https://www.googleapis.com/youtube/v3/liveChatMessages");
+    const url = new URL(
+      "https://www.googleapis.com/youtube/v3/liveChatMessages",
+    );
     url.searchParams.set("liveChatId", liveChatId);
     url.searchParams.set("part", "id,snippet,authorDetails");
-    if (this.nextPageToken) url.searchParams.set("pageToken", this.nextPageToken);
+    if (this.nextPageToken)
+      url.searchParams.set("pageToken", this.nextPageToken);
 
     const res = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -168,8 +207,13 @@ class LivePlatformConnector {
 
     if (res.status === 429 || res.status === 403) {
       this.consecutiveErrors++;
-      this.pollDelayMs = Math.min(30000, 2500 * Math.pow(2, this.consecutiveErrors));
-      console.warn(`[YouTube Poller] Rate limited (Status ${res.status}). Backing off for ${this.pollDelayMs}ms`);
+      this.pollDelayMs = Math.min(
+        30000,
+        2500 * Math.pow(2, this.consecutiveErrors),
+      );
+      console.warn(
+        `[YouTube Poller] Rate limited (Status ${res.status}). Backing off for ${this.pollDelayMs}ms`,
+      );
       return;
     }
 
@@ -178,7 +222,7 @@ class LivePlatformConnector {
       this.consecutiveErrors = 0;
       this.pollDelayMs = 2500;
 
-      const json = await res.json() as {
+      const json = (await res.json()) as {
         nextPageToken?: string;
         items?: Array<{
           id: string;
@@ -225,7 +269,10 @@ class LivePlatformConnector {
           try {
             await this.liveDetectedCallback();
           } catch (err) {
-            console.error("[LivePlatformConnector] Live detected callback failed:", err);
+            console.error(
+              "[LivePlatformConnector] Live detected callback failed:",
+              err,
+            );
           }
         }
       }
@@ -234,13 +281,19 @@ class LivePlatformConnector {
     }
   }
 
-  private async pollInstagramComments(liveVideoId: string, accessToken: string) {
+  private async pollInstagramComments(
+    liveVideoId: string,
+    accessToken: string,
+  ) {
     const url = `https://graph.facebook.com/v18.0/${liveVideoId}/comments?access_token=${accessToken}`;
     const res = await fetch(url);
 
     if (res.status === 429 || res.status === 403) {
       this.consecutiveErrors++;
-      this.pollDelayMs = Math.min(30000, 2500 * Math.pow(2, this.consecutiveErrors));
+      this.pollDelayMs = Math.min(
+        30000,
+        2500 * Math.pow(2, this.consecutiveErrors),
+      );
       return;
     }
 
@@ -248,7 +301,7 @@ class LivePlatformConnector {
       this.consecutiveErrors = 0;
       this.pollDelayMs = 2500;
 
-      const json = await res.json() as {
+      const json = (await res.json()) as {
         data?: Array<{
           id: string;
           from?: { username?: string };
@@ -269,27 +322,41 @@ class LivePlatformConnector {
     }
   }
 
-  private async handleNewComment(commentId: string, sender: string, text: string) {
+  private async handleNewComment(
+    commentId: string,
+    sender: string,
+    text: string,
+  ) {
     this.metrics.comments += 1;
     let aiResponseText: string | undefined = undefined;
 
     if (this.currentConfig?.autoReply !== false && text.trim().length > 0) {
       try {
+        const product = this.currentConfig?.productId
+          ? await prisma.product.findUnique({
+              where: { id: this.currentConfig.productId },
+            })
+          : null;
         const response: LunaStructuredOutput = await generateLunaResponse(
           text,
-          this.currentConfig?.productId,
+          product,
           this.currentConfig?.avatarName || "Luna",
-          this.currentConfig?.tone || "Persuasif"
+          this.currentConfig?.tone || "Persuasif",
         );
         aiResponseText = response.speech;
         this.metrics.aiReplies += 1;
+        this.speechCallback?.(response.speech);
       } catch {
         aiResponseText = `Terima kasih pertanyaannya kak ${sender}! Produk ini lagi promo spesial, yuk langsung checkout sekarang yaa! ✨`;
         this.metrics.aiReplies += 1;
+        this.speechCallback?.(aiResponseText);
       }
     }
 
-    const timeStr = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+    const timeStr = new Date().toLocaleTimeString("id-ID", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
     this.metrics.recentComments.push({
       id: commentId,
       sender,
@@ -304,9 +371,10 @@ class LivePlatformConnector {
   }
 
   public getMetricsSnapshot(): LiveMetricsSnapshot {
-    const duration = this.startedAtTimestamp > 0
-      ? Math.floor((Date.now() - this.startedAtTimestamp) / 1000)
-      : 0;
+    const duration =
+      this.startedAtTimestamp > 0
+        ? Math.floor((Date.now() - this.startedAtTimestamp) / 1000)
+        : 0;
 
     return {
       ...this.metrics,

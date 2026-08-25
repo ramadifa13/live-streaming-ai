@@ -38,20 +38,20 @@ export interface PhotorealisticAvatarViewProps {
 // Pipeline stage labels shown in the generating UI
 // ---------------------------------------------------------------------------
 const PIPELINE_STAGES = [
-  { id: "face",    label: "Face Detection & Landmark" },
-  { id: "audio",   label: "TTS Audio Synthesis" },
+  { id: "face", label: "Face Detection & Landmark" },
+  { id: "audio", label: "TTS Audio Synthesis" },
   { id: "lipsync", label: "Lip-sync (EchoMimic)" },
-  { id: "motion",  label: "Head Motion & Eye Blinks" },
-  { id: "encode",  label: "Video Encode H.264" },
-  { id: "upload",  label: "CDN Upload" },
+  { id: "motion", label: "Head Motion & Eye Blinks" },
+  { id: "encode", label: "Video Encode H.264" },
+  { id: "upload", label: "CDN Upload" },
 ];
 
 function getActiveStageIndex(progress: number): number {
-  if (progress < 15)  return 0;
-  if (progress < 30)  return 1;
-  if (progress < 55)  return 2;
-  if (progress < 70)  return 3;
-  if (progress < 88)  return 4;
+  if (progress < 15) return 0;
+  if (progress < 30) return 1;
+  if (progress < 55) return 2;
+  if (progress < 70) return 3;
+  if (progress < 88) return 4;
   return 5;
 }
 
@@ -75,34 +75,28 @@ export default function PhotorealisticAvatarView({
 
   // Fallback photo map
   const defaultImages: Record<string, string> = {
-    Nana:  "/avatars/host_2d_statis_nana.png",
-    Namira:  "/avatars/host_3d_dinamis_namira.png",
-    Ardi:  "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=400&fit=crop&q=80",
-    Maya:  "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=400&fit=crop&q=80",
+    Namira: "/avatars/namira.png",
   };
-  const imageSrc = (avatarImage && avatarImage !== "/avatars/ardi-2d.jpg" && avatarImage !== "/avatars/maya-2d.jpg")
-    ? avatarImage
-    : defaultImages[avatarName] || "/avatars/host_3d_dinamis_namira.png";
+  const imageSrc =
+    avatarImage &&
+    avatarImage !== "/avatars/ardi-2d.jpg" &&
+    avatarImage !== "/avatars/maya-2d.jpg"
+      ? avatarImage
+      : defaultImages[avatarName] || "/avatars/namira.png";
 
   // Auto-play video when URL arrives
   useEffect(() => {
     if (videoGenerationState === "ready" && videoUrl && videoRef.current) {
       videoRef.current.src = videoUrl;
       videoRef.current.load();
-      videoRef.current.play().catch(() => {/* autoplay policy — user will see play button */});
+      videoRef.current.play().catch(() => {
+        /* autoplay policy — user will see play button */
+      });
     }
   }, [videoGenerationState, videoUrl]);
 
   // Map avatar name to local video file
-  const avatarVideoMap: Record<string, string> = {
-    nana: "/avatars/host_2d_statis_nana.mp4",
-    namira: "/avatars/host_3d_dinamis_namira.mp4",
-    ardi: "/avatars/host_3d_dinamis_namira.mp4",
-    maya: "/avatars/host_2d_statis_nana.mp4",
-  };
-
-  const avatarKey = avatarName.toLowerCase();
-  const localAvatarVideo = avatarVideoMap[avatarKey] || "/avatars/host_3d_dinamis_namira.mp4";
+  const localAvatarVideo = "/avatars/namira.mp4";
 
   const activeStageIdx = getActiveStageIndex(renderProgress);
 
@@ -181,33 +175,52 @@ export default function PhotorealisticAvatarView({
           STATE 2: GENERATING — AI render progress UI
       ══════════════════════════════════════════════════ */}
       {videoGenerationState === "generating" && (
-        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center p-5 text-center"
-          style={{ background: "rgba(7,5,15,0.96)", backdropFilter: "blur(12px)" }}
+        <div
+          className="absolute inset-0 z-30 flex flex-col items-center justify-center p-5 text-center"
+          style={{
+            background: "rgba(7,5,15,0.96)",
+            backdropFilter: "blur(12px)",
+          }}
         >
           {/* Animated neural net orb */}
           <div className="relative mb-5">
             <div className="w-16 h-16 rounded-full border-2 border-purple-500/20 border-t-purple-500 animate-spin" />
             <div
               className="absolute inset-2 rounded-full border-2 border-cyan-500/20 border-b-cyan-500 animate-spin"
-              style={{ animationDirection: "reverse", animationDuration: "1.4s" }}
+              style={{
+                animationDirection: "reverse",
+                animationDuration: "1.4s",
+              }}
             />
             <div className="absolute inset-4 rounded-full bg-gradient-to-br from-purple-600/40 to-cyan-600/40 flex items-center justify-center">
               <span className="text-lg">🎬</span>
             </div>
           </div>
 
-          <p className="text-sm font-black text-white mb-0.5">Generating AI Avatar Video...</p>
-          <p className="text-[10px] text-slate-400 mb-4 max-w-[220px] leading-snug">{renderStage}</p>
+          <p className="text-sm font-black text-white mb-0.5">
+            Generating AI Avatar Video...
+          </p>
+          <p className="text-[10px] text-slate-400 mb-4 max-w-[220px] leading-snug">
+            {renderStage}
+          </p>
 
           {/* Progress bar */}
           <div className="w-full max-w-[240px] mb-4">
             <div className="flex justify-between items-center mb-1">
-              <span className="text-[9px] text-slate-500 font-mono">Progress</span>
-              <span className="text-[10px] font-black text-purple-400 font-mono">{renderProgress}%</span>
+              <span className="text-[9px] text-slate-500 font-mono">
+                Progress
+              </span>
+              <span className="text-[10px] font-black text-purple-400 font-mono">
+                {renderProgress}%
+              </span>
             </div>
             <div
               className="w-full rounded-full overflow-hidden"
-              style={{ height: 5, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}
+              style={{
+                height: 5,
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.08)",
+              }}
             >
               <div
                 className="h-full rounded-full transition-all duration-700"
@@ -223,7 +236,7 @@ export default function PhotorealisticAvatarView({
           {/* Pipeline stage checklist */}
           <div className="w-full max-w-[240px] space-y-1.5">
             {PIPELINE_STAGES.map((s, i) => {
-              const done   = i < activeStageIdx;
+              const done = i < activeStageIdx;
               const active = i === activeStageIdx;
               return (
                 <div key={s.id} className="flex items-center gap-2">
@@ -233,20 +246,30 @@ export default function PhotorealisticAvatarView({
                       background: done
                         ? "rgba(34,197,94,0.2)"
                         : active
-                        ? "rgba(124,58,237,0.3)"
-                        : "rgba(255,255,255,0.04)",
+                          ? "rgba(124,58,237,0.3)"
+                          : "rgba(255,255,255,0.04)",
                       border: done
                         ? "1px solid rgba(34,197,94,0.5)"
                         : active
-                        ? "1px solid rgba(139,92,246,0.7)"
-                        : "1px solid rgba(255,255,255,0.08)",
+                          ? "1px solid rgba(139,92,246,0.7)"
+                          : "1px solid rgba(255,255,255,0.08)",
                     }}
                   >
-                    {done ? "✓" : active ? <span className="animate-pulse">●</span> : ""}
+                    {done ? (
+                      "✓"
+                    ) : active ? (
+                      <span className="animate-pulse">●</span>
+                    ) : (
+                      ""
+                    )}
                   </div>
                   <span
                     className={`text-[9px] font-medium ${
-                      done ? "text-emerald-400" : active ? "text-purple-300" : "text-slate-600"
+                      done
+                        ? "text-emerald-400"
+                        : active
+                          ? "text-purple-300"
+                          : "text-slate-600"
                     }`}
                   >
                     {s.label}
@@ -257,7 +280,9 @@ export default function PhotorealisticAvatarView({
                     </span>
                   )}
                   {done && (
-                    <span className="ml-auto text-[8px] text-emerald-500 font-mono">done</span>
+                    <span className="ml-auto text-[8px] text-emerald-500 font-mono">
+                      done
+                    </span>
                   )}
                 </div>
               );
@@ -287,11 +312,14 @@ export default function PhotorealisticAvatarView({
             src={videoUrl.replace(/^http:\/\/localhost:4000/, "")}
             style={{ objectPosition: "center top" }}
             onError={(e) => {
-              console.warn("[PhotorealisticAvatarView] Video notice, maintaining continuous presenter stream");
+              console.warn(
+                "[PhotorealisticAvatarView] Video notice, maintaining continuous presenter stream",
+              );
               const target = e.target as HTMLVideoElement;
               // Fallback to high-reliability continuous stream
               if (target && !target.src.includes("pexels.com")) {
-                target.src = "https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4";
+                target.src =
+                  "https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4";
                 target.load();
                 target.play().catch(() => {});
               }
@@ -319,17 +347,24 @@ export default function PhotorealisticAvatarView({
           STATE 4: ERROR
       ══════════════════════════════════════════════════ */}
       {videoGenerationState === "error" && (
-        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center p-6 text-center"
+        <div
+          className="absolute inset-0 z-30 flex flex-col items-center justify-center p-6 text-center"
           style={{ background: "rgba(7,5,15,0.95)" }}
         >
           <div className="mb-3 text-3xl">⚠️</div>
-          <p className="text-sm font-black text-red-400 mb-1">Gagal Generate Video</p>
+          <p className="text-sm font-black text-red-400 mb-1">
+            Gagal Generate Video
+          </p>
           <p className="text-[9px] text-slate-500 leading-snug max-w-[200px]">
             {videoError ?? "Terjadi error pada pipeline AI. Silakan coba lagi."}
           </p>
           {/* Show static avatar as fallback during error */}
           <div className="absolute inset-0 -z-10 opacity-20">
-            <img src={imageSrc} alt={avatarName} className="w-full h-full object-cover object-top" />
+            <img
+              src={imageSrc}
+              alt={avatarName}
+              className="w-full h-full object-cover object-top"
+            />
           </div>
         </div>
       )}
@@ -348,8 +383,8 @@ export default function PhotorealisticAvatarView({
             videoGenerationState === "ready"
               ? "bg-emerald-400 animate-pulse"
               : videoGenerationState === "generating"
-              ? "bg-yellow-400 animate-ping"
-              : "bg-slate-500"
+                ? "bg-yellow-400 animate-ping"
+                : "bg-slate-500"
           }`}
         />
         <span className="font-semibold text-white">{avatarName}</span>

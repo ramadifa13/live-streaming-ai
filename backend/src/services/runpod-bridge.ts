@@ -10,6 +10,7 @@ export interface RunPod2DStreamParams {
   speed?: number;
   rtmpUrl?: string;
   streamKey?: string;
+  requireWorker?: boolean;
 }
 
 export interface RunPod2DStreamResult {
@@ -19,7 +20,43 @@ export interface RunPod2DStreamResult {
   status: string;
 }
 
+export interface RunPodBroadcastResult {
+  success: boolean;
+  status: string;
+  error?: string;
+}
+
 import { getWorkerUrl } from "./runpod-manager.js";
+
+async function workerRequest(path: string, init?: RequestInit) {
+  const response = await fetch(`${getWorkerUrl()}${path}`, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok)
+    throw new Error(data.error || `Worker request failed: ${response.status}`);
+  return data;
+}
+
+export async function startRunPodBroadcast(params: {
+  rtmpUrl: string;
+  streamKey: string;
+}): Promise<RunPodBroadcastResult> {
+  return workerRequest("/stream/start-broadcast", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export async function stopRunPodBroadcast(): Promise<RunPodBroadcastResult> {
+  return workerRequest("/stream/stop-broadcast", { method: "POST" });
+}
+
+export async function getRunPodBroadcastStatus(): Promise<RunPodBroadcastResult> {
+  return workerRequest("/stream/broadcast-status");
+}
 
 export async function forwardToRunPodGPU(
   params: RunPod2DStreamParams,
@@ -31,7 +68,7 @@ export async function forwardToRunPodGPU(
     // Tingkatkan timeout menjadi 60 detik (60000ms) agar Backend sabar menunggu RunPod
     const timeoutId = setTimeout(() => controller.abort(), 60000);
 
-    let avatarName = "host_3d_dinamis_namira";
+    let avatarName = "namira";
     if (params.avatarImagePath) {
       const parts = params.avatarImagePath.split("/");
       const filename = parts[parts.length - 1];
@@ -46,8 +83,7 @@ export async function forwardToRunPodGPU(
       signal: controller.signal,
       body: JSON.stringify({
         avatar_name: avatarName,
-        avatar_image_path:
-          params.avatarImagePath || "avatars/host_3d_dinamis_namira.png",
+        avatar_image_path: params.avatarImagePath || "avatars/namira.png",
         text: params.text,
         voice: params.voice || "id-ID-GadisNeural",
         speed: params.speed || 1.0,
@@ -102,11 +138,13 @@ export async function forwardToRunPodGPU(
         status: completedData.status || "rendered",
       };
     }
+    throw new Error(`Worker returned status ${res.status}`);
   } catch (err) {
     console.warn(
       "[RunPodBridge] GPU worker notice (using standard stream pipe):",
       err,
     );
+    if (params.requireWorker) throw err;
   }
 
   // Fallback 2D video stream url

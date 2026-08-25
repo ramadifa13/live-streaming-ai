@@ -16,11 +16,8 @@ const chatStreamRequestSchema = z.object({
   avatarName: z.string().optional().default("Namira"),
   tone: z.string().optional().default("Persuasif"),
   voice: z.string().optional().default("id-ID-GadisNeural"),
-  mode: z.enum(["2D", "3D"]).default("3D"),
-  avatarImagePath: z
-    .string()
-    .optional()
-    .default("avatars/host_3d_dinamis_namira.png"),
+  mode: z.literal("3D").default("3D"),
+  avatarImagePath: z.string().optional().default("avatars/namira.png"),
 });
 
 export async function chatStreamRoutes(server: FastifyInstance) {
@@ -72,9 +69,9 @@ export async function chatStreamRoutes(server: FastifyInstance) {
         linkedProduct = activeProduct;
       }
 
-      // Step 4: If Mode 2D, forward to GPU RunPod Worker (LivePortrait / MuseTalk)
+      // Step 4: Render the Namira 3D response on the GPU Worker.
       let videoUrl: string | undefined = undefined;
-      if (mode === "2D") {
+      if (mode === "3D") {
         const activeSession = await prisma.liveSession.findFirst({
           where: { status: "live" },
           select: { id: true },

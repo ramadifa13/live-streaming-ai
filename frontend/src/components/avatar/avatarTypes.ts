@@ -3,7 +3,7 @@
  * Aligned with photorealistic AI Presenter architecture.
  */
 
-export type AvatarMode = "2D" | "3D";
+export type AvatarMode = "3D";
 
 export interface AvatarProfile {
   id: string;

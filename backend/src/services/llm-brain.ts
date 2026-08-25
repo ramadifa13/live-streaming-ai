@@ -25,8 +25,74 @@ export interface SalesBrainOutput {
   action: string;
 }
 
+export interface ProductKnowledge {
+  description: string;
+  benefits: string;
+  usage: string;
+  faq: string;
+  targetAudience: string;
+  copywriting: string;
+}
+
+export async function generateProductKnowledge(input: {
+  name: string;
+  description?: string;
+  category?: string;
+  image?: string;
+}): Promise<ProductKnowledge> {
+  const fallback: ProductKnowledge = {
+    description:
+      input.description ||
+      `${input.name} adalah produk ${input.category || "pilihan"} untuk kebutuhan harian pelanggan.`,
+    benefits: `Membantu pelanggan mendapatkan manfaat dari ${input.name} dengan penggunaan rutin sesuai petunjuk.`,
+    usage:
+      "Gunakan sesuai petunjuk pada kemasan dan lakukan uji kecocokan terlebih dahulu.",
+    faq: "Pastikan membaca komposisi, izin resmi, dan petunjuk keamanan pada kemasan sebelum digunakan.",
+    targetAudience: `Pelanggan yang membutuhkan produk ${input.category || "ini"} untuk penggunaan sehari-hari.`,
+    copywriting: `Kenalan dengan ${input.name}, pilihan praktis untuk menemani kebutuhan harian kamu. Cek detailnya dan dapatkan promo terbaik di live sekarang!`,
+  };
+  const prompt = `Buat knowledge base dan copywriting produk dalam Bahasa Indonesia berdasarkan data berikut.
+Nama: ${input.name}
+Kategori: ${input.category || "General"}
+Deskripsi dari penjual: ${input.description || "Tidak tersedia"}
+Gambar produk: ${input.image || "Tidak tersedia"}
+Jangan mengarang klaim medis, sertifikasi, bahan, angka hasil, atau manfaat yang tidak didukung data. Kembalikan JSON valid dengan keys: description, benefits, usage, faq, targetAudience, copywriting. Copywriting 2-3 kalimat, natural untuk AI host live.`;
+
+  try {
+    const host = process.env.OLLAMA_HOST || "http://localhost:11434";
+    const model = process.env.OLLAMA_MODEL || "qwen2.5:latest";
+    const response = await fetch(`${host}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        stream: false,
+        format: "json",
+      }),
+    });
+    if (response.ok) {
+      const content = (await response.json()).message?.content;
+      if (content) {
+        const parsed = JSON.parse(content) as Partial<ProductKnowledge>;
+        if (
+          Object.values(parsed).every(
+            (value) => typeof value === "string" && value.trim(),
+          )
+        ) {
+          return parsed as ProductKnowledge;
+        }
+      }
+    }
+  } catch {
+    // Use conservative copy when the local model is unavailable.
+  }
+  return fallback;
+}
+
 export async function generateDynamicSalesResponse(
-  input: SalesBrainInput
+  input: SalesBrainInput,
 ): Promise<SalesBrainOutput> {
   const {
     userQuestion,
@@ -155,7 +221,15 @@ Kamu: "Wah tenang aja kak, jangan panik! Kakak wajib cobain ${productName} karen
   }
 
   // 3. Autonomous Neural Generative Engine (Non-stiff, rich spontaneous conversational brain)
-  return generateSpontaneousResponse(userQuestion, avatarName, tone, productName, productPrice, productBenefits, productStock);
+  return generateSpontaneousResponse(
+    userQuestion,
+    avatarName,
+    tone,
+    productName,
+    productPrice,
+    productBenefits,
+    productStock,
+  );
 }
 
 /**
@@ -169,7 +243,7 @@ function generateSpontaneousResponse(
   productName: string,
   productPrice: string,
   productBenefits: string,
-  productStock: number
+  productStock: number,
 ): SalesBrainOutput {
   const query = q.toLowerCase().trim();
 

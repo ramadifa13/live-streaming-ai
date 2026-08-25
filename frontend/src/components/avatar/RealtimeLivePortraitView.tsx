@@ -1,4 +1,3 @@
-/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import React, { useEffect, useRef } from "react";
@@ -27,36 +26,12 @@ export default function RealtimeLivePortraitView({
 }: RealtimeLivePortraitViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  const cleanUgcImages: Record<string, string> = {
-    Namira: "/avatars/host_3d_dinamis_namira.png",
-    Nana: "/avatars/host_2d_statis_nana.png",
-    Ardi: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=720&h=1280&fit=crop&q=80",
-    Maya: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=720&h=1280&fit=crop&q=80",
-  };
+  const resolvedFillerSrc = "/avatars/namira.mp4";
 
-  const defaultLiveImages: Record<string, string> = {
-    Namira: "/avatars/host_3d_dinamis_namira.png",
-    Nana: "/avatars/host_2d_statis_nana.png",
-    Ardi: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=400&fit=crop&q=80",
-    Maya: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=400&fit=crop&q=80",
-  };
-
-  const defaultLiveVideos: Record<string, string> = {
-    Namira: "/avatars/host_3d_dinamis_namira.mp4",
-    Nana: "/avatars/host_2d_statis_nana.mp4",
-  };
-
-  const resolvedFillerSrc =
-    defaultLiveVideos[avatarName] ||
-    (avatarName.toLowerCase().includes("nana")
-      ? "/avatars/host_2d_statis_nana.mp4"
-      : "/avatars/host_3d_dinamis_namira.mp4");
-
-  const resolvedImageSrc = mode === "video_ads"
-    ? (cleanUgcImages[avatarName] || avatarImage || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=720&h=1280&fit=crop&q=80")
-    : ((avatarImage && avatarImage !== "/avatars/ardi-2d.jpg" && avatarImage !== "/avatars/maya-2d.jpg")
-      ? avatarImage
-      : defaultLiveImages[avatarName] || "/avatars/host_3d_dinamis_namira.png");
+  const resolvedImageSrc =
+    mode === "video_ads"
+      ? "/avatars/namira.png"
+      : avatarImage || "/avatars/namira.png";
 
   // When videoUrl changes, safely play the video
   useEffect(() => {
@@ -71,11 +46,13 @@ export default function RealtimeLivePortraitView({
   }, [videoUrl, soundOn]);
 
   return (
-    <div className={`relative w-full h-full overflow-hidden bg-[#07050f] select-none ${className}`}>
+    <div
+      className={`relative w-full h-full overflow-hidden bg-[#07050f] select-none ${className}`}
+    >
       {/* ── Visual Output (Video Lipsync or Continuous Idle Video) ── */}
       {videoUrl ? (
         <video
-          key={videoUrl}           // Force remount when URL changes (new lip-sync video)
+          key={videoUrl} // Force remount when URL changes (new lip-sync video)
           ref={videoRef}
           src={videoUrl}
           autoPlay
@@ -116,4 +93,3 @@ export default function RealtimeLivePortraitView({
     </div>
   );
 }
-

@@ -5,13 +5,9 @@ import {
   stopPod,
 } from "./runpod-manager.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
+import { liveHostOrchestrator } from "./live-host-orchestrator.js";
 
-export type SessionState =
-  | "starting"
-  | "pending"
-  | "live"
-  | "ended"
-  | "error";
+export type SessionState = "starting" | "pending" | "live" | "ended" | "error";
 
 export interface ManagedSession {
   sessionId: string;
@@ -20,6 +16,8 @@ export interface ManagedSession {
   durationHours: number;
   startedAt: number;
   deadlineAt: number;
+  avatarName: string;
+  tone: string;
   watchdogTimer?: NodeJS.Timeout;
   livePollTimer?: NodeJS.Timeout;
   onStateChange?: (state: SessionState, sessionId: string) => void;
@@ -73,6 +71,8 @@ class LiveSessionManager {
       durationHours: params.durationHours,
       startedAt: Date.now(),
       deadlineAt: Date.now() + params.durationHours * 3600 * 1000,
+      avatarName: params.avatarName || "Namira",
+      tone: params.tone || "Persuasif",
       onStateChange: undefined,
     };
 
@@ -122,6 +122,7 @@ class LiveSessionManager {
 
     const session = this.activeSession;
     this.clearTimers();
+    liveHostOrchestrator.stop();
 
     await this.transitionState("ended");
 
@@ -129,7 +130,10 @@ class LiveSessionManager {
     livePlatformConnector.stopSession();
 
     await prisma.liveSession.updateMany({
-      where: { id: session.sessionId, status: { in: ["live", "pending", "starting"] } },
+      where: {
+        id: session.sessionId,
+        status: { in: ["live", "pending", "starting"] },
+      },
       data: { status: "ended" },
     });
 
@@ -149,7 +153,10 @@ class LiveSessionManager {
     const finalComments = Math.max(summary?.comments || 0, metrics.comments);
     const finalClicks = Math.max(summary?.clicks || 0, metrics.clicks);
     const finalSales = Math.max(summary?.sales || 0, metrics.sales);
-    const finalProductSold = Math.max(summary?.productSold || 0, metrics.orders);
+    const finalProductSold = Math.max(
+      summary?.productSold || 0,
+      metrics.orders,
+    );
 
     const durationHours = Math.max(0.1, durationSeconds / 3600);
     const estimatedGpuCost = Math.round(durationHours * 12500);
@@ -199,9 +206,18 @@ class LiveSessionManager {
     return this.activeSession?.state === "pending";
   }
 
+  public async markBroadcastLive(): Promise<void> {
+    if (this.activeSession?.state === "pending") {
+      await this.transitionState("live");
+    }
+  }
+
   public getRemainingDurationSeconds(): number {
     if (!this.activeSession) return 0;
-    return Math.max(0, Math.floor((this.activeSession.deadlineAt - Date.now()) / 1000));
+    return Math.max(
+      0,
+      Math.floor((this.activeSession.deadlineAt - Date.now()) / 1000),
+    );
   }
 
   private async transitionState(newState: SessionState): Promise<void> {
@@ -220,11 +236,17 @@ class LiveSessionManager {
 
     try {
       await prisma.liveSession.updateMany({
-        where: { id: this.activeSession.sessionId, status: { in: ["starting", "pending", "live"] } },
+        where: {
+          id: this.activeSession.sessionId,
+          status: { in: ["starting", "pending", "live"] },
+        },
         data: { status: newState },
       });
     } catch (err) {
-      console.error(`[LiveSessionManager] Failed to update session state to ${newState}:`, err);
+      console.error(
+        `[LiveSessionManager] Failed to update session state to ${newState}:`,
+        err,
+      );
     }
 
     this.activeSession.onStateChange?.(newState, this.activeSession.sessionId);
@@ -282,7 +304,10 @@ class LiveSessionManager {
     this.clearLivePoll();
   }
 
-  private startPlatformLivePoll(liveVideoId?: string, accessToken?: string): void {
+  private startPlatformLivePoll(
+    liveVideoId?: string,
+    accessToken?: string,
+  ): void {
     this.clearLivePoll();
     if (!this.activeSession || !liveVideoId || !accessToken) return;
 
@@ -318,10 +343,7 @@ class LiveSessionManager {
           return;
         }
       } catch (err) {
-        console.warn(
-          `[LiveSessionManager] Platform live poll failed:`,
-          err,
-        );
+        console.warn(`[LiveSessionManager] Platform live poll failed:`, err);
       }
 
       if (this.activeSession?.state === "pending") {
@@ -355,7 +377,9 @@ class LiveSessionManager {
     }
 
     if (lower.includes("youtube")) {
-      const url = new URL("https://www.googleapis.com/youtube/v3/liveBroadcasts");
+      const url = new URL(
+        "https://www.googleapis.com/youtube/v3/liveBroadcasts",
+      );
       url.searchParams.set("part", "status");
       url.searchParams.set("broadcastStatus", "active");
       url.searchParams.set("mine", "true");
@@ -388,10 +412,14 @@ class LiveSessionManager {
 
     const sessionId = this.activeSession.sessionId;
     this.clearTimers();
+    liveHostOrchestrator.stop();
 
     try {
       await prisma.liveSession.updateMany({
-        where: { id: sessionId, status: { in: ["starting", "pending", "live"] } },
+        where: {
+          id: sessionId,
+          status: { in: ["starting", "pending", "live"] },
+        },
         data: { status: "ended" },
       });
     } catch {}

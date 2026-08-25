@@ -10,14 +10,14 @@ interface Avatar3DCanvasProps {
   avatarImage?: string;
   avatarModelUrl?: string;
   avatarRole?: string;
-  mode?: "2D" | "3D";
+  mode?: "3D";
   tone?: string;
   className?: string;
 }
 
 /**
  * Avatar3DCanvas / Photorealistic Presenter Component
- * Renders high-quality AI Live Hosts (Namira, Nana) with real-time speech visualizer.
+ * Renders the Namira 3D AI Host with real-time speech visualizer.
  */
 export default function Avatar3DCanvas({
   isSpeaking,

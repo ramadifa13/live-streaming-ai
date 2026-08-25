@@ -21,6 +21,7 @@ model Product {
   usage          String?
   faq            String?
   targetAudience String?
+  copywriting    String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }

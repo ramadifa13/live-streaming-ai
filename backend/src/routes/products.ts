@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import prisma from "../lib/prisma.js";
+import { generateProductKnowledge } from "../services/llm-brain.js";
 
 const productSchema = z.object({
   name: z.string().min(1, "Nama produk wajib diisi"),
@@ -15,6 +16,7 @@ const productSchema = z.object({
   usage: z.string().optional(),
   faq: z.string().optional(),
   targetAudience: z.string().optional(),
+  copywriting: z.string().optional(),
 });
 
 const bulkProductSchema = z.object({
@@ -68,7 +70,10 @@ export async function productsRoutes(server: FastifyInstance) {
     } catch (error: any) {
       server.log.error(error);
       reply.code(500);
-      return { success: false, error: error.message || "Failed to fetch product" };
+      return {
+        success: false,
+        error: error.message || "Failed to fetch product",
+      };
     }
   });
 
@@ -94,23 +99,33 @@ export async function productsRoutes(server: FastifyInstance) {
       usage,
       faq,
       targetAudience,
+      copywriting,
     } = parsed.data;
 
     try {
+      const knowledge = await generateProductKnowledge({
+        name,
+        description,
+        category,
+        image,
+      });
       const created = await prisma.product.create({
         data: {
           name,
-          description: description || "",
+          description: knowledge.description,
           price,
           stock,
           sku: sku || `SKU-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           category: category || "Skincare",
-          image: image || "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
+          image:
+            image ||
+            "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
           link: link || "",
-          benefits: benefits || "",
-          usage: usage || "",
-          faq: faq || "",
-          targetAudience: targetAudience || "",
+          benefits: benefits || knowledge.benefits,
+          usage: usage || knowledge.usage,
+          faq: faq || knowledge.faq,
+          targetAudience: targetAudience || knowledge.targetAudience,
+          copywriting: copywriting || knowledge.copywriting,
         },
       });
 
@@ -121,7 +136,10 @@ export async function productsRoutes(server: FastifyInstance) {
     } catch (error: any) {
       server.log.error(error);
       reply.code(500);
-      return { success: false, error: error.message || "Failed to create product" };
+      return {
+        success: false,
+        error: error.message || "Failed to create product",
+      };
     }
   });
 
@@ -143,17 +161,21 @@ export async function productsRoutes(server: FastifyInstance) {
               description: p.description || "",
               price: p.price,
               stock: p.stock ?? 50,
-              sku: p.sku || `SKU-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`,
+              sku:
+                p.sku ||
+                `SKU-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`,
               category: p.category || "General",
-              image: p.image || "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
+              image:
+                p.image ||
+                "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
               link: p.link || "",
               benefits: p.benefits || "",
               usage: p.usage || "",
               faq: p.faq || "",
               targetAudience: p.targetAudience || "",
             },
-          })
-        )
+          }),
+        ),
       );
 
       return {
@@ -164,7 +186,10 @@ export async function productsRoutes(server: FastifyInstance) {
     } catch (error: any) {
       server.log.error(error);
       reply.code(500);
-      return { success: false, error: error.message || "Failed to bulk import products" };
+      return {
+        success: false,
+        error: error.message || "Failed to bulk import products",
+      };
     }
   });
 
@@ -191,7 +216,10 @@ export async function productsRoutes(server: FastifyInstance) {
     } catch (error: any) {
       server.log.error(error);
       reply.code(500);
-      return { success: false, error: error.message || "Failed to update product" };
+      return {
+        success: false,
+        error: error.message || "Failed to update product",
+      };
     }
   });
 
@@ -217,8 +245,10 @@ export async function productsRoutes(server: FastifyInstance) {
     } catch (error: any) {
       server.log.error(error);
       reply.code(500);
-      return { success: false, error: error.message || "Failed to delete product" };
+      return {
+        success: false,
+        error: error.message || "Failed to delete product",
+      };
     }
   });
 }
-

@@ -49,12 +49,14 @@ class AIBroadcaster:
     def start_loop(self):
         """Loop Siaran 24 Jam"""
         print(f"\n[BROADCASTER] Menyiarkan secara Live (Tekan Ctrl+C untuk berhenti)...\n")
+        last_spoken_video = None
         
         while True:
             # Cek folder output apakah ada video jawaban baru dari AI Worker
             search_pattern = os.path.join(self.output_folder, "**", "*.mp4")
             new_videos = sorted(
-                glob.glob(search_pattern, recursive=True),
+                [path for path in glob.glob(search_pattern, recursive=True)
+                 if path != last_spoken_video],
                 key=os.path.getctime,
             )
             
@@ -62,13 +64,13 @@ class AIBroadcaster:
                 video_to_play = new_videos[0]
                 print(f"[>] MEMUTAR RESPON AI: {os.path.basename(video_to_play)}")
                 self._stream_file(video_to_play)
-                
-                # Hapus video setelah tayang agar tidak diulang
-                os.remove(video_to_play)
+                if last_spoken_video and os.path.exists(last_spoken_video):
+                    os.remove(last_spoken_video)
+                last_spoken_video = video_to_play
                 
             else:
-                # Jika tidak ada yang nanya, putar video diam (Idle)
-                self._stream_file(self.idle_video)
+                # Pertahankan host berbicara saat worker merender ucapan berikutnya.
+                self._stream_file(last_spoken_video or self.idle_video)
 
 # --- KONFIGURASI DAN EKSEKUSI ---
 if __name__ == "__main__":
@@ -80,7 +82,10 @@ if __name__ == "__main__":
     RTMP_URL = f"{RTMP_BASE_URL}/{STREAM_KEY}"
     
     # 2. Tentukan video Idle (Sesuai dengan host yang dipilih pelanggan)
-    IDLE_VIDEO = "/workspace/ai_live_worker/assets/2d/host_2d_statis.mp4" 
+    IDLE_VIDEO = os.environ.get(
+        "IDLE_VIDEO",
+        "/workspace/ai_live_worker/assets/3d/namira.mp4",
+    )
     
     OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "/workspace/ai_live_worker/output")
     

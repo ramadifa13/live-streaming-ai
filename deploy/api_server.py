@@ -1,6 +1,7 @@
 import os
 import asyncio
 import uuid
+import subprocess
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -30,11 +31,12 @@ async def root():
     return {"status": "ok", "message": "AI Live Worker API is running"}
 
 jobs = {}
+broadcaster_process = None
 
 async def process_video_task(req: GenerateVideoRequest, task_id: str):
     try:
-        host_type = "3d" if "3d" in req.avatar_name.lower() or "3d" in str(req.avatar_image_path).lower() else "2d"
-        host_name = req.avatar_name.lower()
+        host_type = "3d"
+        host_name = "namira"
         
         final_video_path = await worker.run_pipeline(
             host_type=host_type,
@@ -77,6 +79,48 @@ async def generate_neural_video(req: GenerateVideoRequest):
     print(f"[API ACCEPTED] Memproses {task_id} di background")
     print(f"=======================================================\n")
     return {"success": True, "job_id": task_id, "status": "processing"}
+
+class BroadcastRequest(BaseModel):
+    rtmp_url: str
+    stream_key: str
+    idle_video: str = "/workspace/ai_live_worker/assets/3d/namira.mp4"
+
+@app.post("/stream/start-broadcast")
+async def start_broadcast(req: BroadcastRequest):
+    global broadcaster_process
+    if broadcaster_process and broadcaster_process.poll() is None:
+        return {"success": True, "status": "streaming", "message": "Broadcaster already running"}
+
+    env = os.environ.copy()
+    env["RTMP_URL"] = req.rtmp_url
+    env["STREAM_KEY"] = req.stream_key
+    env["IDLE_VIDEO"] = req.idle_video
+    env["OUTPUT_FOLDER"] = output_dir
+    broadcaster_process = subprocess.Popen(
+        ["python", os.path.join(os.path.dirname(__file__), "broadcaster.py")],
+        cwd=os.path.dirname(__file__),
+        env=env,
+        stdout=open(os.path.join(output_dir, "broadcaster.log"), "a"),
+        stderr=subprocess.STDOUT,
+    )
+    return {"success": True, "status": "starting", "pid": broadcaster_process.pid}
+
+@app.post("/stream/stop-broadcast")
+async def stop_broadcast():
+    global broadcaster_process
+    if broadcaster_process and broadcaster_process.poll() is None:
+        broadcaster_process.terminate()
+        try:
+            broadcaster_process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            broadcaster_process.kill()
+    broadcaster_process = None
+    return {"success": True, "status": "stopped"}
+
+@app.get("/stream/broadcast-status")
+async def broadcast_status():
+    running = broadcaster_process is not None and broadcaster_process.poll() is None
+    return {"success": True, "status": "streaming" if running else "stopped"}
 
 @app.get("/stream/status/{job_id}")
 async def get_job_status(job_id: str):

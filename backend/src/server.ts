@@ -18,6 +18,7 @@ import { ttsRoutes } from "./routes/tts.js";
 import { avatarVideoRoutes } from "./routes/avatar-video.js";
 import { chatStreamRoutes } from "./routes/chat-stream.js";
 import { oauthRoutes } from "./routes/oauth.js";
+import { productsRoutes } from "./routes/products.js";
 
 dotenv.config();
 
@@ -58,7 +59,6 @@ server.get("/api/workflow", async () => ({
   data: liveWorkflowSteps,
 }));
 
-
 await avatarsRoutes(server);
 await liveSessionRoutes(server);
 await providersRoutes(server);
@@ -67,10 +67,9 @@ await ttsRoutes(server);
 await avatarVideoRoutes(server);
 await chatStreamRoutes(server);
 await oauthRoutes(server);
+await productsRoutes(server);
 
 async function seedDatabase() {
-
-
   const avatarCount = await prisma.avatar.count();
   if (avatarCount === 0) {
     await prisma.avatar.createMany({
@@ -112,11 +111,14 @@ try {
     await seedDatabase();
     console.log("Database seeded successfully.");
   } catch (dbErr) {
-    console.warn("[Database] Database notice (will use fallback store if offline):", dbErr);
+    console.warn(
+      "[Database] Database notice (will use fallback store if offline):",
+      dbErr,
+    );
   }
   await server.listen({ port, host });
   console.log(`Backend ready at http://${host}:${port}`);
-  
+
   // Start GPU idle monitor
   import("./services/runpod-manager.js").then((m) => m.startIdleMonitor());
 } catch (error) {

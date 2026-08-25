@@ -12,6 +12,7 @@ export interface Product {
   usage?: string;
   faq?: string;
   targetAudience?: string;
+  copywriting?: string;
 }
 
 export interface BackendProduct {
@@ -28,6 +29,7 @@ export interface BackendProduct {
   usage?: string;
   faq?: string;
   targetAudience?: string;
+  copywriting?: string;
 }
 
 export interface CsvRawItem {

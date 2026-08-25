@@ -2,24 +2,26 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import prisma from "../lib/prisma.js";
 import {
-  startInstagramBroadcast,
   stopBroadcast,
   pauseBroadcast,
   resumeBroadcast,
   getStreamStatus,
 } from "../services/rtmp-streamer.js";
-import { livePlatformConnector } from "../services/live-platform-connector.js";
 import {
-  setLiveSessionActive,
-  stopPod,
-} from "../services/runpod-manager.js";
+  getRunPodBroadcastStatus,
+  startRunPodBroadcast,
+  stopRunPodBroadcast,
+} from "../services/runpod-bridge.js";
+import { livePlatformConnector } from "../services/live-platform-connector.js";
+import { setLiveSessionActive, stopPod } from "../services/runpod-manager.js";
 import { liveSessionManager } from "../services/live-session-manager.js";
+import { liveHostOrchestrator } from "../services/live-host-orchestrator.js";
 
 const liveSessionSchema = z.object({
   productId: z.string().min(1),
   avatarId: z.string().min(1),
   platform: z.string().min(1),
-  durationHours: z.number().min(1).max(24),
+  durationHours: z.literal(1),
   autoReply: z.boolean().optional(),
   autoPin: z.boolean().optional(),
   autoPromotion: z.boolean().optional(),
@@ -83,7 +85,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       data: session ?? {
         status: effectiveStatus,
         platform: "TikTok LIVE",
-        durationHours: 8,
+        durationHours: 1,
         currentProduct: "Produk",
         estimatedCost: 90000,
         gpuMode: "on-demand",
@@ -100,13 +102,24 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
-    const avatar = await prisma.avatar.findUnique({
+    const avatarById = await prisma.avatar.findUnique({
       where: { id: parsed.data.avatarId },
     });
+    const avatar =
+      avatarById ||
+      (parsed.data.avatarName
+        ? await prisma.avatar.findFirst({
+            where: { name: parsed.data.avatarName },
+          })
+        : null);
 
     if (!avatar) {
       reply.code(404);
       return { error: "avatar not found" };
+    }
+    if (avatar.name.toLowerCase() !== "namira") {
+      reply.code(400);
+      return { error: "Demo hanya mendukung AI Host Namira" };
     }
 
     try {
@@ -155,6 +168,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
+    liveHostOrchestrator.stop();
+    await stopRunPodBroadcast().catch(() => {});
     stopBroadcast();
     const result = await liveSessionManager.stopSession({
       durationSeconds: parsed.data.durationSeconds,
@@ -192,33 +207,55 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       stockCount,
       ctaLabel,
     } = parsed.data;
-    const result = await startInstagramBroadcast(
-      rtmpUrl,
-      streamKey,
-      avatarImage,
-      avatarVideo,
-      productName,
-      productPrice,
-      parsed.data.productImageUrl,
-      platform,
-      stockCount,
-      ctaLabel,
-    );
+    const managedSession = liveSessionManager.getActiveSession();
+    const liveSession = sessionId
+      ? await prisma.liveSession.findUnique({ where: { id: sessionId } })
+      : null;
+
+    if (sessionId && managedSession && liveSession) {
+      try {
+        await liveHostOrchestrator.start({
+          productId: liveSession.productId,
+          avatarName: managedSession.avatarName,
+          tone: managedSession.tone,
+          rtmpUrl,
+          streamKey,
+        });
+      } catch (error) {
+        liveHostOrchestrator.stop();
+        await liveSessionManager.stopSession().catch(() => {});
+        reply.code(502);
+        return {
+          success: false,
+          error: `AI Worker pre-buffer gagal: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    }
+
+    const result = await startRunPodBroadcast({ rtmpUrl, streamKey });
+
+    if (result.success && sessionId) {
+      await liveSessionManager.markBroadcastLive();
+    }
 
     if (!result.success) {
       reply.code(502);
       await liveSessionManager.stopSession().catch(() => {});
       if (sessionId) {
-        await prisma.liveSession.updateMany({
-          where: { id: sessionId, status: { in: ["starting", "pending"] } },
-          data: { status: "ended" },
-        }).catch(() => {});
+        await prisma.liveSession
+          .updateMany({
+            where: { id: sessionId, status: { in: ["starting", "pending"] } },
+            data: { status: "ended" },
+          })
+          .catch(() => {});
       }
     } else if (sessionId) {
-      await prisma.liveSession.updateMany({
-        where: { id: sessionId, status: { in: ["starting", "pending"] } },
-        data: { status: "pending" },
-      }).catch(() => {});
+      await prisma.liveSession
+        .updateMany({
+          where: { id: sessionId, status: { in: ["starting", "pending"] } },
+          data: { status: "pending" },
+        })
+        .catch(() => {});
     }
 
     return {
@@ -229,6 +266,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
 
   // POST /api/live-stream/stop-broadcast
   server.post("/api/live-stream/stop-broadcast", async () => {
+    liveHostOrchestrator.stop();
+    await stopRunPodBroadcast().catch(() => {});
     const res = stopBroadcast();
     return {
       success: true,
@@ -337,6 +376,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     });
 
     const streamStatus = getStreamStatus();
+    const workerBroadcast = await getRunPodBroadcastStatus().catch(() => null);
     const metrics = livePlatformConnector.getMetricsSnapshot();
     const managedSession = liveSessionManager.getActiveSession();
 
@@ -345,8 +385,12 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     return {
       success: true,
       data: {
-        isStreaming: streamStatus.status === "streaming",
-        handshakeVerified: streamStatus.handshakeVerified,
+        isStreaming:
+          workerBroadcast?.status === "streaming" ||
+          streamStatus.status === "streaming",
+        handshakeVerified:
+          workerBroadcast?.status === "streaming" ||
+          streamStatus.handshakeVerified,
         sessionStatus,
         platform: session?.platform || "TikTok LIVE",
         product: null,
