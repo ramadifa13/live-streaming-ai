@@ -47,6 +47,7 @@ check_disk_space "/workspace" "volume workspace"
 echo "0.1. Membersihkan cache pip..."
 pip cache purge 2>/dev/null || true
 rm -rf /usr/local/lib/python3.10/dist-packages/~* 2>/dev/null || true
+rm -rf ~/.cache/pip 2>/dev/null || true
 
 echo "1. Mempersiapkan Direktori Kerja..."
 cp "$SCRIPT_DIR"/*.py "$WORKER_DIR"/ 2>/dev/null || true
@@ -96,13 +97,20 @@ TORCH_INDEX_URL="https://download.pytorch.org/whl/${TORCH_CUDA_TAG}"
 MMCV_WHEEL_INDEX="https://download.openmmlab.com/mmcv/dist/${TORCH_CUDA_TAG}/torch2.1.0/index.html"
 
 ensure_torch_21() {
-	pip install --no-cache-dir --force-reinstall \
+	local current
+	current="$(python -c 'import torch; print(torch.__version__)' 2>/dev/null || echo "none")"
+	if [[ "$current" == 2.1.* ]]; then
+		echo "  -> PyTorch $current sudah terinstall, skip reinstall."
+		return
+	fi
+	echo "  -> Install PyTorch 2.1.0+${TORCH_CUDA_TAG} (current: ${current})..."
+	pip install --no-cache-dir --no-deps \
 		"torch==2.1.0+${TORCH_CUDA_TAG}" \
 		"torchvision==0.16.0+${TORCH_CUDA_TAG}" \
 		"torchaudio==2.1.0+${TORCH_CUDA_TAG}" \
 		--index-url "$TORCH_INDEX_URL"
 	# torch cu121 menarik numpy 2.x — MuseTalk butuh numpy 1.26.4
-	pip install --no-cache-dir --force-reinstall "numpy==1.26.4"
+	pip install --no-cache-dir --no-deps "numpy==1.26.4"
 }
 
 pin_ml_deps() {
