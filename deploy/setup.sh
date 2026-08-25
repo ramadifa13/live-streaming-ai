@@ -317,14 +317,13 @@ echo "4.2. Menginstal OpenMIM (MMPose, MMCV, MMDetection)..."
 pip install --no-cache-dir -U openmim
 pip install --no-cache-dir mmengine
 
-# Uninstall mmcv lama (biasanya wheel cached tidak match PyTorch 2.1)
+# Uninstall mmcv lama — wheel cache sering mismatch dengan PyTorch 2.1
 pip uninstall -y mmcv mmcv-full 2>/dev/null || true
 
-# Force recompile mmcv dari source terhadap PyTorch 2.1 yang aktif
-if ! pip install --no-cache-dir --no-build-isolation "mmcv==2.1.0" -f "$MMCV_WHEEL_INDEX"; then
-	echo "[PERINGATAN] Wheel mmcv prebuilt gagal, mencoba mim install..."
-	MIM_BUILD_TORCH_VERSION=2.1.0 mim install "mmcv==2.1.0" || pip install --no-cache-dir --no-build-isolation "mmcv==2.1.0"
-fi
+# Force mim build dari source (abaikan wheel prebuilt yang salah)
+export MIM_BUILD_TORCH_VERSION=2.1.0
+echo "  -> Build mmcv 2.1.0 dari source untuk PyTorch 2.1..."
+mim install "mmcv==2.1.0"
 
 mim install "mmdet>=3.1.0"
 mim install "mmpose>=1.1.0"
