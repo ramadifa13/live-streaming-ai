@@ -58,17 +58,77 @@ fi
 
 cd "$WORKER_DIR"
 
-echo "2. Menyetel stack PyTorch 2.1 (wajib untuk MuseTalk/MMCV)..."
+detect_cuda_tag() {
+	if [ -n "${TORCH_CUDA_TAG:-}" ]; then
+		echo "$TORCH_CUDA_TAG"
+		return
+	fi
+	local from_torch
+	from_torch="$(python - <<'PY' 2>/dev/null || true
+try:
+    import torch
+    v = torch.__version__
+    if "cu121" in v:
+        print("cu121")
+    elif "cu118" in v:
+        print("cu118")
+except Exception:
+    pass
+PY
+)"
+	if [ -n "$from_torch" ]; then
+		echo "$from_torch"
+		return
+	fi
+	if command -v nvidia-smi &>/dev/null; then
+		local cuda_major
+		cuda_major="$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9]*\)\..*/\1/p' | head -1)"
+		if [ "${cuda_major:-0}" -ge 12 ] 2>/dev/null; then
+			echo "cu121"
+			return
+		fi
+	fi
+	echo "cu118"
+}
+
+TORCH_CUDA_TAG="$(detect_cuda_tag)"
+TORCH_INDEX_URL="https://download.pytorch.org/whl/${TORCH_CUDA_TAG}"
+MMCV_WHEEL_INDEX="https://download.openmmlab.com/mmcv/dist/${TORCH_CUDA_TAG}/torch2.1.0/index.html"
+
+ensure_torch_21() {
+	pip install --no-cache-dir --force-reinstall \
+		"torch==2.1.0+${TORCH_CUDA_TAG}" \
+		"torchvision==0.16.0+${TORCH_CUDA_TAG}" \
+		"torchaudio==2.1.0+${TORCH_CUDA_TAG}" \
+		--index-url "$TORCH_INDEX_URL"
+}
+
+echo "2. Menyetel stack PyTorch 2.1 (CUDA tag: ${TORCH_CUDA_TAG})..."
 python - <<'PY' || true
 import torch
 v = torch.__version__
 if not v.startswith("2.1."):
     print(f"[PERINGATAN] Template RunPod memakai PyTorch {v}, bukan 2.1.x.")
-    print("             Setup akan memasang ulang torch 2.1.0+cu118.")
+    print("             Setup akan memasang ulang torch 2.1.x.")
 PY
-pip install --no-cache-dir --force-reinstall \
-	torch==2.1.0+cu118 torchvision==0.16.0+cu118 torchaudio==2.1.0+cu118 \
-	--index-url https://download.pytorch.org/whl/cu118
+ensure_torch_21
+python - <<'PY'
+import re
+import torch
+import torchvision
+
+def cuda_tag(version: str):
+    match = re.search(r"cu(\d+)", version)
+    return match.group(1) if match else None
+
+torch_tag = cuda_tag(torch.__version__) or (torch.version.cuda or "0").split(".")[0]
+tv_tag = cuda_tag(torchvision.__version__)
+if tv_tag and torch_tag and tv_tag != torch_tag:
+    raise SystemExit(
+        f"CUDA mismatch: torch {torch.__version__} vs torchvision {torchvision.__version__}"
+    )
+print(f"torch {torch.__version__} + torchvision {torchvision.__version__} OK")
+PY
 
 echo "2.1. Menginstal Dependensi Python Utama..."
 pip install --no-cache-dir --upgrade pip
@@ -87,12 +147,6 @@ if ! command -v ffmpeg &> /dev/null; then
 else
 	echo "FFmpeg sudah terinstal: $(ffmpeg -version | head -n1)"
 fi
-
-ensure_torch_21() {
-	pip install --no-cache-dir --force-reinstall \
-		torch==2.1.0+cu118 torchvision==0.16.0+cu118 torchaudio==2.1.0+cu118 \
-		--index-url https://download.pytorch.org/whl/cu118
-}
 
 echo "3. Mengunduh & Menyiapkan Repositori MuseTalk..."
 if [ ! -d "MuseTalk" ]; then
@@ -127,7 +181,6 @@ echo "4.2. Menginstal OpenMIM (MMPose, MMCV, MMDetection)..."
 pip install --no-cache-dir -U openmim
 mim install mmengine
 
-MMCV_WHEEL_INDEX="https://download.openmmlab.com/mmcv/dist/cu118/torch2.1.0/index.html"
 if ! pip install --no-cache-dir "mmcv==2.1.0" -f "$MMCV_WHEEL_INDEX"; then
 	echo "[PERINGATAN] Wheel mmcv prebuilt gagal, mencoba mim install..."
 	mim install "mmcv==2.1.0" || pip install --no-cache-dir --no-build-isolation "mmcv==2.1.0" -f "$MMCV_WHEEL_INDEX"
@@ -166,6 +219,23 @@ python -c "import os; from huggingface_hub import snapshot_download; snapshot_do
 
 echo "6. Memverifikasi instalasi..."
 python -c "import torch; assert torch.cuda.is_available(), 'CUDA tidak tersedia'; print('PyTorch', torch.__version__, 'CUDA OK')"
+python - <<'PY'
+import re
+import torch
+import torchvision
+
+def cuda_tag(version: str):
+    match = re.search(r"cu(\d+)", version)
+    return match.group(1) if match else None
+
+torch_tag = cuda_tag(torch.__version__) or (torch.version.cuda or "0").split(".")[0]
+tv_tag = cuda_tag(torchvision.__version__)
+if tv_tag and torch_tag and tv_tag != torch_tag:
+    raise SystemExit(
+        f"CUDA mismatch: torch {torch.__version__} vs torchvision {torchvision.__version__}"
+    )
+print("torch/torchvision CUDA tags match")
+PY
 python -c "import mmcv, mmpose; print('MMCV/MMPose OK')"
 
 date -Iseconds > "$WORKER_DIR/.setup_complete"
