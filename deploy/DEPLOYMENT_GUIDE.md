@@ -20,22 +20,26 @@ bash setup.sh
 
 ---
 
-### 2. Jalankan Server API
+### 2. Jalankan Worker AI
 Setelah skrip setup selesai (muncul tulisan `SETUP SELESAI 100%!`), jalankan:
 ```bash
-cd /workspace/ai_live_worker
-python api_server.py
+bash start.sh
 ```
-*Server FastAPI akan menyala dan siap di port 8000.*
+*Server FastAPI akan menyala di port 8000 dan siap menerima request dari backend.*
 
 ---
 
 ### 3. Sambungkan ke Backend Komputer Anda
 1. Buka file `backend/.env` di komputer Anda.
-2. Perbarui `RUNPOD_POD_ID` dengan ID Pod RunPod baru Anda:
-   ```env
-   RUNPOD_POD_ID=id_pod_baru_anda
-   ```
+2. Isi konfigurasi RunPod:
+    ```env
+    RUNPOD_API_KEY=api_key_runpod_anda
+    RUNPOD_POD_ID=id_pod_baru_anda
+    ```
+3. Opsional: Isi `RUNPOD_WORKER_URL` jika menggunakan domain kustom, atau biarkan kosong agar backend otomatis menggunakan URL proxy RunPod:
+    ```
+    https://<RUNPOD_POD_ID>-8000.proxy.runpod.net
+    ```
 *(Simpan file `.env`, backend akan otomatis terhubung kembali!)*
 
 ---
@@ -45,6 +49,77 @@ python api_server.py
 Pastikan file video avatar dasar ditaruh di folder yang sesuai di server RunPod:
 - **Host 2D:** `/workspace/ai_live_worker/assets/2d/host_2d_statis_nana.mp4`
 - **Host 3D:** `/workspace/ai_live_worker/assets/3d/host_3d_dinamis_namira.mp4`
+
+---
+
+## 🔄 Lifecycle Otomatis (Backend)
+
+Backend sekarang mengontrol lifecycle Pod RunPod secara penuh:
+
+| Fitur | Deskripsi |
+|-------|-----------|
+| **Auto-Start** | Pod otomatis dijalankan saat ada job streaming atau preview |
+| **Auto-Stop** | Pod otomatis dimatikan saat sesi live berakhir |
+| **Idle Monitor** | Pod mati otomatis jika tidak ada aktivitas GPU selama `GPU_IDLE_TIMEOUT_MINUTES` (default: 30 menit) |
+| **GPU Lease** | Setiap job (preview, komentar video) memperoleh lease GPU temporary |
+
+Backend API endpoints untuk kontrol manual:
+- `GET /api/runpod/status` — Cek status pod
+- `POST /api/runpod/start` — Jalankan pod
+- `POST /api/runpod/stop` — Matikan pod
+
+---
+
+## 📡 API Worker Endpoints
+
+Setelah worker berjalan di RunPod, endpoint yang tersedia:
+
+| Endpoint | Method | Deskripsi |
+|----------|--------|-----------|
+| `/` | GET | Health check |
+| `/stream/live-utterance` | POST | Generate video avatar dari teks (async job) |
+| `/stream/generate-neural-video` | POST | Alias untuk `/stream/live-utterance` |
+| `/stream/status/{job_id}` | GET | Cek status job video |
+
+Contoh request generate video:
+```bash
+curl -X POST "https://<POD_ID>-8000.proxy.runpod.net/stream/live-utterance" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "avatar_name": "host_3d_dinamis_namira",
+    "text": "Halo selamat malam!",
+    "voice": "id-ID-GadisNeural",
+    "speed": 1.0
+  }'
+```
+
+Response akan berisi `job_id`. Gunakan `/stream/status/{job_id}` untuk polling hingga status `"done"`.
+
+---
+
+## 🛠️ Konfigurasi Lanjutan
+
+### Menjalankan dengan PM2
+```bash
+pm2 start deploy/ecosystem.config.js
+```
+
+### Menjalankan Broadcaster RTMP (Opsional)
+Jika ingin worker langsung broadcast ke RTMP tanpa backend Node:
+```bash
+START_BROADCASTER=true RTMP_URL=rtmp://live.example.com/live STREAM_KEY=your_key bash start.sh
+```
+
+### Environment Variables di RunPod
+| Variable | Wajib | Deskripsi |
+|----------|-------|-----------|
+| `RUNPOD_API_KEY` | Ya | API key untuk kontrol lifecycle pod |
+| `RUNPOD_POD_ID` | Ya | ID Pod RunPod Anda |
+| `RUNPOD_WORKER_URL` | Tidak | URL worker kustom (opsional) |
+| `GPU_IDLE_TIMEOUT_MINUTES` | Tidak | Timeout idle sebelum auto-shutdown (default: 30) |
+| `START_BROADCASTER` | Tidak | Set `true` untuk jalankan broadcaster Python |
+| `RTMP_URL` | Ketika `START_BROADCASTER=true` | Base URL RTMP destination |
+| `STREAM_KEY` | Ketika `START_BROADCASTER=true` | Stream key untuk RTMP |
 
 ---
 

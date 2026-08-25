@@ -51,10 +51,11 @@ npm run dev
 2. Jalankan perintah instalasi di terminal RunPod:
    ```bash
    bash setup.sh
-   python api_server.py
+   bash start.sh
    ```
 3. Salin Pod ID Anda dan masukkan ke file `backend/.env`:
    ```env
+   RUNPOD_API_KEY=api_key_runpod_anda
    RUNPOD_POD_ID=your_pod_id_here
    ```
 

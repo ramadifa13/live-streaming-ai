@@ -3,6 +3,9 @@ import os
 import time
 import asyncio
 import torch
+import threading
+import sys
+from argparse import Namespace
 
 class AILiveWorker:
     def __init__(self):
@@ -17,10 +20,45 @@ class AILiveWorker:
         self.musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
         self.musetalk_checkpoint = os.path.join(self.musetalk_dir, "models", "musetalk", "musetalk.json")
         
+        # Batch size untuk inferensi UNet. RTX 4090 bisa handled 16, GPU kecil gunakan 8.
+        self.batch_size = int(os.environ.get("MUSETALK_BATCH_SIZE", "8"))
+        
+        # Lock untuk serialisasi inferensi GPU (mencegah OOM dan memastikan stabilitas)
+        self._inference_lock = threading.Lock()
+        
         if not os.path.exists(self.musetalk_checkpoint):
             print(f"[WARNING] Model MuseTalk belum terunduh di {self.musetalk_checkpoint}. Pastikan setup.sh sudah dijalankan.")
+        
+        # Pre-load MuseTalk modules agar model hanya dimuat SEKALI saat startup
+        try:
+            self._warmup_musetalk()
+        except Exception as e:
+            print(f"[WARMUP] Gagal pre-load MuseTalk: {e}")
             
         print("[INFO] Worker siap dengan sistem TTS Edge-TTS dan Lipsync MuseTalk...")
+    
+    def _warmup_musetalk(self):
+        musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
+        if musetalk_dir not in sys.path:
+            sys.path.insert(0, musetalk_dir)
+        
+        from scripts.inference import _load_models_cached
+        from argparse import Namespace
+        
+        dummy_args = Namespace(
+            gpu_id=0,
+            use_float16=True,
+            version="v15",
+            left_cheek_width=90,
+            right_cheek_width=90,
+            unet_model_path=os.path.join(musetalk_dir, "models", "musetalk", "musetalkV15", "unet.pth"),
+            unet_config=os.path.join(musetalk_dir, "models", "musetalk", "musetalk.json"),
+            whisper_dir=os.path.join(musetalk_dir, "models", "whisper"),
+            vae_type="sd-vae-ft-mse",
+            batch_size=self.batch_size,
+        )
+        _load_models_cached(dummy_args)
+        print("[WARMUP] MuseTalk models pre-loaded successfully")
 
     async def _generate_voice(self, text, task_id, host_name):
         """Ubah Teks menjadi Suara Indonesia Natural menggunakan Edge-TTS (Lebih Cepat, Hemat VRAM)"""
@@ -73,127 +111,120 @@ class AILiveWorker:
                 
         return None
 
+    async def _sync_lips_async(self, idle_video, audio_path, task_id):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._sync_lips, idle_video, audio_path, task_id)
+
     def _sync_lips(self, idle_video, audio_path, task_id):
-        import yaml
+        with self._inference_lock:
+            import yaml
 
-        yaml_path = os.path.join(
-            self.temp_dir,
-            f"{task_id}.yaml"
-        )
+            yaml_path = os.path.join(
+                self.temp_dir,
+                f"{task_id}.yaml"
+            )
 
-        config_data = {
-            "task_0": {
-                "video_path": idle_video,
-                "audio_path": audio_path,
-                "bbox_shift": 0
+            config_data = {
+                "task_0": {
+                    "video_path": idle_video,
+                    "audio_path": audio_path,
+                    "bbox_shift": 0
+                }
             }
-        }
 
-        os.makedirs(self.temp_dir, exist_ok=True)
-        os.makedirs(self.output_dir, exist_ok=True)
+            os.makedirs(self.temp_dir, exist_ok=True)
+            os.makedirs(self.output_dir, exist_ok=True)
 
-        with open(yaml_path, "w") as f:
-            yaml.dump(config_data, f)
+            with open(yaml_path, "w") as f:
+                yaml.dump(config_data, f)
 
-        # =========================================================
-        # MUSE TALK 1.5
-        # =========================================================
+            musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
 
-        musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
-
-        unet_config = os.path.join(
-            musetalk_dir,
-            "models",
-            "musetalk",
-            "musetalk",
-            "musetalk.json"
-        )
-
-        unet_model_path = os.path.join(
-            musetalk_dir,
-            "models",
-            "musetalk",
-            "musetalkV15",
-            "unet.pth"
-        )
-
-        whisper_dir = os.path.join(
-            musetalk_dir,
-            "models",
-            "whisper"
-        )
-
-        print("\n==============================================")
-        print("[MuseTalk] VERSION : 1.5")
-        print(f"[MuseTalk] Video   : {idle_video}")
-        print(f"[MuseTalk] Audio   : {audio_path}")
-        print(f"[MuseTalk] Config  : {unet_config}")
-        print(f"[MuseTalk] UNet    : {unet_model_path}")
-        print(f"[MuseTalk] Whisper : {whisper_dir}")
-        print("==============================================\n")
-
-        # Validasi file
-        if not os.path.exists(unet_config):
-            print(f"[ERROR] MuseTalk V1.5 config tidak ditemukan:\n{unet_config}")
-            return None
-
-        if not os.path.exists(unet_model_path):
-            print(f"[ERROR] MuseTalk V1.5 checkpoint tidak ditemukan:\n{unet_model_path}")
-            return None
-
-        if not os.path.exists(whisper_dir):
-            print(f"[ERROR] Whisper model tidak ditemukan:\n{whisper_dir}")
-            return None
-
-        # =========================================================
-        # COMMAND MUSE TALK 1.5
-        # =========================================================
-
-        command = [
-            "python",
-            "-m",
-            "scripts.inference",
-            "--inference_config",
-            yaml_path,
-            "--result_dir",
-            self.output_dir,
-            "--unet_model_path",
-            unet_model_path,
-            "--unet_config",
-            unet_config,
-            "--whisper_dir",
-            whisper_dir,
-            "--vae_type",
-            "sd-vae-ft-mse",
-            "--version",
-            "v15",
-            "--use_float16",
-            "--use_saved_coord",
-            "--saved_coord",
-            "--output_vid_name",
-            f"{task_id}.mp4"
-        ]
-
-        try:
-            print(
-                f"[MuseTalk] Starting V1.5 inference: {task_id}"
+            unet_config = os.path.join(
+                musetalk_dir,
+                "models",
+                "musetalk",
+                "musetalk",
+                "musetalk.json"
             )
 
-            result = subprocess.run(
-                command,
-                cwd=musetalk_dir,
-                check=True,
-                text=True
+            unet_model_path = os.path.join(
+                musetalk_dir,
+                "models",
+                "musetalk",
+                "musetalkV15",
+                "unet.pth"
             )
 
-            print(
-                f"[MuseTalk] Process selesai dengan code "
-                f"{result.returncode}"
+            whisper_dir = os.path.join(
+                musetalk_dir,
+                "models",
+                "whisper"
             )
 
-            # =====================================================
-            # CARI OUTPUT
-            # =====================================================
+            print("\n==============================================")
+            print("[MuseTalk] VERSION : 1.5")
+            print(f"[MuseTalk] Video   : {idle_video}")
+            print(f"[MuseTalk] Audio   : {audio_path}")
+            print(f"[MuseTalk] Config  : {unet_config}")
+            print(f"[MuseTalk] UNet    : {unet_model_path}")
+            print(f"[MuseTalk] Whisper : {whisper_dir}")
+            print("==============================================\n")
+
+            if not os.path.exists(unet_config):
+                print(f"[ERROR] MuseTalk V1.5 config tidak ditemukan:\n{unet_config}")
+                return None
+
+            if not os.path.exists(unet_model_path):
+                print(f"[ERROR] MuseTalk V1.5 checkpoint tidak ditemukan:\n{unet_model_path}")
+                return None
+
+            if not os.path.exists(whisper_dir):
+                print(f"[ERROR] Whisper model tidak ditemukan:\n{whisper_dir}")
+                return None
+
+            if musetalk_dir not in sys.path:
+                sys.path.insert(0, musetalk_dir)
+
+            from scripts.inference import main as musetalk_main
+
+            args = Namespace(
+                ffmpeg_path="",
+                gpu_id=0,
+                vae_type="sd-vae-ft-mse",
+                unet_config=unet_config,
+                unet_model_path=unet_model_path,
+                whisper_dir=whisper_dir,
+                inference_config=yaml_path,
+                bbox_shift=0,
+                result_dir=self.output_dir,
+                extra_margin=10,
+                fps=25,
+                audio_padding_length_left=2,
+                audio_padding_length_right=2,
+                batch_size=self.batch_size,
+                output_vid_name=f"{task_id}.mp4",
+                use_saved_coord=True,
+                saved_coord=True,
+                use_float16=True,
+                parsing_mode="jaw",
+                left_cheek_width=90,
+                right_cheek_width=90,
+                version="v15",
+            )
+
+            try:
+                print(f"[MuseTalk] Starting V1.5 inference: {task_id}")
+                musetalk_main(args)
+            except Exception as e:
+                print(f"[MuseTalk ERROR] {type(e).__name__}: {e}")
+                return None
+            finally:
+                if os.path.exists(yaml_path):
+                    try:
+                        os.remove(yaml_path)
+                    except Exception:
+                        pass
 
             expected_output = os.path.join(
                 self.output_dir,
@@ -202,69 +233,27 @@ class AILiveWorker:
             )
 
             if os.path.exists(expected_output):
-                print(
-                    f"[MuseTalk SUCCESS] Output ditemukan:\n"
-                    f"{expected_output}"
-                )
+                print(f"[MuseTalk SUCCESS] Output ditemukan:\n{expected_output}")
                 return expected_output
 
-            # fallback: cari mp4 task
             list_of_files = []
-            for root, dirs, files in os.walk(
-                self.output_dir
-            ):
+            for root, dirs, files in os.walk(self.output_dir):
                 for file in files:
-                    if (
-                        file.endswith(".mp4")
-                        and task_id in file
-                    ):
-                        list_of_files.append(
-                            os.path.join(root, file)
-                        )
+                    if file.endswith(".mp4") and task_id in file:
+                        list_of_files.append(os.path.join(root, file))
 
             if not list_of_files:
                 raise FileNotFoundError(
-                    f"Output video MuseTalk untuk "
-                    f"{task_id} tidak ditemukan."
+                    f"Output video MuseTalk untuk {task_id} tidak ditemukan."
                 )
 
-            latest_file = max(
-                list_of_files,
-                key=os.path.getctime
-            )
+            latest_file = max(list_of_files, key=os.path.getctime)
 
             if latest_file != expected_output:
-                os.replace(
-                    latest_file,
-                    expected_output
-                )
+                os.replace(latest_file, expected_output)
 
-            print(
-                f"[MuseTalk SUCCESS] Output:\n"
-                f"{expected_output}"
-            )
-
+            print(f"[MuseTalk SUCCESS] Output:\n{expected_output}")
             return expected_output
-
-        except subprocess.CalledProcessError as e:
-            print(
-                f"[MuseTalk ERROR] Process gagal "
-                f"dengan code {e.returncode}"
-            )
-            return None
-
-        except Exception as e:
-            print(
-                f"[MuseTalk ERROR] {type(e).__name__}: {e}"
-            )
-            return None
-
-        finally:
-            if os.path.exists(yaml_path):
-                try:
-                    os.remove(yaml_path)
-                except Exception:
-                    pass
 
     async def run_pipeline(self, host_type, host_name, text_answer, task_id):
         """Fungsi Pemicu Utama"""
@@ -283,7 +272,7 @@ class AILiveWorker:
             return None
         
         print(" -> Generating Video Lipsync (MuseTalk)...")
-        final_video = self._sync_lips(idle_video, audio_file, task_id)
+        final_video = await self._sync_lips_async(idle_video, audio_file, task_id)
         
         if os.path.exists(audio_file):
             os.remove(audio_file) # Bersihkan file suara

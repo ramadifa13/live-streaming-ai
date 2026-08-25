@@ -28,8 +28,17 @@ cd /workspace/ai_live_worker
 
 echo "3. Menginstal Dependensi Python Utama..."
 pip install --upgrade pip
-pip install --force-reinstall "numpy==1.26.4" "opencv-python==4.8.0.76" "opencv-python-headless==4.8.0.76" "huggingface_hub<0.26.0,>=0.25.0"
+pip install --force-reinstall "numpy==1.26.4" "opencv-python-headless==4.8.0.76" "huggingface_hub<0.26.0,>=0.25.0"
 pip install -r requirements-worker.txt
+
+echo "3.1. Memverifikasi FFmpeg..."
+if ! command -v ffmpeg &> /dev/null; then
+    echo "[PERINGATAN] FFmpeg tidak ditemukan di PATH. MuseTalk membutuhkan ffmpeg untuk encoding video."
+    echo "           Pastikan image RunPod Anda menyertakan ffmpeg, atau instal manual:"
+    echo "           apt-get update && apt-get install -y ffmpeg"
+else
+    echo "FFmpeg sudah terinstal: $(ffmpeg -version | head -n1)"
+fi
 
 echo "4. Mengunduh & Menyiapkan Repositori MuseTalk..."
 if [ ! -d "MuseTalk" ]; then
@@ -39,7 +48,9 @@ cd MuseTalk
 
 # Sesuaikan versi requirements agar kompatibel dengan PyTorch 2.1
 sed -i 's/opencv-python==.*/opencv-python==4.8.0.76/g' requirements.txt || true
-pip install -r requirements.txt || true
+sed -i 's/^tensorflow==.*/# tensorflow dihapus: tidak dibutuhkan untuk inferensi MuseTalk/g' requirements.txt || true
+sed -i 's/^tensorboard==.*/# tensorboard dihapus: tidak dibutuhkan untuk inferensi MuseTalk/g' requirements.txt || true
+pip install -r requirements.txt
 pip install --force-reinstall "transformers==4.38.2" "diffusers==0.27.2" "accelerate==0.28.0"
 
 echo "5. Menginstal OpenMIM (MMPose, MMCV, MMDetection)..."

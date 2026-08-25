@@ -1,5 +1,6 @@
 import os
 import asyncio
+import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -67,7 +68,7 @@ async def generate_neural_video(req: GenerateVideoRequest):
     print(f"[API INCOMING] Menerima request dari Backend")
     print(f"[DATA] Avatar: {req.avatar_name}, Teks: '{req.text[:30]}...'")
     
-    task_id = f"task_{int(asyncio.get_event_loop().time() * 1000)}"
+    task_id = f"task_{int(asyncio.get_event_loop().time() * 1000)}_{uuid.uuid4().hex[:8]}"
     jobs[task_id] = {"status": "processing"}
     
     # Start the task in background
