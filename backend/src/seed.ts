@@ -3,10 +3,17 @@ import prisma from "./lib/prisma.js";
 async function main() {
   console.log("=== EXECUTING DATABASE MIGRATION & SEEDING ===");
 
-  // 1. Add 'link' column if it doesn't exist yet via raw SQL
+  // 1. Add 'link' column if it doesn't exist yet (SQLite compatible)
   try {
-    await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "link" TEXT;`);
-    console.log("✅ Column 'link' verified/added to Product table.");
+    const cols = await prisma.$queryRawUnsafe<{ name: string }[]>(
+      `PRAGMA table_info("Product")`,
+    );
+    const hasLink = cols.some((c) => c.name === "link");
+    if (!hasLink) {
+      await prisma.executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN "link" TEXT;`);
+      console.log("Added column 'link' to Product table.");
+    } else {
+      console.log("Column 'link' already exists.");
   } catch (err) {
     console.error("Error adding column:", err);
   }
@@ -20,7 +27,7 @@ async function main() {
     console.log("No previous records to clear");
   }
 
-  // 3. Seed initial 6 official products directly into PostgreSQL
+  // 3. Seed initial 6 official products directly into database (SQLite compatible)
   const initialProducts = [
     {
       id: "prod_01_serum_brightening",
@@ -91,32 +98,23 @@ async function main() {
   ];
 
   for (const prod of initialProducts) {
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO "Product" ("id", "name", "description", "price", "stock", "sku", "category", "image", "link", "updatedAt") 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()) 
-       ON CONFLICT ("id") DO UPDATE SET 
-         "name" = EXCLUDED."name", 
-         "price" = EXCLUDED."price", 
-         "stock" = EXCLUDED."stock", 
-         "category" = EXCLUDED."category", 
-         "image" = EXCLUDED."image", 
-         "link" = EXCLUDED."link";`,
-      prod.id,
-      prod.name,
-      prod.description,
-      prod.price,
-      prod.stock,
-      prod.sku,
-      prod.category,
-      prod.image,
-      prod.link
-    );
-    console.log(`✅ Seeded Product: ${prod.name} (DB ID: ${prod.id})`);
+    await prisma.product.upsert({
+      where: { id: prod.id },
+      update: {
+        name: prod.name,
+        price: prod.price,
+        stock: prod.stock,
+        category: prod.category,
+        image: prod.image,
+        link: prod.link,
+      },
+      create: prod,
+    });
+    console.log(`Seeded Product: ${prod.name} (${prod.id})`);
   }
 
-  const all: any = await prisma.$queryRawUnsafe(`SELECT "id", "name", "price", "stock", "sku", "category", "image", "link" FROM "Product" ORDER BY "createdAt" ASC;`);
-  console.log(`=== DATABASE AUDIT & SEED SUCCESS: Total ${all.length} products in DB ===`);
-  console.log(all);
+  const all = await prisma.product.findMany({ orderBy: { createdAt: "asc" } });
+  console.log(`=== SEED SUCCESS: ${all.length} products in DB ===`);
 
   // 4. Seed avatars if none exist
   const avatarCount = await prisma.avatar.count();
@@ -146,6 +144,20 @@ async function main() {
         },
       ],
     });
+    console.log("Seeded 2 avatars (id=1: Namira 3D, id=2: Nana 2D)");
+  } else {
+    console.log(`Avatars already exist: ${avatarCount} records`);
+  }
+}
+
+main()
+  .catch((e) => {
+    console.error("Migration/Seed error:", e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
     console.log("✅ Seeded 2 avatars (id=1: Namira 3D, id=2: Nana 2D)");
   } else {
     console.log(`Avatars already exist: ${avatarCount} records`);
