@@ -146,7 +146,8 @@ export default function Dashboard() {
           price: 99000,
           stock: 50,
           tag: "Skincare",
-          image: "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
+          image:
+            "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
           link: "",
         },
         {
@@ -155,7 +156,8 @@ export default function Dashboard() {
           price: 129000,
           stock: 30,
           tag: "Skincare",
-          image: "https://images.unsplash.com/photo-1598440947619-2c35fc9aa908?w=400&h=400&fit=crop&q=80",
+          image:
+            "https://images.unsplash.com/photo-1598440947619-2c35fc9aa908?w=400&h=400&fit=crop&q=80",
           link: "",
         },
       ];
@@ -255,7 +257,9 @@ export default function Dashboard() {
   const [isConnectingLive, setIsConnectingLive] = useState(false);
   const [isLiveActive, setIsLiveActive] = useState(false);
   const [isLivePaused, setIsLivePaused] = useState(false);
-  const [liveSessionPhase, setLiveSessionPhase] = useState<"idle" | "pending" | "live" | "ended">("idle");
+  const [liveSessionPhase, setLiveSessionPhase] = useState<
+    "idle" | "pending" | "live" | "ended"
+  >("idle");
   const [liveSeconds, setLiveSeconds] = useState(0);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showEndLiveConfirm, setShowEndLiveConfirm] = useState(false);
@@ -621,7 +625,10 @@ export default function Dashboard() {
 
           if (sessionStatus === "live" && liveSessionPhase !== "live") {
             setLiveSessionPhase("live");
-          } else if (sessionStatus === "pending" && liveSessionPhase !== "pending") {
+          } else if (
+            sessionStatus === "pending" &&
+            liveSessionPhase !== "pending"
+          ) {
             setLiveSessionPhase("pending");
           } else if (
             !sessionStatus &&
@@ -786,12 +793,22 @@ export default function Dashboard() {
         throw new Error(`Error ${res.status}: Gagal memanggil API TTS.`);
       }
 
-      // Jika EdgeTTS timeout, backend me-return JSON { success: true, message: "TTS synthesis fallback" }
+      // Jika EdgeTTS timeout, backend me-return JSON { success: true, message: "..." }
       const contentType = res.headers.get("Content-Type");
       if (contentType && contentType.includes("application/json")) {
-        const data = await res.json();
+        const data = (await res.json()) as {
+          success?: boolean;
+          message?: string;
+          error?: string;
+          data?: { message?: string };
+        };
+        if (data.success !== false) {
+          setIsPlayingAudio(false);
+          setIsAvatarSpeaking(false);
+          return;
+        }
         throw new Error(
-          `TTS Error: ${data.message || data.error || "Gagal menghasilkan suara"}`,
+          `TTS Error: ${data.data?.message || data.message || data.error || "Gagal menghasilkan suara"}`,
         );
       }
 
@@ -2636,50 +2653,88 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                     {/* Product Overlay on Video — Always show when product exists */}
-                     {activeFeaturedProduct && activeFeaturedProduct.name && activeFeaturedProduct.name !== "Memuat Produk..." && (
-                       <div
-                         className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none"
-                         style={{
-                           background: "linear-gradient(to top, rgba(5,3,15,0.98) 0%, rgba(5,3,15,0.85) 75%, transparent 100%)",
-                           padding: "12px 10px 8px",
-                         }}
-                       >
-                         {/* Platform header */}
-                         <div className="flex items-center justify-between mb-1.5">
-                           <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${selectedPlatform === "TikTok LIVE" ? "bg-yellow-400/15 text-yellow-400 border border-yellow-400/40" : selectedPlatform === "Shopee Live" ? "bg-orange-500/15 text-orange-400 border border-orange-400/40" : selectedPlatform === "Instagram Live" ? "bg-purple-500/15 text-purple-300 border border-purple-400/40" : "bg-blue-500/15 text-blue-400 border border-blue-400/40"}`}>
-                             {selectedPlatform === "TikTok LIVE" ? "🛒 Keranjang Kuning" : selectedPlatform === "Shopee Live" ? "🏷️ Flash Sale" : selectedPlatform === "Instagram Live" ? "💜 IG Shop" : "🛒 Toko Live"}
-                           </span>
-                           <span className="text-[8px] text-slate-400 font-mono">Sisa: {activeFeaturedProduct.stock || 0} pcs</span>
-                         </div>
+                    {/* Product Overlay on Video — Always show when product exists */}
+                    {activeFeaturedProduct &&
+                      activeFeaturedProduct.name &&
+                      activeFeaturedProduct.name !== "Memuat Produk..." && (
+                        <div
+                          className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none"
+                          style={{
+                            background:
+                              "linear-gradient(to top, rgba(5,3,15,0.98) 0%, rgba(5,3,15,0.85) 75%, transparent 100%)",
+                            padding: "12px 10px 8px",
+                          }}
+                        >
+                          {/* Platform header */}
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span
+                              className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${selectedPlatform === "TikTok LIVE" ? "bg-yellow-400/15 text-yellow-400 border border-yellow-400/40" : selectedPlatform === "Shopee Live" ? "bg-orange-500/15 text-orange-400 border border-orange-400/40" : selectedPlatform === "Instagram Live" ? "bg-purple-500/15 text-purple-300 border border-purple-400/40" : "bg-blue-500/15 text-blue-400 border border-blue-400/40"}`}
+                            >
+                              {selectedPlatform === "TikTok LIVE"
+                                ? "🛒 Keranjang Kuning"
+                                : selectedPlatform === "Shopee Live"
+                                  ? "🏷️ Flash Sale"
+                                  : selectedPlatform === "Instagram Live"
+                                    ? "💜 IG Shop"
+                                    : "🛒 Toko Live"}
+                            </span>
+                            <span className="text-[8px] text-slate-400 font-mono">
+                              Sisa: {activeFeaturedProduct.stock || 0} pcs
+                            </span>
+                          </div>
 
-                         {/* Product row */}
-                         <div className="flex items-center gap-2.5">
-                           {activeFeaturedProduct.image && (
-                             <img
-                               src={activeFeaturedProduct.image.startsWith("http") || activeFeaturedProduct.image.startsWith("/") ? activeFeaturedProduct.image : "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80"}
-                               alt={activeFeaturedProduct.name}
-                               className="h-12 w-12 rounded-lg object-cover border border-white/20 shadow-md"
-                             />
-                           )}
-                           <div className="flex-1 min-w-0">
-                             <p className="text-[11px] font-bold text-white truncate leading-tight">{activeFeaturedProduct.name}</p>
-                             <p className="text-[12px] font-black text-emerald-400 leading-none mt-0.5">
-                               {typeof activeFeaturedProduct.price === "number" ? `Rp${activeFeaturedProduct.price.toLocaleString("id-ID")}` : activeFeaturedProduct.price}
-                             </p>
-                           </div>
-                           <button
-                             type="button"
-                             className={`shrink-0 rounded-lg px-3 py-1.5 text-[10px] font-black leading-tight text-center shadow-md ${selectedPlatform === "Instagram Live" ? "bg-gradient-to-b from-pink-500 via-purple-500 to-indigo-600 text-white" : "bg-gradient-to-b from-yellow-300 to-amber-500 text-black"}`}
-                           >
-                             {selectedPlatform === "Instagram Live" ? "💬 DM" : "🛒 Beli"}
-                           </button>
-                         </div>
-                       </div>
-                     )}
+                          {/* Product row */}
+                          <div className="flex items-center gap-2.5">
+                            {activeFeaturedProduct.image && (
+                              <img
+                                src={
+                                  activeFeaturedProduct.image.startsWith(
+                                    "http",
+                                  ) ||
+                                  activeFeaturedProduct.image.startsWith("/")
+                                    ? activeFeaturedProduct.image
+                                    : "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80"
+                                }
+                                alt={activeFeaturedProduct.name}
+                                className="h-12 w-12 rounded-lg object-cover border border-white/20 shadow-md"
+                              />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[11px] font-bold text-white truncate leading-tight">
+                                {activeFeaturedProduct.name}
+                              </p>
+                              <p className="text-[12px] font-black text-emerald-400 leading-none mt-0.5">
+                                {typeof activeFeaturedProduct.price === "number"
+                                  ? `Rp${activeFeaturedProduct.price.toLocaleString("id-ID")}`
+                                  : activeFeaturedProduct.price}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              className={`shrink-0 rounded-xl px-4 py-2 text-[11px] font-black leading-tight text-center transition-all duration-200 active:scale-95 hover:brightness-110 hover:shadow-lg ${
+                                selectedPlatform === "Instagram Live"
+                                  ? "bg-gradient-to-br from-pink-500 via-purple-500 to-indigo-600 text-white shadow-md shadow-purple-500/30"
+                                  : selectedPlatform === "TikTok LIVE"
+                                    ? "bg-gradient-to-br from-yellow-300 to-amber-500 text-black shadow-md shadow-amber-500/30"
+                                    : selectedPlatform === "Shopee Live"
+                                      ? "bg-gradient-to-br from-orange-400 to-red-600 text-white shadow-md shadow-orange-500/30"
+                                      : "bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-md shadow-blue-500/30"
+                              }`}
+                            >
+                              {selectedPlatform === "Instagram Live"
+                                ? "💬 DM"
+                                : selectedPlatform === "TikTok LIVE"
+                                  ? "🛒 Beli"
+                                  : selectedPlatform === "Shopee Live"
+                                    ? "🛍️ Shopee"
+                                    : "🛒 Beli"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
-                     {/* Original Promo Banner Toggle */}
-                     {showPromoBanner && false && (
+                    {/* Original Promo Banner Toggle */}
+                    {showPromoBanner && false && (
                       <div
                         className="absolute bottom-0 left-0 right-0 z-20 animate-fadeIn"
                         style={{
@@ -2747,16 +2802,16 @@ export default function Dashboard() {
                               </p>
                               <p className="text-[8.5px] text-slate-500 line-through">
                                 Rp
-                                {(
-                                  (typeof activeFeaturedProduct.price ===
-                                  "number"
+                                {(Number(
+                                  typeof activeFeaturedProduct.price ===
+                                    "number"
                                     ? activeFeaturedProduct.price
                                     : parseInt(
                                         String(
                                           activeFeaturedProduct.price,
                                         ).replace(/[^0-9]/g, ""),
-                                      ) || 99000) * 1.3
-                                ).toLocaleString("id-ID")}
+                                      ) || 99000,
+                                ) * 1.3).toLocaleString("id-ID")}
                               </p>
                             </div>
                           </div>
@@ -3598,24 +3653,32 @@ export default function Dashboard() {
                                       ? "/avatars/host_3d_dinamis_namira.mp4"
                                       : undefined,
                                 productName: activeFeaturedProduct.name,
-                                productPrice: String(activeFeaturedProduct.price).replace(/[^0-9]/g, ""),
+                                productPrice: String(
+                                  activeFeaturedProduct.price,
+                                ).replace(/[^0-9]/g, ""),
                                 productImageUrl: activeFeaturedProduct.image,
+                                platform: selectedPlatform,
+                                stockCount: activeFeaturedProduct.stock,
+                                ctaLabel:
+                                  selectedPlatform === "Instagram Live"
+                                    ? "DM Sekarang"
+                                    : "Beli Sekarang",
                               }),
                             },
                           );
 
                           const bcastJson = await bcastRes.json();
 
-                           if (bcastRes.ok && bcastJson.data?.success) {
-                             setIsConnectingLive(false);
-                             setIsLiveActive(true);
-                             setIsLivePaused(false);
-                             setLiveSessionPhase("pending");
-                             setLiveSeconds(0);
-                             showToast(
-                               `📡 RTMP terhubung! Menunggu ${selectedPlatform} memulai live...`,
-                             );
-                           } else {
+                          if (bcastRes.ok && bcastJson.data?.success) {
+                            setIsConnectingLive(false);
+                            setIsLiveActive(true);
+                            setIsLivePaused(false);
+                            setLiveSessionPhase("pending");
+                            setLiveSeconds(0);
+                            showToast(
+                              `📡 RTMP terhubung! Menunggu ${selectedPlatform} memulai live...`,
+                            );
+                          } else {
                             await fetch("/api/live-session/stop", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
@@ -5807,12 +5870,12 @@ export default function Dashboard() {
                 >
                   Batal
                 </button>
-                  <button
-                    onClick={async () => {
-                      setIsLiveActive(false);
-                      setLiveSessionPhase("ended");
-                      setShowEndLiveConfirm(false);
-                      showToast("Menghitung Laporan Analitik Live...");
+                <button
+                  onClick={async () => {
+                    setIsLiveActive(false);
+                    setLiveSessionPhase("ended");
+                    setShowEndLiveConfirm(false);
+                    showToast("Menghitung Laporan Analitik Live...");
 
                     // Stop RTMP transmission on backend
                     try {

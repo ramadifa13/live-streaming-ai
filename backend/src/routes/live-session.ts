@@ -60,6 +60,10 @@ const broadcastSchema = z.object({
   productName: z.string().optional(),
   productPrice: z.string().optional(),
   productImageUrl: z.string().optional(),
+  // Preview-sync fields — used to replicate Step 4 overlay in FFmpeg
+  platform: z.string().optional(),
+  stockCount: z.number().optional(),
+  ctaLabel: z.string().optional(),
 });
 
 export async function liveSessionRoutes(server: FastifyInstance) {
@@ -176,8 +180,18 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
-    const { rtmpUrl, streamKey, avatarImage, avatarVideo, sessionId, productName, productPrice } =
-      parsed.data;
+    const {
+      rtmpUrl,
+      streamKey,
+      avatarImage,
+      avatarVideo,
+      sessionId,
+      productName,
+      productPrice,
+      platform,
+      stockCount,
+      ctaLabel,
+    } = parsed.data;
     const result = await startInstagramBroadcast(
       rtmpUrl,
       streamKey,
@@ -186,6 +200,9 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       productName,
       productPrice,
       parsed.data.productImageUrl,
+      platform,
+      stockCount,
+      ctaLabel,
     );
 
     if (!result.success) {
