@@ -285,18 +285,14 @@ else
 fi
 
 echo "3. Menyiapkan Repositori MuseTalk..."
-# Init/update git submodule for MuseTalk
-cd "$SCRIPT_DIR/.."
-git submodule update --init --recursive 2>/dev/null || true
-
-# Use bundled MuseTalk from repo (has _load_models_cached), don't clone upstream
+# Copy MuseTalk from repo (has _load_models_cached)
 if [ ! -d "$WORKER_DIR/MuseTalk/musetalk" ]; then
 	mkdir -p "$WORKER_DIR/MuseTalk"
 	cp -r "$SCRIPT_DIR"/../MuseTalk/* "$WORKER_DIR/MuseTalk/" 2>/dev/null || true
 fi
 if [ ! -d "$WORKER_DIR/MuseTalk/musetalk" ]; then
 	echo "[FATAL] MuseTalk source tidak ditemukan di repo lokal."
-	echo "        Pastikan folder MuseTalk/ ada di repo."
+	echo "        Pastikan folder MuseTalk/ ada di root repo."
 	exit 1
 fi
 
