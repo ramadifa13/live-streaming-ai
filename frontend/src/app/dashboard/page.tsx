@@ -2636,8 +2636,50 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    {/* Product Overlay Banner — TikTok / Shopee Live authentic clean style */}
-                    {showPromoBanner && (
+                     {/* Product Overlay on Video — Always show when product exists */}
+                     {activeFeaturedProduct && activeFeaturedProduct.name && activeFeaturedProduct.name !== "Memuat Produk..." && (
+                       <div
+                         className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none"
+                         style={{
+                           background: "linear-gradient(to top, rgba(5,3,15,0.98) 0%, rgba(5,3,15,0.85) 75%, transparent 100%)",
+                           padding: "12px 10px 8px",
+                         }}
+                       >
+                         {/* Platform header */}
+                         <div className="flex items-center justify-between mb-1.5">
+                           <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${selectedPlatform === "TikTok LIVE" ? "bg-yellow-400/15 text-yellow-400 border border-yellow-400/40" : selectedPlatform === "Shopee Live" ? "bg-orange-500/15 text-orange-400 border border-orange-400/40" : selectedPlatform === "Instagram Live" ? "bg-purple-500/15 text-purple-300 border border-purple-400/40" : "bg-blue-500/15 text-blue-400 border border-blue-400/40"}`}>
+                             {selectedPlatform === "TikTok LIVE" ? "🛒 Keranjang Kuning" : selectedPlatform === "Shopee Live" ? "🏷️ Flash Sale" : selectedPlatform === "Instagram Live" ? "💜 IG Shop" : "🛒 Toko Live"}
+                           </span>
+                           <span className="text-[8px] text-slate-400 font-mono">Sisa: {activeFeaturedProduct.stock || 0} pcs</span>
+                         </div>
+
+                         {/* Product row */}
+                         <div className="flex items-center gap-2.5">
+                           {activeFeaturedProduct.image && (
+                             <img
+                               src={activeFeaturedProduct.image.startsWith("http") || activeFeaturedProduct.image.startsWith("/") ? activeFeaturedProduct.image : "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80"}
+                               alt={activeFeaturedProduct.name}
+                               className="h-12 w-12 rounded-lg object-cover border border-white/20 shadow-md"
+                             />
+                           )}
+                           <div className="flex-1 min-w-0">
+                             <p className="text-[11px] font-bold text-white truncate leading-tight">{activeFeaturedProduct.name}</p>
+                             <p className="text-[12px] font-black text-emerald-400 leading-none mt-0.5">
+                               {typeof activeFeaturedProduct.price === "number" ? `Rp${activeFeaturedProduct.price.toLocaleString("id-ID")}` : activeFeaturedProduct.price}
+                             </p>
+                           </div>
+                           <button
+                             type="button"
+                             className={`shrink-0 rounded-lg px-3 py-1.5 text-[10px] font-black leading-tight text-center shadow-md ${selectedPlatform === "Instagram Live" ? "bg-gradient-to-b from-pink-500 via-purple-500 to-indigo-600 text-white" : "bg-gradient-to-b from-yellow-300 to-amber-500 text-black"}`}
+                           >
+                             {selectedPlatform === "Instagram Live" ? "💬 DM" : "🛒 Beli"}
+                           </button>
+                         </div>
+                       </div>
+                     )}
+
+                     {/* Original Promo Banner Toggle */}
+                     {showPromoBanner && false && (
                       <div
                         className="absolute bottom-0 left-0 right-0 z-20 animate-fadeIn"
                         style={{
