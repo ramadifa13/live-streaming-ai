@@ -93,6 +93,17 @@ export default function PhotorealisticAvatarView({
     }
   }, [videoGenerationState, videoUrl]);
 
+  // Map avatar name to local video file
+  const avatarVideoMap: Record<string, string> = {
+    nana: "/avatars/host_2d_statis_nana.mp4",
+    namira: "/avatars/host_3d_dinamis_namira.mp4",
+    ardi: "/avatars/host_3d_dinamis_namira.mp4",
+    maya: "/avatars/host_2d_statis_nana.mp4",
+  };
+
+  const avatarKey = avatarName.toLowerCase();
+  const localAvatarVideo = avatarVideoMap[avatarKey] || "/avatars/host_3d_dinamis_namira.mp4";
+
   const activeStageIdx = getActiveStageIndex(renderProgress);
 
   return (
@@ -117,11 +128,7 @@ export default function PhotorealisticAvatarView({
             loop
             muted
             playsInline
-            src={
-              avatarName.toLowerCase().includes("nana")
-                ? "https://assets.mixkit.co/videos/preview/mixkit-woman-talking-on-a-video-call-42898-large.mp4"
-                : "https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4"
-            }
+            src={localAvatarVideo}
             poster={imageSrc}
             style={{
               filter: isSpeaking
