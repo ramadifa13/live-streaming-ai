@@ -105,6 +105,14 @@ ensure_torch_21() {
 	pip install --no-cache-dir --force-reinstall "numpy==1.26.4"
 }
 
+pin_ml_deps() {
+	# MuseTalk/diffusers masih butuh cached_download (dihapus di huggingface_hub>=0.26)
+	pip install --no-cache-dir --force-reinstall \
+		"numpy==1.26.4" \
+		"huggingface_hub>=0.25.0,<0.26.0" \
+		"transformers==4.38.2" "diffusers==0.27.2" "accelerate==0.28.0"
+}
+
 echo "2. Menyetel stack PyTorch 2.1 (CUDA tag: ${TORCH_CUDA_TAG})..."
 python - <<'PY' || true
 import torch
@@ -173,7 +181,7 @@ pip install --no-cache-dir --force-reinstall --no-deps \
 	"numpy==1.26.4" \
 	"transformers==4.38.2" "diffusers==0.27.2" "accelerate==0.28.0"
 ensure_torch_21
-pip install --no-cache-dir "numpy==1.26.4" "tokenizers>=0.14,<0.19" "safetensors>=0.4.1"
+pin_ml_deps
 
 echo "4.1. Memperbaiki Dependensi Build Tools untuk MMCV/MMPose..."
 pip install --no-cache-dir --force-reinstall "pip<24.1" "setuptools>=65,<71" "wheel<0.42"
@@ -193,7 +201,8 @@ mim install "mmpose>=1.1.0"
 
 echo "4.3. Memastikan NumPy/PyTorch tetap kompatibel..."
 ensure_torch_21
-pip install --no-cache-dir --force-reinstall "numpy==1.26.4"
+pin_ml_deps
+pip install --no-cache-dir "tokenizers>=0.14,<0.19" "safetensors>=0.4.1"
 python - <<'PY'
 import torch
 v = torch.__version__
@@ -237,6 +246,11 @@ if tv_tag and torch_tag and tv_tag != torch_tag:
         f"CUDA mismatch: torch {torch.__version__} vs torchvision {torchvision.__version__}"
     )
 print("torch/torchvision CUDA tags match")
+PY
+python - <<'PY'
+import huggingface_hub
+from huggingface_hub import cached_download
+print("huggingface_hub", huggingface_hub.__version__, "cached_download OK")
 PY
 python -c "import mmcv, mmpose; print('MMCV/MMPose OK')"
 
