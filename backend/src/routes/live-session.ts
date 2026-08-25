@@ -57,6 +57,8 @@ const broadcastSchema = z.object({
   sessionId: z.string().optional(),
   avatarImage: z.string().optional(),
   avatarVideo: z.string().optional(),
+  productName: z.string().optional(),
+  productPrice: z.string().optional(),
 });
 
 export async function liveSessionRoutes(server: FastifyInstance) {
@@ -173,13 +175,15 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
-    const { rtmpUrl, streamKey, avatarImage, avatarVideo, sessionId } =
+    const { rtmpUrl, streamKey, avatarImage, avatarVideo, sessionId, productName, productPrice } =
       parsed.data;
     const result = await startInstagramBroadcast(
       rtmpUrl,
       streamKey,
       avatarImage,
       avatarVideo,
+      productName,
+      productPrice,
     );
 
     if (!result.success) {

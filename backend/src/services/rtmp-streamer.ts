@@ -31,6 +31,8 @@ export async function startInstagramBroadcast(
   streamKey: string,
   avatarImagePath?: string,
   avatarVideoPath?: string,
+  productName?: string,
+  productPrice?: string,
 ) {
   stopBroadcast();
   activeStreamConfig = {
@@ -38,6 +40,8 @@ export async function startInstagramBroadcast(
     streamKey,
     avatarImagePath,
     avatarVideoPath,
+    productName,
+    productPrice,
   };
 
   const normalizedBaseUrl = rtmpBaseUrl.replace(/\/+$/, "");
@@ -45,7 +49,6 @@ export async function startInstagramBroadcast(
     ? normalizedBaseUrl
     : `${normalizedBaseUrl}/${streamKey}`;
 
-  // The frontend sends public URLs; FFmpeg needs an actual local file path.
   const publicRoot = path.resolve(process.cwd(), "../frontend/public");
   const resolvePublicAsset = (assetPath: string | undefined) => {
     if (
@@ -98,6 +101,25 @@ export async function startInstagramBroadcast(
 
   const isVideo = /\.(mp4|mov|webm|mkv)$/i.test(mediaToUse);
 
+  // Build drawtext filter for product overlay
+  const drawtextFilters: string[] = [];
+  if (productName) {
+    const escapedName = productName.replace(/'/g, "\\'").replace(/:/g, "\\:");
+    drawtextFilters.push(
+      `drawtext=text='${escapedName}':fontcolor=white:fontsize=42:box=1:boxcolor=black@0.6:boxborderw=10:x=20:y=h-th-100`,
+    );
+  }
+  if (productPrice) {
+    const priceText = `Rp${Number(productPrice).toLocaleString("id-ID")}`;
+    drawtextFilters.push(
+      `drawtext=text='${priceText}':fontcolor=yellow:fontsize=36:box=1:boxcolor=red@0.7:boxborderw=8:x=20:y=h-th-40`,
+    );
+  }
+
+  const overlayFilter = drawtextFilters.length > 0
+    ? `,${drawtextFilters.join(",")}`
+    : "";
+
   // Keep the idle avatar moving when no AI response video is available.
   const ffmpegArgs = [
     "-re",
@@ -126,7 +148,7 @@ export async function startInstagramBroadcast(
     "-r",
     "30",
     "-vf",
-    "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280",
+    `scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280${overlayFilter}`,
     "-c:a",
     "aac",
     "-b:a",
