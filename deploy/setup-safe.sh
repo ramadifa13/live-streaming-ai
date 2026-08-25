@@ -385,25 +385,16 @@ if ! grep -q "_load_models_cached" inference.py 2>/dev/null; then
     cp inference.py inference.py.original
 
     python3 << 'PYINJECT'
-import re
-
 with open("inference.py.original", "r") as f:
     content = f.read()
 
-# Find where imports end (before first function or decorator)
-lines = content.split("\n")
-import_end = 0
-for i, line in enumerate(lines):
-    if line.startswith("def ") or line.startswith("@") or line.startswith("class "):
-        import_end = i
-        break
+inject_code = '''
+# ============================================================
+# INJECTED: _load_models_cached (for live_worker.py warmup)
+# ============================================================
+import threading as _threading
 
-# The code after imports
-remaining_code = "\n".join(lines[import_end:])
-
-inject_code = '''import threading
-
-_lock = threading.Lock()
+_lock = _threading.Lock()
 _models_cache = {}
 
 def _load_models_cached(args):
@@ -460,12 +451,13 @@ def _load_models_cached(args):
 
 '''
 
-new_content = inject_code + remaining_code
+# Inject at END of file (after all imports and existing code)
+new_content = content.rstrip() + "\n\n" + inject_code
 
 with open("inference.py", "w") as f:
     f.write(new_content)
 
-print("[OK] _load_models_cached berhasil diinject.")
+print("[OK] _load_models_cached berhasil diinject di akhir file.")
 PYINJECT
 
 else
