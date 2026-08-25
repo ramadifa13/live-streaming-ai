@@ -11,9 +11,9 @@ import {
 import { livePlatformConnector } from "../services/live-platform-connector.js";
 import {
   setLiveSessionActive,
-  startPodAndWait,
   stopPod,
 } from "../services/runpod-manager.js";
+import { liveSessionManager } from "../services/live-session-manager.js";
 
 const liveSessionSchema = z.object({
   productId: z.string().min(1),
@@ -69,9 +69,12 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       },
     });
 
+    const managedSession = liveSessionManager.getActiveSession();
+    const effectiveStatus = managedSession?.state || session?.status || "ready";
+
     return {
       data: session ?? {
-        status: "ready",
+        status: effectiveStatus,
         platform: "TikTok LIVE",
         durationHours: 8,
         currentProduct: "Produk",
@@ -100,57 +103,40 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     try {
-      // Start the GPU Pod and wait for it to be ready
-      await startPodAndWait();
-      setLiveSessionActive(true);
-    } catch (err: any) {
-      reply.code(500);
-      return { error: `Gagal menyalakan GPU RunPod: ${err.message}` };
-    }
-
-    const autoPromotionValue =
-      parsed.data.autoPromotion ?? parsed.data.autoPromo ?? true;
-
-    const session = await prisma.liveSession.create({
-      data: {
+      const result = await liveSessionManager.startSession({
         productId: parsed.data.productId,
         avatarId: avatar.id,
         platform: parsed.data.platform,
         durationHours: parsed.data.durationHours,
         autoReply: parsed.data.autoReply ?? true,
         autoPin: parsed.data.autoPin ?? true,
-        autoPromotion: autoPromotionValue,
+        autoPromotion:
+          parsed.data.autoPromotion ?? parsed.data.autoPromo ?? true,
         autoModeration: parsed.data.autoModeration ?? true,
-        status: "starting",
-        estimatedCost: Math.round(parsed.data.durationHours * 12500),
-      },
-    });
+        accessToken: parsed.data.accessToken,
+        liveChatId: parsed.data.liveChatId,
+        liveVideoId: parsed.data.liveVideoId,
+        avatarName: avatar.name,
+        tone: parsed.data.tone || "Persuasif",
+      });
 
-    // Start Live Platform Background Poller & Collector
-    livePlatformConnector.startSession({
-      platform: parsed.data.platform,
-      accessToken: parsed.data.accessToken,
-      liveChatId: parsed.data.liveChatId,
-      liveVideoId: parsed.data.liveVideoId,
-      autoReply: parsed.data.autoReply ?? true,
-      productId: parsed.data.productId,
-      avatarName: avatar.name,
-      tone: parsed.data.tone || "Persuasif",
-    });
-
-    return {
-      success: true,
-      data: {
-        id: session.id,
-        status: session.status,
-        platform: session.platform,
-        durationHours: session.durationHours,
-        maxDurationSeconds: session.durationHours * 3600,
-        estimatedCost: session.estimatedCost,
-        gpuMode: "on-demand (NVIDIA RTX 4090)",
-        startedAt: session.createdAt.toISOString(),
-      },
-    };
+      return {
+        success: true,
+        data: {
+          id: result.sessionId,
+          status: result.state,
+          platform: parsed.data.platform,
+          durationHours: parsed.data.durationHours,
+          maxDurationSeconds: parsed.data.durationHours * 3600,
+          estimatedCost: Math.round(parsed.data.durationHours * 12500),
+          gpuMode: "on-demand (NVIDIA RTX 4090)",
+          startedAt: new Date().toISOString(),
+        },
+      };
+    } catch (err: any) {
+      reply.code(500);
+      return { error: `Gagal memulai sesi live: ${err.message}` };
+    }
   });
 
   // POST /api/live-session/stop
@@ -163,65 +149,18 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     stopBroadcast();
-    setLiveSessionActive(false);
-    const liveMetrics = livePlatformConnector.getMetricsSnapshot();
-    livePlatformConnector.stopSession();
-
-    await prisma.liveSession.updateMany({
-      where: { status: { in: ["live", "starting"] } },
-      data: { status: "ended" },
+    const result = await liveSessionManager.stopSession({
+      durationSeconds: parsed.data.durationSeconds,
+      viewers: parsed.data.viewers,
+      comments: parsed.data.comments,
+      clicks: parsed.data.clicks,
+      sales: parsed.data.sales,
+      productSold: parsed.data.productSold,
     });
 
-    // Stop the GPU Pod automatically to save costs
-    stopPod().catch((err) => console.error("Failed to stop GPU Pod:", err));
-
-    const { durationSeconds, viewers, comments, clicks, sales, productSold } =
-      parsed.data;
-    const finalDuration = Math.max(
-      durationSeconds,
-      liveMetrics.durationSeconds,
-    );
-    const finalViewers = Math.max(
-      viewers,
-      liveMetrics.viewers,
-      liveMetrics.peakViewers,
-    );
-    const finalComments = Math.max(comments, liveMetrics.comments);
-    const finalClicks = Math.max(clicks, liveMetrics.clicks);
-    const finalSales = Math.max(sales, liveMetrics.sales);
-    const finalProductSold = Math.max(productSold, liveMetrics.orders);
-
-    const durationHours = Math.max(0.1, finalDuration / 3600);
-    const estimatedGpuCost = Math.round(durationHours * 12500);
-    const netProfit = Math.max(0, finalSales - estimatedGpuCost);
-    const roiPercentage =
-      estimatedGpuCost > 0
-        ? Math.round((netProfit / estimatedGpuCost) * 100)
-        : 0;
-
     return {
-      success: true,
-      summary: {
-        durationSeconds: finalDuration,
-        durationFormatted: `${Math.floor(finalDuration / 3600)}j ${Math.floor((finalDuration % 3600) / 60)}m ${finalDuration % 60}d`,
-        totalViewers: finalViewers,
-        peakViewers: Math.round(finalViewers * 1.25),
-        totalComments: finalComments,
-        aiRepliesCount: Math.max(
-          liveMetrics.aiReplies,
-          Math.round(finalComments * 0.95),
-        ),
-        totalClicks: finalClicks,
-        totalProductSold: finalProductSold,
-        grossRevenue: finalSales,
-        grossRevenueFormatted: `Rp${finalSales.toLocaleString("id-ID")}`,
-        estimatedGpuCost,
-        estimatedGpuCostFormatted: `Rp${estimatedGpuCost.toLocaleString("id-ID")}`,
-        netProfit,
-        netProfitFormatted: `Rp${netProfit.toLocaleString("id-ID")}`,
-        roiPercentage: `${roiPercentage}%`,
-        endedAt: new Date().toISOString(),
-      },
+      success: result.success,
+      summary: result.summary,
     };
   });
 
@@ -245,18 +184,18 @@ export async function liveSessionRoutes(server: FastifyInstance) {
 
     if (!result.success) {
       reply.code(502);
-      setLiveSessionActive(false);
+      await liveSessionManager.stopSession().catch(() => {});
       if (sessionId) {
         await prisma.liveSession.updateMany({
-          where: { id: sessionId, status: "starting" },
+          where: { id: sessionId, status: { in: ["starting", "pending"] } },
           data: { status: "ended" },
-        });
+        }).catch(() => {});
       }
     } else if (sessionId) {
       await prisma.liveSession.updateMany({
-        where: { id: sessionId, status: "starting" },
-        data: { status: "live" },
-      });
+        where: { id: sessionId, status: { in: ["starting", "pending"] } },
+        data: { status: "pending" },
+      }).catch(() => {});
     }
 
     return {
@@ -369,22 +308,23 @@ export async function liveSessionRoutes(server: FastifyInstance) {
   // GET /api/live-session/metrics
   server.get("/api/live-session/metrics", async () => {
     const session = await prisma.liveSession.findFirst({
-      where: { status: "live" },
+      where: { status: { in: ["starting", "pending", "live"] } },
       orderBy: { createdAt: "desc" },
       include: { avatar: true },
     });
 
     const streamStatus = getStreamStatus();
     const metrics = livePlatformConnector.getMetricsSnapshot();
+    const managedSession = liveSessionManager.getActiveSession();
+
+    const sessionStatus = managedSession?.state || session?.status || "idle";
 
     return {
       success: true,
       data: {
         isStreaming: streamStatus.status === "streaming",
         handshakeVerified: streamStatus.handshakeVerified,
-        sessionStatus:
-          session?.status ||
-          (streamStatus.status === "streaming" ? "live" : "idle"),
+        sessionStatus,
         platform: session?.platform || "TikTok LIVE",
         product: null,
         avatar: session?.avatar || null,

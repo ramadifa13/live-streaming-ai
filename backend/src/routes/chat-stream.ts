@@ -8,6 +8,7 @@ import {
   acquireGpuForJob,
   releaseGpuForJob,
 } from "../services/runpod-manager.js";
+import { liveSessionManager } from "../services/live-session-manager.js";
 
 const chatStreamRequestSchema = z.object({
   comment: z.string().min(1, "Comment is required"),
@@ -74,11 +75,13 @@ export async function chatStreamRoutes(server: FastifyInstance) {
       // Step 4: If Mode 2D, forward to GPU RunPod Worker (LivePortrait / MuseTalk)
       let videoUrl: string | undefined = undefined;
       if (mode === "2D") {
-        const liveSession = await prisma.liveSession.findFirst({
-          where: { status: { in: ["starting", "live"] } },
+        const activeSession = await prisma.liveSession.findFirst({
+          where: { status: "live" },
           select: { id: true },
         });
-        const temporaryGpuJob = !liveSession;
+
+        const isActuallyLive = activeSession !== null;
+        const temporaryGpuJob = !isActuallyLive;
         if (temporaryGpuJob) await acquireGpuForJob();
         try {
           const gpuRes = await forwardToRunPodGPU({

@@ -235,6 +235,7 @@ export default function Dashboard() {
   const [isConnectingLive, setIsConnectingLive] = useState(false);
   const [isLiveActive, setIsLiveActive] = useState(false);
   const [isLivePaused, setIsLivePaused] = useState(false);
+  const [liveSessionPhase, setLiveSessionPhase] = useState<"idle" | "pending" | "live" | "ended">("idle");
   const [liveSeconds, setLiveSeconds] = useState(0);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showEndLiveConfirm, setShowEndLiveConfirm] = useState(false);
@@ -506,6 +507,7 @@ export default function Dashboard() {
           if (nextSec >= maxAllowedSeconds) {
             setIsLiveActive(false);
             setIsLivePaused(false);
+            setLiveSessionPhase("ended");
             setShowSummaryModal(true);
             showToast(
               `⏱️ Waktu siaran telah mencapai batas durasi ${selectedDuration} Jam. Live streaming selesai!`,
@@ -595,6 +597,22 @@ export default function Dashboard() {
         if (res.ok) {
           const json = await res.json();
           const backendMetrics = json.data?.metrics;
+          const sessionStatus = json.data?.sessionStatus;
+
+          if (sessionStatus === "live" && liveSessionPhase !== "live") {
+            setLiveSessionPhase("live");
+          } else if (sessionStatus === "pending" && liveSessionPhase !== "pending") {
+            setLiveSessionPhase("pending");
+          } else if (
+            !sessionStatus &&
+            liveSessionPhase !== "idle" &&
+            liveSessionPhase !== "ended"
+          ) {
+            setLiveSessionPhase("ended");
+            setIsLiveActive(false);
+            setIsLivePaused(false);
+          }
+
           if (
             backendMetrics &&
             (backendMetrics.viewers > 0 ||
@@ -3523,15 +3541,16 @@ export default function Dashboard() {
 
                           const bcastJson = await bcastRes.json();
 
-                          if (bcastRes.ok && bcastJson.data?.success) {
-                            setIsConnectingLive(false);
-                            setIsLiveActive(true);
-                            setIsLivePaused(false);
-                            setLiveSeconds(0);
-                            showToast(
-                              `🎉 SIARAN LIVE AKTIF! AI Host berhasil memancarkan live ke ${selectedPlatform}!`,
-                            );
-                          } else {
+                           if (bcastRes.ok && bcastJson.data?.success) {
+                             setIsConnectingLive(false);
+                             setIsLiveActive(true);
+                             setIsLivePaused(false);
+                             setLiveSessionPhase("pending");
+                             setLiveSeconds(0);
+                             showToast(
+                               `📡 RTMP terhubung! Menunggu ${selectedPlatform} memulai live...`,
+                             );
+                           } else {
                             await fetch("/api/live-session/stop", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
@@ -5723,11 +5742,12 @@ export default function Dashboard() {
                 >
                   Batal
                 </button>
-                <button
-                  onClick={async () => {
-                    setIsLiveActive(false);
-                    setShowEndLiveConfirm(false);
-                    showToast("Menghitung Laporan Analitik Live...");
+                  <button
+                    onClick={async () => {
+                      setIsLiveActive(false);
+                      setLiveSessionPhase("ended");
+                      setShowEndLiveConfirm(false);
+                      showToast("Menghitung Laporan Analitik Live...");
 
                     // Stop RTMP transmission on backend
                     try {

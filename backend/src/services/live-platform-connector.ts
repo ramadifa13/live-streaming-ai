@@ -23,6 +23,8 @@ export interface PollerSessionConfig {
   tone?: string;
 }
 
+type LiveDetectedCallback = () => Promise<void> | void;
+
 class LivePlatformConnector {
   private isRunning: boolean = false;
   private pollerTimeout: NodeJS.Timeout | null = null;
@@ -34,6 +36,9 @@ class LivePlatformConnector {
   // Rate Limiting & Exponential Backoff State (C-03 Fix)
   private pollDelayMs: number = 2500;
   private consecutiveErrors: number = 0;
+
+  private liveDetectedCallback: LiveDetectedCallback | null = null;
+  private liveDetectionAttempts: number = 0;
 
   private metrics: LiveMetricsSnapshot = {
     viewers: 0,
@@ -47,6 +52,11 @@ class LivePlatformConnector {
     recentComments: [],
   };
 
+  public setLiveDetectedCallback(callback: LiveDetectedCallback | null) {
+    this.liveDetectedCallback = callback;
+    this.liveDetectionAttempts = 0;
+  }
+
   public startSession(config: PollerSessionConfig) {
     this.stopSession();
     this.currentConfig = config;
@@ -56,6 +66,8 @@ class LivePlatformConnector {
     this.nextPageToken = null;
     this.pollDelayMs = 2500;
     this.consecutiveErrors = 0;
+    this.liveDetectedCallback = null;
+    this.liveDetectionAttempts = 0;
 
     this.metrics = {
       viewers: 0,
@@ -133,6 +145,7 @@ class LivePlatformConnector {
         await this.pollYouTubeChat(liveChatId, accessToken);
       } else if (p.includes("instagram") && liveVideoId && accessToken) {
         await this.pollInstagramComments(liveVideoId, accessToken);
+        await this.checkInstagramLiveStatus(liveVideoId, accessToken);
       }
     } catch (err) {
       this.consecutiveErrors++;
@@ -185,6 +198,37 @@ class LivePlatformConnector {
           }
         }
       }
+    }
+  }
+
+  private async checkInstagramLiveStatus(
+    liveVideoId: string,
+    accessToken: string,
+  ): Promise<void> {
+    if (!this.isRunning || !this.currentConfig) return;
+    if (this.liveDetectedCallback && this.liveDetectionAttempts > 60) {
+      return;
+    }
+
+    try {
+      const url = `https://graph.facebook.com/v18.0/${encodeURIComponent(liveVideoId)}?fields=status,title&access_token=${encodeURIComponent(accessToken)}`;
+      const res = await fetch(url);
+
+      if (res.ok) {
+        const json = (await res.json()) as { status?: string };
+        const isLive = json.status === "LIVE_NOW" || json.status === "live";
+
+        if (isLive && this.liveDetectedCallback) {
+          this.liveDetectionAttempts = 999;
+          try {
+            await this.liveDetectedCallback();
+          } catch (err) {
+            console.error("[LivePlatformConnector] Live detected callback failed:", err);
+          }
+        }
+      }
+    } catch (err) {
+      // Ignore polling errors for live status check
     }
   }
 
