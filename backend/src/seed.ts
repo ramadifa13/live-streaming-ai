@@ -10,10 +10,11 @@ async function main() {
     );
     const hasLink = cols.some((c) => c.name === "link");
     if (!hasLink) {
-      await prisma.executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN "link" TEXT;`);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN "link" TEXT;`);
       console.log("Added column 'link' to Product table.");
     } else {
       console.log("Column 'link' already exists.");
+    }
   } catch (err) {
     console.error("Error adding column:", err);
   }
