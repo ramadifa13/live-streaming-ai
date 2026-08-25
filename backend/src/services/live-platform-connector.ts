@@ -96,6 +96,8 @@ class LivePlatformConnector {
       this.pollerTimeout = null;
     }
     this.currentConfig = null;
+    this.liveDetectedCallback = null;
+    this.liveDetectionAttempts = 0;
   }
 
   private scheduleNextPoll(delayMs?: number) {
