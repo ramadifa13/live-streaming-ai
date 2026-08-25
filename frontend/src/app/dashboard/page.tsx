@@ -138,10 +138,30 @@ export default function Dashboard() {
         }
       }
 
-      // If empty or invalid, set to empty
-      setProducts([]);
-      setActiveFeaturedProduct({} as any);
-      localStorage.setItem("ai_host_products", JSON.stringify([]));
+      // Default sample products for preview
+      const sampleProducts = [
+        {
+          id: "sample_1",
+          name: "Serum Brightening",
+          price: 99000,
+          stock: 50,
+          tag: "Skincare",
+          image: "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
+          link: "",
+        },
+        {
+          id: "sample_2",
+          name: "Moisturizer Glow",
+          price: 129000,
+          stock: 30,
+          tag: "Skincare",
+          image: "https://images.unsplash.com/photo-1598440947619-2c35fc9aa908?w=400&h=400&fit=crop&q=80",
+          link: "",
+        },
+      ];
+      setProducts(sampleProducts);
+      setActiveFeaturedProduct(sampleProducts[0]);
+      localStorage.setItem("ai_host_products", JSON.stringify(sampleProducts));
     } catch (err) {
       console.error("Failed to load products from local storage:", err);
       setProducts([]);
