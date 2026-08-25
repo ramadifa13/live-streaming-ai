@@ -220,9 +220,9 @@ if [ -z "${HF_TOKEN:-}" ]; then
 	export HF_TOKEN="${P1}${P2}${P3}${P4}"
 fi
 
-mkdir -p models/musetalk models/sd-vae-ft-mse models/whisper models/dwpose models/face-parse-bisent
+mkdir -p models/musetalkV15 models/sd-vae-ft-mse models/whisper models/dwpose models/face-parse-bisent
 
-python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='TMElyralab/MuseTalk', local_dir='models/musetalk', token=os.environ['HF_TOKEN'])"
+python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='TMElyralab/MuseTalk', local_dir='models', allow_patterns=['musetalkV15/*'], token=os.environ['HF_TOKEN'])"
 python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='stabilityai/sd-vae-ft-mse', local_dir='models/sd-vae-ft-mse', token=os.environ['HF_TOKEN'])"
 python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='openai/whisper-tiny', local_dir='models/whisper', token=os.environ['HF_TOKEN'])"
 python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='yzd-v/DWPose', local_dir='models/dwpose', token=os.environ['HF_TOKEN'])"
@@ -266,8 +266,8 @@ base = "/workspace/ai_live_worker"
 required = [
     "musetalk/utils/dwpose/rtmpose-l_8xb32-270e_coco-ubody-wholebody-384x288.py",
     "models/dwpose/dw-ll_ucoco_384.pth",
-    "models/musetalk/musetalk.json",
-    "models/musetalk/musetalkV15/unet.pth",
+    "models/musetalkV15/musetalk.json",
+    "models/musetalkV15/unet.pth",
     "models/whisper/config.json",
     "models/face-parse-bisent/79999_iter.pth",
     "models/sd-vae-ft-mse/config.json",

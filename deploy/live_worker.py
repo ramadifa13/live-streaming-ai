@@ -18,7 +18,8 @@ class AILiveWorker:
         
         # Konfigurasi MuseTalk
         self.musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
-        self.musetalk_checkpoint = os.path.join(self.musetalk_dir, "models", "musetalk", "musetalk.json")
+        paths = self._musetalk_paths()
+        self.musetalk_checkpoint = paths["unet_config"]
         
         # Batch size untuk inferensi UNet. RTX 4090 bisa handled 16, GPU kecil gunakan 8.
         self.batch_size = int(os.environ.get("MUSETALK_BATCH_SIZE", "8"))
@@ -62,8 +63,8 @@ class AILiveWorker:
     def _musetalk_paths(self):
         models_root = os.path.join(self.musetalk_dir, "models")
         return {
-            "unet_config": os.path.join(models_root, "musetalk", "musetalk.json"),
-            "unet_model_path": os.path.join(models_root, "musetalk", "musetalkV15", "unet.pth"),
+            "unet_config": os.path.join(models_root, "musetalkV15", "musetalk.json"),
+            "unet_model_path": os.path.join(models_root, "musetalkV15", "unet.pth"),
             "whisper_dir": os.path.join(models_root, "whisper"),
         }
     

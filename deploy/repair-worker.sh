@@ -67,11 +67,11 @@ download_missing_models() {
 	fi
 
 	cd "$WORKER_DIR/MuseTalk"
-	mkdir -p models/musetalk models/sd-vae-ft-mse models/whisper models/dwpose models/face-parse-bisent
+	mkdir -p models/musetalkV15 models/sd-vae-ft-mse models/whisper models/dwpose models/face-parse-bisent
 
-	if [ ! -f models/musetalk/musetalk.json ]; then
-		echo "  -> Mengunduh TMElyralab/MuseTalk weights..."
-		python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='TMElyralab/MuseTalk', local_dir='models/musetalk', token=os.environ['HF_TOKEN'])"
+	if [ ! -f models/musetalkV15/musetalk.json ]; then
+		echo "  -> Mengunduh MuseTalk v1.5 weights..."
+		python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id='TMElyralab/MuseTalk', local_dir='models', allow_patterns=['musetalkV15/*'], token=os.environ['HF_TOKEN'])"
 	fi
 	if [ ! -f models/dwpose/dw-ll_ucoco_384.pth ]; then
 		echo "  -> Mengunduh DWPose..."
@@ -135,8 +135,8 @@ base = "/workspace/ai_live_worker"
 required = [
     "musetalk/utils/dwpose/rtmpose-l_8xb32-270e_coco-ubody-wholebody-384x288.py",
     "models/dwpose/dw-ll_ucoco_384.pth",
-    "models/musetalk/musetalk.json",
-    "models/musetalk/musetalkV15/unet.pth",
+    "models/musetalkV15/musetalk.json",
+    "models/musetalkV15/unet.pth",
     "models/whisper/config.json",
     "models/face-parse-bisent/79999_iter.pth",
     "models/sd-vae-ft-mse/config.json",
