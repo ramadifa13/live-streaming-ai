@@ -27,6 +27,7 @@ export interface ManagedSession {
 
 class LiveSessionManager {
   private activeSession: ManagedSession | null = null;
+  private liveDetectionAttempts: number = 0;
 
   public async startSession(params: {
     productId: string;
@@ -289,6 +290,15 @@ class LiveSessionManager {
 
     const poll = async (): Promise<void> => {
       if (!this.activeSession || this.activeSession.state !== "pending") {
+        return;
+      }
+
+      this.liveDetectionAttempts += 1;
+
+      if (this.liveDetectionAttempts > 60) {
+        console.warn(
+          `[LiveSessionManager] Platform live poll timed out after 60 attempts for session ${this.activeSession.sessionId}.`,
+        );
         return;
       }
 
