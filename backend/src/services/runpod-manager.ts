@@ -20,6 +20,10 @@ export function setLiveSessionActive(active: boolean) {
 export async function acquireGpuForJob(): Promise<void> {
   activeJobLeases += 1;
   try {
+    if ((process.env.GPU_PROVIDER ?? "mock").toLowerCase() === "mock") {
+      console.log("[RunPodManager] GPU_PROVIDER=mock. Skipping GPU acquisition.");
+      return;
+    }
     await startPodAndWait();
   } catch (error) {
     activeJobLeases = Math.max(0, activeJobLeases - 1);
@@ -206,6 +210,12 @@ export async function startPodAndWait(timeoutMs = 120000): Promise<boolean> {
   const podId = process.env.RUNPOD_POD_ID;
   if (!podId) {
     console.log("[RunPodManager] No RUNPOD_POD_ID. Skipping startPodAndWait.");
+    return true;
+  }
+
+  // Skip pod start if using mock provider
+  if ((process.env.GPU_PROVIDER ?? "mock").toLowerCase() === "mock") {
+    console.log("[RunPodManager] GPU_PROVIDER=mock. Skipping pod start.");
     return true;
   }
 
