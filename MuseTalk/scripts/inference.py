@@ -337,3 +337,65 @@ if __name__ == "__main__":
     parser.add_argument("--version", type=str, default="v15", choices=["v1", "v15"], help="Model version to use")
     args = parser.parse_args()
     main(args)
+
+
+# ============================================================
+# Cache helper for live_worker.py warmup
+# ============================================================
+import threading as _threading
+
+_lock = _threading.Lock()
+_models_cache = {}
+
+
+def _load_models_cached(args):
+    global _models_cache
+    cache_key = (
+        args.gpu_id,
+        args.use_float16,
+        args.version,
+        args.left_cheek_width,
+        args.right_cheek_width,
+        args.unet_model_path,
+        args.unet_config,
+        args.whisper_dir,
+        args.vae_type,
+    )
+    if cache_key not in _models_cache:
+        with _lock:
+            if cache_key not in _models_cache:
+                device = torch.device(f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu")
+                vae, unet, pe = load_all_model(
+                    unet_model_path=args.unet_model_path,
+                    vae_type=args.vae_type,
+                    unet_config=args.unet_config,
+                    device=device
+                )
+                timesteps = torch.tensor([0], device=device)
+                if args.use_float16:
+                    pe = pe.half()
+                    vae.vae = vae.vae.half()
+                    unet.model = unet.model.half()
+                pe = pe.to(device)
+                vae.vae = vae.vae.to(device)
+                unet.model = unet.model.to(device)
+                audio_processor = AudioProcessor(feature_extractor_path=args.whisper_dir)
+                weight_dtype = unet.model.dtype
+                whisper = WhisperModel.from_pretrained(args.whisper_dir)
+                whisper = whisper.to(device=device, dtype=weight_dtype).eval()
+                whisper.requires_grad_(False)
+                if args.version == "v15":
+                    fp = FaceParsing(
+                        left_cheek_width=args.left_cheek_width,
+                        right_cheek_width=args.right_cheek_width
+                    )
+                else:
+                    fp = FaceParsing()
+                _models_cache[cache_key] = {
+                    "vae": vae, "unet": unet, "pe": pe,
+                    "whisper": whisper, "fp": fp,
+                    "audio_processor": audio_processor,
+                    "device": device, "weight_dtype": weight_dtype,
+                    "timesteps": timesteps,
+                }
+    return _models_cache[cache_key]
