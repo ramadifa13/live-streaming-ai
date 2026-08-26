@@ -134,6 +134,7 @@ export async function forwardToRunPodGPU(
       3,
     );
 
+    clearTimeout(timeoutId);
     let completedData = data;
     if (data.job_id) {
       for (let attempt = 0; attempt < 100; attempt += 1) {

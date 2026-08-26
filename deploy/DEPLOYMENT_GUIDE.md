@@ -52,6 +52,33 @@ Untuk menjalankan sistem secara utuh sebagai website, ada beberapa biaya tetap (
     - **Cloudflare Registrar**: Menawarkan harga dasar perpanjangan termurah di pasar (tanpa markup harga grosir, sekitar $9/tahun untuk `.com`).
     - **Niagahoster / Idwebhost (Lokal)**: Sering menyediakan diskon untuk domain lokal seperti `.id`, `.my.id` (mulai dari Rp 10.000/tahun untuk `.my.id`).
 
+
+## Panduan Prompt Video AI (Untuk Video Idle Multi-Action)
+
+Sistem ini mendukung transisi gerakan tubuh secara instan (Zero-Latency) melalui fitur pembacaan **Action Tag** (misalnya `[RAISE_HAND]`, `[IDLE]`, `[EXCITED]`).
+Anda bisa menggunakan AI Video Generator seperti **Kling AI, Luma Dream Machine, atau Runway Gen-3** untuk membuat file mentah video Host Anda.
+
+**Aturan Penting Pembuatan Video Idle untuk MuseTalk:**
+1. **Mulut Harus Diam/Tertutup!** (Sangat krusial. Jika mulut di video asli bergerak, MuseTalk akan tumpang tindih dan hasilnya hancur).
+2. Posisi kepala jangan terlalu banyak menoleh ke kiri/kanan (wajah harus selalu menghadap kamera).
+3. Buat video berdurasi sekitar 5-10 detik. Jika terlalu pendek, video akan terlihat berulang secara kasar.
+
+### Contoh Prompt Generator (Kling AI / Luma)
+
+**1. Aksi Biasa (namira_idle.mp4):**
+> *A highly realistic, 4k resolution video of an Indonesian female presenter standing in front of a clean studio background. She is looking directly at the camera with a soft, friendly smile. She blinks naturally and subtly shifts her weight, but her mouth is completely closed and motionless. No talking.*
+
+**2. Aksi Melambai / Menyapa (namira_raise_hand.mp4):**
+> *A highly realistic, 4k resolution video of an Indonesian female presenter standing in a studio. She smiles warmly, raises her right hand, and waves enthusiastically at the camera as if greeting someone. Her mouth is completely closed and motionless. No talking.*
+
+**3. Aksi Menunjuk Bawah (namira_point_down.mp4):**
+> *A highly realistic, 4k resolution video of an Indonesian female presenter in a studio. She looks directly at the camera, smiles, and uses her right index finger to point downwards toward the bottom of the screen (indicating a shopping cart). Her mouth is completely closed and motionless. No talking.*
+
+**4. Aksi Antusias (namira_excited.mp4):**
+> *A highly realistic, 4k resolution video of an Indonesian female presenter in a studio. She opens her eyes wide in excitement, raises both hands slightly in joy, and nods enthusiastically. Her mouth is completely closed and motionless. No talking.*
+
+Setelah video-video tersebut di-generate, ganti namanya sesuai tag (contoh: `namira_idle.mp4`, `namira_raise_hand.mp4`, `namira_point_down.mp4`, `namira_excited.mp4`) dan masukkan ke folder `assets/3d/` (atau `assets/2d/`) di RunPod Anda.
+
 ## Langkah 1: Persiapan Network Volume RunPod
 
 Untuk menjaga environment dan weights/model (Kokoro, MuseTalk) agar tidak ter-reset, siapkan Network Volume:
