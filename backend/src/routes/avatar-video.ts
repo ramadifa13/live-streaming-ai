@@ -11,7 +11,7 @@ const generateSchema = z.object({
   scriptText: z.string().min(1),
   audioBase64: z.string().optional(),
   audioUrl: z.string().url().optional(),
-  avatarName: z.string().default("Luna"),
+  avatarName: z.string().default("Namira"),
   tone: z.string().optional().default("Persuasif"),
 });
 

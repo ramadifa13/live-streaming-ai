@@ -31,17 +31,21 @@ class AIBroadcaster:
 
     def _stream_file(self, video_path):
         """Memasukkan video ke dalam Pipa Master"""
+        # Gunakan filter fallback agar jika video idle tidak memiliki audio track, FFmpeg tetap mengirim silent audio dan tidak crash
         worker_command = [
             "ffmpeg",
-            "-re",                      # Baca secara real-time
+            "-re",
             "-i", video_path,
-            "-c", "copy",
-            "-f", "mpegts",             # Format streaming stabil
-            "pipe:1"                    
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-shortest",
+            "-f", "mpegts",
+            "pipe:1"
         ]
         
         try:
-            worker_process = subprocess.Popen(worker_command, stdout=self.master_process.stdin)
+            worker_process = subprocess.Popen(worker_command, stdout=self.master_process.stdin, stderr=subprocess.DEVNULL)
             worker_process.wait() 
         except Exception as e:
             print(f"[ERROR] Gagal memutar {video_path}: {e}")

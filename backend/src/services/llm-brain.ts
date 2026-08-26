@@ -40,17 +40,6 @@ export async function generateProductKnowledge(input: {
   category?: string;
   image?: string;
 }): Promise<ProductKnowledge> {
-  const fallback: ProductKnowledge = {
-    description:
-      input.description ||
-      `${input.name} adalah produk ${input.category || "pilihan"} untuk kebutuhan harian pelanggan.`,
-    benefits: `Membantu pelanggan mendapatkan manfaat dari ${input.name} dengan penggunaan rutin sesuai petunjuk.`,
-    usage:
-      "Gunakan sesuai petunjuk pada kemasan dan lakukan uji kecocokan terlebih dahulu.",
-    faq: "Pastikan membaca komposisi, izin resmi, dan petunjuk keamanan pada kemasan sebelum digunakan.",
-    targetAudience: `Pelanggan yang membutuhkan produk ${input.category || "ini"} untuk penggunaan sehari-hari.`,
-    copywriting: `Kenalan dengan ${input.name}, pilihan praktis untuk menemani kebutuhan harian kamu. Cek detailnya dan dapatkan promo terbaik di live sekarang!`,
-  };
   const prompt = `Buat knowledge base dan copywriting produk dalam Bahasa Indonesia berdasarkan data berikut.
 Nama: ${input.name}
 Kategori: ${input.category || "General"}
@@ -86,9 +75,290 @@ Jangan mengarang klaim medis, sertifikasi, bahan, angka hasil, atau manfaat yang
       }
     }
   } catch {
-    // Use conservative copy when the local model is unavailable.
   }
-  return fallback;
+  throw new Error("AI product knowledge generator is unavailable");
+}
+
+export async function generateVideoSalesScript(input: {
+  productName: string;
+  productDescription?: string;
+  productPrice?: string;
+  productCategory?: string;
+  durationType?: "15s" | "30s" | "60s";
+  style?: string;
+}): Promise<{
+  tierName: string;
+  tierPrice: string;
+  estimatedCogs: string;
+  hookHeadline: string;
+  hook: string;
+  problem: string;
+  solution: string;
+  cta: string;
+  fullVoiceover: string;
+  badges: string[];
+  durationSeconds: number;
+}> {
+  const durationType = input.durationType || "30s";
+  const durationSeconds = durationType === "15s" ? 15 : durationType === "30s" ? 30 : 60;
+  const base = {
+    tierName:
+      durationType === "15s"
+        ? "Short Hook (15 Detik)"
+        : durationType === "30s"
+          ? "Standard Showcase (30 Detik)"
+          : "Deep Review (60 Detik)",
+    tierPrice:
+      durationType === "15s"
+        ? "Rp19.000"
+        : durationType === "30s"
+          ? "Rp35.000"
+          : "Rp59.000",
+    estimatedCogs:
+      durationType === "15s"
+        ? "~Rp200"
+        : durationType === "30s"
+          ? "~Rp350"
+          : "~Rp600",
+    hookHeadline: "",
+    hook: "",
+    problem: "",
+    solution: "",
+    cta: "",
+    fullVoiceover: "",
+    badges: ["✨ 100% BPOM Resmi", "⚡ Cepat Meresap", "💧 24H Glowing"],
+    durationSeconds,
+  };
+
+  const prompt = `Buat naskah iklan video UGC dalam Bahasa Indonesia yang natural, tajam, dan langsung bisa dipakai host live.
+Produk: ${input.productName}
+Deskripsi produk dari penjual: ${input.productDescription || "Tidak tersedia"}
+Kategori: ${input.productCategory || "General"}
+Harga promo live: ${input.productPrice || "Harga Spesial"}
+Durasi: ${durationType}
+Gaya: ${input.style || "Viral TikTok"}
+
+Wajib:
+- Gunakan hanya fakta yang ada di deskripsi produk.
+- Jangan menambahkan klaim medis, hasil instan, atau sertifikasi yang tidak ada di data.
+- Output harus JSON valid dengan keys: hookHeadline, hook, problem, solution, cta, fullVoiceover.
+- Hook singkat, problem relevan dengan kategori, solution menjelaskan manfaat dari deskripsi produk, CTA spesifik ke harga dan urgency.
+- Tone: persuasif, komersial, natural, tidak kaku.
+`;
+
+  const parseResult = (text: string) => {
+    const parsed = JSON.parse(text) as Partial<typeof base>;
+    const required = [
+      parsed.hookHeadline,
+      parsed.hook,
+      parsed.problem,
+      parsed.solution,
+      parsed.cta,
+      parsed.fullVoiceover,
+    ];
+    if (required.some((value) => typeof value !== "string" || !value.trim())) {
+      throw new Error("AI returned incomplete video script");
+    }
+    return {
+      ...base,
+      hookHeadline: parsed.hookHeadline!,
+      hook: parsed.hook!,
+      problem: parsed.problem!,
+      solution: parsed.solution!,
+      cta: parsed.cta!,
+      fullVoiceover: parsed.fullVoiceover!,
+    };
+  };
+
+  try {
+    const host = process.env.OLLAMA_HOST || "http://localhost:11434";
+    const model = process.env.OLLAMA_MODEL || "qwen2.5:latest";
+    const response = await fetch(`${host}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        stream: false,
+        format: "json",
+      }),
+    });
+    if (response.ok) {
+      const content = (await response.json()).message?.content;
+      if (content) return parseResult(content);
+    }
+  } catch {}
+
+  const apiKey = process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
+  if (apiKey) {
+    try {
+      const endpoint = process.env.OPENROUTER_API_KEY
+        ? "https://openrouter.ai/api/v1/chat/completions"
+        : "https://api.openai.com/v1/chat/completions";
+      const model = process.env.OPENROUTER_API_KEY ? "openai/gpt-4o-mini" : "gpt-4o-mini";
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.8,
+          max_tokens: 500,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content;
+        if (text) return parseResult(text);
+      }
+    } catch {}
+  }
+
+  throw new Error("AI video script generator is unavailable");
+}
+
+export interface LiveSalesPitchInput {
+  productName: string;
+  productPrice?: string;
+  productCategory?: string;
+  productDescription?: string;
+  productBenefits?: string;
+  productUsage?: string;
+  productFaq?: string;
+  productStock?: number;
+  avatarName?: string;
+  tone?: string;
+}
+
+export interface LiveSalesPitchOutput {
+  productName: string;
+  price: string;
+  stock: number;
+  category: string;
+  avatarName: string;
+  tone: string;
+  hook: string;
+  showcase: string;
+  cta: string;
+  fullScript: string;
+}
+
+export async function generateLiveSalesPitchFromAI(
+  input: LiveSalesPitchInput,
+): Promise<LiveSalesPitchOutput> {
+  const hostName = input.avatarName || "Namira";
+  const tone = input.tone || "Persuasif";
+  const category = input.productCategory || "General";
+  const price = input.productPrice || "Harga Spesial";
+  const stock = input.productStock ?? 50;
+
+  const prompt = `Kamu adalah ${hostName}, seorang Top Live Host & Streamer profesional di Indonesia.
+Buat naskah live sales pitch terstruktur dalam Bahasa Indonesia yang sangat natural, santai, ramah, dan memikat penonton ("aku", "kakak", "yuk", "nih", "ya kak").
+
+DATA PRODUK:
+- Nama Produk: ${input.productName}
+- Kategori: ${category}
+- Harga Promo Live: ${price}
+- Sisa Stok: ${stock} pcs
+- Deskripsi dari Penjual: ${input.productDescription || "Tidak ada deskripsi"}
+- Keunggulan & Manfaat: ${input.productBenefits || "Kualitas terbaik dan teruji"}
+- Petunjuk Pemakaian: ${input.productUsage || "Mudah digunakan"}
+- FAQ / Izin: ${input.productFaq || "Terjamin original dan aman"}
+
+GAYA BICARA: ${tone} (bahasa live streaming santai, tidak kaku, tidak seperti membaca brosur).
+
+ATURAN WAJIB:
+- Gunakan HANYA informasi nyata dari data produk di atas. Jangan mengarang klaim berlebihan atau izin yang tidak tertulis.
+- Naskah harus dibagi menjadi 3 bagian:
+  1. "hook": Sapaan pembuka yang heboh & mengaitkan rasa penasaran penonton (1-2 kalimat).
+  2. "showcase": Bedah manfaat utama, keunggulan, dan solusi dari deskripsi/benefits produk dengan bahasa yang persuasif dan luwes (2-3 kalimat).
+  3. "cta": Ajakan beli/checkout mendesak dengan menyebut harga promo ${price} dan sisa stok di keranjang kuning (1-2 kalimat).
+
+Kembalikan HANYA JSON valid tanpa teks pengantar:
+{
+  "hook": "...",
+  "showcase": "...",
+  "cta": "..."
+}`;
+
+  const parseResult = (text: string): LiveSalesPitchOutput => {
+    const parsed = JSON.parse(text) as { hook?: string; showcase?: string; cta?: string };
+    if (!parsed.hook || !parsed.showcase || !parsed.cta) {
+      throw new Error("AI returned incomplete live sales script format");
+    }
+    const cleanHook = parsed.hook.trim();
+    const cleanShowcase = parsed.showcase.trim();
+    const cleanCta = parsed.cta.trim();
+    return {
+      productName: input.productName,
+      price,
+      stock,
+      category,
+      avatarName: hostName,
+      tone,
+      hook: cleanHook,
+      showcase: cleanShowcase,
+      cta: cleanCta,
+      fullScript: `${cleanHook}\n\n${cleanShowcase}\n\n${cleanCta}`,
+    };
+  };
+
+  // 1. Coba Ollama
+  try {
+    const host = process.env.OLLAMA_HOST || "http://localhost:11434";
+    const model = process.env.OLLAMA_MODEL || "qwen2.5:latest";
+    const response = await fetch(`${host}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(12000),
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        stream: false,
+        format: "json",
+      }),
+    });
+    if (response.ok) {
+      const content = (await response.json()).message?.content;
+      if (content) return parseResult(content);
+    }
+  } catch {}
+
+  // 2. Coba Cloud LLM (OpenAI / OpenRouter)
+  const apiKey = process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
+  if (apiKey) {
+    try {
+      const endpoint = process.env.OPENROUTER_API_KEY
+        ? "https://openrouter.ai/api/v1/chat/completions"
+        : "https://api.openai.com/v1/chat/completions";
+      const model = process.env.OPENROUTER_API_KEY ? "openai/gpt-4o-mini" : "gpt-4o-mini";
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.7,
+          max_tokens: 600,
+          response_format: { type: "json_object" },
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content;
+        if (text) return parseResult(text);
+      }
+    } catch {}
+  }
+
+  throw new Error("AI Sales Script Generator is offline (Ollama/LLM unreachable). Harap aktifkan Ollama atau set OPENAI_API_KEY.");
 }
 
 export async function generateDynamicSalesResponse(
@@ -107,10 +377,10 @@ export async function generateDynamicSalesResponse(
     productStock = 50,
   } = input;
 
-  const systemPrompt = `Kamu adalah ${avatarName}, seorang AI Host & Live Streamer profesional yang sedang siaran langsung jualan di TikTok / Instagram Live.
-Gaya bicara kamu: ${tone}, sangat luwes, ramah, ceria, menggunakan Bahasa Indonesia santai (bahasa live streaming: "aku", "kakak", "nih", "banget", "ya kak", "hehe", "yuk"). TIDAK BOLEH kaku atau seperti robot.
+  const systemPrompt = `Kamu adalah ${avatarName}, seorang AI Host & Live Streamer profesional yang sedang siaran langsung jualan di TikTok / Shopee / Instagram Live.
+Gaya bicara kamu: ${tone}, sangat luwes, ramah, ceria, menggunakan Bahasa Indonesia santai khas live streaming ("aku", "kakak", "nih", "banget", "ya kak", "hehe", "yuk"). TIDAK BOLEH kaku atau seperti robot.
 
-Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.productCategory || "Skincare"}, Harga spesial live: ${productPrice}, Sisa Stok: ${productStock} pcs).
+Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.productCategory || "General"}, Harga spesial live: ${productPrice}, Sisa Stok: ${productStock} pcs).
 
 --- RAG KNOWLEDGE BASE PRODUK ---
 1. Deskripsi: ${productDescription}
@@ -125,25 +395,20 @@ Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.product
 
 --- CONTOH DIALOG (FEW-SHOT PROMPTING) ---
 Penonton: "Kaka lagi apa?"
-Kamu: "Aku lagi seru-seruan nemenin kakak-kakak manis di live streaming nih! Eh ngomong-ngomong soal manis, produk ${productName} kita lagi promo ${productPrice} lho, yuk dicek keranjang kuningnya!"
+Kamu: "Aku lagi seru-seruan nemenin kakak-kakak manis di live streaming nih! Eh ngomong-ngomong, produk ${productName} kita lagi diskon spesial ${productPrice} lho, yuk dicek keranjang kuningnya!"
 
 Penonton: "Kamu namanya siapa?"
 Kamu: "Kenalin, aku ${avatarName}, host andalan kakak hari ini! Sambil kita kenalan, kakak udah amankan ${productName} belum nih mumpung stok tinggal ${productStock} pcs?"
 
-Penonton: "Kamu siapa si?"
-Kamu: "Aku ${avatarName}, AI streamer kesayangan kakak yang siap nemenin hari ini! Biar makin asyik, jangan lupa check out ${productName} mumpung lagi diskon ${productPrice} ya kak!"
-
 Penonton: "Kenapa musti beli disini?"
-Kamu: "Karena di live aku ini diskonnya paling gila-gilaan kak! ${productName} ini dijamin 100% ori, terdaftar BPOM, dan kakak bisa dapat harga ${productPrice} cuma di keranjang kuning sekarang juga."
+Kamu: "Karena di live aku ini diskonnya paling gila-gilaan kak! ${productName} ini dijamin 100% ori, dan kakak bisa dapat harga ${productPrice} cuma di keranjang kuning sekarang juga."`;
 
-Penonton: "Aku jerawatan parah kak"
-Kamu: "Wah tenang aja kak, jangan panik! Kakak wajib cobain ${productName} karena ${productBenefits}. Formulanya aman banget, yuk langsung di-checkout sebelum promonya habis!"`;
-
+  // 1. Coba Ollama
   try {
     const ollamaHost = process.env.OLLAMA_HOST || "http://localhost:11434";
     const ollamaModel = process.env.OLLAMA_MODEL || "qwen2.5:latest";
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s timeout fallback
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
 
     const res = await fetch(`${ollamaHost}/api/chat`, {
       method: "POST",
@@ -171,9 +436,7 @@ Kamu: "Wah tenang aja kak, jangan panik! Kakak wajib cobain ${productName} karen
         };
       }
     }
-  } catch (e) {
-    // Ollama not active, fallback gracefully
-  }
+  } catch (e) {}
 
   // 2. Coba panggil OpenAI / OpenRouter jika ada API Key di .env
   const apiKey = process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
@@ -198,7 +461,7 @@ Kamu: "Wah tenang aja kak, jangan panik! Kakak wajib cobain ${productName} karen
             { role: "system", content: systemPrompt },
             { role: "user", content: userQuestion },
           ],
-          max_tokens: 150,
+          max_tokens: 200,
           temperature: 0.8,
         }),
       });
@@ -215,153 +478,9 @@ Kamu: "Wah tenang aja kak, jangan panik! Kakak wajib cobain ${productName} karen
           };
         }
       }
-    } catch (e) {
-      // Cloud API failed, fallback to neural engine
-    }
+    } catch (e) {}
   }
 
-  // 3. Autonomous Neural Generative Engine (Non-stiff, rich spontaneous conversational brain)
-  return generateSpontaneousResponse(
-    userQuestion,
-    avatarName,
-    tone,
-    productName,
-    productPrice,
-    productBenefits,
-    productStock,
-  );
-}
-
-/**
- * Autonomous Spontaneous Response Generator
- * Natural, humorous, conversational, and always in-character as a live host with smooth sales pivot.
- */
-function generateSpontaneousResponse(
-  q: string,
-  avatarName: string,
-  _tone: string,
-  productName: string,
-  productPrice: string,
-  productBenefits: string,
-  productStock: number,
-): SalesBrainOutput {
-  const query = q.toLowerCase().trim();
-
-  // Pertanyaan spesifik: Siapa kamu / Namanya siapa
-  if (
-    query.includes("kamu siapa") ||
-    query.includes("namanya siapa") ||
-    query.includes("nama kamu") ||
-    query.includes("siapa sih")
-  ) {
-    return {
-      replyText: `Kenalin, aku ${avatarName}, host andalan kakak hari ini! Sambil kita kenalan, kakak udah amankan ${productName} belum nih mumpung stok tinggal ${productStock} pcs? Yuk ah dicheckout!`,
-      engineUsed: "Neural Host Persona Brain",
-      intent: "identity",
-      action: "reply",
-    };
-  }
-
-  // Pertanyaan spesifik: Lagi apa
-  if (
-    query.includes("lagi apa") ||
-    query.includes("ngapain") ||
-    query.includes("sedang apa")
-  ) {
-    return {
-      replyText: `Aku lagi seru-seruan nemenin kakak-kakak manis di live streaming nih! Eh ngomong-ngomong soal manis, produk ${productName} kita lagi promo ${productPrice} lho, yuk dicek keranjang kuningnya sekarang!`,
-      engineUsed: "Neural Host Persona Brain",
-      intent: "activity",
-      action: "reply",
-    };
-  }
-
-  // Pertanyaan spesifik: Kenapa musti beli disini
-  if (
-    query.includes("kenapa musti beli") ||
-    query.includes("kenapa harus beli") ||
-    query.includes("alasan beli") ||
-    query.includes("bedanya apa") ||
-    query.includes("keunggulan")
-  ) {
-    return {
-      replyText: `Karena di live aku ini diskonnya paling gila-gilaan kak! ${productName} ini dijamin 100% ori, terdaftar BPOM, dan kakak bisa dapat harga spesial ${productPrice} cuma kalau checkout di keranjang kuning sekarang juga.`,
-      engineUsed: "Neural Host Persona Brain",
-      intent: "convince_buy",
-      action: "reply",
-    };
-  }
-
-  // Pertanyaan Lokasi / Tinggal di mana
-  if (
-    query.includes("tinggal dimana") ||
-    query.includes("asal mana") ||
-    query.includes("rumah dimana") ||
-    query.includes("orang mana")
-  ) {
-    const locations = [
-      `Aku aslinya stay di Jakarta nih kak, tapi live streaming ini bisa nemenin kakak di seluruh Indonesia! Biar makin akrab, kakak wajib cobain ${productName} yang lagi aku pegang ini ya, lagi promo ${productPrice}! ✨`,
-      `Aku stay di studio live Jakarta nih kak. Sambil ngobrol santai, kakak udah amankan ${productName} belum? Mumpung lagi flash sale lho! 😊`,
-    ];
-    return {
-      replyText: locations[Math.floor(Math.random() * locations.length)],
-      engineUsed: "Neural Host Persona Brain",
-      intent: "personal_location",
-      action: "reply",
-    };
-  }
-
-  // Sapaan Santai
-  if (
-    /^(halo|hallo|hai|hi|hey|pagi|siang|malam|assalamualaikum)/i.test(query) ||
-    query.includes("halo") ||
-    query.includes("hai")
-  ) {
-    return {
-      replyText: `Halo juga kakak manis! Senang banget kakak mampir di live ${avatarName}. Kebetulan kita lagi ada promo heboh untuk ${productName} cuma ${productPrice}! Kakak lagi cari produk apa nih? 🌸`,
-      engineUsed: "Neural Host Persona Brain",
-      intent: "greeting",
-      action: "reply",
-    };
-  }
-
-  // Pujian
-  if (
-    query.includes("cantik") ||
-    query.includes("cakep") ||
-    query.includes("manis") ||
-    query.includes("lucu") ||
-    query.includes("keren")
-  ) {
-    return {
-      replyText: `Makasih banyak pujiannya kak, bikin ${avatarName} makin semangat live! Biar kakak juga makin percaya diri, wajib banget cobain ${productName} yang lagi diskon ${productPrice} hari ini ya! 💖`,
-      engineUsed: "Neural Host Persona Brain",
-      intent: "compliment",
-      action: "reply",
-    };
-  }
-
-  // Tanya Harga / Promo / Diskon
-  if (
-    query.includes("harga") ||
-    query.includes("berapa") ||
-    query.includes("diskon") ||
-    query.includes("promo") ||
-    query.includes("ongkir")
-  ) {
-    return {
-      replyText: `Harga spesial live untuk ${productName} cuma ${productPrice} saja kak! Plus ada voucher diskon ongkir khusus pemesanan sekarang di keranjang kuning. Langsung disikat kak! 🎁🛍️`,
-      engineUsed: "Neural Host Persona Brain",
-      intent: "price_promo",
-      action: "pin_product",
-    };
-  }
-
-  // Pertanyaan Random Lainnya (Spontaneous Smart Answer + Smooth Product Pivot)
-  return {
-    replyText: `Pertanyaannya seru banget kak! Sambil kita ngobrol santai di live ${avatarName} ini, mumpung ${productName} lagi promo spesial ${productPrice}, jangan sampai kelewatan kesempatan checkout di keranjang kuning ya kak! 😊🛒`,
-    engineUsed: "Neural Host Persona Brain",
-    intent: "spontaneous_pivot",
-    action: "reply",
-  };
+  // Hard-fail explicitly instead of using fake static template
+  throw new Error("AI Sales Brain is offline / unreachable. Pastikan server Ollama (qwen2.5) atau Cloud LLM API aktif.");
 }

@@ -151,14 +151,14 @@ export const pricing = {
 };
 
 export const dashboardSummary = {
-  totalProducts: 12,
-  activeAvatar: "Nana",
-  sessions: 3,
-  totalRevenue: 4235000,
-  estimatedCost: 875000,
-  liveViewers: 1234,
-  comments: 156,
-  conversion: 12,
+  totalProducts: 0,
+  activeAvatar: "",
+  sessions: 0,
+  totalRevenue: 0,
+  estimatedCost: 0,
+  liveViewers: 0,
+  comments: 0,
+  conversion: 0,
 };
 
 export const liveWorkflowSteps = [
@@ -190,30 +190,6 @@ export const liveWorkflowSteps = [
 ];
 
 export const inventoryRows = [
-  {
-    name: "Serum Brightening Premium",
-    harga: 99000,
-    stok: 120,
-    aksi: "Aktif",
-  },
-  {
-    name: "Moisturizer Glow Natural",
-    harga: 129000,
-    stok: 80,
-    aksi: "Aktif",
-  },
-  {
-    name: "Sunscreen Day Protection",
-    harga: 79000,
-    stok: 200,
-    aksi: "Draft",
-  },
-  {
-    name: "Hydrating Essence",
-    harga: 110000,
-    stok: 70,
-    aksi: "Aktif",
-  },
 ];
 
 export const hostOptions = [

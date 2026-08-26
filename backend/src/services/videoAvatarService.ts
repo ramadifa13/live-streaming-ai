@@ -347,18 +347,18 @@ async function runMock(
     updateJob(jobId, { progress: step.progress, stage: step.stage });
   }
 
-  // Accurate avatar matching videos based on selected 2D / 3D character
-  let videoUrl =
-    "https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4";
+  const allowFallback = (process.env.ALLOW_MEDIA_FALLBACK ?? "false").toLowerCase() === "true";
   const nameLow = (params.avatarName || "").toLowerCase();
+  const videoUrl = allowFallback
+    ? nameLow.includes("nana") || nameLow.includes("2d")
+      ? "https://assets.mixkit.co/videos/preview/mixkit-woman-talking-on-a-video-call-42898-large.mp4"
+      : "https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4"
+    : undefined;
 
-  if (nameLow.includes("nana") || nameLow.includes("2d")) {
-    videoUrl =
-      "https://assets.mixkit.co/videos/preview/mixkit-woman-talking-on-a-video-call-42898-large.mp4";
-  } else {
-    // Namira (3D Energetic)
-    videoUrl =
-      "https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4";
+  if (!videoUrl) {
+    throw new Error(
+      "Avatar video mock disabled in demo mode. Configure AVATAR_PROVIDER=liveportrait or set ALLOW_MEDIA_FALLBACK=true for local development.",
+    );
   }
 
   updateJob(jobId, {

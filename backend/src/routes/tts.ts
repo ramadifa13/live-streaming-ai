@@ -5,7 +5,7 @@ import { INDONESIAN_VOICES, synthesizeSpeech } from "../services/tts.js";
 const synthesizeSchema = z.object({
   text: z.string().min(1),
   voice: z.string().optional(),
-  avatarName: z.string().optional().default("Luna"),
+  avatarName: z.string().optional().default("Namira"),
   speed: z.number().optional().default(1.0),
   pitch: z.number().optional().default(1.0),
 });

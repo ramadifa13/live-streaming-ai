@@ -201,15 +201,15 @@ class AILiveWorker:
 
             if not os.path.exists(unet_config):
                 print(f"[ERROR] MuseTalk V1.5 config tidak ditemukan:\n{unet_config}")
-                return None
+                raise FileNotFoundError(unet_config)
 
             if not os.path.exists(unet_model_path):
                 print(f"[ERROR] MuseTalk V1.5 checkpoint tidak ditemukan:\n{unet_model_path}")
-                return None
+                raise FileNotFoundError(unet_model_path)
 
             if not os.path.exists(whisper_dir):
                 print(f"[ERROR] Whisper model tidak ditemukan:\n{whisper_dir}")
-                return None
+                raise FileNotFoundError(whisper_dir)
 
             if musetalk_dir not in sys.path:
                 sys.path.insert(0, musetalk_dir)
@@ -286,7 +286,7 @@ class AILiveWorker:
             print(f"[MuseTalk SUCCESS] Output:\n{expected_output}")
             return expected_output
 
-    async def run_pipeline(self, host_type, host_name, text_answer, task_id):
+    async def run_pipeline(self, host_type, host_name, text_answer, task_id, audio_path=None):
         """Fungsi Pemicu Utama"""
         print(f"\n[MEMPROSES] {task_id} | Host: {host_name} ({host_type.upper()})")
         
@@ -295,17 +295,24 @@ class AILiveWorker:
             print(f"[ERROR] Video '{host_name}.mp4' tidak ada di folder assets/{host_type}")
             return None
             
-        print(" -> Generating Suara (XTTSv2)...")
-        try:
-            audio_file = await self._generate_voice(text_answer, task_id, host_name)
-        except Exception as e:
-            print(f"[ERROR] Gagal membuat suara: {e}")
-            return None
+        if audio_path and os.path.exists(audio_path):
+            audio_file = audio_path
+            print(" -> Menggunakan audio dari backend...")
+        else:
+            if os.environ.get("WORKER_REQUIRE_AUDIO", "0") == "1":
+                print("[ERROR] Backend audio wajib tersedia, tetapi audio_path tidak valid.")
+                return None
+            print(" -> Generating Suara (XTTSv2)...")
+            try:
+                audio_file = await self._generate_voice(text_answer, task_id, host_name)
+            except Exception as e:
+                print(f"[ERROR] Gagal membuat suara: {e}")
+                return None
         
         print(" -> Generating Video Lipsync (MuseTalk)...")
         final_video = await self._sync_lips_async(idle_video, audio_file, task_id)
         
-        if os.path.exists(audio_file):
+        if audio_file and os.path.exists(audio_file) and audio_file.startswith(self.temp_dir):
             os.remove(audio_file) # Bersihkan file suara
             
         if final_video:

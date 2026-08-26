@@ -32,49 +32,68 @@ export COQUI_TOS_AGREED=1
 export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:7b}"
 export OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0:11434}"
 
+check_python_import() {
+	python - "$1" <<'PY'
+import importlib.util
+import sys
+
+module = sys.argv[1]
+if importlib.util.find_spec(module) is None:
+    raise SystemExit(1)
+PY
+}
+
+for dep in fastapi uvicorn pydantic; do
+	if ! check_python_import "$dep"; then
+		echo "[ERROR] Python dependency missing: $dep"
+		exit 1
+	fi
+done
+
 echo "Menyiapkan symlink MuseTalk (./musetalk, ./models)..."
 ln -sfn "$WORKER_DIR/MuseTalk/musetalk" "$WORKER_DIR/musetalk"
 ln -sfn "$WORKER_DIR/MuseTalk/models" "$WORKER_DIR/models"
 
-echo "Memastikan model Ollama tersedia (${OLLAMA_MODEL})..."
-if ! command -v ollama >/dev/null 2>&1; then
-	echo "[ERROR] Ollama tidak ditemukan. Jalankan setup-safe.sh terlebih dahulu."
+echo "Memeriksa ketersediaan FFmpeg..."
+if ! command -v ffmpeg >/dev/null 2>&1; then
+	echo "[ERROR] FFmpeg tidak ditemukan. Worker memerlukan ffmpeg untuk render."
 	exit 1
 fi
 
-if ! pgrep -f "ollama serve" >/dev/null 2>&1; then
-	echo "Memulai Ollama (${OLLAMA_HOST})..."
-	OLLAMA_HOST="$OLLAMA_HOST" ollama serve > "$WORKER_DIR/ollama.log" 2>&1 &
-	OLLAMA_PID=$!
-	for attempt in $(seq 1 30); do
-		if curl -fsS "http://127.0.0.1:11434/api/tags" >/dev/null 2>&1; then
-			break
+# Ollama di RunPod bersifat opsional karena LLM diproses terpusat di Backend
+if [ "${ENABLE_RUNPOD_OLLAMA:-0}" = "1" ]; then
+	echo "Memastikan model Ollama tersedia (${OLLAMA_MODEL})..."
+	if command -v ollama >/dev/null 2>&1; then
+		if ! pgrep -f "ollama serve" >/dev/null 2>&1; then
+			echo "Memulai Ollama (${OLLAMA_HOST})..."
+			OLLAMA_HOST="$OLLAMA_HOST" ollama serve > "$WORKER_DIR/ollama.log" 2>&1 &
 		fi
-		sleep 1
-		if ! kill -0 "$OLLAMA_PID" 2>/dev/null; then
-			echo "[ERROR] Ollama gagal start. Lihat $WORKER_DIR/ollama.log"
-			exit 1
-		fi
-	done
+	fi
+else
+	echo "[INFO] LLM dipusatkan di Backend (Ollama RunPod dinonaktifkan untuk menghemat VRAM GPU)."
 fi
-
-if ! curl -fsS "http://127.0.0.1:11434/api/tags" >/dev/null 2>&1; then
-	echo "[ERROR] Ollama tidak merespons di port 11434."
-	exit 1
-fi
-
-if ! ollama list | awk 'NR > 1 {print $1}' | grep -Fxq "$OLLAMA_MODEL"; then
-	echo "Model belum ada, mengunduh ${OLLAMA_MODEL}..."
-	ollama pull "$OLLAMA_MODEL"
-fi
-
-echo "[OK] Ollama siap di ${OLLAMA_HOST}"
 
 echo "Memulai AI Worker API (Port 8000)..."
 python api_server.py > "$WORKER_DIR/api_server.log" 2>&1 &
 API_PID=$!
 
-sleep 2
+for attempt in $(seq 1 30); do
+	if curl -fsS "http://127.0.0.1:8000/" >/dev/null 2>&1; then
+		break
+	fi
+	sleep 1
+	if ! kill -0 "$API_PID" 2>/dev/null; then
+		echo "[ERROR] api_server.py gagal start. Lihat log:"
+		echo "        tail -50 $WORKER_DIR/api_server.log"
+		exit 1
+	fi
+	if [ "$attempt" -eq 30 ]; then
+		echo "[ERROR] api_server.py timeout start. Lihat log:"
+		echo "        tail -50 $WORKER_DIR/api_server.log"
+		exit 1
+	fi
+done
+
 if ! kill -0 "$API_PID" 2>/dev/null; then
 	echo "[ERROR] api_server.py gagal start. Lihat log:"
 	echo "        tail -50 $WORKER_DIR/api_server.log"

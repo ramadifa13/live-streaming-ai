@@ -2,6 +2,8 @@ import os
 import asyncio
 import uuid
 import subprocess
+import base64
+import tempfile
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -20,6 +22,8 @@ class GenerateVideoRequest(BaseModel):
     voice: str = None
     speed: float = 1.0
     tone: str = "Persuasif"
+    audio_base64: str = None
+    audio_url: str = None
 
 # Mount output folder to serve the generated video files
 output_dir = worker.output_dir
@@ -34,15 +38,30 @@ jobs = {}
 broadcaster_process = None
 
 async def process_video_task(req: GenerateVideoRequest, task_id: str):
+    audio_path = None
     try:
         host_type = "3d"
         host_name = "namira"
-        
+
+        if req.audio_base64:
+            try:
+                raw_audio = base64.b64decode(req.audio_base64)
+                fd, audio_path = tempfile.mkstemp(suffix=".mp3", dir=worker.temp_dir)
+                os.close(fd)
+                with open(audio_path, "wb") as audio_file:
+                    audio_file.write(raw_audio)
+            except Exception as audio_err:
+                jobs[task_id] = {"status": "error", "error": f"Audio backend invalid: {str(audio_err)}"}
+                return
+        elif req.audio_url:
+            audio_path = req.audio_url
+
         final_video_path = await worker.run_pipeline(
             host_type=host_type,
             host_name=host_name,
             text_answer=req.text,
-            task_id=task_id
+            task_id=task_id,
+            audio_path=audio_path,
         )
         
         if not final_video_path:
@@ -55,13 +74,19 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
         jobs[task_id] = {
             "status": "done",
             "video_url": video_url,
-            "engine": "XTTSv2 + Wav2Lip",
+            "engine": "Backend TTS + MuseTalk",
             "lip_sync_active": True
         }
         print(f"[API SUCCESS] Video berhasil dibuat untuk {task_id}: {video_url}")
     except Exception as e:
         print(f"[API FATAL ERROR] Terjadi kesalahan sistem: {str(e)}")
         jobs[task_id] = {"status": "error", "error": str(e)}
+    finally:
+        if audio_path and os.path.exists(audio_path):
+            try:
+                os.remove(audio_path)
+            except Exception:
+                pass
 
 @app.post("/stream/generate-neural-video")
 @app.post("/stream/live-utterance")
@@ -96,6 +121,7 @@ async def start_broadcast(req: BroadcastRequest):
     env["STREAM_KEY"] = req.stream_key
     env["IDLE_VIDEO"] = req.idle_video
     env["OUTPUT_FOLDER"] = output_dir
+    env["WORKER_REQUIRE_AUDIO"] = "1"
     broadcaster_process = subprocess.Popen(
         ["python", os.path.join(os.path.dirname(__file__), "broadcaster.py")],
         cwd=os.path.dirname(__file__),

@@ -3,13 +3,26 @@ import { z } from "zod";
 import prisma from "../lib/prisma.js";
 import { generateProductKnowledge } from "../services/llm-brain.js";
 
+export const PRODUCT_CATEGORIES = [
+  "Skincare",
+  "Beauty",
+  "Fashion",
+  "Supplements",
+  "Food & Beverage",
+  "Electronics",
+  "Home & Living",
+  "General",
+] as const;
+
 const productSchema = z.object({
   name: z.string().min(1, "Nama produk wajib diisi"),
   description: z.string().optional(),
   price: z.number().min(1, "Harga harus lebih dari 0"),
   stock: z.number().min(0, "Stok tidak boleh negatif"),
   sku: z.string().optional(),
-  category: z.string().optional(),
+  category: z.enum(PRODUCT_CATEGORIES, {
+    errorMap: () => ({ message: `Kategori harus salah satu dari: ${PRODUCT_CATEGORIES.join(", ")}` }),
+  }).default("General"),
   image: z.string().optional(),
   link: z.string().optional(),
   benefits: z.string().optional(),

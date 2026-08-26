@@ -884,18 +884,29 @@ export default function Dashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           activeProduct: activeFeaturedProduct,
-          avatarName: selectedAvatar.id,
+          avatarName: selectedAvatar.name,
           tone: selectedTone,
+          productName: activeFeaturedProduct.name,
+          productPrice: String(activeFeaturedProduct.price),
+          category: activeFeaturedProduct.tag,
+          productDescription: activeFeaturedProduct.description || "",
+          productBenefits: activeFeaturedProduct.benefits || "",
+          productUsage: activeFeaturedProduct.usage || "",
+          productFaq: activeFeaturedProduct.faq || "",
+          productStock: activeFeaturedProduct.stock,
         }),
       });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.data) {
-          setLiveSalesScriptData(json.data);
-        }
+      const json = await res.json();
+      if (res.ok && json.data) {
+        setLiveSalesScriptData(json.data);
+        showToast("✨ Naskah promosi AI Host berhasil dibuat dari RAG produk!");
+      } else {
+        throw new Error(json.error || "AI service offline");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to load live sales script:", err);
+      setLiveSalesScriptData(null);
+      showToast(`❌ ${err?.message || "AI Host tidak dapat dijangkau. Pastikan Ollama atau LLM aktif."}`);
     } finally {
       setIsLoadingLiveScript(false);
     }
@@ -1260,7 +1271,7 @@ export default function Dashboard() {
           setIsAvatarSpeaking(false);
           setAiWorkerStatus("error");
           showToast(
-            `❌ AI Host error: Backend mengembalikan status ${res.status}.`,
+            `❌ AI Host error: Backend mengembalikan status ${res.status}. Pastikan Ollama atau LLM aktif.`,
           );
         }
       } catch {
@@ -1272,59 +1283,20 @@ export default function Dashboard() {
         );
       }
 
-      if (!aiReplyText) {
-        const qLow = currentInput.toLowerCase();
-        if (
-          /^(halo|hallo|hai|hi|hey|pagi|siang|malam|ass)/i.test(qLow) ||
-          qLow.includes("halo") ||
-          qLow.includes("hai")
-        ) {
-          aiReplyText = `Halo juga kakak! Selamat bergabung di sesi live ${selectedAvatar.name} yaa. Kita lagi ada promo spesial untuk ${activeFeaturedProduct.name} seharga ${activeFeaturedProduct.price}! Ada yang mau ditanyakan tentang produk ini kak? 😊✨`;
-        } else if (
-          qLow.includes("cantik") ||
-          qLow.includes("cakep") ||
-          qLow.includes("ganteng") ||
-          qLow.includes("semangat") ||
-          qLow.includes("lucu")
-        ) {
-          aiReplyText = `Aduh terima kasih banyak pujiannya kak! Biar kakak juga makin glowing & percaya diri, wajib banget cobain ${activeFeaturedProduct.name} yang lagi promo hari ini ya! 💖`;
-        } else if (
-          qLow.includes("diskon") ||
-          qLow.includes("promo") ||
-          qLow.includes("voucher") ||
-          qLow.includes("harga")
-        ) {
-          aiReplyText = `Khusus sesi live ${selectedAvatar.name} saat ini, ada DISKON 20% + FREE ONGKIR untuk ${activeFeaturedProduct.name}! Silakan amankan keranjang kuning sekarang kak! 🎁`;
-        } else if (
-          qLow.includes("cod") ||
-          qLow.includes("asli") ||
-          qLow.includes("bpom")
-        ) {
-          aiReplyText = `Bisa COD (Bayar di Tempat) ke seluruh Indonesia ya kak! Produk 100% original BPOM, bayar pas barang sudah sampai di rumah dengan aman ✅`;
-        } else if (
-          qLow.includes("kulit") ||
-          qLow.includes("jerawat") ||
-          qLow.includes("sensitif") ||
-          qLow.includes("manfaat")
-        ) {
-          aiReplyText = `Sangat cocok untuk semua jenis kulit kak! ${activeFeaturedProduct.name} formulanya ringan, cepat meresap, dan melembapkan seharian! 🌿`;
-        } else {
-          aiReplyText = `Terima kasih pertanyaannya kak! Mumpung harga promo ${activeFeaturedProduct.name} (${activeFeaturedProduct.price}) masih aktif di live sekarang, yuk langsung checkout di keranjang kuning kak! ✨`;
-        }
+      if (aiReplyText) {
+        const aiMsg: ChatMessage = {
+          id: String(Date.now() + 1),
+          sender: `AI Host (${selectedAvatar.name})`,
+          isAi: true,
+          avatarColor: "bg-[#4148e2]",
+          text: aiReplyText,
+          time: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        };
+        setChatMessages((prev) => [...prev, aiMsg]);
       }
-
-      const aiMsg: ChatMessage = {
-        id: String(Date.now() + 1),
-        sender: `AI Host (${selectedAvatar.name})`,
-        isAi: true,
-        avatarColor: "bg-[#4148e2]",
-        text: aiReplyText,
-        time: new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-      };
-      setChatMessages((prev) => [...prev, aiMsg]);
     }
   };
 
@@ -2447,24 +2419,26 @@ export default function Dashboard() {
                 </div>
 
                 {/* AI Sales Script Generator Box */}
-                <div className="mt-auto rounded-xl bg-[#0e1628] p-3 border border-blue-500/20 shadow-inner">
+                <div className="mt-auto rounded-xl bg-[#0e1628] p-3 border border-blue-500/30 shadow-inner">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5 truncate">
-                        <span>📜</span>
-                        <span>AI Script Promosi &amp; CTA</span>
+                        <span>✨</span>
+                        <span>AI Copywriting &amp; CTA Pitch</span>
                       </p>
                       <p className="text-[9px] text-slate-400 truncate mt-0.5">
-                        Dibuat otomatis dari RAG:{" "}
-                        <strong>{activeFeaturedProduct.name}</strong>
+                        Sumber data:{" "}
+                        <strong className="text-blue-300">{activeFeaturedProduct.name}</strong>{" "}
+                        ({activeFeaturedProduct.tag || "General"})
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={handleFetchLiveSalesScript}
-                      className="rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-3 py-1.5 text-[10px] font-bold text-white hover:brightness-110 transition active:scale-95 shrink-0 shadow-md shadow-blue-600/30"
+                      className="flex items-center gap-1 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 px-3 py-1.5 text-[10px] font-bold text-white hover:brightness-110 transition active:scale-95 shrink-0 shadow-md shadow-blue-600/30"
                     >
-                      Lihat Preview Script
+                      <span>🤖</span>
+                      <span>Generate from AI</span>
                     </button>
                   </div>
                 </div>
@@ -5375,69 +5349,84 @@ export default function Dashboard() {
                 <div className="py-12 text-center space-y-3">
                   <div className="h-8 w-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
                   <p className="text-xs text-slate-300 font-semibold">
-                    AI sedang merancang naskah copywriting live berbasis RAG...
+                    AI Host sedang menganalisis deskripsi &amp; manfaat produk...
+                  </p>
+                  <p className="text-[10px] text-slate-500">
+                    Menyusun Hook, Problem-Solution, dan Call To Action...
                   </p>
                 </div>
-              ) : (
+              ) : liveSalesScriptData ? (
                 <div className="rounded-xl bg-[#111827] border border-[#232c42] p-4 text-xs text-slate-200 space-y-3 font-sans max-h-72 overflow-y-auto pr-1.5 shadow-inner">
                   <div className="rounded-lg bg-blue-950/30 border border-blue-500/20 p-2.5">
                     <p className="text-[10px] font-bold text-blue-400 uppercase tracking-wider mb-1">
-                      🎣 [1. HOOK PEMBUKA]
+                      🎣 [1. HOOK PEMBUKA &amp; SAPAAN]
                     </p>
                     <p className="text-slate-200 leading-relaxed">
-                      &ldquo;
-                      {liveSalesScriptData?.hook ||
-                        `Halo semuanya! Selamat datang di live ${selectedAvatar.name} hari ini! Kakak yang lagi cari produk ${activeFeaturedProduct.tag || "terbaik"}, pas banget lagi mampir di sini!`}
-                      &rdquo;
+                      &ldquo;{liveSalesScriptData.hook}&rdquo;
                     </p>
                   </div>
 
                   <div className="rounded-lg bg-purple-950/30 border border-purple-500/20 p-2.5">
                     <p className="text-[10px] font-bold text-purple-400 uppercase tracking-wider mb-1">
-                      💡 [2. BEDAH MANFAAT &amp; RAG KNOWLEDGE]
+                      💡 [2. BEDAH MANFAAT &amp; SELLING POINTS]
                     </p>
                     <p className="text-slate-200 leading-relaxed">
-                      &ldquo;
-                      {liveSalesScriptData?.showcase ||
-                        `Kenalin ini ${activeFeaturedProduct.name}. Keunggulannya ${activeFeaturedProduct.benefits || activeFeaturedProduct.description || "kualitas terjamin dan aman digunakan"}. Ready stock tinggal ${activeFeaturedProduct.stock} pcs ya kak!`}
-                      &rdquo;
+                      &ldquo;{liveSalesScriptData.showcase}&rdquo;
                     </p>
                   </div>
 
                   <div className="rounded-lg bg-emerald-950/30 border border-emerald-500/20 p-2.5">
                     <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-1">
-                      ⚡ [3. CALL TO ACTION &amp; FLASH PROMO]
+                      ⚡ [3. CALL TO ACTION &amp; URGENCY PROMO]
                     </p>
                     <p className="text-slate-200 leading-relaxed">
-                      &ldquo;
-                      {liveSalesScriptData?.cta ||
-                        `Khusus di sesi live sekarang, harganya cuma ${activeFeaturedProduct.price} plus gratis ongkir! Yuk langsung klik tombol Beli Sekarang di keranjang kuning ya kak!`}
-                      &rdquo;
+                      &ldquo;{liveSalesScriptData.cta}&rdquo;
                     </p>
                   </div>
                 </div>
+              ) : (
+                <div className="py-8 text-center space-y-2">
+                  <span className="text-2xl">⚠️</span>
+                  <p className="text-xs text-amber-300 font-semibold">
+                    Belum ada naskah yang digenerate oleh AI.
+                  </p>
+                  <p className="text-[10px] text-slate-400">
+                    Klik tombol di bawah untuk membuat naskah otomatis dari AI Host.
+                  </p>
+                </div>
               )}
 
-              <div className="mt-4 flex justify-end gap-2 pt-2 border-t border-[#232c42]">
+              <div className="mt-4 flex flex-wrap justify-between items-center gap-2 pt-2 border-t border-[#232c42]">
                 <button
                   type="button"
-                  onClick={() => {
-                    const fullText =
-                      liveSalesScriptData?.fullScript ||
-                      `Halo semuanya! Kenalin ini ${activeFeaturedProduct.name}. Harganya cuma ${activeFeaturedProduct.price}! Yuk langsung checkout sebelum kehabisan!`;
-                    handleCopy(fullText, "Script promosi live");
-                  }}
-                  className="rounded-lg border border-[#232c42] bg-[#111827] px-4 py-2 text-xs font-semibold text-slate-300 hover:text-white hover:border-blue-500 transition active:scale-95 shadow-sm"
+                  onClick={handleFetchLiveSalesScript}
+                  disabled={isLoadingLiveScript}
+                  className="rounded-lg border border-blue-500/40 bg-blue-500/10 px-3.5 py-2 text-xs font-semibold text-blue-300 hover:bg-blue-500/20 transition active:scale-95 flex items-center gap-1.5"
                 >
-                  📋 Salin Script Lengkap
+                  <span>🔄</span>
+                  <span>Regenerate Script</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setShowScriptModal(false)}
-                  className="rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 text-xs font-bold text-white hover:brightness-110 shadow-md shadow-blue-600/30"
-                >
-                  Tutup
-                </button>
+
+                <div className="flex items-center gap-2">
+                  {liveSalesScriptData?.fullScript && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleCopy(liveSalesScriptData.fullScript || "", "Script promosi live");
+                      }}
+                      className="rounded-lg border border-[#232c42] bg-[#111827] px-4 py-2 text-xs font-semibold text-slate-300 hover:text-white hover:border-blue-500 transition active:scale-95 shadow-sm"
+                    >
+                      📋 Salin Naskah
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowScriptModal(false)}
+                    className="rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 text-xs font-bold text-white hover:brightness-110 shadow-md shadow-blue-600/30"
+                  >
+                    Tutup
+                  </button>
+                </div>
               </div>
             </div>
           </div>

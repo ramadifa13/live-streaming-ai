@@ -158,83 +158,9 @@ export async function generateLunaResponse(
         }
       }
     }
-  } catch (err) {
-    // Graceful fallback to rule-based engine on LLM error/timeout
+  } catch (err: any) {
+    throw new Error(`AI Host Brain is offline / unreachable (${err?.message || "LLM error"}). Pastikan Ollama atau Cloud LLM API aktif.`);
   }
 
-  // 3. Fallback: Ultra-fast local rule-based intent engine
-  return generateLocalRuleBasedLunaResponse(userComment, product, avatarName, tone);
-}
-
-// ==============================================================================
-// 4. RULE-BASED FAST FALLBACK INTENT ENGINE
-// ==============================================================================
-function generateLocalRuleBasedLunaResponse(
-  comment: string,
-  product?: { id?: string | null; name?: string | null; price?: number | string | null; category?: string | null; description?: string | null } | null,
-  avatarName: string = "Namira",
-  _tone: string = "Persuasif"
-): LunaStructuredOutput {
-  const q = comment.toLowerCase();
-  const prodName = product?.name || "produk viral kita";
-  const prodPrice = product?.price ? `Rp${product.price.toLocaleString("id-ID")}` : "harga promo";
-  const prodId = product?.id || null;
-
-  // Lelucon / Gombalan / Candaan
-  if (/lucu|jodoh|pacar|cantik|cakep|ganteng|nikah|gombal|manis|kangen|sayang|love/i.test(q)) {
-    return {
-      speech: `Hehe makasih kak! Jangan lupa checkout ${prodName} ya!`,
-      action: "LAUGH",
-      emotion: "happy",
-      target_product_id: prodId,
-    };
-  }
-
-  // Tanya Harga / Promo / Diskon / Voucher
-  if (/harga|berapa|price|promo|diskon|voucher|murah|ongkir|potongan/i.test(q)) {
-    return {
-      speech: `Lagi promo jadi ${prodPrice} aja kak, buruan di-checkout!`,
-      action: "POINT_CART",
-      emotion: "happy",
-      target_product_id: prodId,
-    };
-  }
-
-  // Tanya COD / Pengiriman / Keaslian / Garansi
-  if (/cod|bayar di tempat|asli|ori|original|bpom|aman|nyampe|garansi/i.test(q)) {
-    return {
-      speech: `Bisa COD ke seluruh Indonesia dan dijamin 100% original kak!`,
-      action: "NOD",
-      emotion: "happy",
-      target_product_id: prodId,
-    };
-  }
-
-  // Tanya Detail / Khasiat / Kulit / Penggunaan
-  if (/kulit|jerawat|kering|berminyak|sensitif|manfaat|khasiat|cara|pakai|bagus/i.test(q)) {
-    return {
-      speech: `Bagus banget kak, formulanya super ringan dan cepat meresap lho!`,
-      action: "HOLD_PRODUCT",
-      emotion: "happy",
-      target_product_id: prodId,
-    };
-  }
-
-  // Sapaan / Halo / Hadir
-  if (/halo|hai|pagi|siang|sore|malam|ass|hadir|tes|absen/i.test(q)) {
-    return {
-      speech: `Halo kak, selamat bergabung! Boleh langsung cek keranjang kuning kita ya.`,
-      action: "TALK_EXPRESSIVE",
-      emotion: "happy",
-      target_product_id: prodId,
-    };
-  }
-
-  // Default General Chat
-  return {
-    speech: `Wah mantap kak! Mumpung promo ${prodPrice}, jangan sampai kehabisan ya.`,
-    action: "TALK_EXPRESSIVE",
-    emotion: "happy",
-    target_product_id: prodId,
-  };
+  throw new Error("AI Host Brain failed to produce valid response. Pastikan Ollama atau Cloud LLM API aktif.");
 }

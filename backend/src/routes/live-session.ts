@@ -20,6 +20,7 @@ import { liveHostOrchestrator } from "../services/live-host-orchestrator.js";
 const liveSessionSchema = z.object({
   productId: z.string().min(1),
   avatarId: z.string().min(1),
+  voice: z.string().optional(),
   platform: z.string().min(1),
   durationHours: z.literal(1),
   autoReply: z.boolean().optional(),
@@ -82,14 +83,11 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     const effectiveStatus = managedSession?.state || session?.status || "ready";
 
     return {
-      data: session ?? {
-        status: effectiveStatus,
-        platform: "TikTok LIVE",
-        durationHours: 1,
-        currentProduct: "Produk",
-        estimatedCost: 90000,
-        gpuMode: "on-demand",
-      },
+      data: session
+        ? session
+        : {
+            status: effectiveStatus,
+          },
     };
   });
 
@@ -137,6 +135,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         liveChatId: parsed.data.liveChatId,
         liveVideoId: parsed.data.liveVideoId,
         avatarName: avatar.name,
+        voice: parsed.data.voice || avatar.voice || undefined,
         tone: parsed.data.tone || "Persuasif",
       });
 
@@ -146,6 +145,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
           id: result.sessionId,
           status: result.state,
           platform: parsed.data.platform,
+          voice: parsed.data.voice || avatar.voice || null,
           durationHours: parsed.data.durationHours,
           maxDurationSeconds: parsed.data.durationHours * 3600,
           estimatedCost: Math.round(parsed.data.durationHours * 12500),
@@ -157,6 +157,26 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       reply.code(500);
       return { error: `Gagal memulai sesi live: ${err.message}` };
     }
+  });
+
+  // POST /api/live-session/preferences
+  server.post("/api/live-session/preferences", async (request, reply) => {
+    const bodySchema = z.object({
+      voice: z.string().min(1).optional(),
+    });
+    const parsed = bodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: parsed.error.flatten() };
+    }
+
+    liveSessionManager.setPendingVoicePreference(parsed.data.voice ?? null);
+    return {
+      success: true,
+      data: {
+        voice: liveSessionManager.getPendingVoicePreference(),
+      },
+    };
   });
 
   // POST /api/live-session/stop
@@ -220,6 +240,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
           tone: managedSession.tone,
           rtmpUrl,
           streamKey,
+          voice: liveSession.voice || undefined,
         });
       } catch (error) {
         liveHostOrchestrator.stop();

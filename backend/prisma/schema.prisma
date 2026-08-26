@@ -45,6 +45,7 @@ model LiveSession {
   id              String   @id @default(cuid())
   productId       String
   avatarId        String
+  voice           String?
   status          String   @default("draft")
   platform        String
   durationHours   Int

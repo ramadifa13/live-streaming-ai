@@ -1,14 +1,8 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import prisma from "../lib/prisma.js";
 import { generateLunaResponse } from "../services/luna-brain.js";
 import { generateVisemesFromText } from "../services/viseme-generator.js";
-import { forwardToRunPodGPU } from "../services/runpod-bridge.js";
-import {
-  acquireGpuForJob,
-  releaseGpuForJob,
-} from "../services/runpod-manager.js";
-import { liveSessionManager } from "../services/live-session-manager.js";
+import { synthesizeSpeech } from "../services/tts.js";
 
 const chatStreamRequestSchema = z.object({
   comment: z.string().min(1, "Comment is required"),
@@ -27,7 +21,7 @@ export async function chatStreamRoutes(server: FastifyInstance) {
    * Handles:
    * 1. Structured JSON output from LLM (Speech + Action + Emotion + Product)
    * 2. Edge-TTS viseme / phoneme extraction for 3D WebGL mouth morph targets
-   * 3. Mode 2D forwarding to RunPod GPU LivePortrait worker
+ * 3. Preview mode must stay idle and never trigger RunPod rendering
    */
   server.post("/api/chat-stream", async (request, reply) => {
     const parsed = chatStreamRequestSchema.safeParse(request.body);
@@ -44,8 +38,7 @@ export async function chatStreamRoutes(server: FastifyInstance) {
       tone,
       voice,
       mode,
-      avatarImagePath,
-    } = parsed.data;
+  } = parsed.data;
 
     try {
       // Step 1: Generate Structured Persona Host Response via LLM
@@ -69,28 +62,17 @@ export async function chatStreamRoutes(server: FastifyInstance) {
         linkedProduct = activeProduct;
       }
 
-      // Step 4: Render the Namira 3D response on the GPU Worker.
-      let videoUrl: string | undefined = undefined;
-      if (mode === "3D") {
-        const activeSession = await prisma.liveSession.findFirst({
-          where: { status: "live" },
-          select: { id: true },
-        });
-
-        const isActuallyLive = activeSession !== null;
-        const temporaryGpuJob = !isActuallyLive;
-        if (temporaryGpuJob) await acquireGpuForJob();
-        try {
-          const gpuRes = await forwardToRunPodGPU({
-            avatarImagePath,
-            text: lunaResponse.speech,
-            voice: voice || "id-ID-GadisNeural",
-            speed: lunaResponse.action === "TALK_EXPRESSIVE" ? 1.08 : 1.0,
-          });
-          videoUrl = gpuRes.videoUrl;
-        } finally {
-          if (temporaryGpuJob) await releaseGpuForJob();
-        }
+      // Step 4: Preview mode only. Generate audio + visemes, but never render video.
+      const tts = await synthesizeSpeech({
+        text: lunaResponse.speech,
+        avatarName,
+        voice: voice || "id-ID-GadisNeural",
+      });
+      const audioBase64 = tts.audioBuffer
+        ? tts.audioBuffer.toString("base64")
+        : undefined;
+      if (!audioBase64) {
+        throw new Error("Backend TTS gagal menghasilkan audio untuk preview");
       }
 
       // Step 5: Return unified structured response
@@ -104,12 +86,12 @@ export async function chatStreamRoutes(server: FastifyInstance) {
           product: linkedProduct,
           audio: {
             text: lunaResponse.speech,
-            voice: "id-ID-GadisNeural",
+            voice: voice || "id-ID-GadisNeural",
             durationMs: visemeData.durationMs,
           },
           visemes: visemeData.visemes,
           mode,
-          videoUrl: videoUrl || null,
+          videoUrl: null,
         },
       };
     } catch (err: any) {

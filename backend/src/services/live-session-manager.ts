@@ -17,6 +17,7 @@ export interface ManagedSession {
   startedAt: number;
   deadlineAt: number;
   avatarName: string;
+  voice?: string;
   tone: string;
   watchdogTimer?: NodeJS.Timeout;
   livePollTimer?: NodeJS.Timeout;
@@ -26,10 +27,12 @@ export interface ManagedSession {
 class LiveSessionManager {
   private activeSession: ManagedSession | null = null;
   private liveDetectionAttempts: number = 0;
+  private pendingVoicePreference: string | null = null;
 
   public async startSession(params: {
     productId: string;
     avatarId: string;
+    voice?: string;
     platform: string;
     durationHours: number;
     autoReply?: boolean;
@@ -53,6 +56,7 @@ class LiveSessionManager {
       data: {
         productId: params.productId,
         avatarId: params.avatarId,
+        voice: params.voice,
         platform: params.platform,
         durationHours: params.durationHours,
         autoReply: params.autoReply ?? true,
@@ -72,6 +76,7 @@ class LiveSessionManager {
       startedAt: Date.now(),
       deadlineAt: Date.now() + params.durationHours * 3600 * 1000,
       avatarName: params.avatarName || "Namira",
+      voice: params.voice || this.pendingVoicePreference || undefined,
       tone: params.tone || "Persuasif",
       onStateChange: undefined,
     };
@@ -84,6 +89,7 @@ class LiveSessionManager {
       autoReply: params.autoReply ?? true,
       productId: params.productId,
       avatarName: params.avatarName,
+      voice: params.voice || this.pendingVoicePreference || undefined,
       tone: params.tone || "Persuasif",
     });
 
@@ -196,6 +202,14 @@ class LiveSessionManager {
 
   public getActiveSession(): ManagedSession | null {
     return this.activeSession;
+  }
+
+  public setPendingVoicePreference(voice: string | null) {
+    this.pendingVoicePreference = voice;
+  }
+
+  public getPendingVoicePreference(): string | null {
+    return this.pendingVoicePreference;
   }
 
   public isLive(): boolean {
@@ -339,7 +353,6 @@ class LiveSessionManager {
             `[LiveSessionManager] Platform confirmed live for session ${this.activeSession?.sessionId}. Starting AI...`,
           );
           await this.transitionState("live");
-          this.activeSession = null;
           return;
         }
       } catch (err) {

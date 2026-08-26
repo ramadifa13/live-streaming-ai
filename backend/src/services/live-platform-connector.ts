@@ -1,4 +1,4 @@
-﻿import { generateLunaResponse, LunaStructuredOutput } from "./luna-brain.js";
+import { generateLunaResponse, LunaStructuredOutput } from "./luna-brain.js";
 import prisma from "../lib/prisma.js";
 
 export interface LiveMetricsSnapshot {
@@ -27,6 +27,7 @@ export interface PollerSessionConfig {
   autoReply?: boolean;
   productId?: string;
   avatarName?: string;
+  voice?: string;
   tone?: string;
 }
 
@@ -340,7 +341,7 @@ class LivePlatformConnector {
         const response: LunaStructuredOutput = await generateLunaResponse(
           text,
           product,
-          this.currentConfig?.avatarName || "Luna",
+          this.currentConfig?.avatarName || "Namira",
           this.currentConfig?.tone || "Persuasif",
         );
         aiResponseText = response.speech;

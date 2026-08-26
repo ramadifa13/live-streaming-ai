@@ -75,29 +75,15 @@ async function seedDatabase() {
     await prisma.avatar.createMany({
       data: [
         {
-          name: "Alya",
-          type: "Friendly",
-          style: "Friendly",
-          language: "Indonesia",
-          voice: "Wanita Natural",
-          description: "AI host natural and warm",
-        },
-        {
-          name: "Luna",
-          type: "Energetic",
+          name: "Namira",
+          type: "3D",
           style: "Energetic",
           language: "Indonesia",
-          voice: "Energetic Promo",
-          description: "AI host energetic and high conversion",
+          voice: "id-ID-GadisNeural",
+          description: "AI host utama untuk demo live streaming",
         },
-        {
-          name: "Cinta",
-          type: "Professional",
-          style: "Professional",
-          language: "Indonesia",
-          voice: "Soft Professional",
-          description: "AI host professional and authoritative",
-        },
+        
+       
       ],
     });
   }

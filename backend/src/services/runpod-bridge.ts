@@ -10,6 +10,8 @@ export interface RunPod2DStreamParams {
   speed?: number;
   rtmpUrl?: string;
   streamKey?: string;
+  audioBase64?: string;
+  audioUrl?: string;
   requireWorker?: boolean;
 }
 
@@ -27,6 +29,10 @@ export interface RunPodBroadcastResult {
 }
 
 import { getWorkerUrl } from "./runpod-manager.js";
+
+function isDemoFallbackAllowed() {
+  return (process.env.ALLOW_MEDIA_FALLBACK ?? "false").toLowerCase() === "true";
+}
 
 async function workerRequest(path: string, init?: RequestInit) {
   const response = await fetch(`${getWorkerUrl()}${path}`, {
@@ -89,6 +95,8 @@ export async function forwardToRunPodGPU(
         speed: params.speed || 1.0,
         rtmp_url: params.rtmpUrl || "",
         stream_key: params.streamKey || "",
+        audio_base64: params.audioBase64 || "",
+        audio_url: params.audioUrl || "",
       }),
     });
     clearTimeout(timeoutId);
@@ -132,8 +140,7 @@ export async function forwardToRunPodGPU(
       return {
         success: true,
         videoUrl:
-          finalVideoUrl ||
-          "https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4",
+          finalVideoUrl,
         audioPath: completedData.audio_path,
         status: completedData.status || "rendered",
       };
@@ -144,14 +151,11 @@ export async function forwardToRunPodGPU(
       "[RunPodBridge] GPU worker notice (using standard stream pipe):",
       err,
     );
-    if (params.requireWorker) throw err;
+    if (params.requireWorker || !isDemoFallbackAllowed()) throw err;
   }
 
-  // Fallback 2D video stream url
   return {
     success: true,
-    videoUrl:
-      "https://videos.pexels.com/video-files/6231246/6231246-hd_1080_1920_30fps.mp4",
     status: "ready",
   };
 }

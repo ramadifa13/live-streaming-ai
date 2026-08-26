@@ -2,12 +2,14 @@ import prisma from "../lib/prisma.js";
 import { forwardToRunPodGPU } from "./runpod-bridge.js";
 import { generateDynamicSalesResponse } from "./llm-brain.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
+import { synthesizeSpeech } from "./tts.js";
 
 const DEFAULT_INTERVAL_SECONDS = 35;
 
 type HostConfig = {
   productId: string;
   avatarName: string;
+  voice?: string;
   tone: string;
   rtmpUrl?: string;
   streamKey?: string;
@@ -117,12 +119,24 @@ class LiveHostOrchestrator {
   private async renderAndQueue(text: string) {
     const config = this.config;
     if (!config) return;
+    const tts = await synthesizeSpeech({
+      text,
+      avatarName: config.avatarName,
+      voice: config.voice || "id-ID-GadisNeural",
+    });
+    const audioBase64 = tts.audioBuffer
+      ? tts.audioBuffer.toString("base64")
+      : undefined;
+    if (!audioBase64) {
+      throw new Error("Backend TTS gagal menghasilkan audio untuk RunPod");
+    }
     await forwardToRunPodGPU({
       avatarImagePath: "avatars/namira.png",
       text,
-      voice: "id-ID-GadisNeural",
+      voice: config.voice || "id-ID-GadisNeural",
       rtmpUrl: config.rtmpUrl,
       streamKey: config.streamKey,
+      audioBase64,
       requireWorker: true,
     });
   }
