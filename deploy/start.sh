@@ -28,6 +28,12 @@ if [ ! -f "$WORKER_DIR/api_server.py" ]; then
 	exit 1
 fi
 
+
+if [ -d "$WORKER_DIR/env" ]; then
+    echo "Activating virtual environment..."
+    source "$WORKER_DIR/env/bin/activate" || true
+fi
+
 export COQUI_TOS_AGREED=1
 export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:7b}"
 export OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0:11434}"

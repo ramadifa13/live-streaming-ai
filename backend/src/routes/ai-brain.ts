@@ -2,10 +2,10 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import {
-  generateDynamicSalesResponse,
-  generateVideoSalesScript,
-  generateLiveSalesPitchFromAI,
-} from "../services/llm-brain.js";
+  generateDynamicSalesResponseGemini,
+  generateVideoSalesScriptGemini,
+  generateLiveSalesPitchFromAIGemini,
+} from "../services/gemini-brain.js";
 
 const salesResponseSchema = z.object({
   productId: z.string().optional(),
@@ -64,7 +64,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     }
 
     // Call Autonomous LLM Sales Brain with RAG Knowledge
-    const aiResult = await generateDynamicSalesResponse({
+    const aiResult = await generateDynamicSalesResponseGemini({
       userQuestion,
       avatarName,
       tone,
@@ -111,7 +111,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       style = "Viral TikTok",
     } = parsed.data;
 
-    const script = await generateVideoSalesScript({
+    const script = await generateVideoSalesScriptGemini({
       productName,
       productDescription,
       productPrice,
@@ -172,7 +172,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     const tone = body.tone || "Persuasif";
 
     try {
-      const scriptResult = await generateLiveSalesPitchFromAI({
+      const scriptResult = await generateLiveSalesPitchFromAIGemini({
         productName: name,
         productPrice: price,
         productCategory: category,
@@ -198,4 +198,3 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     }
   });
 }
-

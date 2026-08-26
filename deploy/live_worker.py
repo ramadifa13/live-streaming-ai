@@ -78,6 +78,7 @@ class AILiveWorker:
         }
     
     def _warmup_musetalk(self):
+        print(f"[WARMUP] Loading MuseTalk models (batch_size={self.batch_size})")
         musetalk_dir = self.musetalk_dir
         if musetalk_dir not in sys.path:
             sys.path.insert(0, musetalk_dir)
@@ -86,7 +87,6 @@ class AILiveWorker:
         os.chdir(musetalk_dir)
         try:
             from scripts.inference import _load_models_cached
-
             paths = self._musetalk_paths()
             dummy_args = Namespace(
                 gpu_id=0,
@@ -100,37 +100,93 @@ class AILiveWorker:
                 vae_type="sd-vae-ft-mse",
                 batch_size=self.batch_size,
             )
-            _load_models_cached(dummy_args)
+            self._models_cache = _load_models_cached(dummy_args)
             print("[WARMUP] MuseTalk models pre-loaded successfully")
+
+            # Pre-cache Idle Video
+            self._precache_idle_videos()
         finally:
             os.chdir(original_cwd)
 
-    async def _generate_voice(self, text, task_id, host_name):
-        """Ubah Teks menjadi Suara Indonesia Natural menggunakan Edge-TTS (Lebih Cepat, Hemat VRAM)"""
-        audio_path = os.path.join(self.temp_dir, f"{task_id}.mp3")
-        
-        # Penentuan gender suara sederhana dari nama host
-        is_male = any(word in host_name.lower() for word in ["pria", "cowo", "budi", "ardi", "laki"])
-        voice = "id-ID-ArdiNeural" if is_male else "id-ID-GadisNeural"
-        
-        print(f"[INFO] Men-generate suara menggunakan Edge-TTS ({voice})...")
-        
-        # Jalankan edge-tts via command line
-        cmd = ["edge-tts", "--voice", voice, "--text", text, "--write-media", audio_path]
+    def _precache_idle_videos(self):
+        print("[WARMUP] Pre-caching idle videos to prevent repeating face detection...")
+        for host_type in ["2d", "3d"]:
+            target_dir = getattr(self, f"assets_{host_type}")
+            if not os.path.exists(target_dir):
+                continue
+            for f in os.listdir(target_dir):
+                if f.endswith(".mp4"):
+                    video_path = os.path.join(target_dir, f)
+                    self._cache_video(video_path)
+
+    def _cache_video(self, video_path):
+        print(f"[PRE-CACHE] Processing video: {video_path}")
         try:
-            # Gunakan asyncio untuk subprocess agar tidak memblokir FastAPI
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            await process.communicate()
-            
-            if process.returncode != 0:
-                raise Exception(f"Edge-TTS gagal dengan kode {process.returncode}")
-                
+            from scripts.inference import get_cropped_video
+            import yaml
+
+            # Create dummy config just for caching the landmarks
+            yaml_path = os.path.join(self.temp_dir, "cache_dummy.yaml")
+            os.makedirs(self.temp_dir, exist_ok=True)
+            config_data = {
+                "task_0": {
+                    "video_path": video_path,
+                    "audio_path": "", # Dummy
+                    "bbox_shift": 0
+                }
+            }
+            with open(yaml_path, "w") as f:
+                yaml.dump(config_data, f)
+
+            # Running get_cropped_video will trigger the DWPose extraction and cache it
+            # inside MuseTalk's expected cache directories.
+            # Just calling it is enough for the cache to be populated.
+            get_cropped_video(video_path, bbox_shift=0)
+
+            if os.path.exists(yaml_path):
+                os.remove(yaml_path)
+
+            print(f"[PRE-CACHE] Successfully cached video {video_path}")
         except Exception as e:
-            print(f"[ERROR] Gagal memanggil edge-tts: {e}")
+            print(f"[WARNING] Failed to pre-cache video {video_path}: {e}")
+
+
+    async def _generate_voice(self, text, task_id, host_name):
+        """Ubah Teks menjadi Suara menggunakan Kokoro TTS (Offline, Open Source)"""
+        audio_path = os.path.join(self.temp_dir, f"{task_id}.wav")
+        
+        print(f"[INFO] Men-generate suara menggunakan Kokoro TTS...")
+        
+        try:
+            from kokoro import KPipeline
+            import soundfile as sf
+            import re
+
+            pipeline = KPipeline(lang_code='a') # 'a' for American English, can be changed based on Kokoro model
+
+            # Simple chunking by punctuation
+            chunks = re.split(r'([,.\!?\n])', text)
+            chunks = [''.join(i) for i in zip(chunks[0::2], chunks[1::2] + [''])]
+
+            full_audio = []
+            sample_rate = 24000
+
+            import numpy as np
+            for chunk in chunks:
+                if not chunk.strip(): continue
+                # In real scenario we stream this directly to MuseTalk
+                generator = pipeline(chunk, voice='af_bella', speed=1, split_pattern=r'\n+')
+                for _, _, audio in generator:
+                    full_audio.append(audio)
+
+            if len(full_audio) > 0:
+                final_audio = np.concatenate(full_audio)
+                sf.write(audio_path, final_audio, sample_rate)
+            else:
+                raise Exception("No audio generated from chunks")
+            
+        except Exception as e:
+            print(f"[ERROR] Gagal memanggil Kokoro TTS: {e}")
             raise e
             
         return audio_path
@@ -302,7 +358,7 @@ class AILiveWorker:
             if os.environ.get("WORKER_REQUIRE_AUDIO", "0") == "1":
                 print("[ERROR] Backend audio wajib tersedia, tetapi audio_path tidak valid.")
                 return None
-            print(" -> Generating Suara (XTTSv2)...")
+            print(" -> Generating Suara (Kokoro TTS)...")
             try:
                 audio_file = await self._generate_voice(text_answer, task_id, host_name)
             except Exception as e:

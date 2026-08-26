@@ -24,7 +24,7 @@ async function fix() {
   const all = await prisma.avatar.findMany();
   console.log(
     "\nAll avatars:",
-    all.map((a) => ({ id: a.id, name: a.name })),
+    all.map((a: any) => ({ id: a.id, name: a.name })),
   );
 
   await prisma.$disconnect();

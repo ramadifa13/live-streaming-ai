@@ -9,6 +9,13 @@ export PIP_NO_CACHE_DIR=1
 
 WORKER_DIR="/workspace/ai_live_worker"
 
+if [ -f "$WORKER_DIR/.setup_complete" ] && [ -d "$WORKER_DIR/env" ] && [ -d "$WORKER_DIR/models" ]; then
+    echo "[INFO] Setup already complete, environment and models exist. Skipping setup."
+    # Using python to exit to avoid bash termination issues in some environments
+    python -c "import sys; sys.exit(0)"
+fi
+
+
 echo ""
 echo "============================================================"
 echo " MuseTalk RunPod RTX 4090 - SAFE SETUP"
@@ -688,6 +695,27 @@ PY
 else
     echo "Face parse model sudah ada."
 fi
+
+# Kokoro
+if [ ! -f models/kokoro/kokoro-v0_19.pth ]; then
+
+    echo "Downloading Kokoro TTS..."
+
+    python - <<'PY'
+import os
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    repo_id="hexgrad/Kokoro-82M",
+    local_dir="models/kokoro",
+    token=os.environ.get("HF_TOKEN", None),
+)
+PY
+
+else
+    echo "Kokoro model sudah ada."
+fi
+
 
 # ------------------------------------------------------------
 # SYMLINK

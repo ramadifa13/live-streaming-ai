@@ -31,7 +31,7 @@ export async function ttsRoutes(server: FastifyInstance) {
     const result = await synthesizeSpeech(parsed.data);
     
     if (result.audioBuffer) {
-      reply.header('Content-Type', 'audio/mpeg');
+      reply.header('Content-Type', 'audio/wav');
       reply.header('X-Voice-Duration-Est', result.durationEstimateSeconds.toString());
       return reply.send(result.audioBuffer);
     }
