@@ -344,9 +344,30 @@ class AILiveWorker:
 
     async def run_pipeline(self, host_type, host_name, text_answer, task_id, audio_path=None):
         """Fungsi Pemicu Utama"""
-        print(f"\n[MEMPROSES] {task_id} | Host: {host_name} ({host_type.upper()})")
         
-        idle_video = self._get_idle_video(host_type, host_name)
+        # 1. Parse Action Tags (e.g. [RAISE_HAND])
+        import re
+        action_tag = "idle"
+        match = re.search(r'\[([A-Z_]+)\]', text_answer)
+        if match:
+            action_tag = match.group(1).lower()
+            text_answer = re.sub(r'\[[A-Z_]+\]', '', text_answer).strip()
+
+        print(f"\n[MEMPROSES] {task_id} | Host: {host_name} ({host_type.upper()}) | Action: {action_tag}")
+
+        # 2. Modify host_name dynamically to match action video (e.g., namira_raise_hand.mp4)
+        dynamic_host_name = host_name
+        if action_tag != "idle":
+            dynamic_host_name = f"{host_name}_{action_tag}"
+
+        idle_video = self._get_idle_video(host_type, dynamic_host_name)
+
+        # 3. Fallback to default if dynamic video is not found
+        if not idle_video and dynamic_host_name != host_name:
+            print(f"[INFO] Video untuk aksi '{action_tag}' ({dynamic_host_name}.mp4) tidak ditemukan, fallback ke default {host_name}.mp4")
+            idle_video = self._get_idle_video(host_type, host_name)
+
+
         if not idle_video:
             print(f"[ERROR] Video '{host_name}.mp4' tidak ada di folder assets/{host_type}")
             return None
