@@ -37,7 +37,7 @@ Jalankan di terminal Pod:
 cd /workspace
 git clone <URL_REPOSITORY_ANDA> live-streaming-ai
 cd /workspace/live-streaming-ai/deploy
-export HF_TOKEN='---------------'
+export HF_TOKEN='secret-key'
 bash setup-safe.sh
 ```
 
