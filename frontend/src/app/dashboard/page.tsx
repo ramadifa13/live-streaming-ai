@@ -1257,13 +1257,44 @@ export default function Dashboard() {
               }
             } else {
               // Fallback URL = RunPod worker offline/unavailable
-              setIsAvatarSpeaking(false);
               if (aiWorkerStatus === "unknown") {
                 setAiWorkerStatus("offline");
                 showToast(
                   "⚠️ AI Worker GPU belum aktif — AI Host tampil mode foto statis.",
                 );
               }
+            }
+
+            const audioBase64 = json.data.audio?.audioBase64;
+            if (audioBase64 && isSoundOn) {
+              try {
+                const byteCharacters = atob(audioBase64);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                  byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                const blob = new Blob([byteArray], { type: "audio/mpeg" });
+                const url = URL.createObjectURL(blob);
+                const audio = new Audio(url);
+                currentAudioRef.current = audio;
+                audio.onended = () => {
+                  setIsAvatarSpeaking(false);
+                  URL.revokeObjectURL(url);
+                };
+                audio.onerror = () => {
+                  setIsAvatarSpeaking(false);
+                  URL.revokeObjectURL(url);
+                };
+                await audio.play();
+              } catch {
+                // Audio playback fallback: speak via TTS endpoint
+                if (aiReplyText) {
+                  speakText(aiReplyText);
+                }
+              }
+            } else if (aiReplyText) {
+              speakText(aiReplyText);
             }
           }
         } else {
@@ -1274,10 +1305,11 @@ export default function Dashboard() {
             `❌ AI Host error: Backend mengembalikan status ${res.status}. Pastikan Ollama atau LLM aktif.`,
           );
         }
-      } catch {
+      } catch (err: any) {
         // Network error = backend tidak jalan
         setIsAvatarSpeaking(false);
         setAiWorkerStatus("error");
+        console.error("[chat-stream] request failed:", err);
         showToast(
           "❌ AI Host tidak dapat dijangkau — pastikan backend server berjalan di port 4000.",
         );
@@ -2543,169 +2575,225 @@ export default function Dashboard() {
                       videoUrl={currentLiveVideoUrl || undefined}
                       onVideoEnded={() => setCurrentLiveVideoUrl(null)}
                       soundOn={isSoundOn}
+                      isLiveActive={isLiveActive}
                       className="w-full h-full"
                     />
 
-                    {/* Clean Top Status Bar (No visual overlaps) */}
-                    <div className="absolute top-2 left-2 right-2 z-20 flex items-center justify-between pointer-events-none">
-                      <div className="flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-[9px] font-bold text-white backdrop-blur-md border border-white/10 shadow-lg">
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full ${isLiveActive && !isLivePaused ? "bg-red-500 animate-ping" : "bg-cyan-400 animate-pulse"}`}
-                        />
-                        <span className="text-cyan-300 font-mono tracking-wider">
-                          {isLiveActive
-                            ? isLivePaused
-                              ? "PAUSED"
-                              : "LIVE"
-                            : "PREVIEW"}
-                        </span>
-                        <span className="text-slate-500 font-normal">|</span>
-                        <span className="font-mono text-slate-200">
-                          {formatTime(liveSeconds)}
-                        </span>
-                      </div>
+                     {/* Premium Top Status Bar */}
+                     <div className="absolute top-2 left-2 right-2 z-20 flex items-center justify-between pointer-events-none gap-2">
+                       {/* Live/Preview Badge */}
+                       <div className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-black/80 px-3 py-1.5 text-[9px] font-bold text-white backdrop-blur-xl border border-white/10 shadow-[0_0_20px_rgba(0,0,0,0.5)]">
+                         <span
+                           className={`h-2 w-2 rounded-full ${isLiveActive && !isLivePaused ? "bg-red-500 animate-ping shadow-[0_0_10px_rgba(239,68,68,0.9)]" : "bg-cyan-400 animate-pulse shadow-[0_0_10px_rgba(34,211,238,0.7)]"}`}
+                         />
+                         <span className={`font-mono tracking-wider ${isLiveActive ? "text-red-300" : "text-cyan-300"}`}>
+                           {isLiveActive
+                             ? isLivePaused
+                               ? "PAUSED"
+                               : "LIVE"
+                             : "PREVIEW"}
+                         </span>
+                         {isLiveActive && (
+                           <>
+                             <span className="text-slate-500 font-normal">|</span>
+                             <span className="font-mono text-slate-200">
+                               {formatTime(liveSeconds)}
+                             </span>
+                             <span className="text-slate-500 font-normal">/</span>
+                             <span className="font-mono text-slate-400">
+                               {selectedDuration} Jam
+                             </span>
+                           </>
+                         )}
+                       </div>
 
-                      {/* AI Worker Status Badge */}
-                      <div
-                        className={`pointer-events-auto flex items-center gap-1 rounded-full px-2.5 py-1 text-[8.5px] font-semibold backdrop-blur-md border shadow ${
-                          aiWorkerStatus === "online"
-                            ? "bg-black/75 text-emerald-400 border-emerald-500/40"
-                            : aiWorkerStatus === "offline"
-                              ? "bg-black/75 text-amber-400 border-amber-500/40"
-                              : aiWorkerStatus === "error"
-                                ? "bg-black/75 text-red-400 border-red-500/40"
-                                : "bg-black/75 text-slate-400 border-white/10"
-                        }`}
-                      >
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full ${
-                            aiWorkerStatus === "online"
-                              ? "bg-emerald-400 animate-pulse"
-                              : aiWorkerStatus === "offline"
-                                ? "bg-amber-400"
-                                : aiWorkerStatus === "error"
-                                  ? "bg-red-400 animate-ping"
-                                  : "bg-slate-500"
-                          }`}
-                        />
-                        <span>{selectedAvatar.name}</span>
-                        <span className="text-slate-500">•</span>
-                        <span className="font-mono">
-                          {aiWorkerStatus === "online"
-                            ? "GPU Live ✓"
-                            : aiWorkerStatus === "offline"
-                              ? "Foto Statis"
-                              : aiWorkerStatus === "error"
-                                ? "Error!"
-                                : "Menunggu..."}
-                        </span>
-                        <span className="text-slate-500">|</span>
-                        <span className="font-mono text-slate-300">
-                          {runpodStatus}
-                        </span>
-                        <button
-                          type="button"
-                          disabled={runpodBusy || isLiveActive}
-                          onClick={() =>
-                            handleRunpodControl(
-                              runpodStatus === "RUNNING" ? "stop" : "start",
-                            )
-                          }
-                          className="ml-1 rounded bg-white/10 px-1.5 py-0.5 text-[8px] text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
-                          title={
-                            isLiveActive
-                              ? "RunPod dikontrol otomatis selama live"
-                              : "Kontrol daya RunPod"
-                          }
-                        >
-                          {runpodBusy
-                            ? "..."
-                            : runpodStatus === "RUNNING"
-                              ? "OFF"
-                              : "ON"}
-                        </button>
-                      </div>
-                    </div>
+                       {/* AI Worker + RunPod Status Cluster */}
+                       <div className="pointer-events-auto flex items-center gap-1.5">
+                         {/* AI Worker Status */}
+                         <div
+                           className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[8.5px] font-semibold backdrop-blur-xl border shadow ${
+                             aiWorkerStatus === "online"
+                               ? "bg-black/80 text-emerald-400 border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.25)]"
+                               : aiWorkerStatus === "offline"
+                                 ? "bg-black/80 text-amber-400 border-amber-500/40"
+                                 : aiWorkerStatus === "error"
+                                   ? "bg-black/80 text-red-400 border-red-500/40"
+                                   : "bg-black/80 text-slate-400 border-white/10"
+                           }`}
+                         >
+                           <span
+                             className={`h-1.5 w-1.5 rounded-full ${
+                               aiWorkerStatus === "online"
+                                 ? "bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.8)]"
+                                 : aiWorkerStatus === "offline"
+                                   ? "bg-amber-400"
+                                   : aiWorkerStatus === "error"
+                                     ? "bg-red-400 animate-ping"
+                                     : "bg-slate-500"
+                             }`}
+                           />
+                           <span className="font-bold text-white">
+                             {selectedAvatar.name}
+                           </span>
+                           <span className="text-slate-500">•</span>
+                           <span className="font-mono">
+                             {aiWorkerStatus === "online"
+                               ? "GPU Live ✓"
+                               : aiWorkerStatus === "offline"
+                                 ? "Foto Statis"
+                                 : aiWorkerStatus === "error"
+                                   ? "Error!"
+                                   : "Menunggu..."}
+                           </span>
+                         </div>
 
-                    {/* Product Overlay on Video — Always show when product exists */}
-                    {activeFeaturedProduct &&
-                      activeFeaturedProduct.name &&
-                      activeFeaturedProduct.name !== "Memuat Produk..." && (
-                        <div
-                          className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none"
-                          style={{
-                            background:
-                              "linear-gradient(to top, rgba(5,3,15,0.98) 0%, rgba(5,3,15,0.85) 75%, transparent 100%)",
-                            padding: "12px 10px 8px",
-                          }}
-                        >
-                          {/* Platform header */}
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span
-                              className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${selectedPlatform === "TikTok LIVE" ? "bg-yellow-400/15 text-yellow-400 border border-yellow-400/40" : selectedPlatform === "Shopee Live" ? "bg-orange-500/15 text-orange-400 border border-orange-400/40" : selectedPlatform === "Instagram Live" ? "bg-purple-500/15 text-purple-300 border border-purple-400/40" : "bg-blue-500/15 text-blue-400 border border-blue-400/40"}`}
-                            >
-                              {selectedPlatform === "TikTok LIVE"
-                                ? "🛒 Keranjang Kuning"
-                                : selectedPlatform === "Shopee Live"
-                                  ? "🏷️ Flash Sale"
-                                  : selectedPlatform === "Instagram Live"
-                                    ? "💜 IG Shop"
-                                    : "🛒 Toko Live"}
-                            </span>
-                            <span className="text-[8px] text-slate-400 font-mono">
-                              Sisa: {activeFeaturedProduct.stock || 0} pcs
-                            </span>
-                          </div>
+                         {/* RunPod Status Badge */}
+                         <div
+                           className={`flex items-center gap-1.5 rounded-full px-2 py-1.5 text-[8px] font-mono backdrop-blur-xl border shadow ${
+                             runpodStatus === "RUNNING"
+                               ? "bg-black/80 text-emerald-300 border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.2)]"
+                               : runpodStatus === "STOPPED"
+                                 ? "bg-black/80 text-slate-400 border-white/10"
+                                 : "bg-black/80 text-amber-300 border-amber-500/30"
+                           }`}
+                         >
+                           <span
+                             className={`h-1.5 w-1.5 rounded-full ${
+                               runpodStatus === "RUNNING"
+                                 ? "bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.8)]"
+                                 : runpodStatus === "STOPPED"
+                                   ? "bg-slate-500"
+                                   : "bg-amber-400 animate-pulse"
+                             }`}
+                           />
+                           <span>RTX 4090</span>
+                           <span className="text-slate-500">|</span>
+                           <span>{runpodStatus}</span>
+                           <button
+                             type="button"
+                             disabled={runpodBusy || isLiveActive}
+                             onClick={() =>
+                               handleRunpodControl(
+                                 runpodStatus === "RUNNING" ? "stop" : "start",
+                               )
+                             }
+                             className="ml-0.5 rounded bg-white/10 px-1.5 py-0.5 text-[7.5px] text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40 transition-all"
+                             title={
+                               isLiveActive
+                                 ? "RunPod dikontrol otomatis selama live"
+                                 : "Kontrol daya RunPod"
+                             }
+                           >
+                             {runpodBusy
+                               ? "..."
+                               : runpodStatus === "RUNNING"
+                                 ? "OFF"
+                                 : "ON"}
+                           </button>
+                         </div>
+                       </div>
+                     </div>
 
-                          {/* Product row */}
-                          <div className="flex items-center gap-2.5">
-                            {activeFeaturedProduct.image && (
-                              <img
-                                src={
-                                  activeFeaturedProduct.image.startsWith(
-                                    "http",
-                                  ) ||
-                                  activeFeaturedProduct.image.startsWith("/")
-                                    ? activeFeaturedProduct.image
-                                    : "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80"
-                                }
-                                alt={activeFeaturedProduct.name}
-                                className="h-12 w-12 rounded-lg object-cover border border-white/20 shadow-md"
-                              />
-                            )}
-                            <div className="flex-1 min-w-0">
-                              <p className="text-[11px] font-bold text-white truncate leading-tight">
-                                {activeFeaturedProduct.name}
-                              </p>
-                              <p className="text-[12px] font-black text-emerald-400 leading-none mt-0.5">
-                                {typeof activeFeaturedProduct.price === "number"
-                                  ? `Rp${activeFeaturedProduct.price.toLocaleString("id-ID")}`
-                                  : activeFeaturedProduct.price}
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              className={`shrink-0 rounded-xl px-4 py-2 text-[11px] font-black leading-tight text-center transition-all duration-200 active:scale-95 hover:brightness-110 hover:shadow-lg ${
-                                selectedPlatform === "Instagram Live"
-                                  ? "bg-gradient-to-br from-pink-500 via-purple-500 to-indigo-600 text-white shadow-md shadow-purple-500/30"
-                                  : selectedPlatform === "TikTok LIVE"
-                                    ? "bg-gradient-to-br from-yellow-300 to-amber-500 text-black shadow-md shadow-amber-500/30"
-                                    : selectedPlatform === "Shopee Live"
-                                      ? "bg-gradient-to-br from-orange-400 to-red-600 text-white shadow-md shadow-orange-500/30"
-                                      : "bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-md shadow-blue-500/30"
-                              }`}
-                            >
-                              {selectedPlatform === "Instagram Live"
-                                ? "💬 DM"
-                                : selectedPlatform === "TikTok LIVE"
-                                  ? "🛒 Beli"
-                                  : selectedPlatform === "Shopee Live"
-                                    ? "🛍️ Shopee"
-                                    : "🛒 Beli"}
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                     {/* Product Overlay on Video — Always show when product exists */}
+                     {activeFeaturedProduct &&
+                       activeFeaturedProduct.name &&
+                       activeFeaturedProduct.name !== "Memuat Produk..." && (
+                         <div
+                           className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none"
+                           style={{
+                             background:
+                               "linear-gradient(to top, rgba(5,3,15,0.98) 0%, rgba(5,3,15,0.88) 60%, transparent 100%)",
+                             padding: "14px 12px 10px",
+                           }}
+                         >
+                           {/* Platform header with stock urgency */}
+                           <div className="flex items-center justify-between mb-2">
+                             <span
+                               className={`text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full ${selectedPlatform === "TikTok LIVE" ? "bg-yellow-400/15 text-yellow-400 border border-yellow-400/40 shadow-[0_0_10px_rgba(250,204,21,0.2)]" : selectedPlatform === "Shopee Live" ? "bg-orange-500/15 text-orange-400 border border-orange-400/40" : selectedPlatform === "Instagram Live" ? "bg-purple-500/15 text-purple-300 border border-purple-400/40" : "bg-blue-500/15 text-blue-400 border border-blue-400/40"}`}
+                             >
+                               {selectedPlatform === "TikTok LIVE"
+                                 ? "🛒 Keranjang Kuning"
+                                 : selectedPlatform === "Shopee Live"
+                                   ? "🏷️ Flash Sale"
+                                   : selectedPlatform === "Instagram Live"
+                                     ? "💜 IG Shop"
+                                     : "🛒 Toko Live"}
+                             </span>
+                             <div className="flex items-center gap-1.5">
+                               {(activeFeaturedProduct.stock || 0) <= 10 && (
+                                 <span className="text-[7px] font-black text-red-400 bg-red-500/15 px-1.5 py-0.5 rounded-full border border-red-500/40 animate-pulse">
+                                   STOK HABIS
+                                 </span>
+                               )}
+                               <span className="text-[8px] text-slate-400 font-mono">
+                                 Sisa: {activeFeaturedProduct.stock || 0} pcs
+                               </span>
+                             </div>
+                           </div>
+
+                           {/* Product row */}
+                           <div className="flex items-center gap-2.5">
+                             <div className="relative shrink-0">
+                               {activeFeaturedProduct.image && (
+                                 <img
+                                   src={
+                                     activeFeaturedProduct.image.startsWith(
+                                       "http",
+                                     ) ||
+                                     activeFeaturedProduct.image.startsWith("/")
+                                       ? activeFeaturedProduct.image
+                                       : "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80"
+                                   }
+                                   alt={activeFeaturedProduct.name}
+                                   className="h-14 w-14 rounded-xl object-cover border border-white/20 shadow-[0_0_15px_rgba(0,0,0,0.5)]"
+                                 />
+                               )}
+                               <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-br from-yellow-400/20 to-orange-500/20 -z-10 blur-sm" />
+                             </div>
+                             <div className="flex-1 min-w-0">
+                               <p className="text-[11px] font-bold text-white truncate leading-tight drop-shadow-lg">
+                                 {activeFeaturedProduct.name}
+                               </p>
+                               <div className="flex items-baseline gap-1.5 mt-1">
+                                 <p className="text-[13px] font-black text-emerald-400 leading-none drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
+                                   {typeof activeFeaturedProduct.price === "number"
+                                     ? `Rp${activeFeaturedProduct.price.toLocaleString("id-ID")}`
+                                     : activeFeaturedProduct.price}
+                                 </p>
+                               </div>
+                               <div className="flex items-center gap-1 mt-1">
+                                 <span className="text-[8px] text-yellow-400">
+                                   ★★★★★
+                                 </span>
+                                 <span className="text-[7.5px] text-slate-400">
+                                   {Math.floor((activeFeaturedProduct.stock || 50) * 8)}+
+                                   Terjual
+                                 </span>
+                               </div>
+                             </div>
+                             <button
+                               type="button"
+                               className={`shrink-0 rounded-xl px-4 py-2.5 text-[11px] font-black leading-tight text-center transition-all duration-200 active:scale-95 hover:brightness-110 hover:shadow-xl ${
+                                 selectedPlatform === "Instagram Live"
+                                   ? "bg-gradient-to-br from-pink-500 via-purple-500 to-indigo-600 text-white shadow-lg shadow-purple-500/30"
+                                   : selectedPlatform === "TikTok LIVE"
+                                     ? "bg-gradient-to-br from-yellow-300 to-amber-500 text-black shadow-lg shadow-amber-500/30"
+                                     : selectedPlatform === "Shopee Live"
+                                       ? "bg-gradient-to-br from-orange-400 to-red-600 text-white shadow-lg shadow-orange-500/30"
+                                       : "bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-lg shadow-blue-500/30"
+                               }`}
+                             >
+                               {selectedPlatform === "Instagram Live"
+                                 ? "💬 DM"
+                                 : selectedPlatform === "TikTok LIVE"
+                                   ? "🛒 Beli"
+                                   : selectedPlatform === "Shopee Live"
+                                     ? "🛍️ Shopee"
+                                     : "🛒 Beli"}
+                             </button>
+                           </div>
+                         </div>
+                       )}
 
                     {/* Original Promo Banner Toggle */}
                     {showPromoBanner && false && (
@@ -3093,27 +3181,6 @@ export default function Dashboard() {
                       (Zero Delay)
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleGenerateAvatarVideo()}
-                    disabled={isRenderingVideo}
-                    className="flex items-center gap-1.5 rounded-lg bg-[#1a2333] px-3 py-1 text-[9px] font-bold text-cyan-300 hover:bg-[#232f45] border border-cyan-500/20 transition active:scale-95"
-                  >
-                    {isRenderingVideo ? (
-                      <>
-                        <span className="animate-spin text-xs">⏳</span>
-                        <span>Rendering... {renderProgress}%</span>
-                      </>
-                    ) : hasRenderedVideo ? (
-                      <>
-                        <span>🔄</span> Tes Preview Ulang
-                      </>
-                    ) : (
-                      <>
-                        <span>🎬</span> Tes Preview AI Host
-                      </>
-                    )}
-                  </button>
                 </div>
               </div>
 
@@ -3711,20 +3778,34 @@ export default function Dashboard() {
                 </div>
               ) : (
                 /* LIVE CONTROL CENTER (Appears dynamically when isLiveActive === true) */
-                <div className="flex flex-col rounded-xl border border-red-500/50 bg-[#0e1222] ring-1 ring-red-500/30 p-4 relative overflow-hidden transition animate-fadeIn">
-                  <div className="absolute top-0 left-0 w-full h-1 bg-red-500 animate-pulse"></div>
+                <div className="flex flex-col rounded-2xl border border-red-500/40 bg-[#0e1222] ring-1 ring-red-500/20 p-5 relative overflow-hidden transition animate-fadeIn shadow-2xl shadow-red-900/10">
+                  {/* Animated top gradient line */}
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-600 via-red-400 to-red-600 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.6)]" />
 
-                  {/* Header (Clean, No gear icon as requested) */}
-                  <div className="mb-3 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="h-2 w-2 rounded-full bg-red-500 animate-ping" />
-                      <p className="text-[11px] font-bold uppercase tracking-widest text-red-400">
+                  {/* Subtle animated background glow */}
+                  <div className="absolute -top-20 -right-20 w-40 h-40 bg-red-600/10 rounded-full blur-3xl pointer-events-none" />
+                  <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
+
+                  {/* Header */}
+                  <div className="mb-4 flex items-center justify-between relative z-10">
+                    <div className="flex items-center gap-2.5">
+                      <div className="relative">
+                        <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-ping shadow-[0_0_12px_rgba(239,68,68,0.9)]" />
+                        <span className="absolute inset-0 h-2.5 w-2.5 rounded-full bg-red-500/40 animate-ping" style={{ animationDelay: "0.3s" }} />
+                      </div>
+                      <p className="text-[11px] font-black uppercase tracking-widest text-red-400 drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]">
                         Live Control Center
                       </p>
                     </div>
-                    <span className="text-[9px] font-bold text-cyan-300 bg-cyan-950/60 px-2.5 py-0.5 rounded-full border border-cyan-500/30">
-                      {selectedPlatform}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/30 flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        GPU Active
+                      </span>
+                      <span className="text-[9px] font-bold text-cyan-300 bg-cyan-950/60 px-2.5 py-0.5 rounded-full border border-cyan-500/30">
+                        {selectedPlatform}
+                      </span>
+                    </div>
                   </div>
 
                   {/* Duration Cap & Timer Progress Bar */}

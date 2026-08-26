@@ -37,17 +37,10 @@ Jalankan di terminal Pod:
 cd /workspace
 git clone <URL_REPOSITORY_ANDA> live-streaming-ai
 cd /workspace/live-streaming-ai/deploy
-export HF_TOKEN='hf_xxxxxxxxxxxxxxxxx'
+export HF_TOKEN='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'
 bash setup-safe.sh
 ```
 
-`setup-safe.sh` adalah installer resmi. Script ini memeriksa GPU/CUDA/Python, memasang PyTorch dan dependensi MuseTalk, mengunduh model, menyiapkan symlink, menjalankan verifikasi, dan membuat marker:
-
-```text
-/workspace/ai_live_worker/.setup_complete
-```
-
-Jangan memakai `setup.sh`; file tersebut sudah dihapus.
 
 ## 3. Simpan Asset Host Namira
 
@@ -67,25 +60,8 @@ scp namira.png root@<RUNPOD_IP>:/workspace/ai_live_worker/assets/3d/
 
 Frontend boleh menyimpan salinan preview di `frontend/public/avatars`, tetapi file yang dipakai MuseTalk wajib tersedia di RunPod.
 
-## 4. Ollama di RunPod (Opsional)
 
-Ollama dan model open-weight tidak memiliki biaya lisensi, tetapi GPU, storage, dan network RunPod tetap berbayar.
-
-Secara default, Ollama di RunPod **tidak diinstall maupun dijalankan** karena LLM diproses terpusat di Backend lokal. `setup-safe.sh` sudah melewati instalasi binary Ollama kecuali `ENABLE_RUNPOD_OLLAMA=1` di-set (untuk menghemat waktu setup, disk, dan VRAM GPU).
-
-Jika ingin menjalankan Ollama di RunPod (setup khusus), set environment variable yang sama **baik saat `setup-safe.sh` maupun `start.sh`**:
-
-```bash
-export ENABLE_RUNPOD_OLLAMA=1
-cd /workspace/live-streaming-ai/deploy
-bash setup-safe.sh
-cd /workspace/ai_live_worker
-bash start.sh
-```
-
-Untuk setup demo standard, gunakan Ollama di Backend lokal (sesuai konfigurasi di Section 6).
-
-## 5. Jalankan AI Worker
+## 4. Jalankan AI Worker
 
 Setelah setup selesai:
 

@@ -107,6 +107,19 @@ try {
 
   // Start GPU idle monitor
   import("./services/runpod-manager.js").then((m) => m.startIdleMonitor());
+
+  // Warm up Ollama in background so the first user request is fast
+  setTimeout(() => {
+    const provider = (process.env.LLM_PROVIDER || "auto").toLowerCase();
+    if (provider === "openrouter" || provider === "openai") {
+      console.log(`[LLM-Brain] Skipping Ollama warmup because LLM_PROVIDER=${provider}`);
+      return;
+    }
+    import("./services/llm-brain.js")
+      .then((m) => m.ollamaChat([{ role: "user", content: "hai" }], { timeoutMs: 120000, retries: 1 }))
+      .then(() => console.log("[LLM-Brain] Ollama warmup completed"))
+      .catch((err) => console.warn("[LLM-Brain] Ollama warmup notice:", err));
+  }, 5000);
 } catch (error) {
   server.log.error(error);
   process.exit(1);

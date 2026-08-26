@@ -126,27 +126,32 @@ export default function PhotorealisticAvatarView({
             poster={imageSrc}
             style={{
               filter: isSpeaking
-                ? "brightness(1.1) contrast(1.05) drop-shadow(0 0 16px rgba(124,58,237,0.4))"
-                : "brightness(1.02) contrast(1.02)",
-              transition: "filter 0.3s ease",
+                ? "brightness(1.1) contrast(1.05) drop-shadow(0 0 20px rgba(124,58,237,0.5))"
+                : "brightness(1.03) contrast(1.02) saturate(1.05)",
+              transition: "filter 0.4s ease",
             }}
           />
 
-          {/* Vignette */}
-          <div className="absolute inset-0 bg-gradient-to-t from-[#07050f] via-transparent to-black/25 pointer-events-none" />
-          <div className="absolute inset-0 bg-gradient-to-r from-black/15 via-transparent to-black/15 pointer-events-none" />
+          {/* Enhanced Vignette */}
+          <div className="absolute inset-0 bg-gradient-to-t from-[#07050f]/80 via-[#07050f]/20 to-transparent pointer-events-none" />
+          <div className="absolute inset-0 bg-gradient-to-r from-black/25 via-transparent to-black/25 pointer-events-none" />
+
+          {/* Radial glow behind avatar */}
+          <div className="absolute inset-0 pointer-events-none" style={{
+            background: "radial-gradient(circle at center, rgba(124,58,237,0.08) 0%, transparent 70%)"
+          }} />
 
           {/* Active Speaking Live Waveform Overlay */}
           {isSpeaking && (
-            <div className="absolute top-12 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#7c3aed]/90 backdrop-blur-md border border-purple-400/50 shadow-[0_0_20px_rgba(124,58,237,0.7)] animate-bounce">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+            <div className="absolute top-12 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-4 py-2 rounded-full bg-[#7c3aed]/90 backdrop-blur-xl border border-purple-400/50 shadow-[0_0_30px_rgba(124,58,237,0.6)] animate-bounce">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping shadow-[0_0_10px_rgba(52,211,153,0.9)]" />
               <div className="flex items-center gap-1">
-                <span className="w-1 h-3.5 bg-white rounded-full animate-[pulse_0.6s_ease-in-out_infinite]" />
-                <span className="w-1 h-5 bg-white rounded-full animate-[pulse_0.4s_ease-in-out_infinite_0.1s]" />
-                <span className="w-1 h-2.5 bg-white rounded-full animate-[pulse_0.7s_ease-in-out_infinite_0.2s]" />
-                <span className="w-1 h-4 bg-white rounded-full animate-[pulse_0.5s_ease-in-out_infinite_0.3s]" />
+                <span className="w-1 h-4 bg-white rounded-full animate-[pulse_0.6s_ease-in-out_infinite] shadow-[0_0_6px_rgba(255,255,255,0.6)]" />
+                <span className="w-1 h-5 bg-white rounded-full animate-[pulse_0.4s_ease-in-out_infinite_0.1s] shadow-[0_0_6px_rgba(255,255,255,0.6)]" />
+                <span className="w-1 h-3.5 bg-white rounded-full animate-[pulse_0.7s_ease-in-out_infinite_0.2s] shadow-[0_0_6px_rgba(255,255,255,0.6)]" />
+                <span className="w-1 h-4.5 bg-white rounded-full animate-[pulse_0.5s_ease-in-out_infinite_0.3s] shadow-[0_0_6px_rgba(255,255,255,0.6)]" />
               </div>
-              <span className="text-[10px] font-black text-white uppercase tracking-wider">
+              <span className="text-[10px] font-black text-white uppercase tracking-wider drop-shadow-lg">
                 {avatarName} Sedang Berbicara Live
               </span>
             </div>
@@ -156,14 +161,12 @@ export default function PhotorealisticAvatarView({
           {!isSpeaking && (
             <div className="absolute bottom-12 left-1/2 -translate-x-1/2 z-20">
               <span
-                className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-semibold text-slate-300"
+                className="flex items-center gap-2 px-4 py-2 rounded-full text-[9px] font-bold text-slate-200 backdrop-blur-xl border border-white/10 shadow-[0_0_20px_rgba(0,0,0,0.5)]"
                 style={{
-                  background: "rgba(7,5,15,0.85)",
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  backdropFilter: "blur(8px)",
+                  background: "rgba(7,5,15,0.9)",
                 }}
               >
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_10px_rgba(52,211,153,0.8)]" />
                 Live AI Host Siap Merespon Chat
               </span>
             </div>

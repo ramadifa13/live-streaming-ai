@@ -103,28 +103,31 @@ export async function generateLunaResponse(
   } : null, avatarName, tone);
 
   // 2. Resolve OpenAI-compatible LLM endpoint
-  // Works with: Ollama (http://localhost:11434/v1), vLLM, DeepSeek (https://api.deepseek.com/v1), Groq, OpenAI
+  // Works with: Ollama (http://localhost:11434/v1), vLLM, DeepSeek (https://api.deepseek.com/v1), Groq, OpenAI, OpenRouter
   const llmBaseUrl =
     process.env.LLM_BASE_URL ||
+    (process.env.OPENROUTER_API_KEY ? "https://openrouter.ai/api/v1" : null) ||
     (process.env.DEEPSEEK_API_KEY ? "https://api.deepseek.com/v1" : null) ||
     (process.env.OPENAI_API_KEY ? "https://api.openai.com/v1" : null) ||
     "http://localhost:11434/v1";
 
   const llmApiKey =
     process.env.LLM_API_KEY ||
+    process.env.OPENROUTER_API_KEY ||
     process.env.DEEPSEEK_API_KEY ||
     process.env.OPENAI_API_KEY ||
     "ollama";
 
   const llmModel =
     process.env.LLM_MODEL ||
+    (process.env.OPENROUTER_API_KEY ? "openai/gpt-4o-mini" : null) ||
     (process.env.DEEPSEEK_API_KEY ? "deepseek-chat" : null) ||
     (process.env.OPENAI_API_KEY ? "gpt-4o-mini" : null) ||
     "qwen2.5:7b";
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout for cloud LLM
 
     const res = await fetch(`${llmBaseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",

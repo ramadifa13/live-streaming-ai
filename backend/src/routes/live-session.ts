@@ -11,6 +11,7 @@ import {
   getRunPodBroadcastStatus,
   startRunPodBroadcast,
   stopRunPodBroadcast,
+  warmupWorker,
 } from "../services/runpod-bridge.js";
 import { livePlatformConnector } from "../services/live-platform-connector.js";
 import { setLiveSessionActive, stopPod } from "../services/runpod-manager.js";
@@ -234,6 +235,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
 
     if (sessionId && managedSession && liveSession) {
       try {
+        await warmupWorker();
         await liveHostOrchestrator.start({
           productId: liveSession.productId,
           avatarName: managedSession.avatarName,

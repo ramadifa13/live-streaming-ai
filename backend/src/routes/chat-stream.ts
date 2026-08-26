@@ -71,9 +71,6 @@ export async function chatStreamRoutes(server: FastifyInstance) {
       const audioBase64 = tts.audioBuffer
         ? tts.audioBuffer.toString("base64")
         : undefined;
-      if (!audioBase64) {
-        throw new Error("Backend TTS gagal menghasilkan audio untuk preview");
-      }
 
       // Step 5: Return unified structured response
       return {
@@ -88,6 +85,7 @@ export async function chatStreamRoutes(server: FastifyInstance) {
             text: lunaResponse.speech,
             voice: voice || "id-ID-GadisNeural",
             durationMs: visemeData.durationMs,
+            audioBase64: audioBase64 || undefined,
           },
           visemes: visemeData.visemes,
           mode,

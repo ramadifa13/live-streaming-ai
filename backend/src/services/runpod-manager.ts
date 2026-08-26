@@ -21,7 +21,9 @@ export async function acquireGpuForJob(): Promise<void> {
   activeJobLeases += 1;
   try {
     if ((process.env.GPU_PROVIDER ?? "mock").toLowerCase() === "mock") {
-      console.log("[RunPodManager] GPU_PROVIDER=mock. Skipping GPU acquisition.");
+      console.log(
+        "[RunPodManager] GPU_PROVIDER=mock. Skipping GPU acquisition.",
+      );
       return;
     }
     await startPodAndWait();
@@ -152,6 +154,9 @@ export async function getPodStatus(): Promise<PodStatus | null> {
 /**
  * Sends a request to start/resume the Pod
  */
+/**
+ * Sends a request to start/resume the Pod
+ */
 export async function resumePod(): Promise<boolean> {
   const podId = process.env.RUNPOD_POD_ID;
   if (!podId) return true; // Pretend success if no pod ID
@@ -165,17 +170,142 @@ export async function resumePod(): Promise<boolean> {
     }
   `;
 
-  const data = await runpodGraphQL(mutation, { input: { podId, gpuCount: 1 } });
-  console.log(`[RunPodManager] Resuming Pod ${podId}...`);
-  return !!data?.podResume;
+  try {
+    const data = await runpodGraphQL(mutation, {
+      input: { podId, gpuCount: 1 },
+    });
+    console.log(`[RunPodManager] Resuming Pod ${podId}...`);
+    return !!data?.podResume;
+  } catch (error: any) {
+    // Tangkap error jika GPU di mesin fisik penuh dari respons GraphQL
+    if (error.message && error.message.includes("not enough free GPUs")) {
+      console.warn(
+        `[RunPodManager] Mesin host untuk Pod ${podId} sedang penuh GPU-nya.`,
+      );
+      throw new Error("GPU_HOST_FULL");
+    }
+    throw error;
+  }
 }
 
 /**
- * Sends a request to stop the Pod
+ * Resumes the pod and waits (polls) until it is RUNNING and ready to accept requests.
  */
+export async function startPodAndWait(timeoutMs = 120000): Promise<boolean> {
+  const podId = process.env.RUNPOD_POD_ID;
+  if (!podId) {
+    console.log("[RunPodManager] No RUNPOD_POD_ID. Skipping startPodAndWait.");
+    return true;
+  }
+
+  // Skip pod start if using mock provider
+  if ((process.env.GPU_PROVIDER ?? "mock").toLowerCase() === "mock") {
+    console.log("[RunPodManager] GPU_PROVIDER=mock. Skipping pod start.");
+    return true;
+  }
+
+  updateGpuActivity();
+
+  let status = await getPodStatus();
+
+  // If it's already running, we're good
+  if (status && status.desiredStatus === "RUNNING") {
+    console.log("[RunPodManager] Pod is already running.");
+  } else {
+    // Mekanisme retry untuk menyalakan Pod jika mesin GPU penuh
+    let retries = 3;
+    let resumeSuccess = false;
+
+    while (retries > 0) {
+      try {
+        await resumePod();
+        resumeSuccess = true;
+        break; // Jika berhasil, keluar dari loop retry
+      } catch (err: any) {
+        if (err.message === "GPU_HOST_FULL") {
+          if (retries > 1) {
+            console.log(
+              `[RunPodManager] GPU penuh, mencoba lagi dalam 10 detik... (${retries - 1} percobaan tersisa)`,
+            );
+            await new Promise((r) => setTimeout(r, 10000));
+            retries--;
+          } else {
+            // Percobaan habis, cek apakah fallback diizinkan di .env
+            const allowFallback =
+              (process.env.ALLOW_MEDIA_FALLBACK ?? "false").toLowerCase() ===
+              "true";
+            if (allowFallback) {
+              console.warn(
+                "[RunPodManager] Semua GPU penuh. Beralih ke fallback (tanpa GPU).",
+              );
+              return true; // Bypass proses tunggu agar backend tidak crash
+            }
+            // Jika tidak boleh fallback, hentikan dengan melempar pesan error untuk Frontend
+            throw new Error(
+              "Semua GPU di server sedang penuh. Silakan coba beberapa saat lagi.",
+            );
+          }
+        } else {
+          // Lemparkan error jika disebabkan oleh hal lain (misal: koneksi terputus/API key salah)
+          throw err;
+        }
+      }
+    }
+
+    if (!resumeSuccess) {
+      throw new Error("Gagal menyalakan pod setelah beberapa kali percobaan.");
+    }
+
+    // Poll until it's running
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeoutMs) {
+      status = await getPodStatus();
+      if (status && status.desiredStatus === "RUNNING") {
+        console.log(
+          `[RunPodManager] Pod is now RUNNING (took ${Math.round((Date.now() - startTime) / 1000)}s)`,
+        );
+        break;
+      }
+
+      // Wait 3 seconds before polling again
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+
+    if (!status || status.desiredStatus !== "RUNNING") {
+      throw new Error(
+        `[RunPodManager] Timeout waiting for pod ${podId} to start after ${timeoutMs}ms`,
+      );
+    }
+  }
+
+  const workerUrl = getWorkerUrl();
+  const healthStart = Date.now();
+  const healthTimeout = Math.min(timeoutMs, 180000);
+  while (Date.now() - healthStart < healthTimeout) {
+    try {
+      const res = await fetch(`${workerUrl}/`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        console.log(
+          `[RunPodManager] Worker is ready at ${workerUrl} (${Math.round((Date.now() - healthStart) / 1000)}s after pod RUNNING)`,
+        );
+        return true;
+      }
+    } catch {
+      // Worker not ready yet
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+
+  console.warn(
+    `[RunPodManager] Worker at ${workerUrl} did not respond within ${healthTimeout}ms after pod RUNNING`,
+  );
+  return true;
+}
 export async function stopPod(): Promise<boolean> {
   const podId = process.env.RUNPOD_POD_ID;
-  if (!podId) return true; // Pretend success if no pod ID
+  if (!podId) return true; 
 
   const mutation = `
     mutation podStop($input: PodStopInput!) {
@@ -203,62 +333,6 @@ export async function getGpuControlStatus() {
   };
 }
 
-/**
- * Resumes the pod and waits (polls) until it is RUNNING and ready to accept requests.
- */
-export async function startPodAndWait(timeoutMs = 120000): Promise<boolean> {
-  const podId = process.env.RUNPOD_POD_ID;
-  if (!podId) {
-    console.log("[RunPodManager] No RUNPOD_POD_ID. Skipping startPodAndWait.");
-    return true;
-  }
-
-  // Skip pod start if using mock provider
-  if ((process.env.GPU_PROVIDER ?? "mock").toLowerCase() === "mock") {
-    console.log("[RunPodManager] GPU_PROVIDER=mock. Skipping pod start.");
-    return true;
-  }
-
-  updateGpuActivity();
-
-  let status = await getPodStatus();
-
-  // If it's already running, we're good
-  if (status && status.desiredStatus === "RUNNING") {
-    console.log("[RunPodManager] Pod is already running.");
-    return true;
-  }
-
-  // Resume the pod
-  await resumePod();
-
-  // Poll until it's running
-  const startTime = Date.now();
-  while (Date.now() - startTime < timeoutMs) {
-    status = await getPodStatus();
-    if (status && status.desiredStatus === "RUNNING") {
-      console.log(
-        `[RunPodManager] Pod is now RUNNING (took ${Math.round((Date.now() - startTime) / 1000)}s)`,
-      );
-
-      // Wait a few extra seconds for the internal Fastapi/PM2 services to actually boot up
-      // after the container is marked as running by RunPod
-      await new Promise((r) => setTimeout(r, 10000));
-      return true;
-    }
-
-    // Wait 3 seconds before polling again
-    await new Promise((r) => setTimeout(r, 3000));
-  }
-
-  throw new Error(
-    `[RunPodManager] Timeout waiting for pod ${podId} to start after ${timeoutMs}ms`,
-  );
-}
-
-/**
- * Gets the worker URL, prioritizing the proxy URL based on the POD_ID
- */
 export function getWorkerUrl(): string {
   const workerUrl =
     process.env.RUNPOD_WORKER_URL || process.env.AVATAR_WORKER_URL;

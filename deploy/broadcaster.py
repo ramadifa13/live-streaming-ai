@@ -8,10 +8,11 @@ class AIBroadcaster:
         self.rtmp_url = rtmp_url
         self.idle_video = idle_video_path
         self.output_folder = output_folder
+        self.silence_threshold = 90
+        self.last_new_video_time = time.time()
         
         print("[BROADCASTER] Menginisialisasi Koneksi ke Server RTMP...")
         
-        # Master Pipa FFmpeg (Menjaga koneksi tetap hidup)
         master_command = [
             "ffmpeg",
             "-y",
@@ -28,10 +29,14 @@ class AIBroadcaster:
         
         self.master_process = subprocess.Popen(master_command, stdin=subprocess.PIPE)
         print("[SUKSES] Terhubung ke Platform Live Streaming!")
+        
+        if not os.path.exists(self.idle_video):
+            print(f"[WARNING] Video idle tidak ditemukan: {self.idle_video}")
 
     def _stream_file(self, video_path):
-        """Memasukkan video ke dalam Pipa Master"""
-        # Gunakan filter fallback agar jika video idle tidak memiliki audio track, FFmpeg tetap mengirim silent audio dan tidak crash
+        if not video_path or not os.path.exists(video_path):
+            print(f"[ERROR] File video tidak ditemukan: {video_path}")
+            return False
         worker_command = [
             "ffmpeg",
             "-re",
@@ -43,20 +48,19 @@ class AIBroadcaster:
             "-f", "mpegts",
             "pipe:1"
         ]
-        
         try:
             worker_process = subprocess.Popen(worker_command, stdout=self.master_process.stdin, stderr=subprocess.DEVNULL)
             worker_process.wait() 
+            return True
         except Exception as e:
             print(f"[ERROR] Gagal memutar {video_path}: {e}")
+            return False
 
     def start_loop(self):
-        """Loop Siaran 24 Jam"""
         print(f"\n[BROADCASTER] Menyiarkan secara Live (Tekan Ctrl+C untuk berhenti)...\n")
         last_spoken_video = None
         
         while True:
-            # Cek folder output apakah ada video jawaban baru dari AI Worker
             search_pattern = os.path.join(self.output_folder, "**", "*.mp4")
             new_videos = sorted(
                 [path for path in glob.glob(search_pattern, recursive=True)
@@ -67,14 +71,21 @@ class AIBroadcaster:
             if new_videos:
                 video_to_play = new_videos[0]
                 print(f"[>] MEMUTAR RESPON AI: {os.path.basename(video_to_play)}")
-                self._stream_file(video_to_play)
-                if last_spoken_video and os.path.exists(last_spoken_video):
-                    os.remove(last_spoken_video)
-                last_spoken_video = video_to_play
-                
+                success = self._stream_file(video_to_play)
+                if success:
+                    if last_spoken_video and os.path.exists(last_spoken_video):
+                        os.remove(last_spoken_video)
+                    last_spoken_video = video_to_play
+                    self.last_new_video_time = time.time()
             else:
-                # Pertahankan host berbicara saat worker merender ucapan berikutnya.
-                self._stream_file(last_spoken_video or self.idle_video)
+                idle_video = last_spoken_video or self.idle_video
+                if not last_spoken_video:
+                    if time.time() - self.last_new_video_time > self.silence_threshold:
+                        print("[WARNING] AI Host idle terlalu lama tanpa respon baru!")
+                        self.last_new_video_time = time.time()
+                self._stream_file(idle_video)
+            
+            time.sleep(0.5)
 
 # --- KONFIGURASI DAN EKSEKUSI ---
 if __name__ == "__main__":

@@ -46,22 +46,52 @@ async function workerRequest(path: string, init?: RequestInit) {
   return data;
 }
 
+async function workerRequestWithRetry(
+  path: string,
+  init?: RequestInit,
+  retries = 3,
+): Promise<any> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    try {
+      return await workerRequest(path, init);
+    } catch (err: any) {
+      lastError = err;
+      const status = Number(err.message?.match(/\d{3}/)?.[0]);
+      if (status === 502 || status === 503 || status === 504) {
+        const backoff = 1000 * Math.pow(2, attempt);
+        console.warn(
+          `[RunPodBridge] Worker returned ${status}, retrying in ${backoff}ms...`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
+}
+
 export async function startRunPodBroadcast(params: {
   rtmpUrl: string;
   streamKey: string;
 }): Promise<RunPodBroadcastResult> {
-  return workerRequest("/stream/start-broadcast", {
+  return workerRequestWithRetry("/stream/start-broadcast", {
     method: "POST",
     body: JSON.stringify(params),
   });
 }
 
 export async function stopRunPodBroadcast(): Promise<RunPodBroadcastResult> {
-  return workerRequest("/stream/stop-broadcast", { method: "POST" });
+  return workerRequestWithRetry("/stream/stop-broadcast", { method: "POST" });
 }
 
 export async function getRunPodBroadcastStatus(): Promise<RunPodBroadcastResult> {
-  return workerRequest("/stream/broadcast-status");
+  return workerRequestWithRetry("/stream/broadcast-status");
+}
+
+export async function warmupWorker(): Promise<void> {
+  await workerRequestWithRetry("/", undefined, 3);
 }
 
 export async function forwardToRunPodGPU(
@@ -83,70 +113,59 @@ export async function forwardToRunPodGPU(
       }
     }
 
-    const res = await fetch(`${workerUrl}/stream/live-utterance`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({
-        avatar_name: avatarName,
-        avatar_image_path: params.avatarImagePath || "avatars/namira.png",
-        text: params.text,
-        voice: params.voice || "id-ID-GadisNeural",
-        speed: params.speed || 1.0,
-        rtmp_url: params.rtmpUrl || "",
-        stream_key: params.streamKey || "",
-        audio_base64: params.audioBase64 || "",
-        audio_url: params.audioUrl || "",
-      }),
-    });
-    clearTimeout(timeoutId);
+    const data = await workerRequestWithRetry(
+      `/stream/live-utterance`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          avatar_name: avatarName,
+          avatar_image_path: params.avatarImagePath || "avatars/namira.png",
+          text: params.text,
+          voice: params.voice || "id-ID-GadisNeural",
+          speed: params.speed || 1.0,
+          rtmp_url: params.rtmpUrl || "",
+          stream_key: params.streamKey || "",
+          audio_base64: params.audioBase64 || "",
+          audio_url: params.audioUrl || "",
+        }),
+      },
+      3,
+    );
 
-    if (res.ok) {
-      const data = (await res.json()) as {
-        video_url?: string;
-        audio_path?: string;
-        status?: string;
-        job_id?: string;
-      };
-      let completedData = data;
-      if (data.job_id) {
-        for (let attempt = 0; attempt < 100; attempt += 1) {
-          await new Promise((resolve) => setTimeout(resolve, 3000));
-          const statusRes = await fetch(
-            `${workerUrl}/stream/status/${data.job_id}`,
-            {
-              signal: AbortSignal.timeout(10000),
-            },
-          );
-          if (!statusRes.ok) continue;
-          const statusData = (await statusRes.json()) as typeof data & {
-            error?: string;
-          };
-          if (statusData.status === "error")
-            throw new Error(statusData.error || "RunPod video job gagal");
-          if (statusData.status === "done") {
-            completedData = statusData;
-            break;
-          }
-          if (attempt === 99) throw new Error("RunPod video job timeout");
+    let completedData = data;
+    if (data.job_id) {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const statusData = await workerRequestWithRetry(
+          `/stream/status/${data.job_id}`,
+          undefined,
+          2,
+        );
+        if (statusData.status === "error")
+          throw new Error(statusData.error || "RunPod video job gagal");
+        if (statusData.status === "done") {
+          completedData = statusData;
+          break;
         }
+        if (attempt === 99) throw new Error("RunPod video job timeout");
       }
-
-      let finalVideoUrl = completedData.video_url;
-      if (finalVideoUrl && !finalVideoUrl.startsWith("http")) {
-        finalVideoUrl = `${workerUrl}${finalVideoUrl}`;
-      }
-
-      return {
-        success: true,
-        videoUrl:
-          finalVideoUrl,
-        audioPath: completedData.audio_path,
-        status: completedData.status || "rendered",
-      };
     }
-    throw new Error(`Worker returned status ${res.status}`);
-  } catch (err) {
+
+    let finalVideoUrl = completedData.video_url;
+    if (finalVideoUrl && !finalVideoUrl.startsWith("http")) {
+      finalVideoUrl = `${workerUrl}${finalVideoUrl}`;
+    }
+
+    return {
+      success: true,
+      videoUrl: finalVideoUrl,
+      audioPath: completedData.audio_path,
+      status: completedData.status || "rendered",
+    };
+  }
+  catch (err) {
     console.warn(
       "[RunPodBridge] GPU worker notice (using standard stream pipe):",
       err,
