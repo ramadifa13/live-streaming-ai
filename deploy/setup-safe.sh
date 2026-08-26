@@ -11,8 +11,7 @@ WORKER_DIR="/workspace/ai_live_worker"
 
 if [ -f "$WORKER_DIR/.setup_complete" ] && [ -d "$WORKER_DIR/env" ] && [ -d "$WORKER_DIR/models" ]; then
     echo "[INFO] Setup already complete, environment and models exist. Skipping setup."
-    # Using python to exit to avoid bash termination issues in some environments
-    python -c "import sys; sys.exit(0)"
+    exit 0
 fi
 
 
@@ -332,7 +331,7 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
     echo "FFmpeg belum ada. Installing..."
 
     apt-get update -qq
-    apt-get install -y -qq ffmpeg
+    apt-get install -y -qq ffmpeg espeak-ng
 
 fi
 

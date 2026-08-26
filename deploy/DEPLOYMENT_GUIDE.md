@@ -22,6 +22,36 @@ Fase: Live Broadcast (24 Jam)
 - **Storage**: Persistent Volume RunPod (20GB) - Estimasi Rp 23.000 / bulan ($1.40).
 - **Compute GPU**: RTX 3090/4090 ($0.35-$0.75/hour)
 
+
+## Rincian Biaya (Cost Breakdown)
+
+Sistem ini didesain untuk meminimalisir biaya dengan memanfaatkan free-tier di fase Pre-Live dan hanya membayar server GPU saat live stream benar-benar berjalan.
+
+### 1. Komponen Gratis (Fase Pre-Live / Setup)
+- **Frontend Hosting**: Vercel (Gratis).
+- **Backend Hosting**: Render (Gratis).
+- **AI Brain (LLM/RAG)**: Google Gemini Flash API (Gratis).
+- **Voice Preview & Text to Speech**: Kokoro TTS (Gratis / Open Source).
+
+### 2. Biaya Per Sesi Live (Live Broadcast 24 Jam)
+- **Komputasi GPU (RunPod)**: Menggunakan instance NVIDIA RTX 3090 atau RTX 4090.
+  - Estimasi: **$0.35 - $0.75 per jam** (sekitar Rp 5.500 - Rp 11.500 per jam).
+  - Biaya ini dipotong dari saldo RunPod Anda **hanya saat pod menyala (running)**. Begitu live stream selesai dan pod dimatikan (beralih ke Stopped/Offline), Anda tidak lagi ditagihkan biaya per jam ini.
+
+### 3. Biaya Tetap Bulanan (Monthly Fixed Costs)
+Untuk menjalankan sistem secara utuh sebagai website, ada beberapa biaya tetap (subscription) bulanan/tahunan yang tidak bisa dihindari:
+
+- **RunPod Persistent Storage (Network Volume)**:
+  - Dibutuhkan 20GB hingga 30GB untuk menyimpan setup data, dependencies (`/env`), dan AI Models (Kokoro, MuseTalk) agar pod bisa boot dengan instan tanpa harus instalasi dari awal.
+  - Estimasi Harga: **$1.40 per bulan** (sekitar Rp 23.000 / bulan).
+- **Domain Website (Tahunan)**:
+  - Untuk menggunakan custom domain (misalnya `namatokoanda.com` daripada URL vercel bawaan), Anda perlu membeli nama domain.
+  - **Rekomendasi Penyedia Domain Murah (Sering Ada Diskon Promo)**:
+    - **Porkbun**: Mulai dari $4 - $6 untuk tahun pertama pada domain `.com` atau domain ekstensi lainnya.
+    - **Namecheap**: Mulai dari $1 - $6 untuk tahun pertama (terutama domain `.xyz`, `.site`, `.com`).
+    - **Cloudflare Registrar**: Menawarkan harga dasar perpanjangan termurah di pasar (tanpa markup harga grosir, sekitar $9/tahun untuk `.com`).
+    - **Niagahoster / Idwebhost (Lokal)**: Sering menyediakan diskon untuk domain lokal seperti `.id`, `.my.id` (mulai dari Rp 10.000/tahun untuk `.my.id`).
+
 ## Langkah 1: Persiapan Network Volume RunPod
 
 Untuk menjaga environment dan weights/model (Kokoro, MuseTalk) agar tidak ter-reset, siapkan Network Volume:

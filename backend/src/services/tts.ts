@@ -67,7 +67,7 @@ let kokoroPipeline: any = null;
 
 async function getKokoroPipeline() {
     if (!kokoroPipeline) {
-        kokoroPipeline = await pipeline('text-to-audio', 'Xenova/kokoro-js');
+        kokoroPipeline = await pipeline('text-to-audio', 'onnx-community/Kokoro-82M-v1.0-ONNX');
     }
     return kokoroPipeline;
 }
