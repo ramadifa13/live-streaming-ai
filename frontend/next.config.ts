@@ -23,9 +23,9 @@ const nextConfig: NextConfig = {
         destination: `${BACKEND_URL}/api/:path*`,
       },
       {
-        // Proxy /live_videos/* ke AI Worker (video SadTalker hasil lip-sync)
+        // Proxy /live_videos/* ke AI Worker (video MuseTalk hasil lip-sync)
         source: "/live_videos/:path*",
-        destination: `${WORKER_URL}/live_videos/:path*`,
+        destination: `${WORKER_URL}/output/:path*`,
       },
     ];
   },

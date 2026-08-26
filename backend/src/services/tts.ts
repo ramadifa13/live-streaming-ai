@@ -1,8 +1,8 @@
 /**
  * TTS (Text-To-Speech) Service for LiveStreamerAI
- * Provides natural Indonesian neural voice synthesis using node-edge-tts.
+ * Provides natural Indonesian neural voice synthesis using kokoro-js.
  */
-import { EdgeTTS } from 'node-edge-tts';
+import { pipeline } from '@huggingface/transformers';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -63,6 +63,56 @@ export interface SynthesizeResponse {
   audioBuffer?: Buffer;
 }
 
+let kokoroPipeline: any = null;
+
+async function getKokoroPipeline() {
+    if (!kokoroPipeline) {
+        kokoroPipeline = await pipeline('text-to-audio', 'onnx-community/Kokoro-82M-v1.0-ONNX');
+    }
+    return kokoroPipeline;
+}
+
+function float32ToWav(float32Array: Float32Array, sampleRate: number): Buffer {
+    const numChannels = 1;
+    const bitDepth = 16;
+    const blockAlign = numChannels * (bitDepth / 8);
+    const byteRate = sampleRate * blockAlign;
+    const dataSize = float32Array.length * (bitDepth / 8);
+
+    const buffer = Buffer.alloc(44 + dataSize);
+
+    // RIFF chunk descriptor
+    buffer.write('RIFF', 0);
+    buffer.writeUInt32LE(36 + dataSize, 4);
+    buffer.write('WAVE', 8);
+
+    // fmt sub-chunk
+    buffer.write('fmt ', 12);
+    buffer.writeUInt32LE(16, 16); // Subchunk1Size (16 for PCM)
+    buffer.writeUInt16LE(1, 20); // AudioFormat (1 for PCM)
+    buffer.writeUInt16LE(numChannels, 22);
+    buffer.writeUInt32LE(sampleRate, 24);
+    buffer.writeUInt32LE(byteRate, 28);
+    buffer.writeUInt16LE(blockAlign, 32);
+    buffer.writeUInt16LE(bitDepth, 34);
+
+    // data sub-chunk
+    buffer.write('data', 36);
+    buffer.writeUInt32LE(dataSize, 40);
+
+    // Write audio data
+    let offset = 44;
+    for (let i = 0; i < float32Array.length; i++) {
+        // Clamp value between -1.0 and 1.0
+        let s = Math.max(-1, Math.min(1, float32Array[i]));
+        // Convert to 16-bit PCM
+        buffer.writeInt16LE(s < 0 ? s * 0x8000 : s * 0x7FFF, offset);
+        offset += 2;
+    }
+
+    return buffer;
+}
+
 export async function synthesizeSpeech(
   req: SynthesizeRequest
 ): Promise<SynthesizeResponse> {
@@ -84,21 +134,18 @@ export async function synthesizeSpeech(
   let audioBuffer: Buffer | undefined;
 
   try {
-    const tts = new EdgeTTS({
-      voice: matchedVoice.id,
-      lang: matchedVoice.locale,
-      outputFormat: 'audio-24khz-48kbitrate-mono-mp3',
-    });
+    const generator = await getKokoroPipeline();
+    // Default to a known voice if not specified.
+    // 'af_bella' is a common default for Kokoro models.
+    const result = await generator(text, { voice: 'af_bella' });
 
-    const tmpPath = path.join(process.cwd(), `tmp-tts-${crypto.randomUUID()}.mp3`);
-    await tts.ttsPromise(text, tmpPath);
-
-    if (fs.existsSync(tmpPath)) {
-      audioBuffer = fs.readFileSync(tmpPath);
-      fs.unlinkSync(tmpPath);
+    // result is { audio: Float32Array, sampling_rate: number }
+    if (result && result.audio && result.sampling_rate) {
+        audioBuffer = float32ToWav(result.audio, result.sampling_rate);
     }
+
   } catch (err) {
-    console.error("Failed to synthesize speech via Edge TTS:", err);
+    console.error("Failed to synthesize speech via Kokoro TTS:", err);
   }
 
   return {
@@ -107,8 +154,8 @@ export async function synthesizeSpeech(
     avatar: avatarName,
     text,
     durationEstimateSeconds: estimatedSeconds,
-    audioFormat: "audio/mp3",
-    engine: "Edge-TTS Neural Pipeline",
+    audioFormat: "audio/wav",
+    engine: "Kokoro-TTS Neural Pipeline",
     message: audioBuffer ? "TTS synthesis success" : "TTS synthesis fallback",
     audioBuffer
   };
