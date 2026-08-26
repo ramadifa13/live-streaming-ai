@@ -1,8 +1,4 @@
 #!/bin/bash
-# ============================================================
-# RUNPOD RTX 4090 - MUSETALK SAFE SETUP
-# Python 3.10 + CUDA 11.8 + PyTorch 2.1
-# ============================================================
 
 set -euo pipefail
 
@@ -18,10 +14,6 @@ echo "============================================================"
 echo " MuseTalk RunPod RTX 4090 - SAFE SETUP"
 echo "============================================================"
 echo ""
-
-# ------------------------------------------------------------
-# 0. BASIC CHECK
-# ------------------------------------------------------------
 
 echo "[0/10] Mengecek environment..."
 
@@ -59,9 +51,6 @@ echo ""
 echo "Python:"
 python --version
 
-# ------------------------------------------------------------
-# 1. VALIDATE PYTHON
-# ------------------------------------------------------------
 
 PY_MAJOR_MINOR="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 
@@ -73,36 +62,37 @@ fi
 
 echo "[OK] Python 3.10"
 
-# ------------------------------------------------------------
-# 1.1 OLLAMA
-# ------------------------------------------------------------
 
 echo ""
 echo "[1.1/10] Menyiapkan Ollama (${OLLAMA_MODEL})..."
 
-if ! command -v curl >/dev/null 2>&1; then
-    echo "curl belum ada. Installing..."
-    apt-get update -qq
-    apt-get install -y -qq curl
-fi
+# Ollama di RunPod bersifat opsional. LLM diproses terpusat di backend lokal,
+# sehingga instalasi binary Ollama di RunPod dilewati secara default untuk
+# menghemat waktu setup & disk. Aktifkan hanya untuk setup khusus RunPod LLM.
+if [ "${ENABLE_RUNPOD_OLLAMA:-0}" = "1" ]; then
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "curl belum ada. Installing..."
+        apt-get update -qq
+        apt-get install -y -qq curl
+    fi
 
-if ! command -v ollama >/dev/null 2>&1; then
-    echo "Ollama belum ada. Installing..."
-    curl -fsSL https://ollama.com/install.sh | sh
+    if ! command -v ollama >/dev/null 2>&1; then
+        echo "Ollama belum ada. Installing..."
+        curl -fsSL https://ollama.com/install.sh | sh
+    else
+        echo "Ollama sudah terinstall: $(ollama --version)"
+    fi
+
+    if ! command -v ollama >/dev/null 2>&1; then
+        echo "[ERROR] Ollama gagal diinstall."
+        exit 1
+    fi
+
+    echo "[OK] Ollama tersedia. Model akan dipastikan saat start.sh (ENABLE_RUNPOD_OLLAMA=1)."
 else
-    echo "Ollama sudah terinstall: $(ollama --version)"
+    echo "[SKIP] Ollama dijalankan di backend lokal (ENABLE_RUNPOD_OLLAMA != 1)."
+    echo "[OK] Melewati instalasi Ollama di RunPod."
 fi
-
-if ! command -v ollama >/dev/null 2>&1; then
-    echo "[ERROR] Ollama gagal diinstall."
-    exit 1
-fi
-
-echo "[OK] Ollama tersedia. Model akan dipastikan setelah setup dependensi selesai."
-
-# ------------------------------------------------------------
-# 2. VALIDATE CUDA TOOLKIT
-# ------------------------------------------------------------
 
 NVCC_VERSION="$(nvcc --version | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' | tail -1)"
 
@@ -113,10 +103,6 @@ if [ "$NVCC_VERSION" != "11.8" ]; then
 fi
 
 echo "[OK] CUDA toolkit 11.8"
-
-# ------------------------------------------------------------
-# 3. HF TOKEN
-# ------------------------------------------------------------
 
 echo ""
 echo "[3/10] Mengecek Hugging Face token..."

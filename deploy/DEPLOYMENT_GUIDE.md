@@ -1,15 +1,15 @@
 # Deployment AI Worker di RunPod
 
-Panduan ini untuk konfigurasi demo saat **frontend dan backend berjalan lokal**, sedangkan **AI Worker MuseTalk dan Ollama berjalan di RunPod**.
+Panduan ini untuk konfigurasi demo saat **frontend dan backend berjalan lokal**, sedangkan **AI Worker MuseTalk berjalan di RunPod**. Ollama/LLM diproses **di backend lokal** (default), dan hanya dijalankan di RunPod bila `ENABLE_RUNPOD_OLLAMA=1` di-set.
 
 ## Arsitektur Demo
 
 ```text
 Browser
   -> Frontend Next.js lokal :3000
-  -> Backend Fastify lokal :4000
-       -> Ollama di RunPod :11434 (generate knowledge/copywriting)
-       -> AI Worker di RunPod :8000 (Edge-TTS + MuseTalk)
+   -> Backend Fastify lokal :4000
+        -> Ollama di Backend lokal :11434 (generate knowledge/copywriting)
+        -> AI Worker di RunPod :8000 (Edge-TTS + MuseTalk)
             -> video MP4 hasil lipsync
        -> RTMP publisher yang dipilih untuk platform live
 ```
@@ -67,18 +67,23 @@ scp namira.png root@<RUNPOD_IP>:/workspace/ai_live_worker/assets/3d/
 
 Frontend boleh menyimpan salinan preview di `frontend/public/avatars`, tetapi file yang dipakai MuseTalk wajib tersedia di RunPod.
 
-## 4. Install Ollama di RunPod
+## 4. Ollama di RunPod (Opsional)
 
 Ollama dan model open-weight tidak memiliki biaya lisensi, tetapi GPU, storage, dan network RunPod tetap berbayar.
 
-`setup-safe.sh` menyiapkan binary Ollama. Saat `start.sh` dijalankan, script otomatis memulai Ollama, melakukan health check, dan mengunduh model yang belum tersedia.
+Secara default, Ollama di RunPod **tidak diinstall maupun dijalankan** karena LLM diproses terpusat di Backend lokal. `setup-safe.sh` sudah melewati instalasi binary Ollama kecuali `ENABLE_RUNPOD_OLLAMA=1` di-set (untuk menghemat waktu setup, disk, dan VRAM GPU).
+
+Jika ingin menjalankan Ollama di RunPod (setup khusus), set environment variable yang sama **baik saat `setup-safe.sh` maupun `start.sh`**:
 
 ```bash
-curl http://127.0.0.1:11434/api/tags
-ollama list
+export ENABLE_RUNPOD_OLLAMA=1
+cd /workspace/live-streaming-ai/deploy
+bash setup-safe.sh
+cd /workspace/ai_live_worker
+bash start.sh
 ```
 
-Jika backend lokal mengakses Ollama melalui proxy, expose port `11434` di konfigurasi Pod dan gunakan network/proxy yang aman. Jangan membuka Ollama ke internet tanpa autentikasi.
+Untuk setup demo standard, gunakan Ollama di Backend lokal (sesuai konfigurasi di Section 6).
 
 ## 5. Jalankan AI Worker
 
@@ -89,7 +94,7 @@ cd /workspace/ai_live_worker
 bash start.sh
 ```
 
-`start.sh` menjalankan Ollama terlebih dahulu, memastikan model `OLLAMA_MODEL` tersedia, lalu menjalankan FastAPI Worker. Log Ollama berada di `/workspace/ai_live_worker/ollama.log`; log Worker berada di `/workspace/ai_live_worker/api_server.log`.
+`start.sh` menjalankan AI Worker (FastAPI) dan MuseTalk. Ollama **hanya** dijalankan bila `ENABLE_RUNPOD_OLLAMA=1` (memastikan model `OLLAMA_MODEL` tersedia dulu); untuk setup standard Ollama berjalan di backend lokal sehingga langkah ini dilewati. Log Ollama (bila aktif) berada di `/workspace/ai_live_worker/ollama.log`; log Worker berada di `/workspace/ai_live_worker/api_server.log`.
 
 Health check dari terminal Pod:
 
@@ -109,7 +114,7 @@ Test render manual:
 ```bash
 curl -X POST http://127.0.0.1:8000/stream/live-utterance \
   -H 'Content-Type: application/json' \
-  -d '{"avatar_name":"namira","avatar_image_path":"assets/3d/namira.png","text":"Halo, ini adalah pengujian AI Host Namira.","voice":"id-ID-GadisNeural","speed":1.0}'
+  -d '{"avatar_name":"namira","avatar_image_path":"assets/3d/namira.png","text":"Halo, ini adalah pengujian AI Host Namira.","voice":"id-ID-GadisNeural","speed":1.0,"tone":"Persuasif"}'
 ```
 
 Simpan `job_id`, lalu cek:
@@ -127,16 +132,29 @@ Di `backend/.env`, gunakan konfigurasi demo berikut. Jangan commit file `.env` d
 ```env
 PORT=4000
 HOST=0.0.0.0
+CORS_ORIGIN=http://localhost:3000
 DATABASE_URL="file:./dev.db"
+BACKEND_PUBLIC_URL=http://localhost:4000
+
+# AI / GPU
+GPU_IDLE_TIMEOUT_MINUTES=30
 GPU_PROVIDER=runpod
+LLM_PROVIDER=ollama
+TTS_PROVIDER=edge-tts
+# Setup standard: Ollama berjalan di backend lokal
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=qwen2.5:7b
+# Alternatif bila Ollama dijalankan di RunPod (ENABLE_RUNPOD_OLLAMA=1):
+# OLLAMA_HOST=https://<RUNPOD_ID>-11434.proxy.runpod.net
+LIVE_HOST_INTERVAL_SECONDS=35
+LIVE_HOST_PREBUFFER_COUNT=2
 AVATAR_PROVIDER=liveportrait
+
+# RunPod GPU Worker configuration
 RUNPOD_API_KEY=<RUNPOD_API_KEY_BARU>
 RUNPOD_POD_ID=<RUNPOD_POD_ID>
 RUNPOD_WORKER_URL=https://<RUNPOD_POD_ID>-8000.proxy.runpod.net
-OLLAMA_HOST=https://<RUNPOD_ID>-11434.proxy.runpod.net
-OLLAMA_MODEL=qwen2.5:7b
-LIVE_HOST_INTERVAL_SECONDS=35
-LIVE_HOST_PREBUFFER_COUNT=2
+AVATAR_WORKER_URL=
 ```
 
 Jalankan backend dari komputer lokal:
@@ -148,6 +166,8 @@ npx prisma generate
 npx prisma db push
 npm run dev
 ```
+
+Backend akan berjalan di port 4000.
 
 Health check:
 
@@ -170,10 +190,11 @@ Buka `http://localhost:3000`.
 Flow UI demo:
 
 1. Tambah produk dengan nama, gambar, harga, stok, kategori, dan deskripsi opsional.
-2. Klik simpan. Backend membuat knowledge dan copywriting menggunakan Ollama.
+2. Klik simpan. Backend membuat knowledge dan copywriting menggunakan Ollama (di backend lokal).
 3. Pilih host Namira 3D.
-4. Pastikan durasi menunjukkan 1 jam.
-5. Jalankan live setelah RTMP URL dan stream key valid.
+4. Pastikan durasi menunjukkan 1 jam (durasi maksimal untuk demo).
+5. Pilih platform live (TikTok LIVE, Shopee Live, dll).
+6. Jalankan live setelah RTMP URL dan stream key valid.
 
 Saat broadcast dimulai, backend lebih dahulu menunggu dua video ucapan Namira selesai dirender (`LIVE_HOST_PREBUFFER_COUNT=2`). Setelah itu broadcaster RTMP dijalankan, sehingga stream tidak dimulai dari antrean kosong.
 
@@ -188,11 +209,11 @@ Invoke-RestMethod http://localhost:4000/api/products -Method Post -ContentType '
 
 Response harus memiliki nilai pada `description`, `benefits`, `usage`, `faq`, `targetAudience`, dan `copywriting`.
 
-Jika Ollama mati, sistem memakai fallback konservatif. Untuk demo klien, fallback tidak cukup; health check Ollama dan hasil copywriting harus diverifikasi lebih dahulu.
+Pastikan Ollama berjalan di backend lokal dan dapat menghasilkan copywriting yang berkualitas. Untuk demo klien, health check Ollama dan hasil copywriting harus diverifikasi lebih dahulu.
 
 ## 9. RTMP dan Durasi Demo
 
-Publisher RTMP demo dijalankan oleh Worker melalui API FastAPI. Backend lokal memanggil `/stream/start-broadcast` setelah menerima perintah live. Jangan menjalankan `broadcaster.py` manual atau publisher Node secara bersamaan karena keduanya dapat berebut satu stream key.
+Publisher RTMP demo dijalankan oleh Worker (RunPod) melalui `broadcaster.py`. Backend lokal memanggil `/stream/start-broadcast` pada worker setelah menerima perintah live dan prebuffer selesai. Jangan menjalankan `broadcaster.py` manual atau publisher Node secara bersamaan karena keduanya dapat berebut satu stream key.
 
 Endpoint kontrol publisher pada Worker:
 
@@ -202,7 +223,7 @@ POST /stream/stop-broadcast
 GET  /stream/broadcast-status
 ```
 
-Endpoint tersebut dipanggil oleh backend melalui `runpod-bridge.ts`; user cukup menjalankan live dari dashboard.
+Endpoint tersebut dipanggil oleh backend melalui `runpod-bridge.ts` dan `live-session.ts`; user cukup menjalankan live dari dashboard.
 
 Sebelum demo, verifikasi:
 
@@ -211,15 +232,15 @@ Sebelum demo, verifikasi:
 - Video hasil worker dapat diputar.
 - Publisher yang dipilih membaca hasil video worker dan mengirimkannya ke RTMP.
 - Audio dan gerakan Namira terlihat di platform live.
-- Ucapan proaktif berjalan setiap 30-45 detik.
+- Ucapan proaktif berjalan setiap 30-45 detik (sesuai `LIVE_HOST_INTERVAL_SECONDS`).
 - Komentar platform masuk melalui connector API/webhook, bukan RTMP.
 
-Backend membatasi `durationHours` menjadi `1`. Setelah sekitar 3600 detik:
+Backend membatasi `durationHours` menjadi `1` (maksimal untuk demo). Setelah sekitar 3600 detik:
 
 1. Scheduler AI Host berhenti.
 2. Publisher RTMP berhenti.
 3. Session ditutup.
-4. Backend memanggil `stopPod()`.
+4. Backend memanggil `stopPod()` jika GPU idle timeout tercapai.
 
 ## 10. Troubleshooting
 
@@ -243,11 +264,16 @@ Jika gagal, jalankan ulang `bash setup-safe.sh` setelah memastikan disk dan `HF_
 
 ### Ollama timeout
 
-```bash
-curl https://<RUNPOD_ID>-11434.proxy.runpod.net/api/tags
+Jika menggunakan Ollama di backend lokal:
+
+```powershell
+Test-NetConnection -ComputerName localhost -Port 11434
 ```
 
-Periksa port, proxy, firewall, model name, dan `OLLAMA_HOST` di backend lokal.
+Periksa:
+- Ollama service berjalan di backend lokal
+- `OLLAMA_HOST` di backend `.env` (default standard: http://localhost:11434)
+- Jika ingin menggunakan Ollama di RunPod, set `ENABLE_RUNPOD_OLLAMA=1` (di `setup-safe.sh` dan `start.sh`) dan `OLLAMA_HOST=https://<RUNPOD_ID>-11434.proxy.runpod.net`
 
 ### Jangan menganggap build lokal sebagai tes live
 
@@ -255,4 +281,33 @@ Periksa port, proxy, firewall, model name, dan `OLLAMA_HOST` di backend lokal.
 
 ## 11. Checklist Acceptance
 
-Gunakan checklist terperinci di [demo-readiness-checklist.md](../docs/demo-readiness-checklist.md). Demo klien baru boleh dijalankan setelah bagian worker, Ollama, RTMP, dan acceptance 5 menit dicentang.
+Sebelum demo klien, pastikan:
+
+**Worker & GPU:**
+- [ ] Pod RunPod berjalan dan dapat diakses via proxy
+- [ ] `api_server.py` berjalan di port 8000 dan health check OK
+- [ ] MuseTalk model terdownload dan dapat render video
+- [ ] Test render manual berhasil (via `/stream/live-utterance`)
+
+**Ollama & AI Brain:**
+- [ ] Ollama berjalan di backend lokal
+- [ ] Produk dapat ditambah dan copywriting tergenerate dengan baik
+- [ ] Knowledge base (description, benefits, usage, faq) lengkap
+
+**RTMP & Broadcasting:**
+- [ ] Publisher worker dapat start/stop broadcast
+- [ ] Video hasil worker dapat diputar dan dikirim ke RTMP
+- [ ] Audio dan gerakan Namira terlihat di platform live
+- [ ] Overlay produk (nama, harga, stok, CTA) muncul di stream
+
+**Live Flow:**
+- [ ] Prebuffer video selesai sebelum broadcast dimulai
+- [ ] Ucapan proaktif berjalan setiap interval yang dikonfigurasi
+- [ ] Komentar platform dapat masuk (via webhook/connector)
+- [ ] Auto-stop berfungsi setelah durasi 1 jam
+
+**Environment Variables:**
+- [ ] `RUNPOD_API_KEY` dan `RUNPOD_POD_ID` terkonfigurasi
+- [ ] `RUNPOD_WORKER_URL` mengarah ke proxy RunPod yang benar
+- [ ] `OLLAMA_HOST` dan `OLLAMA_MODEL` terkonfigurasi
+- [ ] `LIVE_HOST_INTERVAL_SECONDS` dan `LIVE_HOST_PREBUFFER_COUNT` sesuai kebutuhan
