@@ -4,7 +4,6 @@ import { generateDynamicSalesResponse } from "./gemini-brain.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
 import { synthesizeSpeech } from "./tts.js";
 
-const DEFAULT_INTERVAL_SECONDS = 35;
 const DEFAULT_INTERVAL_SECONDS = 18;
 
 type HostConfig = {
@@ -65,13 +64,10 @@ class LiveHostOrchestrator {
     );
   }
 
-  public async start(config: HostConfig) {
-    this.stop(config.sessionId);
   public start(config: HostConfig) {
     this.startSession(config);
   }
 
-    this.sessions.set(config.sessionId, {
   public stop(sessionId: string) {
     this.stopSession(sessionId);
   }
@@ -85,11 +81,9 @@ class LiveHostOrchestrator {
       queue: Promise.resolve(),
       cycle: 0,
       usedPromptIndices: new Set(),
-    });
     };
     this.sessions.set(config.sessionId, state);
 
-    this.schedule(config.sessionId, 10);
     // Initial prebuffer: render 2 segmen pembuka agar stream langsung mengalir instan
     const prebufferCount = this.getPrebufferCount();
     for (let i = 0; i < prebufferCount; i++) {
@@ -100,7 +94,6 @@ class LiveHostOrchestrator {
     this.schedule(config.sessionId, 6);
   }
 
-  public stop(sessionId: string) {
   public stopSession(sessionId: string) {
     const state = this.sessions.get(sessionId);
     if (!state) return;
@@ -165,7 +158,6 @@ class LiveHostOrchestrator {
 
   private intervalSeconds() {
     const configured = Number(process.env.LIVE_HOST_INTERVAL_SECONDS);
-    return Number.isFinite(configured) && configured >= 10
     return Number.isFinite(configured) && configured >= 5
       ? configured
       : DEFAULT_INTERVAL_SECONDS;
@@ -175,8 +167,6 @@ class LiveHostOrchestrator {
     const state = this.sessions.get(sessionId);
     if (!state) return;
 
-    const jitter = Math.floor(Math.random() * 5) - 2;
-    const actualDelay = Math.max(10, delaySeconds + jitter);
     const actualDelay = Math.max(3, delaySeconds);
     state.timer = setTimeout(() => {
       const currentState = this.sessions.get(sessionId);
