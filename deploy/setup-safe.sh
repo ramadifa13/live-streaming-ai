@@ -8,6 +8,9 @@ export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:7b}"
 export PIP_NO_CACHE_DIR=1
 
 WORKER_DIR="/workspace/ai_live_worker"
+export TMPDIR="/workspace/tmp"
+export PIP_CACHE_DIR="/workspace/tmp/pip_cache"
+mkdir -p "$TMPDIR" "$PIP_CACHE_DIR" "$WORKER_DIR"
 
 if [ -f "$WORKER_DIR/.setup_complete" ] && [ -d "$WORKER_DIR/env" ] && [ -d "$WORKER_DIR/models" ]; then
     echo "[INFO] Setup already complete, environment and models exist. Skipping setup."
@@ -129,10 +132,12 @@ echo "[OK] HF_TOKEN tersedia."
 
 # ------------------------------------------------------------
 # 4. DISK
+# 4. DISK & VIRTUAL ENVIRONMENT
 # ------------------------------------------------------------
 
 echo ""
 echo "[4/10] Mengecek disk..."
+echo "[4/10] Mengecek disk & menyiapkan virtual environment..."
 
 ROOT_AVAIL_GB="$(df -Pk / | awk 'NR==2 {print int($4/1024/1024)}')"
 WORKSPACE_AVAIL_GB="$(df -Pk /workspace 2>/dev/null | awk 'NR==2 {print int($4/1024/1024)}' || echo '0')"
@@ -163,6 +168,19 @@ mkdir -p \
     "$WORKER_DIR/output"
 
 echo "[OK] Direktori worker siap."
+# Inisialisasi Virtual Environment di /workspace agar tidak memenuhi root container disk
+if [ ! -d "$WORKER_DIR/env" ]; then
+    echo "Membuat Python Virtual Environment di $WORKER_DIR/env..."
+    python3 -m venv "$WORKER_DIR/env"
+fi
+
+echo "Mengaktifkan virtual environment di $WORKER_DIR/env..."
+source "$WORKER_DIR/env/bin/activate"
+
+# Pastikan pip dan build tools ter-update di dalam venv
+pip install --no-cache-dir --upgrade pip setuptools wheel
+
+echo "[OK] Direktori worker & Virtual Environment siap."
 
 # ------------------------------------------------------------
 # 5. STOP OLD API
@@ -178,18 +196,22 @@ echo "[OK] API lama dihentikan."
 
 # ------------------------------------------------------------
 # 6. CLEAN OLD TORCH STACK
+# 6. CLEAN OLD TORCH STACK (DALAM VENV)
 # ------------------------------------------------------------
 
 echo ""
 echo "[6/10] Membersihkan PyTorch stack lama..."
+echo "[6/10] Menyiapkan PyTorch stack di virtual environment..."
 
 python -m pip uninstall -y \
+pip uninstall -y \
     torch \
     torchvision \
     torchaudio \
     2>/dev/null || true
 
 echo "[OK] Torch lama dibersihkan."
+echo "[OK] Lingkungan PyTorch venv siap."
 
 # ------------------------------------------------------------
 # 7. INSTALL EXACT PYTORCH STACK
@@ -197,8 +219,10 @@ echo "[OK] Torch lama dibersihkan."
 
 echo ""
 echo "[7/10] Menginstall PyTorch 2.1 + CUDA 11.8..."
+echo "[7/10] Menginstall PyTorch 2.1 + CUDA 11.8 ke virtual environment..."
 
 python -m pip install \
+pip install \
     --no-cache-dir \
     --no-deps \
     "torch==2.1.0+cu118" \
@@ -207,6 +231,7 @@ python -m pip install \
     --index-url https://download.pytorch.org/whl/cu118
 
 python -m pip install \
+pip install \
     --no-cache-dir \
     --no-deps \
     "numpy==1.26.4"
