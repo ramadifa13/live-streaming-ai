@@ -59,7 +59,10 @@ class LiveHostOrchestrator {
     do {
       index = Math.floor(Math.random() * this.prompts.length);
       attempts += 1;
-    } while (this.usedPromptIndices.has(index) && attempts < this.prompts.length);
+    } while (
+      this.usedPromptIndices.has(index) &&
+      attempts < this.prompts.length
+    );
     this.usedPromptIndices.add(index);
     return index;
   }

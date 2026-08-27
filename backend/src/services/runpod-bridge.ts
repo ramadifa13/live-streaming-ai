@@ -167,8 +167,7 @@ export async function forwardToRunPodGPU(
       audioPath: completedData.audio_path,
       status: completedData.status || "rendered",
     };
-  }
-  catch (err) {
+  } catch (err) {
     console.warn(
       "[RunPodBridge] GPU worker notice (using standard stream pipe):",
       err,

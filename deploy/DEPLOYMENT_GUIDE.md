@@ -3,22 +3,27 @@
 ### Contoh Prompt Generator (Kling AI / Luma)
 
 **1. Aksi Biasa (namira_idle.mp4):**
-> *A highly realistic, 4k resolution video of an Indonesian female presenter standing in front of a clean studio background. She is looking directly at the camera with a soft, friendly smile. She blinks naturally and subtly shifts her weight, but her mouth is completely closed and motionless. No talking.*
+
+> _A highly realistic, 4k resolution video of an Indonesian female presenter standing in front of a clean studio background. She is looking directly at the camera with a soft, friendly smile. She blinks naturally and subtly shifts her weight, but her mouth is completely closed and motionless. No talking._
 
 **2. Aksi Melambai / Menyapa (namira_raise_hand.mp4):**
-> *A highly realistic, 4k resolution video of an Indonesian female presenter standing in a studio. She smiles warmly, raises her right hand, and waves enthusiastically at the camera as if greeting someone. Her mouth is completely closed and motionless. No talking.*
+
+> _A highly realistic, 4k resolution video of an Indonesian female presenter standing in a studio. She smiles warmly, raises her right hand, and waves enthusiastically at the camera as if greeting someone. Her mouth is completely closed and motionless. No talking._
 
 **3. Aksi Menunjuk Bawah (namira_point_down.mp4):**
-> *A highly realistic, 4k resolution video of an Indonesian female presenter in a studio. She looks directly at the camera, smiles, and uses her right index finger to point downwards toward the bottom of the screen (indicating a shopping cart). Her mouth is completely closed and motionless. No talking.*
+
+> _A highly realistic, 4k resolution video of an Indonesian female presenter in a studio. She looks directly at the camera, smiles, and uses her right index finger to point downwards toward the bottom of the screen (indicating a shopping cart). Her mouth is completely closed and motionless. No talking._
 
 **4. Aksi Antusias (namira_excited.mp4):**
-> *A highly realistic, 4k resolution video of an Indonesian female presenter in a studio. She opens her eyes wide in excitement, raises both hands slightly in joy, and nods enthusiastically. Her mouth is completely closed and motionless. No talking.*
+
+> _A highly realistic, 4k resolution video of an Indonesian female presenter in a studio. She opens her eyes wide in excitement, raises both hands slightly in joy, and nods enthusiastically. Her mouth is completely closed and motionless. No talking._
 
 Setelah video-video tersebut di-generate, ganti namanya sesuai tag (contoh: `namira_idle.mp4`, `namira_raise_hand.mp4`, `namira_point_down.mp4`, `namira_excited.mp4`) dan masukkan ke folder `assets/3d/` (atau `assets/2d/`) di RunPod Anda.
 
 ## Langkah 1: Persiapan Network Volume RunPod
 
 Untuk menjaga environment dan weights/model (MuseTalk, Chatterbox-TTS-Indonesian) agar tidak ter-reset, siapkan Network Volume:
+
 1. Masuk ke dashboard RunPod > **Network Volumes** > **Create Network Volume**.
 2. Alokasikan ukuran 20-30GB.
 3. Centang region yang sama dengan ketersediaan GPU Anda (misalnya Eropa atau Amerika).
@@ -37,7 +42,7 @@ Untuk menjaga environment dan weights/model (MuseTalk, Chatterbox-TTS-Indonesian
    cd /workspace/live-streaming-ai/deploy
    bash setup-safe.sh
    ```
-6. Setup script `setup-safe.sh` bersifat *Idempotent*. Jika `env` dan `models` sudah terunduh pada Network Volume, script ini akan langsung _skip_ sehingga setup memakan waktu kurang dari 45 detik.
+6. Setup script `setup-safe.sh` bersifat _Idempotent_. Jika `env` dan `models` sudah terunduh pada Network Volume, script ini akan langsung _skip_ sehingga setup memakan waktu kurang dari 45 detik.
 7. `setup-safe.sh` juga otomatis membuat **virtualenv terpisah** untuk `chatterbox_service` (lihat Langkah 4a) — ini WAJIB terpisah dari env utama karena `chatterbox-tts` butuh `transformers==5.2.0` yang bentrok dengan pin MuseTalk (`4.38.2`).
 8. Isi sample suara untuk voice cloning di `deploy/assets/voice_refs/` (di-upload manual ke Network Volume, TIDAK ikut ter-generate otomatis):
    ```
@@ -50,6 +55,7 @@ Untuk menjaga environment dan weights/model (MuseTalk, Chatterbox-TTS-Indonesian
 ## Langkah 3: Deploy Frontend & Backend (Pre-Live & Dashboard)
 
 ### Backend (Render)
+
 1. Deploy `backend` direktori menggunakan Node.js environment di Render.com (gratis).
 2. Set Environment Variables di Render:
    - `GEMINI_API_KEY`: Kunci API Google Gemini (Free tier).
@@ -58,6 +64,7 @@ Untuk menjaga environment dan weights/model (MuseTalk, Chatterbox-TTS-Indonesian
 3. Backend akan menangani RAG Produk (melalui Gemini API) tanpa memerlukan GPU.
 
 ### Frontend (Vercel)
+
 1. Deploy `frontend` direktori menggunakan Next.js di Vercel (gratis).
 2. Atur Environment Variable:
    - `NEXT_PUBLIC_BACKEND_URL`: Mengarah ke URL backend Render yang telah Anda buat.
@@ -96,10 +103,10 @@ Model finetune Bahasa Indonesia (`grandhigh/Chatterbox-TTS-Indonesian`) di-downl
 
 ## 5. Simulasi Testing Integrasi Backend - Worker
 
-Saat dashboard mengirimkan *Utterance* / Pertanyaan dari penonton:
+Saat dashboard mengirimkan _Utterance_ / Pertanyaan dari penonton:
+
 1. Backend merespon menggunakan `GEMINI_API_KEY` untuk menyusun RAG sales pitch.
 2. Backend mengirim teks respons + tone ke `[Worker_IP]:8000/stream/live-utterance` (TIDAK mengirim audio — TTS sepenuhnya di worker).
 3. Worker meneruskan teks ke microservice **Chatterbox-TTS-Indonesian** (Port `8090`) yang melakukan voice cloning dari sample di `assets/voice_refs/{avatar}_{tone}.wav`.
 4. Audio hasil cloning dikirim langsung ke MuseTalk Inpainting untuk disync dengan video idle yang telah ter-cache.
 5. Worker RTMP Streamer (FFmpeg) memutar hasil stream tersebut ke server RTMP live (TikTok/YT). Saat AI tidak sedang bicara, RTMP Streamer otomatis me-loop video Idle.
-
