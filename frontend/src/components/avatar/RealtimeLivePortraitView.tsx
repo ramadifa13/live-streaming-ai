@@ -12,6 +12,8 @@ interface RealtimeLivePortraitViewProps {
   mode?: "live" | "video_ads";
   soundOn?: boolean;
   isLiveActive?: boolean;
+  workerState?: "ready" | "warming" | "error";
+  workerError?: string;
   className?: string;
 }
 
@@ -24,6 +26,8 @@ export default function RealtimeLivePortraitView({
   mode = "live",
   soundOn = false,
   isLiveActive = false,
+  workerState,
+  workerError,
   className = "",
 }: RealtimeLivePortraitViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -77,6 +81,25 @@ export default function RealtimeLivePortraitView({
           poster={resolvedImageSrc}
           className="w-full h-full object-cover"
         />
+      )}
+
+
+      {/* ── WORKER STATE OVERLAY (Cold Start / Error) ── */}
+      {workerState === "warming" && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+          <p className="mt-4 text-sm font-bold text-blue-400">AI Worker Sedang Cold Start...</p>
+          <p className="text-xs text-slate-300">Mohon tunggu 1-2 menit untuk inisialisasi GPU.</p>
+        </div>
+      )}
+      {workerState === "error" && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-500/20 text-red-500">
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+          </div>
+          <p className="mt-4 text-sm font-bold text-red-400">Koneksi AI Worker Gagal</p>
+          <p className="text-xs text-slate-300 max-w-[80%] text-center">{workerError || "Periksa log backend atau RunPod."}</p>
+        </div>
       )}
 
       {/* ── VIGNETTE OVERLAY (premium depth) ── */}

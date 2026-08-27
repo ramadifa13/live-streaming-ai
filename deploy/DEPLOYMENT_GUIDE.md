@@ -1,5 +1,27 @@
 # Deployment Guide: Realtime AI Live Streaming System
 
+This guide covers deploying all components of the system: the Node.js Fastify Backend, Next.js Frontend, and the RunPod AI Worker (MuseTalk / LivePortrait).
+
+## Environment Setup
+
+### Backend Environment Setup
+1. Duplicate `backend/.env.example` as `backend/.env`
+2. Configure the following critical environment variables:
+   - `GEMINI_API_KEY`: Required for LLM operations.
+   - `DATABASE_URL`: Ensure a PostgreSQL database is reachable.
+   - `RUNPOD_API_KEY` & `RUNPOD_NETWORK_VOLUME_ID`: Required for dynamic GPU pod allocation.
+   - `AVATAR_PROVIDER`: Use `liveportrait` for the RunPod AI worker.
+3. The backend manages the lifecycle of AI Workers on RunPod by dynamically creating and terminating Pods using the Network Volume ID specified.
+
+### Frontend Environment Setup
+1. Duplicate `frontend/.env.example` as `frontend/.env.local`
+2. Map the environment variables to the backend port and worker proxy.
+   - Local: `NEXT_PUBLIC_BACKEND_URL=http://localhost:4000`
+   - Production (Vercel): `NEXT_PUBLIC_BACKEND_URL=<YOUR_BACKEND_RENDER_URL>`
+   - `AVATAR_WORKER_URL`: The URL to the RunPod Proxy endpoint, usually formatted as `https://<pod_id>-8000.proxy.runpod.net`. This allows the frontend to retrieve realtime generated live portrait video streams directly from the worker.
+
+---
+
 ### Contoh Prompt Generator (Kling AI / Luma)
 
 **1. Aksi Biasa (namira_idle.mp4):**

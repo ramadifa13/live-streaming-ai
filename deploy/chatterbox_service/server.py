@@ -12,6 +12,7 @@ Voice cloning reference lookup order (first match wins):
   assets/voice_refs/{avatar}_default.wav  e.g. namira_default.wav
   assets/voice_refs/default.wav
 """
+
 import io
 import os
 import time
@@ -26,9 +27,12 @@ from safetensors.torch import load_file
 MODEL_REPO = "grandhigh/Chatterbox-TTS-Indonesian"
 CHECKPOINT_FILENAME = "t3_cfg.safetensors"
 VOICE_REF_DIR = os.environ.get(
-    "VOICE_REF_DIR", os.path.join(os.path.dirname(__file__), "..", "assets", "voice_refs")
+    "VOICE_REF_DIR",
+    os.path.join(os.path.dirname(__file__), "..", "assets", "voice_refs"),
 )
-DEVICE = os.environ.get("CHATTERBOX_DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = os.environ.get(
+    "CHATTERBOX_DEVICE", "cuda" if torch.cuda.is_available() else "cpu"
+)
 
 # Tone -> (exaggeration, cfg_weight). Chatterbox has no explicit "style" input,
 # but these two knobs meaningfully change delivery energy/pacing per Resemble's
@@ -55,8 +59,12 @@ def get_model():
         print(f"[Chatterbox] Loading base model on {DEVICE}...")
         model = ChatterboxTTS.from_pretrained(device=DEVICE)
 
-        print(f"[Chatterbox] Downloading Indonesian finetune checkpoint ({MODEL_REPO})...")
-        checkpoint_path = hf_hub_download(repo_id=MODEL_REPO, filename=CHECKPOINT_FILENAME)
+        print(
+            f"[Chatterbox] Downloading Indonesian finetune checkpoint ({MODEL_REPO})..."
+        )
+        checkpoint_path = hf_hub_download(
+            repo_id=MODEL_REPO, filename=CHECKPOINT_FILENAME
+        )
         t3_state = load_file(checkpoint_path, device="cpu")
         model.t3.load_state_dict(t3_state)
 
@@ -118,7 +126,9 @@ async def synthesize(req: SynthesizeRequest):
     ta.save(buffer, wav, model.sr, format="wav")
     buffer.seek(0)
     gen_ms = round((time.time() - start) * 1000)
-    print(f"[Chatterbox] Synthesized {len(req.text)} chars in {gen_ms}ms (avatar={req.avatar}, tone={req.tone})")
+    print(
+        f"[Chatterbox] Synthesized {len(req.text)} chars in {gen_ms}ms (avatar={req.avatar}, tone={req.tone})"
+    )
 
     from fastapi.responses import Response
 

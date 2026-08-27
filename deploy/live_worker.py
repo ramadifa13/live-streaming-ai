@@ -7,6 +7,7 @@ import threading
 import sys
 from argparse import Namespace
 
+
 class AILiveWorker:
     def __init__(self):
         # Konfigurasi Direktori Server RunPod
@@ -15,23 +16,25 @@ class AILiveWorker:
         self.assets_3d = os.path.join(self.base_dir, "assets", "3d")
         self.temp_dir = os.path.join(self.base_dir, "temp")
         self.output_dir = os.path.join(self.base_dir, "output")
-        
+
         # Konfigurasi MuseTalk
         self.musetalk_dir = os.path.join(self.base_dir, "MuseTalk")
         paths = self._musetalk_paths()
         self.musetalk_checkpoint = paths["unet_config"]
-        
+
         # Batch size untuk inferensi UNet. RTX 4090 bisa handled 16, GPU kecil gunakan 8.
         self.batch_size = int(os.environ.get("MUSETALK_BATCH_SIZE", "8"))
-        
+
         # Lock untuk serialisasi inferensi GPU (mencegah OOM dan memastikan stabilitas)
         self._inference_lock = threading.Lock()
-        
+
         if not os.path.exists(self.musetalk_checkpoint):
-            print(f"[WARNING] Model MuseTalk belum terunduh di {self.musetalk_checkpoint}. Pastikan setup-safe.sh sudah dijalankan.")
-        
+            print(
+                f"[WARNING] Model MuseTalk belum terunduh di {self.musetalk_checkpoint}. Pastikan setup-safe.sh sudah dijalankan."
+            )
+
         self._ensure_musetalk_layout()
-        
+
         # Warmup berat (load ~3GB model) — default lazy agar API cepat online
         self._warmed_up = False
         if os.environ.get("MUSETALK_WARMUP_ON_START", "0") == "1":
@@ -40,20 +43,26 @@ class AILiveWorker:
                 self._warmed_up = True
             except Exception as e:
                 print(f"[WARMUP] Gagal pre-load MuseTalk: {e}")
-            
-        print("[INFO] Worker siap dengan sistem TTS Chatterbox-TTS-Indonesian (voice cloning) dan Lipsync MuseTalk...")
-    
+
+        print(
+            "[INFO] Worker siap dengan sistem TTS Chatterbox-TTS-Indonesian (voice cloning) dan Lipsync MuseTalk..."
+        )
+
     def _ensure_warmup(self):
         if self._warmed_up:
             return
         self._warmup_musetalk()
         self._warmed_up = True
-    
+
     def _ensure_musetalk_layout(self):
         """MuseTalk pakai path relatif ./musetalk dan ./models — buat symlink dari worker root."""
         links = {
-            os.path.join(self.base_dir, "musetalk"): os.path.join(self.musetalk_dir, "musetalk"),
-            os.path.join(self.base_dir, "models"): os.path.join(self.musetalk_dir, "models"),
+            os.path.join(self.base_dir, "musetalk"): os.path.join(
+                self.musetalk_dir, "musetalk"
+            ),
+            os.path.join(self.base_dir, "models"): os.path.join(
+                self.musetalk_dir, "models"
+            ),
         }
         for link_path, target_path in links.items():
             if not os.path.isdir(target_path):
@@ -64,7 +73,9 @@ class AILiveWorker:
                     continue
                 os.unlink(link_path)
             elif os.path.exists(link_path):
-                print(f"[WARNING] Lewati symlink {link_path} — path sudah ada (bukan symlink)")
+                print(
+                    f"[WARNING] Lewati symlink {link_path} — path sudah ada (bukan symlink)"
+                )
                 continue
             os.symlink(target_path, link_path)
             print(f"[INFO] Symlink: {link_path} -> {target_path}")
@@ -76,7 +87,7 @@ class AILiveWorker:
             "unet_model_path": os.path.join(models_root, "musetalkV15", "unet.pth"),
             "whisper_dir": os.path.join(models_root, "whisper"),
         }
-    
+
     def _warmup_musetalk(self):
         print(f"[WARMUP] Loading MuseTalk models (batch_size={self.batch_size})")
         musetalk_dir = self.musetalk_dir
@@ -87,6 +98,7 @@ class AILiveWorker:
         os.chdir(musetalk_dir)
         try:
             from scripts.inference import _load_models_cached
+
             paths = self._musetalk_paths()
             dummy_args = Namespace(
                 gpu_id=0,
@@ -131,8 +143,8 @@ class AILiveWorker:
             config_data = {
                 "task_0": {
                     "video_path": video_path,
-                    "audio_path": "", # Dummy
-                    "bbox_shift": 0
+                    "audio_path": "",  # Dummy
+                    "bbox_shift": 0,
                 }
             }
             with open(yaml_path, "w") as f:
@@ -150,23 +162,28 @@ class AILiveWorker:
         except Exception as e:
             print(f"[WARNING] Failed to pre-cache video {video_path}: {e}")
 
-
     async def _generate_voice(self, text, task_id, host_name, tone="Casual"):
         """Ubah Teks menjadi Suara menggunakan Chatterbox-TTS-Indonesian (voice cloning, GPU)"""
         audio_path = os.path.join(self.temp_dir, f"{task_id}.wav")
 
-        chatterbox_url = os.environ.get("CHATTERBOX_SERVICE_URL", "http://127.0.0.1:8090")
-        print(f"[INFO] Men-generate suara menggunakan Chatterbox-TTS-Indonesian ({chatterbox_url})...")
+        chatterbox_url = os.environ.get(
+            "CHATTERBOX_SERVICE_URL", "http://127.0.0.1:8090"
+        )
+        print(
+            f"[INFO] Men-generate suara menggunakan Chatterbox-TTS-Indonesian ({chatterbox_url})..."
+        )
 
         try:
             import json
             import urllib.request
 
-            payload = json.dumps({
-                "text": text,
-                "avatar": host_name,
-                "tone": tone,
-            }).encode("utf-8")
+            payload = json.dumps(
+                {
+                    "text": text,
+                    "avatar": host_name,
+                    "tone": tone,
+                }
+            ).encode("utf-8")
 
             request = urllib.request.Request(
                 f"{chatterbox_url}/synthesize",
@@ -188,44 +205,48 @@ class AILiveWorker:
 
     def _get_idle_video(self, host_type, host_name):
         """Cari file bahan baku video di folder 2D/3D"""
-        target_dir = self.assets_2d if str(host_type).lower() == "2d" else self.assets_3d
-        
+        target_dir = (
+            self.assets_2d if str(host_type).lower() == "2d" else self.assets_3d
+        )
+
         # 1. Cek nama persis
         video_path = os.path.join(target_dir, f"{host_name}.mp4")
         if os.path.exists(video_path):
             return video_path
-            
+
         # 2. Cek variasi nama (misal nana / host_2d_statis_nana)
         if os.path.exists(target_dir):
             for f in os.listdir(target_dir):
-                if f.endswith(".mp4") and (host_name.lower() in f.lower() or f.lower().replace(".mp4", "") in host_name.lower()):
+                if f.endswith(".mp4") and (
+                    host_name.lower() in f.lower()
+                    or f.lower().replace(".mp4", "") in host_name.lower()
+                ):
                     return os.path.join(target_dir, f)
             # 3. Ambil file mp4 pertama di folder yang sesuai tipe (2D / 3D)
             mp4s = [f for f in os.listdir(target_dir) if f.endswith(".mp4")]
             if mp4s:
                 return os.path.join(target_dir, mp4s[0])
-                
+
         return None
 
     async def _sync_lips_async(self, idle_video, audio_path, task_id):
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._sync_lips, idle_video, audio_path, task_id)
+        return await loop.run_in_executor(
+            None, self._sync_lips, idle_video, audio_path, task_id
+        )
 
     def _sync_lips(self, idle_video, audio_path, task_id):
         with self._inference_lock:
             self._ensure_warmup()
             import yaml
 
-            yaml_path = os.path.join(
-                self.temp_dir,
-                f"{task_id}.yaml"
-            )
+            yaml_path = os.path.join(self.temp_dir, f"{task_id}.yaml")
 
             config_data = {
                 "task_0": {
                     "video_path": idle_video,
                     "audio_path": audio_path,
-                    "bbox_shift": 0
+                    "bbox_shift": 0,
                 }
             }
 
@@ -255,7 +276,9 @@ class AILiveWorker:
                 raise FileNotFoundError(unet_config)
 
             if not os.path.exists(unet_model_path):
-                print(f"[ERROR] MuseTalk V1.5 checkpoint tidak ditemukan:\n{unet_model_path}")
+                print(
+                    f"[ERROR] MuseTalk V1.5 checkpoint tidak ditemukan:\n{unet_model_path}"
+                )
                 raise FileNotFoundError(unet_model_path)
 
             if not os.path.exists(whisper_dir):
@@ -308,11 +331,7 @@ class AILiveWorker:
                     except Exception:
                         pass
 
-            expected_output = os.path.join(
-                self.output_dir,
-                "v15",
-                f"{task_id}.mp4"
-            )
+            expected_output = os.path.join(self.output_dir, "v15", f"{task_id}.mp4")
 
             if os.path.exists(expected_output):
                 print(f"[MuseTalk SUCCESS] Output ditemukan:\n{expected_output}")
@@ -337,19 +356,24 @@ class AILiveWorker:
             print(f"[MuseTalk SUCCESS] Output:\n{expected_output}")
             return expected_output
 
-    async def run_pipeline(self, host_type, host_name, text_answer, task_id, audio_path=None, tone="Casual"):
+    async def run_pipeline(
+        self, host_type, host_name, text_answer, task_id, audio_path=None, tone="Casual"
+    ):
         """Fungsi Pemicu Utama"""
         pipeline_start = time.time()
 
         # 1. Parse Action Tags (e.g. [RAISE_HAND])
         import re
+
         action_tag = "idle"
-        match = re.search(r'\[([A-Z_]+)\]', text_answer)
+        match = re.search(r"\[([A-Z_]+)\]", text_answer)
         if match:
             action_tag = match.group(1).lower()
-            text_answer = re.sub(r'\[[A-Z_]+\]', '', text_answer).strip()
+            text_answer = re.sub(r"\[[A-Z_]+\]", "", text_answer).strip()
 
-        print(f"\n[MEMPROSES] {task_id} | Host: {host_name} ({host_type.upper()}) | Action: {action_tag}")
+        print(
+            f"\n[MEMPROSES] {task_id} | Host: {host_name} ({host_type.upper()}) | Action: {action_tag}"
+        )
 
         # 2. Modify host_name dynamically to match action video (e.g., namira_raise_hand.mp4)
         dynamic_host_name = host_name
@@ -360,12 +384,15 @@ class AILiveWorker:
 
         # 3. Fallback to default if dynamic video is not found
         if not idle_video and dynamic_host_name != host_name:
-            print(f"[INFO] Video untuk aksi '{action_tag}' ({dynamic_host_name}.mp4) tidak ditemukan, fallback ke default {host_name}.mp4")
+            print(
+                f"[INFO] Video untuk aksi '{action_tag}' ({dynamic_host_name}.mp4) tidak ditemukan, fallback ke default {host_name}.mp4"
+            )
             idle_video = self._get_idle_video(host_type, host_name)
 
-
         if not idle_video:
-            print(f"[ERROR] Video '{host_name}.mp4' tidak ada di folder assets/{host_type}")
+            print(
+                f"[ERROR] Video '{host_name}.mp4' tidak ada di folder assets/{host_type}"
+            )
             return None
 
         tts_start = time.time()
@@ -374,11 +401,15 @@ class AILiveWorker:
             print(" -> Menggunakan audio dari backend...")
         else:
             if os.environ.get("WORKER_REQUIRE_AUDIO", "0") == "1":
-                print("[ERROR] Backend audio wajib tersedia, tetapi audio_path tidak valid.")
+                print(
+                    "[ERROR] Backend audio wajib tersedia, tetapi audio_path tidak valid."
+                )
                 return None
             print(" -> Generating Suara (Chatterbox-TTS-Indonesian)...")
             try:
-                audio_file = await self._generate_voice(text_answer, task_id, host_name, tone=tone)
+                audio_file = await self._generate_voice(
+                    text_answer, task_id, host_name, tone=tone
+                )
             except Exception as e:
                 print(f"[ERROR] Gagal membuat suara: {e}")
                 return None
@@ -389,8 +420,12 @@ class AILiveWorker:
         final_video = await self._sync_lips_async(idle_video, audio_file, task_id)
         lipsync_elapsed = round((time.time() - lipsync_start) * 1000)
 
-        if audio_file and os.path.exists(audio_file) and audio_file.startswith(self.temp_dir):
-            os.remove(audio_file) # Bersihkan file suara
+        if (
+            audio_file
+            and os.path.exists(audio_file)
+            and audio_file.startswith(self.temp_dir)
+        ):
+            os.remove(audio_file)  # Bersihkan file suara
 
         total_elapsed = round((time.time() - pipeline_start) * 1000)
         if final_video:
@@ -400,25 +435,27 @@ class AILiveWorker:
             )
         return final_video
 
+
 # --- PENGUJIAN ---
 if __name__ == "__main__":
+
     async def run_test():
         ai = AILiveWorker()
-        
+
         # Contoh 1: Menjalankan Host 2D
         await ai.run_pipeline(
             host_type="2d",
-            host_name="host_2d_statis", # Pastikan file host_2d_statis.mp4 sudah Anda upload
+            host_name="host_2d_statis",  # Pastikan file host_2d_statis.mp4 sudah Anda upload
             text_answer="Halo kak, selamat datang! Baju ini bahannya adem dan ready warna merah ya.",
-            task_id="komen_2d_01"
+            task_id="komen_2d_01",
         )
-        
+
         # Contoh 2: Menjalankan Host 3D
         await ai.run_pipeline(
             host_type="3d",
-            host_name="host_3d_dinamis", # Pastikan file host_3d_dinamis.mp4 sudah Anda upload
+            host_name="host_3d_dinamis",  # Pastikan file host_3d_dinamis.mp4 sudah Anda upload
             text_answer="Betul banget kak, silakan cek keranjang kuning di bawah ini.",
-            task_id="komen_3d_01"
+            task_id="komen_3d_01",
         )
 
     asyncio.run(run_test())

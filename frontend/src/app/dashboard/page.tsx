@@ -62,9 +62,11 @@ export default function Dashboard() {
   const [editModalTab, setEditModalTab] = useState<"BASIC" | "RAG">("BASIC");
   const [selectedProductForEdit, setSelectedProductForEdit] =
     useState<Product | null>(null);
+  const [workerState] = useState<"ready" | "warming" | "error">("ready");
+  const [workerError] = useState<string>("");
   const [newProductForm, setNewProductForm] = useState({
     name: "",
-    price: "",
+    price: 0,
     stock: 0,
     tag: "",
     sku: "",
@@ -103,7 +105,7 @@ export default function Dashboard() {
     products[0] || {
       id: "loading",
       name: "Memuat Produk...",
-      price: "Rp0",
+      price: 0,
       stock: 0,
       tag: "Loading",
       image: "",
@@ -722,7 +724,7 @@ export default function Dashboard() {
     }
 
     const numPrice =
-      parseInt(String(newProductForm.price).replace(/[^0-9]/g, "")) || 99000;
+      Number(newProductForm.price) || 99000;
     let createdId = `prod_${Date.now()}`;
 
     const payload = {
@@ -775,7 +777,7 @@ export default function Dashboard() {
     const newProd: Product = {
       id: createdId,
       name: payload.name,
-      price: `Rp${numPrice.toLocaleString("id-ID")}`,
+      price: numPrice,
       stock: payload.stock,
       tag: payload.category,
       sku: payload.sku,
@@ -794,7 +796,7 @@ export default function Dashboard() {
     setShowAddProductModal(false);
     setNewProductForm({
       name: "",
-      price: "",
+      price: 0,
       stock: 50,
       tag: "Skincare",
       sku: "",
@@ -816,14 +818,12 @@ export default function Dashboard() {
     const numPrice =
       typeof selectedProductForEdit.price === "number"
         ? selectedProductForEdit.price
-        : parseInt(
-            String(selectedProductForEdit.price).replace(/[^0-9]/g, ""),
-          ) || 99000;
+        : Number(selectedProductForEdit.price) || 99000;
 
     const formattedProduct: Product = {
       ...selectedProductForEdit,
       name: selectedProductForEdit.name.trim(),
-      price: `Rp${numPrice.toLocaleString("id-ID")}`,
+      price: numPrice,
       stock: Number(selectedProductForEdit.stock) || 0,
       tag: selectedProductForEdit.tag || "General",
       image:
@@ -917,7 +917,7 @@ export default function Dashboard() {
     const imported = rawItems.map((p: any) => ({
       id: `prod_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
       name: p.name,
-      price: `Rp${p.price.toLocaleString("id-ID")}`,
+      price: p.price,
       stock: Number(p.stock) || 0,
       tag: p.category || "General",
       image: p.image,
@@ -2231,7 +2231,9 @@ export default function Dashboard() {
                   <div className="md:col-span-4 flex justify-center">
                     <div className="relative aspect-[9/16] w-full max-w-[210px] h-full min-h-[340px] overflow-hidden rounded-2xl border-2 border-[#232c42] bg-[#0c0919] shadow-2xl">
                       <RealtimeLivePortraitView
-                        avatarName={selectedAvatar.name}
+                          avatarName={selectedAvatar.name}
+                          workerState={workerState}
+                          workerError={workerError}
                         avatarImage={selectedAvatar.image}
                         avatarRole={selectedAvatar.role}
                         isSpeaking={isAvatarSpeaking}
@@ -3616,7 +3618,9 @@ export default function Dashboard() {
                 {/* Video Canvas 9:16 */}
                 <div className="relative aspect-[9/16] w-full rounded-[26px] overflow-hidden bg-gradient-to-b from-[#141226] to-[#0a0714] border border-white/10 flex flex-col justify-between p-3.5">
                   <RealtimeLivePortraitView
-                    avatarName={selectedAvatar.name}
+                          avatarName={selectedAvatar.name}
+                          workerState={workerState}
+                          workerError={workerError}
                     avatarImage={selectedAvatar.image}
                     avatarRole={selectedAvatar.role}
                     isSpeaking={isAvatarSpeaking}
@@ -4021,7 +4025,7 @@ export default function Dashboard() {
                           onChange={(e) =>
                             setNewProductForm({
                               ...newProductForm,
-                              price: e.target.value,
+                              price: Number(e.target.value),
                             })
                           }
                           placeholder="99000"
@@ -4400,7 +4404,7 @@ export default function Dashboard() {
                           onChange={(e) =>
                             setSelectedProductForEdit({
                               ...selectedProductForEdit,
-                              price: e.target.value,
+                              price: Number(e.target.value),
                             })
                           }
                           className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-mono font-bold"
