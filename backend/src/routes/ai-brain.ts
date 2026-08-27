@@ -1,11 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-
-import {
-  generateDynamicSalesResponseGemini,
-  generateVideoSalesScriptGemini,
-  generateLiveSalesPitchFromAIGemini,
-} from "../services/gemini-brain.js";
+import { generateDynamicSalesResponse } from "../services/llm-brain.js";
+// Re-implement the other features dynamically using llm-brain instead of stubbing
 
 const salesResponseSchema = z.object({
   productId: z.string().optional(),
@@ -27,10 +23,8 @@ const videoScriptSchema = z.object({
 });
 
 export async function aiBrainRoutes(server: FastifyInstance) {
-  // POST /api/ai/sales-response (Autonomous LLM Sales Brain with RAG & Conversational Pivot)
   server.post("/api/ai/sales-response", async (request, reply) => {
     const parsed = salesResponseSchema.safeParse(request.body);
-
     if (!parsed.success) {
       reply.code(400);
       return { error: parsed.error.flatten() };
@@ -44,6 +38,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       tone = "Persuasif",
       avatarName = "Namira",
     } = parsed.data;
+
     let productDescription = "";
     let productCategory = "Skincare";
     let productBenefits = "";
@@ -63,35 +58,34 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       productStock = p.stock || 50;
     }
 
-    // Call Autonomous LLM Sales Brain with RAG Knowledge
     try {
-      const aiResult = await generateDynamicSalesResponseGemini({
-      userQuestion,
-      avatarName,
-      tone,
-      productName,
-      productPrice,
-      productDescription,
-      productCategory,
-      productBenefits,
-      productUsage,
-      productFaq,
-      productStock,
+      const aiResult = await generateDynamicSalesResponse({
+        userQuestion,
+        avatarName,
+        tone,
+        productName,
+        productPrice,
+        productDescription,
+        productCategory,
+        productBenefits,
+        productUsage,
+        productFaq,
+        productStock,
       });
 
       return {
-      success: true,
-      data: {
-        avatar: avatarName,
-        tone,
-        intent: aiResult.intent,
-        action: aiResult.action,
-        engine: aiResult.engineUsed,
-        replyText: aiResult.replyText,
-        productFeatured: productName,
-        timestamp: new Date().toISOString(),
-      },
-    };
+        success: true,
+        data: {
+          avatar: avatarName,
+          tone,
+          intent: aiResult.intent,
+          action: aiResult.action,
+          engine: aiResult.engineUsed,
+          replyText: aiResult.replyText,
+          productFeatured: productName,
+          timestamp: new Date().toISOString(),
+        },
+      };
     } catch (err: any) {
       server.log.error(err);
       reply.code(500);
@@ -99,54 +93,8 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     }
   });
 
-  // POST /api/ai/video-script (Autonomous Commercial Video Ads Generator)
-  server.post("/api/ai/video-script", async (request, reply) => {
-    const parsed = videoScriptSchema.safeParse(request.body);
-
-    if (!parsed.success) {
-      reply.code(400);
-      return { error: parsed.error.flatten() };
-    }
-
-    const {
-      productName,
-      productDescription,
-      productPrice,
-      productCategory,
-      durationType,
-      style = "Viral TikTok",
-    } = parsed.data;
-
-    try {
-      const script = await generateVideoSalesScriptGemini({
-        productName,
-        productDescription,
-        productPrice,
-        productCategory,
-        durationType,
-        style,
-      });
-      return {
-      success: true,
-      data: {
-        product: productName,
-        category: productCategory,
-        format: "MP4 9:16 (Vertical Video Ads)",
-        style,
-        script,
-      },
-    };
-    } catch (err: any) {
-      server.log.error(err);
-      reply.code(500);
-      return { success: false, error: err.message || "Failed to generate video script" };
-    }
-  });
-
-  // POST /api/ai/live-sales-script (Dynamic RAG Live Stream Sales Script)
   server.post("/api/ai/live-sales-script", async (request, reply) => {
     const body = request.body as {
-      productId?: string;
       productName?: string;
       productPrice?: string;
       category?: string;
@@ -184,22 +132,44 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     const tone = body.tone || "Persuasif";
 
     try {
-      const scriptResult = await generateLiveSalesPitchFromAIGemini({
+      // Create a specific LLM prompt for live sales script format
+      const userQ = `Buatlah script live streaming untuk produk ${name} dalam 3 bagian dengan gaya ${tone}. Format JSON: {"hook": "...", "showcase": "...", "cta": "...", "fullScript": "..."}`;
+
+      const aiResult = await generateDynamicSalesResponse({
+        userQuestion: userQ,
+        avatarName: hostName,
+        tone,
         productName: name,
         productPrice: price,
-        productCategory: category,
         productDescription: description,
+        productCategory: category,
         productBenefits: benefits,
         productUsage: usage,
         productFaq: faq,
         productStock: stock,
-        avatarName: hostName,
-        tone,
       });
+
+      // Try to parse the json from the reply text, or fallback
+      let parsedResponse = {
+         hook: "Halo semua!",
+         showcase: `Ini dia ${name} yang kalian cari!`,
+         cta: "Langsung checkout sekarang!",
+         fullScript: aiResult.replyText
+      };
+
+      try {
+         // attempt naive extract json from text if it's wrapped
+         const jsonStr = aiResult.replyText.replace(/```json/g, "").replace(/```/g, "");
+         const match = jsonStr.match(/\{[\s\S]*\}/);
+         if (match) {
+             const maybeJson = JSON.parse(match[0]);
+             if (maybeJson.hook && maybeJson.showcase) parsedResponse = maybeJson;
+         }
+      } catch (e) {}
 
       return {
         success: true,
-        data: scriptResult,
+        data: parsedResponse
       };
     } catch (err: any) {
       reply.code(502);
@@ -207,6 +177,53 @@ export async function aiBrainRoutes(server: FastifyInstance) {
         success: false,
         error: err?.message || "Gagal menghasilkan live script dari AI",
       };
+    }
+  });
+
+  server.post("/api/ai/video-script", async (request, reply) => {
+    const parsed = videoScriptSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: parsed.error.flatten() };
+    }
+
+    const {
+      productName,
+      productDescription,
+      productPrice,
+      productCategory,
+      durationType,
+      style = "Viral TikTok",
+    } = parsed.data;
+
+    try {
+      const aiResult = await generateDynamicSalesResponse({
+        userQuestion: `Buat script video iklan durasi ${durationType} dengan gaya ${style}`,
+        avatarName: "Video Creator",
+        tone: "Menarik",
+        productName,
+        productPrice,
+        productDescription,
+        productCategory,
+        productBenefits: "",
+        productUsage: "",
+        productFaq: "",
+        productStock: 100,
+      });
+      return {
+        success: true,
+        data: {
+          product: productName,
+          category: productCategory,
+          format: "MP4 9:16 (Vertical Video Ads)",
+          style,
+          script: aiResult.replyText,
+        },
+      };
+    } catch (err: any) {
+      server.log.error(err);
+      reply.code(500);
+      return { success: false, error: err.message || "Failed to generate video script" };
     }
   });
 }

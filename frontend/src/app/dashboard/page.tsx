@@ -557,7 +557,7 @@ export default function Dashboard() {
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [isLiveActive, isLivePaused]);
+  }, [isLiveActive, isLivePaused, liveSessionPhase]);
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -581,11 +581,13 @@ export default function Dashboard() {
   };
 
   const handlePlayAudioPreview = async (
-    _voice: string = selectedVoice,
-    _lang: string = selectedLang,
-    tone: string = selectedTone,
-    speed: number = speechSpeed,
+    overrideVoice?: string,
+    overrideLang?: string,
+    overrideTone?: string,
+    overrideSpeed?: number,
   ) => {
+    const tone = overrideTone ?? selectedTone;
+    const speed = overrideSpeed ?? speechSpeed;
     if (isPlayingAudio) {
       if (currentAudioRef.current) {
         currentAudioRef.current.pause();
