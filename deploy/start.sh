@@ -83,6 +83,18 @@ echo "Memulai AI Worker API (Port 8000)..."
 python api_server.py > "$WORKER_DIR/api_server.log" 2>&1 &
 API_PID=$!
 
+if [ -d "$WORKER_DIR/chatterbox_service/env-chatterbox" ]; then
+	echo "Memulai Chatterbox-TTS-Indonesian microservice (Port 8090, venv terpisah)..."
+	(
+		source "$WORKER_DIR/chatterbox_service/env-chatterbox/bin/activate"
+		cd "$WORKER_DIR/chatterbox_service"
+		python server.py > "$WORKER_DIR/chatterbox_service.log" 2>&1
+	) &
+	CHATTERBOX_PID=$!
+else
+	echo "[INFO] chatterbox_service/env-chatterbox tidak ditemukan — voice cloning live dilewati (lihat deploy/chatterbox_service/requirements-chatterbox.txt untuk setup)."
+fi
+
 for attempt in $(seq 1 30); do
 	if curl -fsS "http://127.0.0.1:8000/" >/dev/null 2>&1; then
 		break

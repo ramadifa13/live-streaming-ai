@@ -259,6 +259,12 @@ if [ -d "$SCRIPT_DIR/assets" ]; then
     cp -r "$SCRIPT_DIR/assets"/* "$WORKER_DIR/assets"/ 2>/dev/null || true
 fi
 
+if [ -d "$SCRIPT_DIR/chatterbox_service" ]; then
+    mkdir -p "$WORKER_DIR/chatterbox_service"
+    cp -r "$SCRIPT_DIR/chatterbox_service"/*.py "$WORKER_DIR/chatterbox_service"/ 2>/dev/null || true
+    cp "$SCRIPT_DIR/chatterbox_service"/requirements-chatterbox.txt "$WORKER_DIR/chatterbox_service"/ 2>/dev/null || true
+fi
+
 if [ -f "$SCRIPT_DIR/requirements-worker.txt" ]; then
     cp "$SCRIPT_DIR/requirements-worker.txt" "$WORKER_DIR/"
 fi
@@ -695,24 +701,20 @@ else
     echo "Face parse model sudah ada."
 fi
 
-# Kokoro
-if [ ! -f models/kokoro/kokoro-v0_19.pth ]; then
-
-    echo "Downloading Kokoro TTS..."
-
-    python - <<'PY'
-import os
-from huggingface_hub import snapshot_download
-
-snapshot_download(
-    repo_id="hexgrad/Kokoro-82M",
-    local_dir="models/kokoro",
-    token=os.environ.get("HF_TOKEN", None),
-)
-PY
-
+# ------------------------------------------------------------
+# CHATTERBOX-TTS-INDONESIAN (isolated venv — conflicting deps with MuseTalk)
+# ------------------------------------------------------------
+CHATTERBOX_DIR="$WORKER_DIR/chatterbox_service"
+if [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ]; then
+    if [ ! -d "$CHATTERBOX_DIR/env-chatterbox" ]; then
+        echo "Membuat virtualenv terpisah untuk Chatterbox-TTS-Indonesian..."
+        python -m venv "$CHATTERBOX_DIR/env-chatterbox"
+    fi
+    echo "Menginstall dependencies Chatterbox-TTS-Indonesian (venv terpisah)..."
+    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install --upgrade pip
+    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install -r "$CHATTERBOX_DIR/requirements-chatterbox.txt"
 else
-    echo "Kokoro model sudah ada."
+    echo "[INFO] chatterbox_service/requirements-chatterbox.txt tidak ditemukan, lewati setup voice cloning."
 fi
 
 

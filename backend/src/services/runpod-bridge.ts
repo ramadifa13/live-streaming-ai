@@ -8,6 +8,7 @@ export interface RunPod2DStreamParams {
   text: string;
   voice?: string;
   speed?: number;
+  tone?: string;
   rtmpUrl?: string;
   streamKey?: string;
   audioBase64?: string;
@@ -125,6 +126,7 @@ export async function forwardToRunPodGPU(
           text: params.text,
           voice: params.voice || "id-ID-GadisNeural",
           speed: params.speed || 1.0,
+          tone: params.tone || "Casual",
           rtmp_url: params.rtmpUrl || "",
           stream_key: params.streamKey || "",
           audio_base64: params.audioBase64 || "",

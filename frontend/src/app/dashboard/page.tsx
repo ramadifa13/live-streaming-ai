@@ -92,6 +92,7 @@ export default function Dashboard() {
   const [selectedLang, setSelectedLang] = useState<string>("Bahasa Indonesia");
   const [speechSpeed, setSpeechSpeed] = useState<number>(1.0); // 0.85, 1.0, 1.15, 1.3
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [isSynthesizingAudio, setIsSynthesizingAudio] = useState(false);
   const [audioPreviewText, setAudioPreviewText] = useState<string>(
     "Halo semuanya! Selamat datang di live streaming kita hari ini. Yuk check out sebelum kehabisan!",
   );
@@ -732,8 +733,8 @@ export default function Dashboard() {
   const audioUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   const handlePlayAudioPreview = async (
-    voice: string = selectedVoice,
-    lang: string = selectedLang,
+    _voice: string = selectedVoice,
+    _lang: string = selectedLang,
     tone: string = selectedTone,
     speed: number = speechSpeed,
   ) => {
@@ -745,6 +746,7 @@ export default function Dashboard() {
       }
       setIsPlayingAudio(false);
       setIsAvatarSpeaking(false);
+      setIsSynthesizingAudio(false);
       return;
     }
 
@@ -779,68 +781,47 @@ export default function Dashboard() {
     setIsPlayingAudio(true);
     setIsAvatarSpeaking(true);
 
-    try {
-      const res = await fetch("/api/tts/synthesize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: previewText,
-          voice,
-          speed,
-        }),
-      });
+    // Pre-live never calls TTS — it just plays a pre-recorded template file
+    // per avatar+tone (e.g. /voice-templates/namira_fomo.mp3), falling back
+    // to a generic per-avatar/global template if that combo isn't recorded yet.
+    const toneSlug: Record<string, string> = {
+      Persuasif: "persuasif",
+      Energetic: "energetik",
+      FOMO: "fomo",
+      Professional: "professional",
+      Casual: "casual",
+    };
+    const avatarSlug = selectedAvatar.name.toLowerCase();
+    const candidates = [
+      `/voice-templates/${avatarSlug}_${toneSlug[tone] || "casual"}.mp3`,
+      `/voice-templates/${avatarSlug}_default.mp3`,
+      `/voice-templates/default.mp3`,
+    ];
 
-      if (!res.ok) {
-        throw new Error(`Error ${res.status}: Gagal memanggil API TTS.`);
-      }
-
-      // Jika EdgeTTS timeout, backend me-return JSON { success: true, message: "..." }
-      const contentType = res.headers.get("Content-Type");
-      if (contentType && contentType.includes("application/json")) {
-        const data = (await res.json()) as {
-          success?: boolean;
-          message?: string;
-          error?: string;
-          data?: { message?: string };
-        };
-        if (data.success !== false) {
-          setIsPlayingAudio(false);
-          setIsAvatarSpeaking(false);
-          return;
-        }
-        throw new Error(
-          `TTS Error: ${data.data?.message || data.message || data.error || "Gagal menghasilkan suara"}`,
-        );
-      }
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-
-      const audio = new Audio(url);
+    const tryPlay = (index: number) => {
+      const src = candidates[index];
+      const audio = new Audio(src);
       currentAudioRef.current = audio;
 
       audio.onended = () => {
         setIsPlayingAudio(false);
         setIsAvatarSpeaking(false);
-        URL.revokeObjectURL(url);
       };
 
       audio.onerror = () => {
-        setIsPlayingAudio(false);
-        setIsAvatarSpeaking(false);
-        URL.revokeObjectURL(url);
+        if (index + 1 < candidates.length) {
+          tryPlay(index + 1);
+        } else {
+          setIsPlayingAudio(false);
+          setIsAvatarSpeaking(false);
+          showToast("🔇 Template suara belum tersedia untuk kombinasi ini.");
+        }
       };
 
-      await audio.play();
-    } catch (err) {
-      console.error("Audio preview failed:", err);
-      // Fallback
-      setTimeout(() => {
-        setIsPlayingAudio(false);
-        setIsAvatarSpeaking(false);
-      }, 5000);
-    }
+      audio.play().catch(() => audio.onerror?.(new Event("error")));
+    };
 
+    tryPlay(0);
     showToast(`🔊 Memutar suara ${selectedAvatar.name} (${tone} • ${speed}x)`);
   };
 
@@ -1974,7 +1955,7 @@ export default function Dashboard() {
                 <div className="mb-3 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label className="mb-1 block text-[10.5px] font-semibold text-slate-300">
-                      Suara AI Neural (Edge-TTS)
+                      Suara AI Neural (Voice Clone)
                     </label>
                     <div className="flex items-center gap-1.5">
                       <select
@@ -2148,7 +2129,11 @@ export default function Dashboard() {
                       <span>Preview Suara Live Host</span>
                     </span>
                     <span className="text-[8.5px] text-emerald-400 font-mono bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20">
-                      {isPlayingAudio ? "Sedang Berbicara..." : "Siap Diputar"}
+                      {isSynthesizingAudio
+                        ? "Menyintesis suara..."
+                        : isPlayingAudio
+                          ? "Sedang Berbicara..."
+                          : "Siap Diputar"}
                     </span>
                   </div>
 
@@ -2167,9 +2152,12 @@ export default function Dashboard() {
                           speechSpeed,
                         )
                       }
-                      className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:brightness-110 transition active:scale-95 shrink-0 shadow-md shadow-blue-600/30"
+                      disabled={isSynthesizingAudio}
+                      className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:brightness-110 transition active:scale-95 shrink-0 shadow-md shadow-blue-600/30 disabled:opacity-60 disabled:cursor-wait"
                     >
-                      {isPlayingAudio ? (
+                      {isSynthesizingAudio ? (
+                        <span className="h-3 w-3 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                      ) : isPlayingAudio ? (
                         <span className="text-[11px]">⏸</span>
                       ) : (
                         <svg
@@ -2188,24 +2176,28 @@ export default function Dashboard() {
                         <div
                           key={i}
                           className={`w-1 rounded-full transition-all duration-150 ${
-                            isPlayingAudio || isAvatarSpeaking
-                              ? "bg-gradient-to-t from-blue-500 to-emerald-400 animate-pulse"
-                              : i < 16
-                                ? "bg-blue-600"
-                                : "bg-slate-700"
+                            isSynthesizingAudio
+                              ? "bg-slate-600 animate-pulse"
+                              : isPlayingAudio || isAvatarSpeaking
+                                ? "bg-gradient-to-t from-blue-500 to-emerald-400 animate-pulse"
+                                : i < 16
+                                  ? "bg-blue-600"
+                                  : "bg-slate-700"
                           }`}
                           style={{
                             height:
                               isPlayingAudio || isAvatarSpeaking
                                 ? `${((i * 19 + 23) % 75) + 25}%`
-                                : `${(i % 6) * 15 + 20}%`,
+                                : isSynthesizingAudio
+                                  ? "35%"
+                                  : `${(i % 6) * 15 + 20}%`,
                             animationDelay: `${(i % 8) * 0.12}s`,
                           }}
                         />
                       ))}
                     </div>
                     <span className="text-[9.5px] font-mono text-slate-400 shrink-0">
-                      {isPlayingAudio ? "00:04" : "00:00"}
+                      {isSynthesizingAudio ? "..." : isPlayingAudio ? "00:04" : "00:00"}
                     </span>
                   </div>
                 </div>
@@ -5899,7 +5891,7 @@ export default function Dashboard() {
                 <div className="flex items-center justify-between p-2 rounded bg-[#111827] border border-[#232c42]">
                   <span>Voice TTS Engine</span>
                   <span className="text-cyan-400 font-bold">
-                    Edge-TTS (Bahasa Indonesia)
+                    Chatterbox-TTS-Indonesian (Voice Clone)
                   </span>
                 </div>
               </div>

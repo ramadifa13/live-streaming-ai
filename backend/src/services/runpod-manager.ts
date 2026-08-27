@@ -17,6 +17,10 @@ export function setLiveSessionActive(active: boolean) {
   if (active) updateGpuActivity();
 }
 
+export function isLiveSessionActive(): boolean {
+  return liveSessionActive;
+}
+
 export async function acquireGpuForJob(): Promise<void> {
   activeJobLeases += 1;
   try {
@@ -220,7 +224,7 @@ export async function startPodAndWait(timeoutMs = 120000): Promise<boolean> {
       try {
         await resumePod();
         resumeSuccess = true;
-        break; // Jika berhasil, keluar dari loop retry
+        break;
       } catch (err: any) {
         if (err.message === "GPU_HOST_FULL") {
           if (retries > 1) {
@@ -230,7 +234,6 @@ export async function startPodAndWait(timeoutMs = 120000): Promise<boolean> {
             await new Promise((r) => setTimeout(r, 10000));
             retries--;
           } else {
-            // Percobaan habis, cek apakah fallback diizinkan di .env
             const allowFallback =
               (process.env.ALLOW_MEDIA_FALLBACK ?? "false").toLowerCase() ===
               "true";
@@ -305,7 +308,7 @@ export async function startPodAndWait(timeoutMs = 120000): Promise<boolean> {
 }
 export async function stopPod(): Promise<boolean> {
   const podId = process.env.RUNPOD_POD_ID;
-  if (!podId) return true; 
+  if (!podId) return true;
 
   const mutation = `
     mutation podStop($input: PodStopInput!) {

@@ -41,7 +41,7 @@ class AILiveWorker:
             except Exception as e:
                 print(f"[WARMUP] Gagal pre-load MuseTalk: {e}")
             
-        print("[INFO] Worker siap dengan sistem TTS Edge-TTS dan Lipsync MuseTalk...")
+        print("[INFO] Worker siap dengan sistem TTS Chatterbox-TTS-Indonesian (voice cloning) dan Lipsync MuseTalk...")
     
     def _ensure_warmup(self):
         if self._warmed_up:
@@ -151,44 +151,39 @@ class AILiveWorker:
             print(f"[WARNING] Failed to pre-cache video {video_path}: {e}")
 
 
-    async def _generate_voice(self, text, task_id, host_name):
-        """Ubah Teks menjadi Suara menggunakan Kokoro TTS (Offline, Open Source)"""
+    async def _generate_voice(self, text, task_id, host_name, tone="Casual"):
+        """Ubah Teks menjadi Suara menggunakan Chatterbox-TTS-Indonesian (voice cloning, GPU)"""
         audio_path = os.path.join(self.temp_dir, f"{task_id}.wav")
-        
-        print(f"[INFO] Men-generate suara menggunakan Kokoro TTS...")
-        
+
+        chatterbox_url = os.environ.get("CHATTERBOX_SERVICE_URL", "http://127.0.0.1:8090")
+        print(f"[INFO] Men-generate suara menggunakan Chatterbox-TTS-Indonesian ({chatterbox_url})...")
+
         try:
-            from kokoro import KPipeline
-            import soundfile as sf
-            import re
+            import json
+            import urllib.request
 
-            pipeline = KPipeline(lang_code='a') # 'a' for American English, can be changed based on Kokoro model
+            payload = json.dumps({
+                "text": text,
+                "avatar": host_name,
+                "tone": tone,
+            }).encode("utf-8")
 
-            # Simple chunking by punctuation
-            chunks = re.split(r'([,.\!?\n])', text)
-            chunks = [''.join(i) for i in zip(chunks[0::2], chunks[1::2] + [''])]
+            request = urllib.request.Request(
+                f"{chatterbox_url}/synthesize",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                gen_time_ms = response.headers.get("X-Gen-Time-Ms", "?")
+                with open(audio_path, "wb") as f:
+                    f.write(response.read())
+                print(f"[INFO] Chatterbox selesai dalam {gen_time_ms}ms")
 
-            full_audio = []
-            sample_rate = 24000
-
-            import numpy as np
-            for chunk in chunks:
-                if not chunk.strip(): continue
-                # In real scenario we stream this directly to MuseTalk
-                generator = pipeline(chunk, voice='af_bella', speed=1, split_pattern=r'\n+')
-                for _, _, audio in generator:
-                    full_audio.append(audio)
-
-            if len(full_audio) > 0:
-                final_audio = np.concatenate(full_audio)
-                sf.write(audio_path, final_audio, sample_rate)
-            else:
-                raise Exception("No audio generated from chunks")
-            
         except Exception as e:
-            print(f"[ERROR] Gagal memanggil Kokoro TTS: {e}")
+            print(f"[ERROR] Gagal memanggil Chatterbox-TTS-Indonesian: {e}")
             raise e
-            
+
         return audio_path
 
     def _get_idle_video(self, host_type, host_name):
@@ -342,9 +337,10 @@ class AILiveWorker:
             print(f"[MuseTalk SUCCESS] Output:\n{expected_output}")
             return expected_output
 
-    async def run_pipeline(self, host_type, host_name, text_answer, task_id, audio_path=None):
+    async def run_pipeline(self, host_type, host_name, text_answer, task_id, audio_path=None, tone="Casual"):
         """Fungsi Pemicu Utama"""
-        
+        pipeline_start = time.time()
+
         # 1. Parse Action Tags (e.g. [RAISE_HAND])
         import re
         action_tag = "idle"
@@ -371,7 +367,8 @@ class AILiveWorker:
         if not idle_video:
             print(f"[ERROR] Video '{host_name}.mp4' tidak ada di folder assets/{host_type}")
             return None
-            
+
+        tts_start = time.time()
         if audio_path and os.path.exists(audio_path):
             audio_file = audio_path
             print(" -> Menggunakan audio dari backend...")
@@ -379,21 +376,28 @@ class AILiveWorker:
             if os.environ.get("WORKER_REQUIRE_AUDIO", "0") == "1":
                 print("[ERROR] Backend audio wajib tersedia, tetapi audio_path tidak valid.")
                 return None
-            print(" -> Generating Suara (Kokoro TTS)...")
+            print(" -> Generating Suara (Chatterbox-TTS-Indonesian)...")
             try:
-                audio_file = await self._generate_voice(text_answer, task_id, host_name)
+                audio_file = await self._generate_voice(text_answer, task_id, host_name, tone=tone)
             except Exception as e:
                 print(f"[ERROR] Gagal membuat suara: {e}")
                 return None
-        
+        tts_elapsed = round((time.time() - tts_start) * 1000)
+
+        lipsync_start = time.time()
         print(" -> Generating Video Lipsync (MuseTalk)...")
         final_video = await self._sync_lips_async(idle_video, audio_file, task_id)
-        
+        lipsync_elapsed = round((time.time() - lipsync_start) * 1000)
+
         if audio_file and os.path.exists(audio_file) and audio_file.startswith(self.temp_dir):
             os.remove(audio_file) # Bersihkan file suara
-            
+
+        total_elapsed = round((time.time() - pipeline_start) * 1000)
         if final_video:
-            print(f"[SUKSES] Video selesai: {final_video}")
+            print(
+                f"[SUKSES] Video selesai: {final_video} | "
+                f"tts={tts_elapsed}ms lipsync={lipsync_elapsed}ms total={total_elapsed}ms"
+            )
         return final_video
 
 # --- PENGUJIAN ---

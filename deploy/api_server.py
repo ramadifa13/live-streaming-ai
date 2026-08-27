@@ -62,6 +62,7 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
             text_answer=req.text,
             task_id=task_id,
             audio_path=audio_path,
+            tone=req.tone,
         )
         
         if not final_video_path:

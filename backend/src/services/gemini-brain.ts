@@ -1,11 +1,11 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import { SalesBrainInput, SalesBrainOutput, LiveSalesPitchInput, LiveSalesPitchOutput } from "./llm-brain.js";
 
 // Initialize Gemini Flash (Free Tier)
 // For RAG & Conversational Pivot / Ingestion Produk
 const apiKey = process.env.GEMINI_API_KEY || "";
-const genAI = new GoogleGenerativeAI(apiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const ai = new GoogleGenAI({ apiKey });
+const MODEL_NAME = "gemini-3.6-flash";
 
 export async function generateDynamicSalesResponseGemini(
   input: SalesBrainInput,
@@ -73,8 +73,12 @@ Kamu: "Karena di live aku ini diskonnya paling gila-gilaan kak! ${productName} i
 Pertanyaan Penonton yang baru: "${userQuestion}"`;
 
   try {
-    const result = await model.generateContent(systemPrompt);
-    const text = result.response.text();
+    const interaction = await ai.interactions.create({
+      model: MODEL_NAME,
+      input: systemPrompt,
+    });
+    
+    const text = interaction.output_text || "";
     return {
       replyText: text.trim(),
       engineUsed: `Gemini Flash 1.5`,
@@ -131,13 +135,12 @@ Kembalikan HANYA JSON valid tanpa teks pengantar:
 }`;
 
   try {
-      const result = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-           responseMimeType: "application/json",
-        }
+      const interaction = await ai.interactions.create({
+        model: MODEL_NAME,
+        input: prompt,
       });
-      const text = result.response.text();
+      
+      let text = interaction.output_text || "";
 
       const parsed = JSON.parse(text) as { hook?: string; showcase?: string; cta?: string };
       if (!parsed.hook || !parsed.showcase || !parsed.cta) {
@@ -181,8 +184,12 @@ Deskripsi: ${params.productDescription}
 Berikan hanya naskahnya langsung tanpa intro/outro tambahan, dalam bahasa Indonesia yang memikat.`;
 
     try {
-        const result = await model.generateContent(prompt);
-        return result.response.text().trim();
+        const interaction = await ai.interactions.create({
+          model: MODEL_NAME,
+          input: prompt,
+        });
+        
+        return (interaction.output_text || "").trim();
     } catch (e) {
         throw new Error("AI Video Script Generator (Gemini) failed: " + String(e));
     }

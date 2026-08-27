@@ -1,0 +1,13 @@
+# =========================================================
+# CHATTERBOX-TTS-INDONESIA MICROSERVICE — ISOLATED REQUIREMENTS
+# =========================================================
+# IMPORTANT: install this in its OWN virtualenv (env-chatterbox), NOT the
+# same env as MuseTalk/api_server.py. chatterbox-tts pins transformers==5.2.0
+# and diffusers==0.29.0, which conflict with MuseTalk's transformers==4.38.2 /
+# diffusers==0.27.2. Running them in one env WILL break one of the two.
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.0.0
+chatterbox-tts==0.1.7
+huggingface_hub
+soundfile

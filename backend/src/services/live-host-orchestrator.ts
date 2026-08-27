@@ -2,7 +2,6 @@ import prisma from "../lib/prisma.js";
 import { forwardToRunPodGPU } from "./runpod-bridge.js";
 import { generateDynamicSalesResponse } from "./llm-brain.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
-import { synthesizeSpeech } from "./tts.js";
 
 const DEFAULT_INTERVAL_SECONDS = 35;
 
@@ -159,26 +158,19 @@ class LiveHostOrchestrator {
   private async renderAndQueue(text: string) {
     const config = this.config;
     if (!config) return;
-    const tts = await synthesizeSpeech({
-      text,
-      avatarName: config.avatarName,
-      voice: config.voice || "id-ID-GadisNeural",
-    });
-    const audioBase64 = tts.audioBuffer
-      ? tts.audioBuffer.toString("base64")
-      : undefined;
-    if (!audioBase64) {
-      throw new Error("Backend TTS gagal menghasilkan audio untuk RunPod");
-    }
+    // TTS + voice cloning now happens entirely on the RunPod worker
+    // (Chatterbox-TTS-Indonesian) — backend only forwards text + tone.
+    const start = Date.now();
     await forwardToRunPodGPU({
       avatarImagePath: "avatars/namira.png",
       text,
       voice: config.voice || "id-ID-GadisNeural",
+      tone: config.tone,
       rtmpUrl: config.rtmpUrl,
       streamKey: config.streamKey,
-      audioBase64,
       requireWorker: true,
     });
+    console.log(`[LiveHost] Utterance round-trip: ${Date.now() - start}ms`);
   }
 }
 

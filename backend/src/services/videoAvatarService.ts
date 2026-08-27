@@ -12,6 +12,7 @@ import crypto from "crypto";
 import {
   acquireGpuForJob,
   getWorkerUrl,
+  isLiveSessionActive,
   releaseGpuForJob,
   updateGpuActivity,
 } from "./runpod-manager.js";
@@ -108,6 +109,14 @@ async function runGeneration(
 ): Promise<void> {
   switch (provider) {
     case "liveportrait":
+      // Never boot the paid RunPod GPU pod for pre-live previews/video-ads —
+      // only an actual live session is allowed to use the real GPU worker.
+      if (!isLiveSessionActive()) {
+        console.log(
+          "[VideoGen] No active live session — using mock renderer instead of RunPod GPU.",
+        );
+        return runMock(jobId, params);
+      }
       return runLivePortrait(jobId, params);
     case "replicate":
       return runReplicate(jobId, params);
@@ -196,7 +205,7 @@ async function runLivePortrait(
 
     updateJob(jobId, {
       progress: 20,
-      stage: "Synthesizing TTS audio (Edge-TTS) & starting job...",
+      stage: "Synthesizing TTS audio (Chatterbox-TTS-Indonesian) & starting job...",
     });
 
     const res = await fetch(`${workerUrl}/stream/generate-neural-video`, {
@@ -347,7 +356,8 @@ async function runMock(
     updateJob(jobId, { progress: step.progress, stage: step.stage });
   }
 
-  const allowFallback = (process.env.ALLOW_MEDIA_FALLBACK ?? "false").toLowerCase() === "true";
+  const allowFallback =
+    (process.env.ALLOW_MEDIA_FALLBACK ?? "false").toLowerCase() === "true";
   const nameLow = (params.avatarName || "").toLowerCase();
   const videoUrl = allowFallback
     ? nameLow.includes("nana") || nameLow.includes("2d")

@@ -1,11 +1,8 @@
-/**
- * TTS (Text-To-Speech) Service for LiveStreamerAI
- * Provides natural Indonesian neural voice synthesis using kokoro-js.
- */
-import { pipeline } from '@huggingface/transformers';
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
+
+import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
 
 export interface TTSVoice {
   id: string;
@@ -43,6 +40,16 @@ export const INDONESIAN_VOICES: TTSVoice[] = [
   },
 ];
 
+// Microsoft Edge only ships two real Indonesian neural voices (Gadis/female,
+// Ardi/male) — "SitiNeural" doesn't exist upstream, so alias it to Gadis.
+const EDGE_VOICE_ALIASES: Record<string, string> = {
+  "id-ID-SitiNeural": "id-ID-GadisNeural",
+};
+
+function resolveEdgeVoice(voiceId: string): string {
+  return EDGE_VOICE_ALIASES[voiceId] || voiceId;
+}
+
 export interface SynthesizeRequest {
   text: string;
   voice?: string;
@@ -63,65 +70,87 @@ export interface SynthesizeResponse {
   audioBuffer?: Buffer;
 }
 
-let kokoroPipeline: any = null;
-
-async function getKokoroPipeline() {
-    if (!kokoroPipeline) {
-        kokoroPipeline = await pipeline('text-to-audio', 'onnx-community/Kokoro-82M-v1.0-ONNX');
-    }
-    return kokoroPipeline;
+/** Escapes text for safe embedding inside the SSML msedge-tts builds internally. */
+function escapeSSML(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
-function float32ToWav(float32Array: Float32Array, sampleRate: number): Buffer {
-    const numChannels = 1;
-    const bitDepth = 16;
-    const blockAlign = numChannels * (bitDepth / 8);
-    const byteRate = sampleRate * blockAlign;
-    const dataSize = float32Array.length * (bitDepth / 8);
+// Note: the free Edge "read aloud" endpoint only accepts <speak>/<voice>/<prosody>
+// elements — <break>/<mstts:express-as> etc. get the connection closed early.
+// So natural-sounding pauses are added by synthesizing sentence-by-sentence and
+// concatenating the resulting MP3s (each utterance already carries Edge's own
+// leading/trailing silence padding), instead of via unsupported SSML tags.
+function splitIntoSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
-    const buffer = Buffer.alloc(44 + dataSize);
+async function synthesizeSentence(
+  sentence: string,
+  voiceId: string,
+  rate: string,
+): Promise<Buffer> {
+  const tts = new MsEdgeTTS();
+  await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+  const { audioStream } = tts.toStream(escapeSSML(sentence), { rate });
 
-    // RIFF chunk descriptor
-    buffer.write('RIFF', 0);
-    buffer.writeUInt32LE(36 + dataSize, 4);
-    buffer.write('WAVE', 8);
+  const chunks: Buffer[] = [];
+  await new Promise<void>((resolve, reject) => {
+    audioStream.on("data", (chunk: Buffer) => chunks.push(chunk));
+    audioStream.on("close", () => resolve());
+    audioStream.on("error", (err) => reject(err));
+  });
 
-    // fmt sub-chunk
-    buffer.write('fmt ', 12);
-    buffer.writeUInt32LE(16, 16); // Subchunk1Size (16 for PCM)
-    buffer.writeUInt16LE(1, 20); // AudioFormat (1 for PCM)
-    buffer.writeUInt16LE(numChannels, 22);
-    buffer.writeUInt32LE(sampleRate, 24);
-    buffer.writeUInt32LE(byteRate, 28);
-    buffer.writeUInt16LE(blockAlign, 32);
-    buffer.writeUInt16LE(bitDepth, 34);
+  return Buffer.concat(chunks);
+}
 
-    // data sub-chunk
-    buffer.write('data', 36);
-    buffer.writeUInt32LE(dataSize, 40);
+/** Synthesizes text via the given Edge neural voice and returns MP3 bytes. */
+async function synthesizeWithEdgeTTS(
+  text: string,
+  voiceId: string,
+  speed: number,
+): Promise<Buffer> {
+  // msedge-tts expects rate as a percentage offset, e.g. "+10%" / "-15%"
+  const ratePercent = Math.round((speed - 1) * 100);
+  const rate = `${ratePercent >= 0 ? "+" : ""}${ratePercent}%`;
 
-    // Write audio data
-    let offset = 44;
-    for (let i = 0; i < float32Array.length; i++) {
-        // Clamp value between -1.0 and 1.0
-        let s = Math.max(-1, Math.min(1, float32Array[i]));
-        // Convert to 16-bit PCM
-        buffer.writeInt16LE(s < 0 ? s * 0x8000 : s * 0x7FFF, offset);
-        offset += 2;
-    }
+  const sentences = splitIntoSentences(text);
+  if (sentences.length <= 1) {
+    return synthesizeSentence(text, voiceId, rate);
+  }
 
-    return buffer;
+  const parts = await Promise.all(
+    sentences.map((sentence) => synthesizeSentence(sentence, voiceId, rate)),
+  );
+  return Buffer.concat(parts);
+}
+
+/** Warms up the TTS engine so the first real request doesn't pay connection setup cost. */
+export async function warmUpTTS(): Promise<void> {
+  try {
+    await synthesizeWithEdgeTTS("hai", "id-ID-GadisNeural", 1.0);
+  } catch (err) {
+    console.warn("[TTS] Edge-TTS warmup notice:", err);
+  }
 }
 
 export async function synthesizeSpeech(
-  req: SynthesizeRequest
+  req: SynthesizeRequest,
 ): Promise<SynthesizeResponse> {
   const { text, avatarName = "Namira", speed = 1.0, pitch: _pitch = 1.0 } = req;
 
   // Determine best matching voice based on avatarName or style
-  let matchedVoice = INDONESIAN_VOICES.find(
-    (v) => v.avatarMatch.toLowerCase() === avatarName.toLowerCase()
-  ) || INDONESIAN_VOICES[1]; // Default to Siti/Namira
+  let matchedVoice =
+    INDONESIAN_VOICES.find(
+      (v) => v.avatarMatch.toLowerCase() === avatarName.toLowerCase(),
+    ) || INDONESIAN_VOICES[1]; // Default to Siti/Namira
 
   if (req.voice) {
     const customVoice = INDONESIAN_VOICES.find((v) => v.id === req.voice);
@@ -129,23 +158,21 @@ export async function synthesizeSpeech(
   }
 
   const wordCount = text.trim().split(/\s+/).length;
-  const estimatedSeconds = Math.max(1.5, Math.round((wordCount / ((140 * speed) / 60)) * 10) / 10);
+  const estimatedSeconds = Math.max(
+    1.5,
+    Math.round((wordCount / ((140 * speed) / 60)) * 10) / 10,
+  );
 
   let audioBuffer: Buffer | undefined;
 
   try {
-    const generator = await getKokoroPipeline();
-    // Default to a known voice if not specified.
-    // 'af_bella' is a common default for Kokoro models.
-    const result = await generator(text, { voice: 'af_bella' });
-
-    // result is { audio: Float32Array, sampling_rate: number }
-    if (result && result.audio && result.sampling_rate) {
-        audioBuffer = float32ToWav(result.audio, result.sampling_rate);
-    }
-
+    audioBuffer = await synthesizeWithEdgeTTS(
+      text,
+      resolveEdgeVoice(matchedVoice.id),
+      speed,
+    );
   } catch (err) {
-    console.error("Failed to synthesize speech via Kokoro TTS:", err);
+    console.error("Failed to synthesize speech via Edge TTS:", err);
   }
 
   return {
@@ -154,9 +181,9 @@ export async function synthesizeSpeech(
     avatar: avatarName,
     text,
     durationEstimateSeconds: estimatedSeconds,
-    audioFormat: "audio/wav",
-    engine: "Kokoro-TTS Neural Pipeline",
+    audioFormat: "audio/mpeg",
+    engine: "Microsoft Edge Neural TTS (id-ID)",
     message: audioBuffer ? "TTS synthesis success" : "TTS synthesis fallback",
-    audioBuffer
+    audioBuffer,
   };
 }

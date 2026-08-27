@@ -11,11 +11,12 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",
+    "@google/genai": "^2.19.0",
     "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^6.8.2",
     "dotenv": "^16.4.5",
     "fastify": "^5.0.0",
-    "kokoro-js": "^1.2.1",
+    "msedge-tts": "^2.0.7",
     "zod": "^3.23.8"
   },
   "devDependencies": {

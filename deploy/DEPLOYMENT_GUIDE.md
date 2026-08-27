@@ -1,68 +1,5 @@
 # Deployment Guide: Realtime AI Live Streaming System
 
-Panduan ini berisi arsitektur dan langkah-langkah implementasi (refactor) sistem AI Live Streamer.
-Sistem ini dirancang untuk:
-1. **Low-latency Realtime Streaming (<1.5s)**: Stream video+audio secara real-time.
-2. **Cost Efficiency**: Memanfaatkan layanan gratis saat masa inkubasi.
-3. **Zero-Manual Setup di GPU Pod**: Sekali klik langsung siap live.
-
-## Arsitektur Terbaru
-
-Fase: Dashboard & Preview (Pre-Live)
-- **Frontend**: Vercel (Free)
-- **Backend**: Render (Free)
-- **AI Brain & RAG**: Google Gemini Flash API (Free Tier)
-- **Voice Preview**: Kokoro TTS JS (Vercel/Render CPU-mode)
-
-Fase: Live Broadcast (24 Jam)
-- **AI Worker (GPU)**: RunPod Network Volume, Serverless Endpoint (FastAPI)
-- **TTS Realtime**: Kokoro TTS (82M)
-- **Video Lipsync**: MuseTalk Realtime Inpainting
-- **Live Output**: RTMP FFmpeg Subprocess (ke TikTok/YouTube Live)
-- **Storage**: Persistent Volume RunPod (20GB) - Estimasi Rp 23.000 / bulan ($1.40).
-- **Compute GPU**: RTX 3090/4090 ($0.35-$0.75/hour)
-
-
-## Rincian Biaya (Cost Breakdown)
-
-Sistem ini didesain untuk meminimalisir biaya dengan memanfaatkan free-tier di fase Pre-Live dan hanya membayar server GPU saat live stream benar-benar berjalan.
-
-### 1. Komponen Gratis (Fase Pre-Live / Setup)
-- **Frontend Hosting**: Vercel (Gratis).
-- **Backend Hosting**: Render (Gratis).
-- **AI Brain (LLM/RAG)**: Google Gemini Flash API (Gratis).
-- **Voice Preview & Text to Speech**: Kokoro TTS (Gratis / Open Source).
-
-### 2. Biaya Per Sesi Live (Live Broadcast 24 Jam)
-- **Komputasi GPU (RunPod)**: Menggunakan instance NVIDIA RTX 3090 atau RTX 4090.
-  - Estimasi: **$0.35 - $0.75 per jam** (sekitar Rp 5.500 - Rp 11.500 per jam).
-  - Biaya ini dipotong dari saldo RunPod Anda **hanya saat pod menyala (running)**. Begitu live stream selesai dan pod dimatikan (beralih ke Stopped/Offline), Anda tidak lagi ditagihkan biaya per jam ini.
-
-### 3. Biaya Tetap Bulanan (Monthly Fixed Costs)
-Untuk menjalankan sistem secara utuh sebagai website, ada beberapa biaya tetap (subscription) bulanan/tahunan yang tidak bisa dihindari:
-
-- **RunPod Persistent Storage (Network Volume)**:
-  - Dibutuhkan 20GB hingga 30GB untuk menyimpan setup data, dependencies (`/env`), dan AI Models (Kokoro, MuseTalk) agar pod bisa boot dengan instan tanpa harus instalasi dari awal.
-  - Estimasi Harga: **$1.40 per bulan** (sekitar Rp 23.000 / bulan).
-- **Domain Website (Tahunan)**:
-  - Untuk menggunakan custom domain (misalnya `namatokoanda.com` daripada URL vercel bawaan), Anda perlu membeli nama domain.
-  - **Rekomendasi Penyedia Domain Murah (Sering Ada Diskon Promo)**:
-    - **Porkbun**: Mulai dari $4 - $6 untuk tahun pertama pada domain `.com` atau domain ekstensi lainnya.
-    - **Namecheap**: Mulai dari $1 - $6 untuk tahun pertama (terutama domain `.xyz`, `.site`, `.com`).
-    - **Cloudflare Registrar**: Menawarkan harga dasar perpanjangan termurah di pasar (tanpa markup harga grosir, sekitar $9/tahun untuk `.com`).
-    - **Niagahoster / Idwebhost (Lokal)**: Sering menyediakan diskon untuk domain lokal seperti `.id`, `.my.id` (mulai dari Rp 10.000/tahun untuk `.my.id`).
-
-
-## Panduan Prompt Video AI (Untuk Video Idle Multi-Action)
-
-Sistem ini mendukung transisi gerakan tubuh secara instan (Zero-Latency) melalui fitur pembacaan **Action Tag** (misalnya `[RAISE_HAND]`, `[IDLE]`, `[EXCITED]`).
-Anda bisa menggunakan AI Video Generator seperti **Kling AI, Luma Dream Machine, atau Runway Gen-3** untuk membuat file mentah video Host Anda.
-
-**Aturan Penting Pembuatan Video Idle untuk MuseTalk:**
-1. **Mulut Harus Diam/Tertutup!** (Sangat krusial. Jika mulut di video asli bergerak, MuseTalk akan tumpang tindih dan hasilnya hancur).
-2. Posisi kepala jangan terlalu banyak menoleh ke kiri/kanan (wajah harus selalu menghadap kamera).
-3. Buat video berdurasi sekitar 5-10 detik. Jika terlalu pendek, video akan terlihat berulang secara kasar.
-
 ### Contoh Prompt Generator (Kling AI / Luma)
 
 **1. Aksi Biasa (namira_idle.mp4):**
@@ -81,7 +18,7 @@ Setelah video-video tersebut di-generate, ganti namanya sesuai tag (contoh: `nam
 
 ## Langkah 1: Persiapan Network Volume RunPod
 
-Untuk menjaga environment dan weights/model (Kokoro, MuseTalk) agar tidak ter-reset, siapkan Network Volume:
+Untuk menjaga environment dan weights/model (MuseTalk, Chatterbox-TTS-Indonesian) agar tidak ter-reset, siapkan Network Volume:
 1. Masuk ke dashboard RunPod > **Network Volumes** > **Create Network Volume**.
 2. Alokasikan ukuran 20-30GB.
 3. Centang region yang sama dengan ketersediaan GPU Anda (misalnya Eropa atau Amerika).
@@ -101,6 +38,14 @@ Untuk menjaga environment dan weights/model (Kokoro, MuseTalk) agar tidak ter-re
    bash setup-safe.sh
    ```
 6. Setup script `setup-safe.sh` bersifat *Idempotent*. Jika `env` dan `models` sudah terunduh pada Network Volume, script ini akan langsung _skip_ sehingga setup memakan waktu kurang dari 45 detik.
+7. `setup-safe.sh` juga otomatis membuat **virtualenv terpisah** untuk `chatterbox_service` (lihat Langkah 4a) — ini WAJIB terpisah dari env utama karena `chatterbox-tts` butuh `transformers==5.2.0` yang bentrok dengan pin MuseTalk (`4.38.2`).
+8. Isi sample suara untuk voice cloning di `deploy/assets/voice_refs/` (di-upload manual ke Network Volume, TIDAK ikut ter-generate otomatis):
+   ```
+   assets/voice_refs/{avatar}_{tone}.wav   contoh: namira_fomo.wav, namira_professional.wav, namira_energetik.wav
+   assets/voice_refs/{avatar}_default.wav  fallback per-avatar
+   assets/voice_refs/default.wav           fallback terakhir (sudah ada placeholder)
+   ```
+   Sample idealnya 10-20 detik, suara bersih 1 orang, tanpa musik/noise, direkam dalam gaya bicara (tone) yang sesuai nama filenya.
 
 ## Langkah 3: Deploy Frontend & Backend (Pre-Live & Dashboard)
 
@@ -116,6 +61,12 @@ Untuk menjaga environment dan weights/model (Kokoro, MuseTalk) agar tidak ter-re
 1. Deploy `frontend` direktori menggunakan Next.js di Vercel (gratis).
 2. Atur Environment Variable:
    - `NEXT_PUBLIC_BACKEND_URL`: Mengarah ke URL backend Render yang telah Anda buat.
+3. Isi file template preview suara pre-live (tidak butuh TTS/GPU sama sekali) di `frontend/public/voice-templates/`:
+   ```
+   {avatar}_{tone}.mp3   contoh: namira_fomo.mp3, namira_professional.mp3, namira_energetik.mp3
+   {avatar}_default.mp3  fallback per-avatar
+   default.mp3           fallback terakhir
+   ```
 
 ## Langkah 4: Menjalankan AI Worker (Fase Live)
 
@@ -127,15 +78,28 @@ bash start.sh
 ```
 
 - Worker API akan berjalan di Port `8000`.
+- Microservice **Chatterbox-TTS-Indonesian** berjalan terpisah di Port `8090` (venv sendiri: `chatterbox_service/env-chatterbox`), otomatis ikut start bersama `start.sh` jika venv-nya sudah dibuat.
 - Worker memiliki fitur **Pre-Cache Idle Video**. Worker akan meload dan mengeksekusi face bounding-box dari video idle sehingga tak perlu direkalkulasi setiap kali ada balasan komentar.
 - Worker menggunakan Chunking Buffer untuk merespon AI secara lebih instan (<1.5s latency).
+
+### Langkah 4a: Setup Manual Chatterbox-TTS-Indonesian (jika belum otomatis)
+
+```bash
+cd /workspace/live-streaming-ai/deploy/chatterbox_service
+python -m venv env-chatterbox
+source env-chatterbox/bin/activate
+pip install -r requirements-chatterbox.txt
+deactivate
+```
+
+Model finetune Bahasa Indonesia (`grandhigh/Chatterbox-TTS-Indonesian`) di-download otomatis dari Hugging Face saat request pertama masuk (lazy load).
 
 ## 5. Simulasi Testing Integrasi Backend - Worker
 
 Saat dashboard mengirimkan *Utterance* / Pertanyaan dari penonton:
 1. Backend merespon menggunakan `GEMINI_API_KEY` untuk menyusun RAG sales pitch.
-2. Backend mengirim teks respons ke `[Worker_IP]:8000/stream/live-utterance`.
-3. Worker memecah teks per tanda baca, mengirimkannya ke *Kokoro TTS* untuk di-synthesize.
-4. Audio Kokoro dikirim langsung ke MuseTalk Inpainting untuk disync dengan video idle yang telah ter-cache.
+2. Backend mengirim teks respons + tone ke `[Worker_IP]:8000/stream/live-utterance` (TIDAK mengirim audio — TTS sepenuhnya di worker).
+3. Worker meneruskan teks ke microservice **Chatterbox-TTS-Indonesian** (Port `8090`) yang melakukan voice cloning dari sample di `assets/voice_refs/{avatar}_{tone}.wav`.
+4. Audio hasil cloning dikirim langsung ke MuseTalk Inpainting untuk disync dengan video idle yang telah ter-cache.
 5. Worker RTMP Streamer (FFmpeg) memutar hasil stream tersebut ke server RTMP live (TikTok/YT). Saat AI tidak sedang bicara, RTMP Streamer otomatis me-loop video Idle.
 
