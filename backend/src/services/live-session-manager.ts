@@ -19,13 +19,14 @@ export interface ManagedSession {
   avatarName: string;
   voice?: string;
   tone: string;
+  podId?: string | null;
   watchdogTimer?: NodeJS.Timeout;
   livePollTimer?: NodeJS.Timeout;
   onStateChange?: (state: SessionState, sessionId: string) => void;
 }
 
 class LiveSessionManager {
-  private activeSession: ManagedSession | null = null;
+  private activeSessions: Map<string, ManagedSession> = new Map();
   private liveDetectionAttempts: number = 0;
   private pendingVoicePreference: string | null = null;
 
@@ -45,11 +46,9 @@ class LiveSessionManager {
     avatarName?: string;
     tone?: string;
   }): Promise<{ sessionId: string; state: SessionState }> {
-    if (this.activeSession) {
-      await this.forceStopSession();
-    }
 
-    await startPodAndWait();
+    const podIdStr = await startPodAndWait();
+    const podId = typeof podIdStr === 'string' ? podIdStr : null;
     setLiveSessionActive(true);
 
     const session = await prisma.liveSession.create({
@@ -68,7 +67,7 @@ class LiveSessionManager {
       },
     });
 
-    this.activeSession = {
+    const managedSession: ManagedSession = {
       sessionId: session.id,
       state: "starting",
       platform: params.platform,
@@ -78,10 +77,15 @@ class LiveSessionManager {
       avatarName: params.avatarName || "Namira",
       voice: params.voice || this.pendingVoicePreference || undefined,
       tone: params.tone || "Persuasif",
+      podId: typeof podId === 'string' ? podId : null,
       onStateChange: undefined,
     };
 
+    this.activeSessions.set(session.id, managedSession);
+
     livePlatformConnector.startSession({
+      sessionId: session.id,
+      podId: typeof podId === 'string' ? podId : null,
       platform: params.platform,
       accessToken: params.accessToken,
       liveChatId: params.liveChatId,
@@ -93,25 +97,28 @@ class LiveSessionManager {
       tone: params.tone || "Persuasif",
     });
 
-    livePlatformConnector.setLiveDetectedCallback(async () => {
-      if (this.activeSession?.state === "pending") {
+    livePlatformConnector.setLiveDetectedCallback(async (triggerSessionId?: string) => {
+      // The callback will need to know which session triggered it, or we rely on connector to pass it
+      const sId = triggerSessionId || session.id;
+      const currentSession = this.activeSessions.get(sId);
+      if (currentSession?.state === "pending") {
         console.log(
-          `[LiveSessionManager] Platform live detected for session ${this.activeSession.sessionId}. Transitioning to live...`,
+          `[LiveSessionManager] Platform live detected for session ${sId}. Transitioning to live...`,
         );
-        await this.transitionState("live");
+        await this.transitionState("live", sId);
       }
     });
 
-    await this.transitionState("pending");
-    this.startPlatformLivePoll(params.liveVideoId, params.accessToken);
+    await this.transitionState("pending", session.id);
+    this.startPlatformLivePoll(session.id, params.liveVideoId, params.accessToken);
 
     return {
       sessionId: session.id,
-      state: this.activeSession.state,
+      state: managedSession.state,
     };
   }
 
-  public async stopSession(summary?: {
+  public async stopSession(sessionId: string, summary?: {
     durationSeconds?: number;
     viewers?: number;
     comments?: number;
@@ -122,29 +129,31 @@ class LiveSessionManager {
     success: boolean;
     summary?: Record<string, unknown>;
   }> {
-    if (!this.activeSession) {
+    const session = this.activeSessions.get(sessionId);
+    if (!session) {
       return { success: false };
     }
 
-    const session = this.activeSession;
-    this.clearTimers();
-    liveHostOrchestrator.stop();
+    this.clearTimers(sessionId);
+    liveHostOrchestrator.stop(sessionId);
 
-    await this.transitionState("ended");
+    await this.transitionState("ended", sessionId);
 
-    const metrics = livePlatformConnector.getMetricsSnapshot();
-    livePlatformConnector.stopSession();
+    const metrics = livePlatformConnector.getMetricsSnapshot(sessionId);
+    livePlatformConnector.stopSession(sessionId);
 
     await prisma.liveSession.updateMany({
       where: {
-        id: session.sessionId,
+        id: sessionId,
         status: { in: ["live", "pending", "starting"] },
       },
       data: { status: "ended" },
     });
 
-    setLiveSessionActive(false);
-    stopPod().catch((err) => console.error("Failed to stop GPU Pod:", err));
+
+    if (session.podId) {
+       stopPod(session.podId).catch((err) => console.error("Failed to stop GPU Pod:", err));
+    }
 
     const durationSeconds =
       summary?.durationSeconds && summary.durationSeconds > 0
@@ -172,7 +181,7 @@ class LiveSessionManager {
         ? Math.round((netProfit / estimatedGpuCost) * 100)
         : 0;
 
-    this.activeSession = null;
+    this.activeSessions.delete(sessionId);
 
     return {
       success: true,
@@ -200,8 +209,8 @@ class LiveSessionManager {
     };
   }
 
-  public getActiveSession(): ManagedSession | null {
-    return this.activeSession;
+  public getSession(sessionId: string): ManagedSession | null {
+    return this.activeSessions.get(sessionId) || null;
   }
 
   public setPendingVoicePreference(voice: string | null) {
@@ -212,46 +221,48 @@ class LiveSessionManager {
     return this.pendingVoicePreference;
   }
 
-  public isLive(): boolean {
-    return this.activeSession?.state === "live";
+  public isLive(sessionId: string): boolean {
+    return this.activeSessions.get(sessionId)?.state === "live";
   }
 
-  public isPending(): boolean {
-    return this.activeSession?.state === "pending";
+  public isPending(sessionId: string): boolean {
+    return this.activeSessions.get(sessionId)?.state === "pending";
   }
 
-  public async markBroadcastLive(): Promise<void> {
-    if (this.activeSession?.state === "pending") {
-      await this.transitionState("live");
+  public async markBroadcastLive(sessionId: string): Promise<void> {
+    if (this.activeSessions.get(sessionId)?.state === "pending") {
+      await this.transitionState("live", sessionId);
     }
   }
 
-  public getRemainingDurationSeconds(): number {
-    if (!this.activeSession) return 0;
+  public getRemainingDurationSeconds(sessionId: string): number {
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return 0;
     return Math.max(
       0,
-      Math.floor((this.activeSession.deadlineAt - Date.now()) / 1000),
+      Math.floor((session.deadlineAt - Date.now()) / 1000),
     );
   }
 
-  private async transitionState(newState: SessionState): Promise<void> {
-    if (!this.activeSession) return;
+  private async transitionState(newState: SessionState, sessionId: string): Promise<void> {
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return;
 
-    const previousState = this.activeSession.state;
-    this.activeSession.state = newState;
+    const previousState = session.state;
+    session.state = newState;
 
     if (newState === "live" && previousState !== "live") {
-      this.startDurationWatchdog();
+      this.startDurationWatchdog(sessionId);
     }
 
     if (newState !== "live") {
-      this.clearWatchdog();
+      this.clearWatchdog(sessionId);
     }
 
     try {
       await prisma.liveSession.updateMany({
         where: {
-          id: this.activeSession.sessionId,
+          id: sessionId,
           status: { in: ["starting", "pending", "live"] },
         },
         data: { status: newState },
@@ -263,72 +274,79 @@ class LiveSessionManager {
       );
     }
 
-    this.activeSession.onStateChange?.(newState, this.activeSession.sessionId);
+    session.onStateChange?.(newState, sessionId);
   }
 
-  private startDurationWatchdog(): void {
-    this.clearWatchdog();
-    if (!this.activeSession) return;
+  private startDurationWatchdog(sessionId: string): void {
+    this.clearWatchdog(sessionId);
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return;
 
     const checkMs = 5000;
-    this.activeSession.watchdogTimer = setInterval(async () => {
-      if (!this.activeSession) return;
+    session.watchdogTimer = setInterval(async () => {
+      const s = this.activeSessions.get(sessionId);
+      if (!s) return;
 
-      const remaining = this.getRemainingDurationSeconds();
+      const remaining = this.getRemainingDurationSeconds(sessionId);
       if (remaining <= 0) {
         console.log(
-          `[LiveSessionManager] Duration exceeded for session ${this.activeSession?.sessionId}. Stopping...`,
+          `[LiveSessionManager] Duration exceeded for session ${s.sessionId}. Stopping...`,
         );
-        await this.stopSession();
+        await this.stopSession(sessionId);
         return;
       }
 
-      if (this.activeSession.state === "live") {
+      if (s.state === "live") {
         const elapsedSeconds = Math.floor(
-          (Date.now() - this.activeSession.startedAt) / 1000,
+          (Date.now() - s.startedAt) / 1000,
         );
-        const maxSeconds = this.activeSession.durationHours * 3600;
+        const maxSeconds = s.durationHours * 3600;
 
         if (elapsedSeconds >= maxSeconds) {
           console.log(
             `[LiveSessionManager] Max live duration reached (${maxSeconds}s). Stopping...`,
           );
-          await this.stopSession();
+          await this.stopSession(sessionId);
         }
       }
     }, checkMs);
   }
 
-  private clearWatchdog(): void {
-    if (this.activeSession?.watchdogTimer) {
-      clearInterval(this.activeSession.watchdogTimer);
-      this.activeSession.watchdogTimer = undefined;
+  private clearWatchdog(sessionId: string): void {
+    const session = this.activeSessions.get(sessionId);
+    if (session?.watchdogTimer) {
+      clearInterval(session.watchdogTimer);
+      session.watchdogTimer = undefined;
     }
   }
 
-  private clearLivePoll(): void {
-    if (this.activeSession?.livePollTimer) {
-      clearTimeout(this.activeSession.livePollTimer);
-      this.activeSession.livePollTimer = undefined;
+  private clearLivePoll(sessionId: string): void {
+    const session = this.activeSessions.get(sessionId);
+    if (session?.livePollTimer) {
+      clearTimeout(session.livePollTimer);
+      session.livePollTimer = undefined;
     }
   }
 
-  private clearTimers(): void {
-    this.clearWatchdog();
-    this.clearLivePoll();
+  private clearTimers(sessionId: string): void {
+    this.clearWatchdog(sessionId);
+    this.clearLivePoll(sessionId);
   }
 
   private startPlatformLivePoll(
+    sessionId: string,
     liveVideoId?: string,
     accessToken?: string,
   ): void {
-    this.clearLivePoll();
-    if (!this.activeSession || !liveVideoId || !accessToken) return;
+    this.clearLivePoll(sessionId);
+    const session = this.activeSessions.get(sessionId);
+    if (!session || !liveVideoId || !accessToken) return;
 
-    const platform = this.activeSession.platform.toLowerCase();
+    const platform = session.platform.toLowerCase();
 
     const poll = async (): Promise<void> => {
-      if (!this.activeSession || this.activeSession.state !== "pending") {
+      const currentSession = this.activeSessions.get(sessionId);
+      if (!currentSession || currentSession.state !== "pending") {
         return;
       }
 
@@ -336,7 +354,7 @@ class LiveSessionManager {
 
       if (this.liveDetectionAttempts > 60) {
         console.warn(
-          `[LiveSessionManager] Platform live poll timed out after 60 attempts for session ${this.activeSession.sessionId}.`,
+          `[LiveSessionManager] Platform live poll timed out after 60 attempts for session ${sessionId}.`,
         );
         return;
       }
@@ -350,21 +368,22 @@ class LiveSessionManager {
 
         if (isLive) {
           console.log(
-            `[LiveSessionManager] Platform confirmed live for session ${this.activeSession?.sessionId}. Starting AI...`,
+            `[LiveSessionManager] Platform confirmed live for session ${sessionId}. Starting AI...`,
           );
-          await this.transitionState("live");
+          await this.transitionState("live", sessionId);
           return;
         }
       } catch (err) {
         console.warn(`[LiveSessionManager] Platform live poll failed:`, err);
       }
 
-      if (this.activeSession?.state === "pending") {
-        this.activeSession.livePollTimer = setTimeout(poll, 5000);
+      const postPollSession = this.activeSessions.get(sessionId);
+      if (postPollSession?.state === "pending") {
+        postPollSession.livePollTimer = setTimeout(poll, 5000);
       }
     };
 
-    this.activeSession.livePollTimer = setTimeout(poll, 5000);
+    session.livePollTimer = setTimeout(poll, 5000);
   }
 
   private async checkPlatformLiveStatus(
@@ -420,12 +439,12 @@ class LiveSessionManager {
     return false;
   }
 
-  private async forceStopSession(): Promise<void> {
-    if (!this.activeSession) return;
+  public async forceStopSession(sessionId: string): Promise<void> {
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return;
 
-    const sessionId = this.activeSession.sessionId;
-    this.clearTimers();
-    liveHostOrchestrator.stop();
+    this.clearTimers(sessionId);
+    liveHostOrchestrator.stop(sessionId);
 
     try {
       await prisma.liveSession.updateMany({
@@ -437,10 +456,12 @@ class LiveSessionManager {
       });
     } catch {}
 
-    livePlatformConnector.stopSession();
-    setLiveSessionActive(false);
-    stopPod().catch(() => {});
-    this.activeSession = null;
+    livePlatformConnector.stopSession(sessionId);
+
+    if (session.podId) {
+        stopPod(session.podId).catch(() => {});
+    }
+    this.activeSessions.delete(sessionId);
   }
 }
 

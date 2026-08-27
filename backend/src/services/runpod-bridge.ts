@@ -35,8 +35,8 @@ function isDemoFallbackAllowed() {
   return (process.env.ALLOW_MEDIA_FALLBACK ?? "false").toLowerCase() === "true";
 }
 
-async function workerRequest(path: string, init?: RequestInit) {
-  const response = await fetch(`${getWorkerUrl()}${path}`, {
+async function workerRequest(podId: string | null | undefined, path: string, init?: RequestInit) {
+  const response = await fetch(`${getWorkerUrl(podId)}${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
     signal: AbortSignal.timeout(15000),
@@ -48,6 +48,7 @@ async function workerRequest(path: string, init?: RequestInit) {
 }
 
 async function workerRequestWithRetry(
+  podId: string | null | undefined,
   path: string,
   init?: RequestInit,
   retries = 3,
@@ -55,7 +56,7 @@ async function workerRequestWithRetry(
   let lastError: Error | null = null;
   for (let attempt = 0; attempt < retries; attempt += 1) {
     try {
-      return await workerRequest(path, init);
+      return await workerRequest(podId, path, init);
     } catch (err: any) {
       lastError = err;
       const status = Number(err.message?.match(/\d{3}/)?.[0]);
@@ -73,32 +74,33 @@ async function workerRequestWithRetry(
   throw lastError;
 }
 
-export async function startRunPodBroadcast(params: {
+export async function startRunPodBroadcast(podId: string | null | undefined, params: {
   rtmpUrl: string;
   streamKey: string;
 }): Promise<RunPodBroadcastResult> {
-  return workerRequestWithRetry("/stream/start-broadcast", {
+  return workerRequestWithRetry(podId, "/stream/start-broadcast", {
     method: "POST",
     body: JSON.stringify(params),
   });
 }
 
-export async function stopRunPodBroadcast(): Promise<RunPodBroadcastResult> {
-  return workerRequestWithRetry("/stream/stop-broadcast", { method: "POST" });
+export async function stopRunPodBroadcast(podId: string | null | undefined): Promise<RunPodBroadcastResult> {
+  return workerRequestWithRetry(podId, "/stream/stop-broadcast", { method: "POST" });
 }
 
-export async function getRunPodBroadcastStatus(): Promise<RunPodBroadcastResult> {
-  return workerRequestWithRetry("/stream/broadcast-status");
+export async function getRunPodBroadcastStatus(podId: string | null | undefined): Promise<RunPodBroadcastResult> {
+  return workerRequestWithRetry(podId, "/stream/broadcast-status");
 }
 
-export async function warmupWorker(): Promise<void> {
-  await workerRequestWithRetry("/", undefined, 3);
+export async function warmupWorker(podId: string | null | undefined): Promise<void> {
+  await workerRequestWithRetry(podId, "/", undefined, 3);
 }
 
 export async function forwardToRunPodGPU(
+  podId: string | null | undefined,
   params: RunPod2DStreamParams,
 ): Promise<RunPod2DStreamResult> {
-  const workerUrl = getWorkerUrl();
+  const workerUrl = getWorkerUrl(podId);
 
   try {
     const controller = new AbortController();
@@ -115,6 +117,7 @@ export async function forwardToRunPodGPU(
     }
 
     const data = await workerRequestWithRetry(
+      podId,
       `/stream/live-utterance`,
       {
         method: "POST",
@@ -142,6 +145,7 @@ export async function forwardToRunPodGPU(
       for (let attempt = 0; attempt < 100; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 3000));
         const statusData = await workerRequestWithRetry(
+          podId,
           `/stream/status/${data.job_id}`,
           undefined,
           2,
