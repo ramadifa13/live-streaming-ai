@@ -135,13 +135,30 @@ echo ""
 echo "[4/10] Mengecek disk..."
 
 ROOT_AVAIL_GB="$(df -Pk / | awk 'NR==2 {print int($4/1024/1024)}')"
+WORKSPACE_AVAIL_GB="$(df -Pk /workspace 2>/dev/null | awk 'NR==2 {print int($4/1024/1024)}' || echo '0')"
 
 echo "Root free: ${ROOT_AVAIL_GB} GB"
+echo "Root free: ${ROOT_AVAIL_GB} GB | Workspace free: ${WORKSPACE_AVAIL_GB} GB"
 
 if [ "$ROOT_AVAIL_GB" -lt 15 ]; then
     echo "[ERROR] Root disk kurang dari 15 GB."
     echo "Tambahkan Container Disk RunPod."
     exit 1
+# Prioritaskan cek ruang di /workspace jika terpasang Network Volume
+if [ "$WORKSPACE_AVAIL_GB" -gt 0 ]; then
+    if [ "$WORKSPACE_AVAIL_GB" -lt 8 ]; then
+        echo "[ERROR] Workspace disk (/workspace) kurang dari 8 GB."
+        echo "Pastikan Network Volume Anda memiliki ruang minimal 8-15 GB."
+        exit 1
+    fi
+    echo "[OK] Ruang penyimpanan Network Volume (/workspace) mencukupi: ${WORKSPACE_AVAIL_GB} GB."
+else
+    if [ "$ROOT_AVAIL_GB" -lt 8 ]; then
+        echo "[ERROR] Root disk kurang dari 8 GB."
+        echo "Tambahkan Container Disk atau pasang Network Volume di /workspace."
+        exit 1
+    fi
+    echo "[OK] Ruang penyimpanan Root mencukupi: ${ROOT_AVAIL_GB} GB."
 fi
 
 mkdir -p \
@@ -151,6 +168,7 @@ mkdir -p \
     "$WORKER_DIR/output"
 
 echo "[OK] Disk cukup."
+echo "[OK] Direktori worker siap."
 
 # ------------------------------------------------------------
 # 5. STOP OLD API
