@@ -137,13 +137,8 @@ echo "[4/10] Mengecek disk..."
 ROOT_AVAIL_GB="$(df -Pk / | awk 'NR==2 {print int($4/1024/1024)}')"
 WORKSPACE_AVAIL_GB="$(df -Pk /workspace 2>/dev/null | awk 'NR==2 {print int($4/1024/1024)}' || echo '0')"
 
-echo "Root free: ${ROOT_AVAIL_GB} GB"
 echo "Root free: ${ROOT_AVAIL_GB} GB | Workspace free: ${WORKSPACE_AVAIL_GB} GB"
 
-if [ "$ROOT_AVAIL_GB" -lt 15 ]; then
-    echo "[ERROR] Root disk kurang dari 15 GB."
-    echo "Tambahkan Container Disk RunPod."
-    exit 1
 # Prioritaskan cek ruang di /workspace jika terpasang Network Volume
 if [ "$WORKSPACE_AVAIL_GB" -gt 0 ]; then
     if [ "$WORKSPACE_AVAIL_GB" -lt 8 ]; then
@@ -167,7 +162,6 @@ mkdir -p \
     "$WORKER_DIR/temp" \
     "$WORKER_DIR/output"
 
-echo "[OK] Disk cukup."
 echo "[OK] Direktori worker siap."
 
 # ------------------------------------------------------------
