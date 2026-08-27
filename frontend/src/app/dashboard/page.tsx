@@ -557,6 +557,7 @@ export default function Dashboard() {
     }, 2500);
 
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLiveActive, isLivePaused]);
 
   useEffect(() => {
@@ -581,8 +582,8 @@ export default function Dashboard() {
   };
 
   const handlePlayAudioPreview = async (
-    _voice: string = selectedVoice,
-    _lang: string = selectedLang,
+    _v?: string,
+    _l?: string,
     tone: string = selectedTone,
     speed: number = speechSpeed,
   ) => {
@@ -682,7 +683,7 @@ export default function Dashboard() {
           tone: selectedTone,
           productName: activeFeaturedProduct.name,
           productPrice: String(activeFeaturedProduct.price),
-          category: activeFeaturedProduct.tag,
+          productCategory: activeFeaturedProduct.tag,
           productDescription: activeFeaturedProduct.description || "",
           productBenefits: activeFeaturedProduct.benefits || "",
           productUsage: activeFeaturedProduct.usage || "",
@@ -2943,7 +2944,9 @@ export default function Dashboard() {
                                 productPrice: String(
                                   activeFeaturedProduct.price,
                                 ).replace(/[^0-9]/g, ""),
-                                productImageUrl: activeFeaturedProduct.image,
+                                productImageUrl: activeFeaturedProduct.image?.startsWith("http")
+                                  ? activeFeaturedProduct.image
+                                  : `${process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"}${activeFeaturedProduct.image}`,
                                 platform: selectedPlatform,
                                 stockCount: activeFeaturedProduct.stock,
                                 ctaLabel:

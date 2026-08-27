@@ -58,7 +58,7 @@ Untuk menjaga environment dan weights/model (MuseTalk, Chatterbox-TTS-Indonesian
 
 1. Deploy `backend` direktori menggunakan Node.js environment di Render.com (gratis).
 2. Set Environment Variables di Render:
-   - `GEMINI_API_KEY`: Kunci API Google Gemini (Free tier).
+   - `GEMINI_API_KEY`: Kunci API Google Gemini (Free tier). Wajib diisi karena backend menggunakan `@google/genai` (gemini-3.6-flash) sepenuhnya untuk fungsionalitas sales pitch dan dynamic respons. LLM_PROVIDER / OLLAMA sudah tidak digunakan.
    - `RUNPOD_API_KEY`: API Key akun RunPod Anda.
    - `RUNPOD_POD_ID`: ID Pod Worker yang menyala.
 3. Backend akan menangani RAG Produk (melalui Gemini API) tanpa memerlukan GPU.
@@ -84,7 +84,7 @@ cd /workspace/live-streaming-ai/deploy
 bash start.sh
 ```
 
-- Worker API akan berjalan di Port `8000`.
+- Worker API akan berjalan di Port `8000` dengan timeout/error handling yang kokoh untuk mencegah kegagalan pipeline.
 - Microservice **Chatterbox-TTS-Indonesian** berjalan terpisah di Port `8090` (venv sendiri: `chatterbox_service/env-chatterbox`), otomatis ikut start bersama `start.sh` jika venv-nya sudah dibuat.
 - Worker memiliki fitur **Pre-Cache Idle Video**. Worker akan meload dan mengeksekusi face bounding-box dari video idle sehingga tak perlu direkalkulasi setiap kali ada balasan komentar.
 - Worker menggunakan Chunking Buffer untuk merespon AI secara lebih instan (<1.5s latency).

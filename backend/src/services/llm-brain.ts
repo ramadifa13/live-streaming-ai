@@ -4,6 +4,12 @@
  * Capable of answering any random/personal questions and smoothly pivoting to product sales.
  */
 
+import { GoogleGenAI } from "@google/genai";
+
+const apiKey = process.env.GEMINI_API_KEY || "";
+const ai = new GoogleGenAI({ apiKey });
+const MODEL_NAME = "gemini-3.6-flash";
+
 export interface SalesBrainInput {
   userQuestion: string;
   avatarName: string;
@@ -34,77 +40,7 @@ export interface ProductKnowledge {
   copywriting: string;
 }
 
-const OLLAMA_HOST = process.env.OLLAMA_HOST || "http://localhost:11434";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen2.5:latest";
-const OLLAMA_TIMEOUT = Number(process.env.OLLAMA_TIMEOUT_MS || "60000");
-const OLLAMA_RETRIES = Number(process.env.OLLAMA_RETRIES || "3");
-const LLM_PROVIDER = (process.env.LLM_PROVIDER || "auto").toLowerCase();
 
-export async function ollamaChat(
-  messages: Array<{ role: string; content: string }>,
-  options?: { format?: string; timeoutMs?: number; retries?: number },
-): Promise<string> {
-  const timeoutMs = options?.timeoutMs ?? OLLAMA_TIMEOUT;
-  const retries = options?.retries ?? OLLAMA_RETRIES;
-
-  if (LLM_PROVIDER === "openrouter" || LLM_PROVIDER === "openai") {
-    throw new Error(`Skipped Ollama because LLM_PROVIDER=${LLM_PROVIDER}`);
-  }
-
-  const body = {
-    model: OLLAMA_MODEL,
-    messages,
-    stream: false,
-    ...(options?.format ? { format: options.format } : {}),
-  };
-
-  let lastError: Error | null = null;
-  for (let attempt = 0; attempt < retries; attempt += 1) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      const res = await fetch(`${OLLAMA_HOST}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify(body),
-      });
-      clearTimeout(timeoutId);
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`Ollama chat failed: ${res.status} ${text}`);
-      }
-
-      const data = await res.json();
-      const content = data?.message?.content;
-      if (typeof content === "string" && content.trim()) {
-        return content.trim();
-      }
-
-      throw new Error("Ollama returned empty response");
-    } catch (err: any) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      const message = lastError.message || "";
-      const isTimeout = /timeout|timed out|context canceled|aborted/i.test(message);
-      const isTransient = /502|503|504|ECONNRESET|ENOTFOUND|ECONNREFUSED/i.test(message);
-
-      if (isTimeout || isTransient) {
-        const backoff = 1000 * Math.pow(2, attempt);
-        console.warn(
-          `[LLM-Brain] Ollama attempt ${attempt + 1} failed (${message}), retrying in ${backoff}ms...`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, backoff));
-        continue;
-      }
-
-      throw lastError;
-    }
-  }
-
-  throw lastError ?? new Error("Ollama chat failed after retries");
-}
 
 export async function generateProductKnowledge(input: {
   name: string;
@@ -120,11 +56,15 @@ Gambar produk: ${input.image || "Tidak tersedia"}
 Jangan mengarang klaim medis, sertifikasi, bahan, angka hasil, atau manfaat yang tidak didukung data. Kembalikan JSON valid dengan keys: description, benefits, usage, faq, targetAudience, copywriting. Copywriting 2-3 kalimat, natural untuk AI host live.`;
 
   try {
-    const content = await ollamaChat(
-      [{ role: "user", content: prompt }],
-      { format: "json", timeoutMs: Math.max(OLLAMA_TIMEOUT, 45000), retries: 2 },
-    );
-    const parsed = JSON.parse(content) as Partial<ProductKnowledge>;
+    const response = await ai.models.generateContent({
+      model: MODEL_NAME,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+      }
+    });
+
+    const parsed = JSON.parse(response.text || "") as Partial<ProductKnowledge>;
     if (
       Object.values(parsed).every(
         (value) => typeof value === "string" && value.trim(),
@@ -230,46 +170,19 @@ Wajib:
   };
 
   try {
-    const content = await ollamaChat(
-      [{ role: "user", content: prompt }],
-      { format: "json", timeoutMs: Math.max(OLLAMA_TIMEOUT, 45000), retries: 2 },
-    );
-    return parseResult(content);
-  } catch (err) {
-    console.warn("[LLM-Brain] generateVideoSalesScript Ollama failed:", err);
-  }
-
-  const apiKey = process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
-  if (apiKey) {
-    try {
-      const endpoint = process.env.OPENROUTER_API_KEY
-        ? "https://openrouter.ai/api/v1/chat/completions"
-        : "https://api.openai.com/v1/chat/completions";
-      const model = process.env.OPENROUTER_API_KEY ? "openai/gpt-4o-mini" : "gpt-4o-mini";
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.8,
-          max_tokens: 500,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const text = data.choices?.[0]?.message?.content;
-        if (text) return parseResult(text);
+    const response = await ai.models.generateContent({
+      model: MODEL_NAME,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
       }
-    } catch (err) {
-      console.warn("[LLM-Brain] generateVideoSalesScript cloud LLM failed:", err);
-    }
-  }
+    });
 
-  throw new Error("AI video script generator is unavailable");
+    return parseResult(response.text || "");
+  } catch (err) {
+    console.warn("[LLM-Brain] generateVideoSalesScript failed:", err);
+    throw new Error("AI video script generator is unavailable");
+  }
 }
 
 export interface LiveSalesPitchInput {
@@ -302,6 +215,10 @@ export interface LiveSalesPitchOutput {
 export async function generateLiveSalesPitchFromAI(
   input: LiveSalesPitchInput,
 ): Promise<LiveSalesPitchOutput> {
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is missing.");
+  }
+
   const hostName = input.avatarName || "Namira";
   const tone = input.tone || "Persuasif";
   const category = input.productCategory || input.category || "General";
@@ -329,6 +246,7 @@ ATURAN WAJIB:
   1. "hook": Sapaan pembuka yang heboh & mengaitkan rasa penasaran penonton (1-2 kalimat).
   2. "showcase": Bedah manfaat utama, keunggulan, dan solusi dari deskripsi/benefits produk dengan bahasa yang persuasif dan luwes (2-3 kalimat).
   3. "cta": Ajakan beli/checkout mendesak dengan menyebut harga promo ${price} dan sisa stok di keranjang kuning (1-2 kalimat).
+- WAJIB menyisipkan Action Tag di AWAL setiap teks bagian (hook, showcase, cta). Pilih: [IDLE], [RAISE_HAND], [POINT_DOWN], atau [EXCITED]. (contoh: "[RAISE_HAND] Halo semua!").
 
 Kembalikan HANYA JSON valid tanpa teks pengantar:
 {
@@ -337,77 +255,51 @@ Kembalikan HANYA JSON valid tanpa teks pengantar:
   "cta": "..."
 }`;
 
-  const parseResult = (text: string): LiveSalesPitchOutput => {
-    const parsed = JSON.parse(text) as { hook?: string; showcase?: string; cta?: string };
-    if (!parsed.hook || !parsed.showcase || !parsed.cta) {
-      throw new Error("AI returned incomplete live sales script format");
-    }
-    const cleanHook = parsed.hook.trim();
-    const cleanShowcase = parsed.showcase.trim();
-    const cleanCta = parsed.cta.trim();
-    return {
-      productName: input.productName,
-      price,
-      stock,
-      category,
-      avatarName: hostName,
-      tone,
-      hook: cleanHook,
-      showcase: cleanShowcase,
-      cta: cleanCta,
-      fullScript: `${cleanHook}\n\n${cleanShowcase}\n\n${cleanCta}`,
-    };
-  };
-
-  // 1. Coba Ollama
   try {
-    const content = await ollamaChat(
-      [{ role: "user", content: prompt }],
-      { format: "json", timeoutMs: Math.max(OLLAMA_TIMEOUT, 45000), retries: 2 },
-    );
-    return parseResult(content);
-  } catch (err) {
-    console.warn("[LLM-Brain] generateLiveSalesPitchFromAI Ollama failed:", err);
-  }
-
-  // 2. Coba Cloud LLM (OpenAI / OpenRouter)
-  const apiKey = process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
-  if (apiKey) {
-    try {
-      const endpoint = process.env.OPENROUTER_API_KEY
-        ? "https://openrouter.ai/api/v1/chat/completions"
-        : "https://api.openai.com/v1/chat/completions";
-      const model = process.env.OPENROUTER_API_KEY ? "openai/gpt-4o-mini" : "gpt-4o-mini";
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.7,
-          max_tokens: 600,
-          response_format: { type: "json_object" },
-        }),
+      const response = await ai.models.generateContent({
+        model: MODEL_NAME,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+        }
       });
-      if (res.ok) {
-        const data = await res.json();
-        const text = data.choices?.[0]?.message?.content;
-        if (text) return parseResult(text);
-      }
-    } catch (err) {
-      console.warn("[LLM-Brain] generateLiveSalesPitchFromAI cloud LLM failed:", err);
-    }
-  }
 
-  throw new Error("AI Sales Script Generator is offline (Ollama/LLM unreachable). Harap aktifkan Ollama atau set OPENAI_API_KEY.");
+      let text = response.text || "";
+
+      const parsed = JSON.parse(text) as { hook?: string; showcase?: string; cta?: string };
+      if (!parsed.hook || !parsed.showcase || !parsed.cta) {
+        throw new Error("AI returned incomplete live sales script format");
+      }
+      const cleanHook = parsed.hook.trim();
+      const cleanShowcase = parsed.showcase.trim();
+      const cleanCta = parsed.cta.trim();
+
+      return {
+        productName: input.productName,
+        price,
+        stock,
+        category,
+        avatarName: hostName,
+        tone,
+        hook: cleanHook,
+        showcase: cleanShowcase,
+        cta: cleanCta,
+        fullScript: `${cleanHook}\n\n${cleanShowcase}\n\n${cleanCta}`,
+      };
+
+  } catch (err) {
+    console.warn("[LLM-Brain] generateLiveSalesPitchFromAI failed:", err);
+    throw new Error("AI Sales Script Generator (Gemini) is offline.");
+  }
 }
 
 export async function generateDynamicSalesResponse(
   input: SalesBrainInput,
 ): Promise<SalesBrainOutput> {
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is missing. Please set it in .env for Free Tier RAG.");
+  }
+
   const {
     userQuestion,
     avatarName = "Luna",
@@ -436,79 +328,42 @@ Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.product
 1. Jawab pertanyaan penonton secara spontan, cerdas, ramah, dan manusiawi (apapun pertanyaannya, baik tentang produk, cara pakai, izin BPOM, sapaan, ataupun pertanyaan pribadi/di luar topik).
 2. SETELAH menjawab pertanyaan utama, selipkan jembatan obrolan yang halus (smooth pivot) untuk mengajak penonton melirik produk ${productName} atau mengingatkan promo ${productPrice} di keranjang kuning.
 3. Panjang jawaban maksimal 2 - 3 kalimat agar pas dan enak didengar saat dibacakan voice TTS.
+4. (SANGAT PENTING): Kamu harus SELALU menyisipkan satu Tanda Aksi (Action Tag) di AWAL jawabanmu untuk mengendalikan gerakan video AI. Pilih salah satu tag berikut sesuai konteks pembicaraan:
+   - [IDLE] = Obrolan santai biasa.
+   - [RAISE_HAND] = Saat menyapa, memanggil, atau melambaikan tangan ("Halo!", "Hai kak!").
+   - [POINT_DOWN] = Saat menyuruh penonton melihat produk di keranjang kuning ("Cek keranjang kuning di bawah!").
+   - [EXCITED] = Saat membicarakan diskon besar atau sangat antusias.
 
 --- CONTOH DIALOG (FEW-SHOT PROMPTING) ---
 Penonton: "Kaka lagi apa?"
-Kamu: "Aku lagi seru-seruan nemenin kakak-kakak manis di live streaming nih! Eh ngomong-ngomong, produk ${productName} kita lagi diskon spesial ${productPrice} lho, yuk dicek keranjang kuningnya!"
+Kamu: "[IDLE] Aku lagi seru-seruan nemenin kakak-kakak manis di live streaming nih! Eh ngomong-ngomong, produk ${productName} kita lagi diskon spesial ${productPrice} lho, yuk dicek keranjang kuningnya!"
 
 Penonton: "Kamu namanya siapa?"
-Kamu: "Kenalin, aku ${avatarName}, host andalan kakak hari ini! Sambil kita kenalan, kakak udah amankan ${productName} belum nih mumpung stok tinggal ${productStock} pcs?"
+Kamu: "[RAISE_HAND] Kenalin, aku ${avatarName}, host andalan kakak hari ini! Sambil kita kenalan, kakak udah amankan ${productName} belum nih mumpung stok tinggal ${productStock} pcs?"
+
+Penonton: "Gimana cara belinya?"
+Kamu: "[POINT_DOWN] Gampang banget kak! Langsung aja klik ikon keranjang kuning di pojok kiri bawah ya, checkout sekarang mumpung harganya cuma ${productPrice}!"
 
 Penonton: "Kenapa musti beli disini?"
-Kamu: "Karena di live aku ini diskonnya paling gila-gilaan kak! ${productName} ini dijamin 100% ori, dan kakak bisa dapat harga ${productPrice} cuma di keranjang kuning sekarang juga."`;
+Kamu: "[EXCITED] Karena di live aku ini diskonnya paling gila-gilaan kak! ${productName} ini dijamin 100% ori, dan kakak bisa dapat harga ${productPrice} cuma di keranjang kuning sekarang juga."
 
-  // 1. Coba Ollama
+Pertanyaan Penonton yang baru: "${userQuestion}"`;
+
   try {
-    const content = await ollamaChat(
-      [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userQuestion },
-      ],
-      { timeoutMs: Math.max(OLLAMA_TIMEOUT, 45000), retries: 2 },
-    );
+    const response = await ai.models.generateContent({
+      model: MODEL_NAME,
+      contents: systemPrompt,
+    });
+
+    const text = response.text || "";
     return {
-      replyText: content,
-      engineUsed: `Ollama (${OLLAMA_MODEL})`,
+      replyText: text.trim(),
+      engineUsed: `Gemini Flash 1.5`,
       intent: "dynamic_llm",
       action: "reply",
     };
   } catch (err) {
-    console.warn("[LLM-Brain] generateDynamicSalesResponse Ollama failed:", err);
+    console.warn("[LLM-Brain] generateDynamicSalesResponse failed:", err);
+    throw new Error("AI Sales Brain (Gemini) is offline / unreachable.");
   }
-
-  // 2. Coba panggil OpenAI / OpenRouter jika ada API Key di .env
-  const apiKey = process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
-  if (apiKey) {
-    try {
-      const endpoint = process.env.OPENROUTER_API_KEY
-        ? "https://openrouter.ai/api/v1/chat/completions"
-        : "https://api.openai.com/v1/chat/completions";
-      const model = process.env.OPENROUTER_API_KEY ? "openai/gpt-4o-mini" : "gpt-4o-mini";
-
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userQuestion },
-          ],
-          max_tokens: 200,
-          temperature: 0.8,
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const text = data.choices?.[0]?.message?.content;
-        if (text) {
-          return {
-            replyText: text.trim(),
-            engineUsed: `Cloud LLM (${model})`,
-            intent: "dynamic_llm",
-            action: "reply",
-          };
-        }
-      }
-    } catch (err) {
-      console.warn("[LLM-Brain] generateDynamicSalesResponse cloud LLM failed:", err);
-    }
-  }
-
-  // Hard-fail explicitly instead of using fake static template
-  throw new Error("AI Sales Brain is offline / unreachable. Pastikan server Ollama (qwen2.5) atau Cloud LLM API aktif.");
 }

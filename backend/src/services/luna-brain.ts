@@ -87,12 +87,20 @@ Kamu WAJIB mengembalikan output HANYA dalam format JSON valid sesuai schema beri
 // ==============================================================================
 // 3. OPENAI-COMPATIBLE LLM ENGINE (Supports Ollama, DeepSeek, vLLM, Groq, OpenAI)
 // ==============================================================================
+import { GoogleGenAI } from "@google/genai";
+
 export async function generateLunaResponse(
   userComment: string,
   product?: any,
   avatarName: string = "Namira",
   tone: string = "Persuasif"
 ): Promise<LunaStructuredOutput> {
+  const apiKey = process.env.GEMINI_API_KEY || "";
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is missing.");
+  }
+  const ai = new GoogleGenAI({ apiKey });
+  const MODEL_NAME = "gemini-3.6-flash";
 
   const systemPrompt = buildLunaSystemPrompt(product ? {
     id: product.id,
@@ -102,68 +110,26 @@ export async function generateLunaResponse(
     description: product.description || undefined,
   } : null, avatarName, tone);
 
-  // 2. Resolve OpenAI-compatible LLM endpoint
-  // Works with: Ollama (http://localhost:11434/v1), vLLM, DeepSeek (https://api.deepseek.com/v1), Groq, OpenAI, OpenRouter
-  const llmBaseUrl =
-    process.env.LLM_BASE_URL ||
-    (process.env.OPENROUTER_API_KEY ? "https://openrouter.ai/api/v1" : null) ||
-    (process.env.DEEPSEEK_API_KEY ? "https://api.deepseek.com/v1" : null) ||
-    (process.env.OPENAI_API_KEY ? "https://api.openai.com/v1" : null) ||
-    "http://localhost:11434/v1";
-
-  const llmApiKey =
-    process.env.LLM_API_KEY ||
-    process.env.OPENROUTER_API_KEY ||
-    process.env.DEEPSEEK_API_KEY ||
-    process.env.OPENAI_API_KEY ||
-    "ollama";
-
-  const llmModel =
-    process.env.LLM_MODEL ||
-    (process.env.OPENROUTER_API_KEY ? "openai/gpt-4o-mini" : null) ||
-    (process.env.DEEPSEEK_API_KEY ? "deepseek-chat" : null) ||
-    (process.env.OPENAI_API_KEY ? "gpt-4o-mini" : null) ||
-    "qwen2.5:7b";
+  const prompt = `${systemPrompt}\n\nPertanyaan Penonton: "${userComment}"`;
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout for cloud LLM
-
-    const res = await fetch(`${llmBaseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${llmApiKey}`,
-      },
-      body: JSON.stringify({
-        model: llmModel,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userComment },
-        ],
-        temperature: 0.7,
-        max_tokens: 250,
-        response_format: { type: "json_object" },
-      }),
-      signal: controller.signal,
+    const response = await ai.models.generateContent({
+      model: MODEL_NAME,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+      }
     });
 
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const data = await res.json();
-      const rawText = data?.choices?.[0]?.message?.content;
-      if (rawText) {
-        const parsed = JSON.parse(rawText);
-        const validated = LunaStructuredOutputSchema.safeParse(parsed);
-        if (validated.success) {
-          return validated.data;
-        }
-      }
+    const rawText = response.text || "";
+    const parsed = JSON.parse(rawText);
+    const validated = LunaStructuredOutputSchema.safeParse(parsed);
+    if (validated.success) {
+      return validated.data;
     }
   } catch (err: any) {
-    throw new Error(`AI Host Brain is offline / unreachable (${err?.message || "LLM error"}). Pastikan Ollama atau Cloud LLM API aktif.`);
+    throw new Error(`AI Host Brain is offline / unreachable (${err?.message || "LLM error"}).`);
   }
 
-  throw new Error("AI Host Brain failed to produce valid response. Pastikan Ollama atau Cloud LLM API aktif.");
+  throw new Error("AI Host Brain failed to produce valid response.");
 }

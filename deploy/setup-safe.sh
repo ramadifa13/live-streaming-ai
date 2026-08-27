@@ -70,35 +70,6 @@ echo "[OK] Python 3.10"
 
 
 echo ""
-echo "[1.1/10] Menyiapkan Ollama (${OLLAMA_MODEL})..."
-
-# Ollama di RunPod bersifat opsional. LLM diproses terpusat di backend lokal,
-# sehingga instalasi binary Ollama di RunPod dilewati secara default untuk
-# menghemat waktu setup & disk. Aktifkan hanya untuk setup khusus RunPod LLM.
-if [ "${ENABLE_RUNPOD_OLLAMA:-0}" = "1" ]; then
-    if ! command -v curl >/dev/null 2>&1; then
-        echo "curl belum ada. Installing..."
-        apt-get update -qq
-        apt-get install -y -qq curl
-    fi
-
-    if ! command -v ollama >/dev/null 2>&1; then
-        echo "Ollama belum ada. Installing..."
-        curl -fsSL https://ollama.com/install.sh | sh
-    else
-        echo "Ollama sudah terinstall: $(ollama --version)"
-    fi
-
-    if ! command -v ollama >/dev/null 2>&1; then
-        echo "[ERROR] Ollama gagal diinstall."
-        exit 1
-    fi
-
-    echo "[OK] Ollama tersedia. Model akan dipastikan saat start.sh (ENABLE_RUNPOD_OLLAMA=1)."
-else
-    echo "[SKIP] Ollama dijalankan di backend lokal (ENABLE_RUNPOD_OLLAMA != 1)."
-    echo "[OK] Melewati instalasi Ollama di RunPod."
-fi
 
 NVCC_VERSION="$(nvcc --version | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' | tail -1)"
 

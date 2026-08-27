@@ -174,14 +174,18 @@ class AILiveWorker:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(request, timeout=30) as response:
+            import urllib.error
+            with urllib.request.urlopen(request, timeout=45) as response:
                 gen_time_ms = response.headers.get("X-Gen-Time-Ms", "?")
                 with open(audio_path, "wb") as f:
                     f.write(response.read())
                 print(f"[INFO] Chatterbox selesai dalam {gen_time_ms}ms")
 
+        except urllib.error.URLError as e:
+            print(f"[ERROR] Gagal memanggil Chatterbox-TTS-Indonesian (Jaringan/Timeout): {e}")
+            raise e
         except Exception as e:
-            print(f"[ERROR] Gagal memanggil Chatterbox-TTS-Indonesian: {e}")
+            print(f"[ERROR] Kesalahan saat memanggil Chatterbox-TTS-Indonesian: {e}")
             raise e
 
         return audio_path
