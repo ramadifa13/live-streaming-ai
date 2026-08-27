@@ -1,4 +1,7 @@
-import crypto from "crypto";
+import sys
+import re
+
+content = """import crypto from "crypto";
 
 const RUNPOD_GRAPHQL_URL = "https://api.runpod.io/graphql";
 
@@ -353,3 +356,7 @@ export function getWorkerUrl(podId?: string | null): string {
 
   return "http://localhost:8000";
 }
+"""
+
+with open("backend/src/services/runpod-manager.ts", "w") as f:
+    f.write(content)

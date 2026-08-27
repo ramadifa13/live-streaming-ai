@@ -80,7 +80,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       },
     });
 
-    const managedSession = liveSessionManager.getActiveSession();
+    const managedSession = session?.id ? liveSessionManager.getSession(session.id) : null;
     const effectiveStatus = managedSession?.state || session?.status || "ready";
 
     return {
@@ -189,10 +189,11 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
-    liveHostOrchestrator.stop();
-    await stopRunPodBroadcast().catch(() => {});
+    if (parsed.data.sessionId) liveHostOrchestrator.stop(parsed.data.sessionId);
+    const sessionObj = liveSessionManager.getSession(parsed.data.sessionId || '');
+    await stopRunPodBroadcast(sessionObj?.podId).catch(() => {});
     stopBroadcast();
-    const result = await liveSessionManager.stopSession({
+    const result = await liveSessionManager.stopSession(parsed.data.sessionId || '', {
       durationSeconds: parsed.data.durationSeconds,
       viewers: parsed.data.viewers,
       comments: parsed.data.comments,
@@ -228,14 +229,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       stockCount,
       ctaLabel,
     } = parsed.data;
-    const managedSession = liveSessionManager.getActiveSession();
-    const liveSession = sessionId
-      ? await prisma.liveSession.findUnique({ where: { id: sessionId } })
+    const managedSession = parsed.data.sessionId ? liveSessionManager.getSession(parsed.data.sessionId) : null;
+    const liveSession = parsed.data.sessionId
+      ? await prisma.liveSession.findUnique({ where: { id: parsed.data.sessionId } })
       : null;
 
-    if (sessionId && managedSession && liveSession) {
+    if (parsed.data.sessionId && managedSession && liveSession) {
       try {
-        await warmupWorker();
+        await warmupWorker(managedSession?.podId);
         await liveHostOrchestrator.start({
           productId: liveSession.productId,
           avatarName: managedSession.avatarName,
@@ -243,10 +244,12 @@ export async function liveSessionRoutes(server: FastifyInstance) {
           rtmpUrl,
           streamKey,
           voice: liveSession.voice || undefined,
+          podId: managedSession.podId,
+          sessionId: parsed.data.sessionId
         });
       } catch (error) {
-        liveHostOrchestrator.stop();
-        await liveSessionManager.stopSession().catch(() => {});
+        if (parsed.data.sessionId) liveHostOrchestrator.stop(parsed.data.sessionId);
+        if (parsed.data.sessionId) await liveSessionManager.stopSession(parsed.data.sessionId).catch(() => {});
         reply.code(502);
         return {
           success: false,
@@ -255,27 +258,27 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       }
     }
 
-    const result = await startRunPodBroadcast({ rtmpUrl, streamKey });
+    const result = await startRunPodBroadcast(managedSession?.podId, { rtmpUrl, streamKey });
 
-    if (result.success && sessionId) {
-      await liveSessionManager.markBroadcastLive();
+    if (result.success && parsed.data.sessionId) {
+      if (parsed.data.sessionId) await liveSessionManager.markBroadcastLive(parsed.data.sessionId);
     }
 
     if (!result.success) {
       reply.code(502);
-      await liveSessionManager.stopSession().catch(() => {});
+      if (parsed.data.sessionId) await liveSessionManager.stopSession(parsed.data.sessionId).catch(() => {});
       if (sessionId) {
         await prisma.liveSession
           .updateMany({
-            where: { id: sessionId, status: { in: ["starting", "pending"] } },
+            where: { id: sessionId as string, status: { in: ["starting", "pending"] } },
             data: { status: "ended" },
           })
           .catch(() => {});
       }
-    } else if (sessionId) {
+    } else if (parsed.data.sessionId) {
       await prisma.liveSession
         .updateMany({
-          where: { id: sessionId, status: { in: ["starting", "pending"] } },
+          where: { id: sessionId as string, status: { in: ["starting", "pending"] } },
           data: { status: "pending" },
         })
         .catch(() => {});
@@ -288,9 +291,12 @@ export async function liveSessionRoutes(server: FastifyInstance) {
   });
 
   // POST /api/live-stream/stop-broadcast
-  server.post("/api/live-stream/stop-broadcast", async () => {
-    liveHostOrchestrator.stop();
-    await stopRunPodBroadcast().catch(() => {});
+  server.post("/api/live-stream/stop-broadcast", async (request, reply) => {
+    const parsed = liveStopSchema.safeParse(request.body);
+    if (!parsed.success) { reply.code(400); return { error: parsed.error.flatten() }; }
+    if (parsed.data.sessionId) liveHostOrchestrator.stop(parsed.data.sessionId);
+    const sessionObj = liveSessionManager.getSession(parsed.data.sessionId || '');
+    await stopRunPodBroadcast(sessionObj?.podId).catch(() => {});
     const res = stopBroadcast();
     return {
       success: true,
@@ -356,6 +362,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
 
   // POST /api/webhooks/platform-events
   server.post("/api/webhooks/platform-events", async (request, reply) => {
+    const sessionId = (request.query as any).sessionId;
+    if (!sessionId) { reply.code(400); return { error: "Missing sessionId in query" }; }
     const webhookSchema = z.object({
       platform: z.string(),
       eventType: z.enum([
@@ -374,8 +382,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     const { platform, eventType, data } = parsed.data;
-    await livePlatformConnector.ingestEvent(platform, eventType, data);
-    const metrics = livePlatformConnector.getMetricsSnapshot();
+    await livePlatformConnector.ingestEvent(sessionId, platform, eventType, data);
+    const metrics = livePlatformConnector.getMetricsSnapshot(sessionId || '');
 
     return {
       success: true,
@@ -391,17 +399,22 @@ export async function liveSessionRoutes(server: FastifyInstance) {
   });
 
   // GET /api/live-session/metrics
-  server.get("/api/live-session/metrics", async () => {
-    const session = await prisma.liveSession.findFirst({
+  server.get("/api/live-session/metrics", async (request) => {
+    const querySessionId = (request.query as any).sessionId;
+    const session = querySessionId ? await prisma.liveSession.findUnique({
+      where: { id: querySessionId },
+      include: { avatar: true },
+    }) : await prisma.liveSession.findFirst({
       where: { status: { in: ["starting", "pending", "live"] } },
       orderBy: { createdAt: "desc" },
       include: { avatar: true },
     });
 
+    const sessionId = session?.id || '';
+    const managedSession = sessionId ? liveSessionManager.getSession(sessionId) : null;
     const streamStatus = getStreamStatus();
-    const workerBroadcast = await getRunPodBroadcastStatus().catch(() => null);
-    const metrics = livePlatformConnector.getMetricsSnapshot();
-    const managedSession = liveSessionManager.getActiveSession();
+    const workerBroadcast = await getRunPodBroadcastStatus(managedSession?.podId).catch(() => null);
+    const metrics = livePlatformConnector.getMetricsSnapshot(sessionId);
 
     const sessionStatus = managedSession?.state || session?.status || "idle";
 

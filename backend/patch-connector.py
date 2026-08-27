@@ -1,5 +1,8 @@
-import prisma from "../lib/prisma.js";
-import { generateDynamicSalesResponse } from "./llm-brain.js";
+import sys
+
+# Convert LivePlatformConnector to maintain a Map of sessions
+content = """import prisma from "../lib/prisma.js";
+import { generateLunaResponse, LunaStructuredOutput } from "./llm-brain.js";
 
 export interface LiveMetricsSnapshot {
   viewers: number;
@@ -357,23 +360,15 @@ class LivePlatformConnector {
               where: { id: state.config.productId },
             })
           : null;
-        const response: any = await generateDynamicSalesResponse({
-          userQuestion: text,
-          productName: product?.name || "Produk",
-          productPrice: product?.price ? `Rp${product.price}` : "",
-          productDescription: product?.description || "",
-          productCategory: product?.category || "",
-          productBenefits: product?.benefits || "",
-          productUsage: product?.usage || "",
-          productFaq: product?.faq || "",
-          productStock: product?.stock || 0,
-          avatarName: state.config.avatarName || "Namira",
-          tone: state.config.tone || "Persuasif",
-        });
-
-        aiResponseText = response.replyText;
+        const response: LunaStructuredOutput = await generateLunaResponse(
+          text,
+          product,
+          state.config.avatarName || "Namira",
+          state.config.tone || "Persuasif",
+        );
+        aiResponseText = response.speech;
         state.metrics.aiReplies += 1;
-        this.globalSpeechCallback?.(response.replyText, sessionId);
+        this.globalSpeechCallback?.(response.speech, sessionId);
       } catch {
         aiResponseText = `Terima kasih pertanyaannya kak ${sender}! Produk ini lagi promo spesial, yuk langsung checkout sekarang yaa! ✨`;
         state.metrics.aiReplies += 1;
@@ -419,3 +414,7 @@ class LivePlatformConnector {
 }
 
 export const livePlatformConnector = new LivePlatformConnector();
+"""
+
+with open("backend/src/services/live-platform-connector.ts", "w") as f:
+    f.write(content)

@@ -1,4 +1,6 @@
-import prisma from "../lib/prisma.js";
+import sys
+
+content = """import prisma from "../lib/prisma.js";
 import { forwardToRunPodGPU } from "./runpod-bridge.js";
 import { generateDynamicSalesResponse } from "./llm-brain.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
@@ -211,3 +213,7 @@ class LiveHostOrchestrator {
 }
 
 export const liveHostOrchestrator = new LiveHostOrchestrator();
+"""
+
+with open("backend/src/services/live-host-orchestrator.ts", "w") as f:
+    f.write(content)

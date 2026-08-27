@@ -23,13 +23,13 @@ const orchestrationSchema = z.object({
 export async function providersRoutes(server: FastifyInstance) {
   server.get("/api/runpod/status", async () => ({
     success: true,
-    data: await getGpuControlStatus(),
+    data: await getGpuControlStatus(null),
   }));
 
   server.post("/api/runpod/start", async (_request, reply) => {
     try {
       await startPodAndWait();
-      return { success: true, data: await getGpuControlStatus() };
+      return { success: true, data: await getGpuControlStatus(null) };
     } catch (error) {
       reply.code(502);
       return {
@@ -41,12 +41,12 @@ export async function providersRoutes(server: FastifyInstance) {
 
   server.post("/api/runpod/stop", async (_request, reply) => {
     try {
-      const stopped = await stopPod();
+      const stopped = await stopPod((_request.query as any).podId);
       if (!stopped) {
         reply.code(502);
         return { success: false, error: "RunPod menolak permintaan stop" };
       }
-      return { success: true, data: await getGpuControlStatus() };
+      return { success: true, data: await getGpuControlStatus(null) };
     } catch (error) {
       reply.code(502);
       return {
