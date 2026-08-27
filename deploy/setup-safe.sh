@@ -204,6 +204,12 @@ echo "[5/10] Menginstall PyTorch 2.1 + CUDA 11.8 ke Virtual Environment..."
 "$PIP_BIN" install \
     --no-cache-dir \
     --no-deps \
+    "typing_extensions>=4.8.0" \
+    "sympy>=1.12" \
+    "networkx>=3.0" \
+    "jinja2" \
+    "filelock" \
+    "fsspec" \
     "numpy==1.26.4"
 
 echo ""
