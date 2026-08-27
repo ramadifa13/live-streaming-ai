@@ -187,6 +187,7 @@ sleep 2
 echo "[OK] API lama dihentikan."
 
 # ------------------------------------------------------------
+# 5. INSTALL EXACT PYTORCH STACK
 # 5. INSTALL EXACT PYTORCH STACK & RUNTIME DEPENDENCIES
 # ------------------------------------------------------------
 
@@ -215,6 +216,11 @@ echo "[5/10] Menginstall PyTorch 2.1 + CUDA 11.8 ke Virtual Environment..."
     "torchvision==0.16.0+cu118" \
     "torchaudio==2.1.0+cu118" \
     --index-url https://download.pytorch.org/whl/cu118
+
+"$PIP_BIN" install \
+    --no-cache-dir \
+    --no-deps \
+    "numpy==1.26.4"
 
 echo ""
 echo "Memverifikasi PyTorch..."
