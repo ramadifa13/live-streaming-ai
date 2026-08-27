@@ -17,7 +17,6 @@ if [ -f "$WORKER_DIR/.setup_complete" ] && [ -d "$WORKER_DIR/env" ] && [ -d "$WO
     exit 0
 fi
 
-
 echo ""
 echo "============================================================"
 echo " MuseTalk RunPod RTX 4090 - SAFE SETUP"
@@ -60,7 +59,6 @@ echo ""
 echo "Python:"
 python --version
 
-
 PY_MAJOR_MINOR="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 
 if [ "$PY_MAJOR_MINOR" != "3.10" ]; then
@@ -70,7 +68,6 @@ if [ "$PY_MAJOR_MINOR" != "3.10" ]; then
 fi
 
 echo "[OK] Python 3.10"
-
 
 echo ""
 echo "[1.1/10] Menyiapkan Ollama (${OLLAMA_MODEL})..."
@@ -131,12 +128,10 @@ fi
 echo "[OK] HF_TOKEN tersedia."
 
 # ------------------------------------------------------------
-# 4. DISK
 # 4. DISK & VIRTUAL ENVIRONMENT
 # ------------------------------------------------------------
 
 echo ""
-echo "[4/10] Mengecek disk..."
 echo "[4/10] Mengecek disk & menyiapkan virtual environment..."
 
 ROOT_AVAIL_GB="$(df -Pk / | awk 'NR==2 {print int($4/1024/1024)}')"
@@ -167,7 +162,6 @@ mkdir -p \
     "$WORKER_DIR/temp" \
     "$WORKER_DIR/output"
 
-echo "[OK] Direktori worker siap."
 # Inisialisasi Virtual Environment di /workspace agar tidak memenuhi root container disk
 if [ ! -d "$WORKER_DIR/env" ]; then
     echo "Membuat Python Virtual Environment di $WORKER_DIR/env..."
@@ -195,22 +189,18 @@ sleep 2
 echo "[OK] API lama dihentikan."
 
 # ------------------------------------------------------------
-# 6. CLEAN OLD TORCH STACK
 # 6. CLEAN OLD TORCH STACK (DALAM VENV)
 # ------------------------------------------------------------
 
 echo ""
-echo "[6/10] Membersihkan PyTorch stack lama..."
 echo "[6/10] Menyiapkan PyTorch stack di virtual environment..."
 
-python -m pip uninstall -y \
 pip uninstall -y \
     torch \
     torchvision \
     torchaudio \
     2>/dev/null || true
 
-echo "[OK] Torch lama dibersihkan."
 echo "[OK] Lingkungan PyTorch venv siap."
 
 # ------------------------------------------------------------
@@ -218,10 +208,8 @@ echo "[OK] Lingkungan PyTorch venv siap."
 # ------------------------------------------------------------
 
 echo ""
-echo "[7/10] Menginstall PyTorch 2.1 + CUDA 11.8..."
 echo "[7/10] Menginstall PyTorch 2.1 + CUDA 11.8 ke virtual environment..."
 
-python -m pip install \
 pip install \
     --no-cache-dir \
     --no-deps \
@@ -230,7 +218,6 @@ pip install \
     "torchaudio==2.1.0+cu118" \
     --index-url https://download.pytorch.org/whl/cu118
 
-python -m pip install \
 pip install \
     --no-cache-dir \
     --no-deps \
