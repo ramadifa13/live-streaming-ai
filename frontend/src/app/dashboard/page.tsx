@@ -21,11 +21,8 @@ import {
 import { avatars } from "./constants";
 
 export default function Dashboard() {
-  // --- STATE MANAGEMENT ---
   const [currentStep, setCurrentStep] = useState(1);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  // STEP 1: Products State (Mirrors Database Records with RAG Knowledge Base)
   const [products, setProducts] = useState<Product[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [productCategoryFilter, setProductCategoryFilter] = useState("ALL");
@@ -68,11 +65,10 @@ export default function Dashboard() {
   const [newProductForm, setNewProductForm] = useState({
     name: "",
     price: "",
-    stock: 50,
-    tag: "Skincare",
+    stock: 0,
+    tag: "",
     sku: "",
-    image:
-      "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
+    image: "",
     link: "",
     description: "",
     benefits: "",
@@ -81,24 +77,15 @@ export default function Dashboard() {
     targetAudience: "",
   });
   const [csvText, setCsvText] = useState("");
-
-  // STEP 2: Avatars State & Voice TTS Controls
-  // avatars array is imported from constants.ts
-
   const [selectedAvatar, setSelectedAvatar] = useState<Avatar>(avatars[0]);
-  const [selectedTone, setSelectedTone] = useState<string>("Persuasif");
+  const [selectedTone, setSelectedTone] = useState<string>("Energetic");
   const [selectedVoice, setSelectedVoice] =
     useState<string>("id-ID-SitiNeural");
   const [selectedLang, setSelectedLang] = useState<string>("Bahasa Indonesia");
-  const [speechSpeed, setSpeechSpeed] = useState<number>(1.0); // 0.85, 1.0, 1.15, 1.3
+  const [speechSpeed, setSpeechSpeed] = useState<number>(1.0);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [isSynthesizingAudio, setIsSynthesizingAudio] = useState(false);
-  const [audioPreviewText, setAudioPreviewText] = useState<string>(
-    "Halo semuanya! Selamat datang di live streaming kita hari ini. Yuk check out sebelum kehabisan!",
-  );
   const avatarCarouselRef = useRef<HTMLDivElement>(null);
-
-  // STEP 3: Setup Live State
   const [selectedDuration] = useState<number>(1);
   const [selectedPlatform, setSelectedPlatform] =
     useState<string>("TikTok LIVE");
@@ -113,8 +100,6 @@ export default function Dashboard() {
   const [liveSalesScriptData, setLiveSalesScriptData] =
     useState<LiveSalesScript | null>(null);
   const [isLoadingLiveScript, setIsLoadingLiveScript] = useState(false);
-
-  // STEP 4: Preview & Interactive Chat & 3D Avatar
   const [activeFeaturedProduct, setActiveFeaturedProduct] = useState<Product>(
     products[0] || {
       id: "loading",
@@ -122,8 +107,7 @@ export default function Dashboard() {
       price: "Rp0",
       stock: 0,
       tag: "Loading",
-      image:
-        "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
+      image: "",
       link: "",
     },
   );
@@ -139,33 +123,6 @@ export default function Dashboard() {
           return;
         }
       }
-
-      // Default sample products for preview
-      const sampleProducts = [
-        {
-          id: "sample_1",
-          name: "Serum Brightening",
-          price: 99000,
-          stock: 50,
-          tag: "Skincare",
-          image:
-            "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
-          link: "",
-        },
-        {
-          id: "sample_2",
-          name: "Moisturizer Glow",
-          price: 129000,
-          stock: 30,
-          tag: "Skincare",
-          image:
-            "https://images.unsplash.com/photo-1598440947619-2c35fc9aa908?w=400&h=400&fit=crop&q=80",
-          link: "",
-        },
-      ];
-      setProducts(sampleProducts);
-      setActiveFeaturedProduct(sampleProducts[0]);
-      localStorage.setItem("ai_host_products", JSON.stringify(sampleProducts));
     } catch (err) {
       console.error("Failed to load products from local storage:", err);
       setProducts([]);
@@ -173,7 +130,6 @@ export default function Dashboard() {
     }
   }, []);
 
-  // Sync products state to localStorage
   useEffect(() => {
     if (products.length > 0) {
       localStorage.setItem("ai_host_products", JSON.stringify(products));
@@ -183,59 +139,9 @@ export default function Dashboard() {
   const [currentLiveVideoUrl, setCurrentLiveVideoUrl] = useState<string | null>(
     null,
   );
-  const [aiWorkerStatus, setAiWorkerStatus] = useState<
-    "unknown" | "online" | "offline" | "error"
-  >("unknown");
-  const [runpodStatus, setRunpodStatus] = useState("UNKNOWN");
-  const [runpodBusy, setRunpodBusy] = useState(false);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    {
-      id: "1",
-      sender: "Siti Nurhayati",
-      isAi: false,
-      avatarColor: "bg-pink-400",
-      text: "Serum ini untuk kulit berminyak bisa kak?",
-      time: "10:21",
-    },
-    {
-      id: "2",
-      sender: "AI Host",
-      isAi: true,
-      avatarColor: "bg-[#4148e2]",
-      text: "Bisa banget kak! Serum ini ringan, tidak menyumbat pori-pori dan cocok untuk semua jenis kulit ✨",
-      time: "10:21",
-    },
-    {
-      id: "3",
-      sender: "Dewi Anggraini",
-      isAi: false,
-      avatarColor: "bg-orange-400",
-      text: "Ada diskon hari ini?",
-      time: "10:22",
-    },
-    {
-      id: "4",
-      sender: "AI Host",
-      isAi: true,
-      avatarColor: "bg-[#4148e2]",
-      text: "Ada promo spesial hari ini kak! Diskon 20% khusus pembelian sekarang saja 🎁",
-      time: "10:22",
-    },
-    {
-      id: "5",
-      sender: "Bagas",
-      isAi: false,
-      avatarColor: "bg-emerald-400",
-      text: "Cara belinya gimana kak?",
-      time: "10:22",
-    },
-  ]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [inputChat, setInputChat] = useState("");
   const [isAiAutoReplyOn, setIsAiAutoReplyOn] = useState(true);
-  const [isSoundOn, setIsSoundOn] = useState(true);
-  const [showPromoBanner, setShowPromoBanner] = useState(true);
-
-  // STEP 5: Go Live & Control Center State
   const [connectMode, setConnectMode] = useState<"1CLICK" | "MANUAL">("1CLICK");
   const [connectedAccount, setConnectedAccount] = useState<{
     platform: string;
@@ -271,8 +177,6 @@ export default function Dashboard() {
   const [oauthConfigStatus, setOauthConfigStatus] = useState<
     Record<string, boolean>
   >({});
-
-  // Handle OAuth 2.0 redirect callback
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -314,7 +218,6 @@ export default function Dashboard() {
     }
   }, []);
 
-  // Load OAuth config status
   useEffect(() => {
     fetch("/api/oauth/config-status")
       .then((r) => r.json())
@@ -332,7 +235,6 @@ export default function Dashboard() {
       .catch(() => {});
   }, []);
 
-  // Synchronize OAuth Profile with selectedPlatform
   useEffect(() => {
     fetch(`/api/oauth/profile/${encodeURIComponent(selectedPlatform)}`)
       .then((res) => res.json())
@@ -346,8 +248,6 @@ export default function Dashboard() {
       })
       .catch(() => {});
   }, [selectedPlatform]);
-
-  // App Mode Switcher: 24/7 Live Stream Studio vs AI Short Video Ads Generator
   const [appMode, setAppMode] = useState<"LIVE_STUDIO" | "VIDEO_GENERATOR">(
     "LIVE_STUDIO",
   );
@@ -369,8 +269,6 @@ export default function Dashboard() {
   const [renderProgress, setRenderProgress] = useState(0);
   const [hasRenderedVideo, setHasRenderedVideo] = useState(false);
   const videoPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Live Metrics (Starts clean, grows dynamically as live is active)
   const [metrics, setMetrics] = useState({
     viewers: 0,
     comments: 0,
@@ -382,7 +280,6 @@ export default function Dashboard() {
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
-  // Toast Helper
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
@@ -390,13 +287,10 @@ export default function Dashboard() {
 
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // TTS Audio playback helper (tidak merender video ulang)
   const speakText = async (
     text: string,
     opts?: { voice?: string; lang?: string; tone?: string; avatar?: string },
   ) => {
-    if (!isSoundOn || !text.trim()) return;
-
     try {
       const res = await fetch("/api/tts/synthesize", {
         method: "POST",
@@ -487,40 +381,6 @@ export default function Dashboard() {
     }
   };
 
-  const handleRunpodControl = async (action: "start" | "stop") => {
-    setRunpodBusy(true);
-    try {
-      const response = await fetch(`/api/runpod/${action}`, { method: "POST" });
-      const payload = await response.json();
-      if (!response.ok || !payload.success) {
-        throw new Error(payload.error || "Kontrol RunPod gagal");
-      }
-      setRunpodStatus(payload.data?.desiredStatus || "UNKNOWN");
-      setAiWorkerStatus(action === "start" ? "online" : "offline");
-      showToast(
-        action === "start" ? "GPU RunPod aktif" : "GPU RunPod dimatikan",
-      );
-    } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : "Kontrol RunPod gagal",
-      );
-    } finally {
-      setRunpodBusy(false);
-    }
-  };
-
-  useEffect(() => {
-    fetch("/api/runpod/status")
-      .then((response) => response.json())
-      .then((payload) => {
-        const status = payload.data?.desiredStatus;
-        if (status) setRunpodStatus(status);
-        if (status === "RUNNING") setAiWorkerStatus("online");
-      })
-      .catch(() => {});
-  }, []);
-
-  // Live Timer Effect & Real-Time Event Simulation with Strict Duration Limit Cap
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
     if (isLiveActive && !isLivePaused) {
@@ -529,7 +389,6 @@ export default function Dashboard() {
       timer = setInterval(() => {
         setLiveSeconds((prev) => {
           const nextSec = prev + 1;
-          // STRICT DURATION LIMIT CHECK: Stop live immediately if duration reaches or exceeds selected limit
           if (nextSec >= maxAllowedSeconds) {
             setIsLiveActive(false);
             setIsLivePaused(false);
@@ -538,8 +397,6 @@ export default function Dashboard() {
             showToast(
               `⏱️ Waktu siaran telah mencapai batas durasi ${selectedDuration} Jam. Live streaming selesai!`,
             );
-
-            // 1. Send stop signal to backend DB & summary generator
             try {
               fetch("/api/live-session/stop", {
                 method: "POST",
@@ -557,8 +414,6 @@ export default function Dashboard() {
                   if (json.summary) setSessionSummary(json.summary);
                 });
             } catch {}
-
-            // 2. Terminate background FFmpeg broadcast process
             try {
               fetch("/api/live-stream/stop-broadcast", { method: "POST" });
             } catch {}
@@ -567,8 +422,6 @@ export default function Dashboard() {
           }
           return nextSec;
         });
-
-        // Organic viewer and engagement fluctuations
         if (Math.random() > 0.55) {
           const deltaViewers = Math.floor(Math.random() * 7) - 2;
           const hasNewComment = Math.random() > 0.7;
@@ -707,7 +560,6 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [isLiveActive, isLivePaused]);
 
-  // Scroll Chat to bottom on message
   useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop =
@@ -729,16 +581,12 @@ export default function Dashboard() {
     return `${h}:${m}:${s}`;
   };
 
-  // Audio Speech Synthesis Engine for Step 2 Voice Testing
-  const audioUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-
   const handlePlayAudioPreview = async (
     _voice: string = selectedVoice,
     _lang: string = selectedLang,
     tone: string = selectedTone,
     speed: number = speechSpeed,
   ) => {
-    // If currently playing, stop it
     if (isPlayingAudio) {
       if (currentAudioRef.current) {
         currentAudioRef.current.pause();
@@ -750,46 +598,12 @@ export default function Dashboard() {
       return;
     }
 
-    // Generate dynamic preview text based on tone, avatar, and active product
-    let previewText = "";
-    const prodName =
-      activeFeaturedProduct?.name &&
-      activeFeaturedProduct.name !== "Memuat Produk..."
-        ? activeFeaturedProduct.name
-        : "Produk";
-
-    switch (tone) {
-      case "Persuasif":
-        previewText = `Halo semuanya! Selamat datang di live streaming kita hari ini. Kenalin, ${prodName} ini formulanya super ringan dan lagi ada promo potongan harga khusus live!`;
-        break;
-      case "Energetic":
-        previewText = `Hai guys yang baru gabung! Jangan sampai kelewatan ya, ${prodName} lagi diskon gila-gilaan, yuk langsung checkout di keranjang kuning sekarang!`;
-        break;
-      case "FOMO":
-        previewText = `Perhatian kakak-kakak! Stok ${prodName} tinggal 15 botol lagi! Voucher diskon cuma berlaku 5 menit ini aja, buruan amankan sebelum kehabisan!`;
-        break;
-      case "Professional":
-        previewText = `Selamat datang. ${prodName} diformulasikan dengan standar klinis dan teruji BPOM untuk memberikan hasil terbaik dan aman bagi Anda.`;
-        break;
-      case "Casual":
-      default:
-        previewText = `Halo bestie! Asik banget kalian udah mampir. Buat yang mau tanya-tanya tentang ${prodName}, langsung ketik di kolom komentar ya!`;
-        break;
-    }
-
-    setAudioPreviewText(previewText);
     setIsPlayingAudio(true);
     setIsAvatarSpeaking(true);
-
-    // Pre-live never calls TTS — it just plays a pre-recorded template file
-    // per avatar+tone (e.g. /voice-templates/namira_fomo.mp3), falling back
-    // to a generic per-avatar/global template if that combo isn't recorded yet.
     const toneSlug: Record<string, string> = {
-      Persuasif: "persuasif",
       Energetic: "energetik",
       FOMO: "fomo",
       Professional: "professional",
-      Casual: "casual",
     };
     const avatarSlug = selectedAvatar.name.toLowerCase();
     const candidates = [
@@ -835,7 +649,6 @@ export default function Dashboard() {
     }
   };
 
-  // STEP 3: Platform Selection with Ingest URL Auto-Preset
   const handlePlatformSelect = (platName: string) => {
     setSelectedPlatform(platName);
     if (platName.toLowerCase().includes("custom")) {
@@ -857,7 +670,6 @@ export default function Dashboard() {
     showToast(`🎯 Platform siaran dipilih: ${platName}`);
   };
 
-  // STEP 3: Fetch Dynamic Live Sales Script from RAG Backend
   const handleFetchLiveSalesScript = async () => {
     setShowScriptModal(true);
     setIsLoadingLiveScript(true);
@@ -897,7 +709,6 @@ export default function Dashboard() {
     }
   };
 
-  // Handle Add Product with Database Persistence & RAG Knowledge Base
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (
@@ -998,7 +809,6 @@ export default function Dashboard() {
     showToast("✨ Produk & RAG Knowledge Base berhasil disimpan ke Database!");
   };
 
-  // Handle Edit Product
   const handleSaveEditProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProductForEdit) return;
@@ -1179,142 +989,46 @@ export default function Dashboard() {
     await handleGenerateAvatarVideo(fullScript);
   };
 
-  // Handle Send Chat with Backend AI Sales Brain Integration
-  const handleSendChat = async (e: React.FormEvent) => {
+  const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
+
     if (!inputChat.trim()) return;
 
+    const now = new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    // Tampilkan komen yang diketik
     const userMsg: ChatMessage = {
       id: String(Date.now()),
       sender: "Anda (Penonton)",
       isAi: false,
       avatarColor: "bg-blue-500",
       text: inputChat,
-      time: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
+      time: now,
     };
 
     setChatMessages((prev) => [...prev, userMsg]);
-    const currentInput = inputChat;
+
     setInputChat("");
 
-    if (isAiAutoReplyOn) {
-      setIsAvatarSpeaking(true);
-      let aiReplyText = "";
+    if (!isAiAutoReplyOn) return;
 
-      try {
-        const res = await fetch("/api/chat-stream", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            comment: currentInput,
-            activeProduct: activeFeaturedProduct,
-            avatarName: selectedAvatar.id,
-            tone: selectedTone,
-            voice: selectedVoice,
-            mode: "3D",
-            avatarImagePath: selectedAvatar.image,
-          }),
-        });
+    const replyText =
+      "Halo semuanya, selamat datang kembali hari ini kita akan membahas hal yang super seru!";
 
-        if (res.ok) {
-          const json = await res.json();
-          if (json.data) {
-            aiReplyText = json.data.speech;
-            // Detect GPU worker status from videoUrl
-            const rawVideoUrl: string | null = json.data.videoUrl ?? null;
-            const isFallbackUrl =
-              !rawVideoUrl ||
-              rawVideoUrl.includes("pexels.com") ||
-              rawVideoUrl.includes("mixkit.co") ||
-              rawVideoUrl.includes("unsplash.com");
+    const aiMsg: ChatMessage = {
+      id: String(Date.now() + 1),
+      sender: `AI Host (${selectedAvatar.name})`,
+      isAi: true,
+      avatarColor: "bg-[#4148e2]",
+      text: replyText,
+      time: now,
+    };
 
-            if (rawVideoUrl && !isFallbackUrl) {
-              // Real GPU-rendered video from RunPod worker
-              setCurrentLiveVideoUrl(rawVideoUrl);
-              if (aiWorkerStatus !== "online") {
-                setAiWorkerStatus("online");
-                showToast(
-                  "🚀 AI Worker GPU aktif — AI Host tampil photorealistic!",
-                );
-              }
-            } else {
-              // Fallback URL = RunPod worker offline/unavailable
-              if (aiWorkerStatus === "unknown") {
-                setAiWorkerStatus("offline");
-                showToast(
-                  "⚠️ AI Worker GPU belum aktif — AI Host tampil mode foto statis.",
-                );
-              }
-            }
-
-            const audioBase64 = json.data.audio?.audioBase64;
-            if (audioBase64 && isSoundOn) {
-              try {
-                const byteCharacters = atob(audioBase64);
-                const byteNumbers = new Array(byteCharacters.length);
-                for (let i = 0; i < byteCharacters.length; i++) {
-                  byteNumbers[i] = byteCharacters.charCodeAt(i);
-                }
-                const byteArray = new Uint8Array(byteNumbers);
-                const blob = new Blob([byteArray], { type: "audio/mpeg" });
-                const url = URL.createObjectURL(blob);
-                const audio = new Audio(url);
-                currentAudioRef.current = audio;
-                audio.onended = () => {
-                  setIsAvatarSpeaking(false);
-                  URL.revokeObjectURL(url);
-                };
-                audio.onerror = () => {
-                  setIsAvatarSpeaking(false);
-                  URL.revokeObjectURL(url);
-                };
-                await audio.play();
-              } catch {
-                // Audio playback fallback: speak via TTS endpoint
-                if (aiReplyText) {
-                  speakText(aiReplyText);
-                }
-              }
-            } else if (aiReplyText) {
-              speakText(aiReplyText);
-            }
-          }
-        } else {
-          // HTTP error from backend
-          setIsAvatarSpeaking(false);
-          setAiWorkerStatus("error");
-          showToast(
-            `❌ AI Host error: Backend mengembalikan status ${res.status}. Pastikan Ollama atau LLM aktif.`,
-          );
-        }
-      } catch (err: any) {
-        // Network error = backend tidak jalan
-        setIsAvatarSpeaking(false);
-        setAiWorkerStatus("error");
-        console.error("[chat-stream] request failed:", err);
-        showToast(
-          "❌ AI Host tidak dapat dijangkau — pastikan backend server berjalan di port 4000.",
-        );
-      }
-
-      if (aiReplyText) {
-        const aiMsg: ChatMessage = {
-          id: String(Date.now() + 1),
-          sender: `AI Host (${selectedAvatar.name})`,
-          isAi: true,
-          avatarColor: "bg-[#4148e2]",
-          text: aiReplyText,
-          time: new Date().toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-        };
-        setChatMessages((prev) => [...prev, aiMsg]);
-      }
-    }
+    setChatMessages((prev) => [...prev, aiMsg]);
+    handlePlayAudioPreview();
   };
 
   // Handle Copy Clipboard
@@ -1957,68 +1671,6 @@ export default function Dashboard() {
                 <div className="mb-3 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label className="mb-1 block text-[10.5px] font-semibold text-slate-300">
-                      Suara AI Neural (Voice Clone)
-                    </label>
-                    <div className="flex items-center gap-1.5">
-                      <select
-                        value={selectedVoice}
-                        onChange={(e) => {
-                          const newVoice = e.target.value;
-                          setSelectedVoice(newVoice);
-                          handlePlayAudioPreview(
-                            newVoice,
-                            selectedLang,
-                            selectedTone,
-                            speechSpeed,
-                          );
-                        }}
-                        className="w-full rounded-lg border border-[#232c42] bg-[#111827] px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-500 font-medium"
-                      >
-                        <option value="id-ID-GadisNeural">
-                          id-ID Gadis (Wanita Ramah &amp; Natural)
-                        </option>
-                        <option value="id-ID-SitiNeural">
-                          id-ID Siti (Wanita Energetik &amp; Live Host)
-                        </option>
-                        <option value="id-ID-DahliaNeural">
-                          id-ID Dahlia (Wanita Profesional &amp; Jelas)
-                        </option>
-                        <option value="id-ID-ArdiNeural">
-                          id-ID Ardi (Pria Maskulin &amp; Tegas)
-                        </option>
-                        <option value="en-US-JennyNeural">
-                          en-US Jenny (English Natural)
-                        </option>
-                        <option value="ms-MY-YasminNeural">
-                          ms-MY Yasmin (Bahasa Melayu)
-                        </option>
-                      </select>
-                      <button
-                        onClick={() =>
-                          handlePlayAudioPreview(
-                            selectedVoice,
-                            selectedLang,
-                            selectedTone,
-                            speechSpeed,
-                          )
-                        }
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-blue-500/50 bg-blue-500/10 text-blue-400 hover:bg-blue-500 hover:text-white transition active:scale-95 shadow-sm"
-                        title="Tes Suara Ini"
-                      >
-                        <svg
-                          width="12"
-                          height="12"
-                          fill="currentColor"
-                          viewBox="0 0 16 16"
-                        >
-                          <path d="M11.596 8.697l-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393z" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[10.5px] font-semibold text-slate-300">
                       Bahasa Utama
                     </label>
                     <select
@@ -2036,14 +1688,8 @@ export default function Dashboard() {
                       className="w-full rounded-lg border border-[#232c42] bg-[#111827] px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-500 font-medium"
                     >
                       <option value="Bahasa Indonesia">Bahasa Indonesia</option>
-                      <option value="English (US)">English (US)</option>
-                      <option value="Bahasa Melayu">Bahasa Melayu</option>
                     </select>
                   </div>
-                </div>
-
-                {/* Tempo / Speech Speed & Tone */}
-                <div className="mb-3 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label className="mb-1 flex items-center justify-between text-[10.5px] font-semibold text-slate-300">
                       <span>Tempo Bicara</span>
@@ -2081,19 +1727,16 @@ export default function Dashboard() {
                       ))}
                     </div>
                   </div>
+                </div>
 
+                {/* Tempo / Speech Speed & Tone */}
+                <div className="mb-3 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label className="mb-1 block text-[10.5px] font-semibold text-slate-300">
                       Gaya Bicara / Persona
                     </label>
                     <div className="grid grid-cols-3 gap-1">
-                      {[
-                        "Persuasif",
-                        "Energetic",
-                        "FOMO",
-                        "Casual",
-                        "Professional",
-                      ].map((tone) => (
+                      {["Energetic", "FOMO", "Professional"].map((tone) => (
                         <button
                           key={tone}
                           type="button"
@@ -2121,95 +1764,72 @@ export default function Dashboard() {
                       ))}
                     </div>
                   </div>
-                </div>
+                  <div className="mt-auto rounded-xl border border-blue-500/30 bg-[#111827] p-3 shadow-inner">
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() =>
+                          handlePlayAudioPreview(
+                            selectedVoice,
+                            selectedLang,
+                            selectedTone,
+                            speechSpeed,
+                          )
+                        }
+                        disabled={isSynthesizingAudio}
+                        className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:brightness-110 transition active:scale-95 shrink-0 shadow-md shadow-blue-600/30 disabled:opacity-60 disabled:cursor-wait"
+                      >
+                        {isSynthesizingAudio ? (
+                          <span className="h-3 w-3 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                        ) : isPlayingAudio ? (
+                          <span className="text-[11px]">⏸</span>
+                        ) : (
+                          <svg
+                            width="10"
+                            height="10"
+                            fill="currentColor"
+                            viewBox="0 0 16 16"
+                          >
+                            <path d="M11.596 8.697l-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393z" />
+                          </svg>
+                        )}
+                      </button>
 
-                {/* Real-time Voice Preview Waveform Box */}
-                <div className="mt-auto rounded-xl border border-blue-500/30 bg-[#111827] p-3 shadow-inner">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[10px] font-bold text-slate-300 flex items-center gap-1.5">
-                      <span>🔊</span>
-                      <span>Preview Suara Live Host</span>
-                    </span>
-                    <span className="text-[8.5px] text-emerald-400 font-mono bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20">
-                      {isSynthesizingAudio
-                        ? "Menyintesis suara..."
-                        : isPlayingAudio
-                          ? "Sedang Berbicara..."
-                          : "Siap Diputar"}
-                    </span>
-                  </div>
-
-                  {/* Speech Text Bubble */}
-                  <p className="text-[10.5px] text-slate-300 italic mb-2 line-clamp-2 bg-[#0c1221] p-2 rounded-lg border border-[#232c42]">
-                    &ldquo;{audioPreviewText}&rdquo;
-                  </p>
-
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() =>
-                        handlePlayAudioPreview(
-                          selectedVoice,
-                          selectedLang,
-                          selectedTone,
-                          speechSpeed,
-                        )
-                      }
-                      disabled={isSynthesizingAudio}
-                      className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:brightness-110 transition active:scale-95 shrink-0 shadow-md shadow-blue-600/30 disabled:opacity-60 disabled:cursor-wait"
-                    >
-                      {isSynthesizingAudio ? (
-                        <span className="h-3 w-3 rounded-full border-2 border-white/40 border-t-white animate-spin" />
-                      ) : isPlayingAudio ? (
-                        <span className="text-[11px]">⏸</span>
-                      ) : (
-                        <svg
-                          width="10"
-                          height="10"
-                          fill="currentColor"
-                          viewBox="0 0 16 16"
-                        >
-                          <path d="M11.596 8.697l-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393z" />
-                        </svg>
-                      )}
-                    </button>
-
-                    <div className="flex-1 h-5 flex items-center gap-[2.5px] overflow-hidden">
-                      {Array.from({ length: 42 }).map((_, i) => (
-                        <div
-                          key={i}
-                          className={`w-1 rounded-full transition-all duration-150 ${
-                            isSynthesizingAudio
-                              ? "bg-slate-600 animate-pulse"
-                              : isPlayingAudio || isAvatarSpeaking
-                                ? "bg-gradient-to-t from-blue-500 to-emerald-400 animate-pulse"
-                                : i < 16
-                                  ? "bg-blue-600"
-                                  : "bg-slate-700"
-                          }`}
-                          style={{
-                            height:
-                              isPlayingAudio || isAvatarSpeaking
-                                ? `${((i * 19 + 23) % 75) + 25}%`
-                                : isSynthesizingAudio
-                                  ? "35%"
-                                  : `${(i % 6) * 15 + 20}%`,
-                            animationDelay: `${(i % 8) * 0.12}s`,
-                          }}
-                        />
-                      ))}
+                      <div className="flex-1 h-5 flex items-center gap-[2.5px] overflow-hidden">
+                        {Array.from({ length: 42 }).map((_, i) => (
+                          <div
+                            key={i}
+                            className={`w-1 rounded-full transition-all duration-150 ${
+                              isSynthesizingAudio
+                                ? "bg-slate-600 animate-pulse"
+                                : isPlayingAudio || isAvatarSpeaking
+                                  ? "bg-gradient-to-t from-blue-500 to-emerald-400 animate-pulse"
+                                  : i < 16
+                                    ? "bg-blue-600"
+                                    : "bg-slate-700"
+                            }`}
+                            style={{
+                              height:
+                                isPlayingAudio || isAvatarSpeaking
+                                  ? `${((i * 19 + 23) % 75) + 25}%`
+                                  : isSynthesizingAudio
+                                    ? "35%"
+                                    : `${(i % 6) * 15 + 20}%`,
+                              animationDelay: `${(i % 8) * 0.12}s`,
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <span className="text-[9.5px] font-mono text-slate-400 shrink-0">
+                        {isSynthesizingAudio
+                          ? "..."
+                          : isPlayingAudio
+                            ? "00:04"
+                            : "00:00"}
+                      </span>
                     </div>
-                    <span className="text-[9.5px] font-mono text-slate-400 shrink-0">
-                      {isSynthesizingAudio
-                        ? "..."
-                        : isPlayingAudio
-                          ? "00:04"
-                          : "00:00"}
-                    </span>
                   </div>
                 </div>
               </div>
-
-              {/* STEP 3: Atur Live */}
               <div
                 className={`flex flex-col rounded-xl border p-4 transition ${currentStep === 3 ? "border-blue-500/60 bg-[#0c1428] ring-1 ring-blue-500/30 shadow-lg shadow-blue-900/10" : "border-[#232c42] bg-[#0c1221]"}`}
               >
@@ -2478,726 +2098,343 @@ export default function Dashboard() {
                 </div>
               </div>
             </div>
-
-            {/* ROW 2: Step 4 (Preview) and Dynamic Step 5 (Go Live / Live Control Center) */}
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.3fr_1.1fr]">
-              {/* STEP 4: Preview & Test with 3D Canvas / Photorealistic */}
               <div
-                className={`flex flex-col rounded-xl border p-4 transition ${currentStep === 4 ? "border-blue-500/60 bg-[#0c1428] ring-1 ring-blue-500/30" : "border-[#232c42] bg-[#0c1221]"}`}
+                className={`flex flex-col rounded-2xl border p-5 transition-all duration-300 ${
+                  currentStep === 4
+                    ? "border-blue-500/60 bg-[#0c1428] ring-1 ring-blue-500/30 shadow-xl shadow-blue-950/20"
+                    : "border-[#232c42] bg-[#0c1221]"
+                }`}
               >
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">
-                    STEP 4
-                  </span>
-                  <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#111827] border border-[#232c42] text-[9px] font-bold text-blue-300">
+                {/* Header Step 4 */}
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#232c42]/80 pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-md bg-blue-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-blue-400 border border-blue-500/20">
+                      STEP 4
+                    </span>
+                    <span className="text-xs font-bold text-white">
+                      Preview &amp; Test Live
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 rounded-full border border-[#232c42] bg-[#111827] px-3 py-1 text-[11px] font-medium text-slate-300">
                     <span
-                      className={`h-2 w-2 rounded-full ${isAvatarSpeaking ? "bg-emerald-400 animate-ping" : "bg-blue-400"}`}
+                      className={`h-2 w-2 rounded-full ${
+                        isAvatarSpeaking
+                          ? "bg-emerald-400 animate-ping"
+                          : "bg-blue-400"
+                      }`}
                     />
                     <span>
-                      AI Host: {selectedAvatar.name} (
-                      {selectedAvatar.role || selectedAvatar.type})
+                      Host:{" "}
+                      <strong className="text-white">
+                        {selectedAvatar.name}
+                      </strong>{" "}
+                      ({selectedAvatar.role || selectedAvatar.type})
                     </span>
                   </div>
                 </div>
-                <h3 className="mb-1 mt-1 text-lg font-bold text-white">
-                  Preview &amp; Test
-                </h3>
-                <p className="mb-3 text-xs text-slate-400">
-                  Lihat preview live dan uji performa AI Host Anda.
+
+                <p className="mt-2 mb-4 text-xs text-slate-400">
+                  Pratinjau interaktif avatar AI, simulasi live chat, dan
+                  estimasi performa siaran langsung Anda.
                 </p>
 
-                <div className="flex flex-col md:flex-row h-[340px] gap-3">
-                  {/* 1. Chat Panel */}
-                  <div className="flex w-full md:w-[170px] flex-col rounded-lg border border-[#232c42] bg-[#111827] p-2 shrink-0">
-                    <div className="mb-2 flex items-center justify-between border-b border-[#232c42] pb-2 text-[9px]">
-                      <span className="font-semibold text-slate-300">
-                        Komentar (Simulasi)
+                {/* 3-Column Layout: Chat Simulation | Video Preview Player | Summary & Revenue */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-stretch min-h-[360px]">
+                  {/* 1. Kolom Kiri: Simulasi Live Chat */}
+                  <div className="md:col-span-4 flex flex-col rounded-xl border border-[#232c42] bg-[#111827]/80 p-3">
+                    <div className="mb-2 flex items-center justify-between border-b border-[#232c42] pb-2">
+                      <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                        <span>💬</span> Live Chat
                       </span>
-                      <div
+                      <button
+                        type="button"
                         onClick={() => {
                           setIsAiAutoReplyOn(!isAiAutoReplyOn);
                           showToast(
                             `Auto-Reply: ${!isAiAutoReplyOn ? "ON" : "OFF"}`,
                           );
                         }}
-                        className="cursor-pointer text-[8px] text-blue-400 hover:underline"
+                        className={`rounded-full px-2 py-0.5 text-[9.5px] font-bold transition border ${
+                          isAiAutoReplyOn
+                            ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                            : "bg-slate-800 text-slate-400 border-slate-700"
+                        }`}
                       >
-                        {isAiAutoReplyOn ? "Auto-Reply: ON" : "Auto-Reply: OFF"}
-                      </div>
+                        Auto-Reply: {isAiAutoReplyOn ? "ON" : "OFF"}
+                      </button>
                     </div>
 
+                    {/* Chat Message Stream */}
                     <div
                       ref={chatContainerRef}
-                      className="flex-1 space-y-1.5 overflow-y-auto pr-1 text-[9px]"
+                      className="flex-1 space-y-2 overflow-y-auto pr-1 max-h-[250px] md:max-h-none scrollbar-thin scrollbar-thumb-slate-700"
                     >
-                      {chatMessages.map((msg) => (
-                        <div
-                          key={msg.id}
-                          className="rounded bg-[#161f30] p-1.5 border border-[#232c42]/50"
-                        >
-                          <div className="flex items-center justify-between mb-0.5">
-                            <span className="font-semibold text-blue-300 text-[8.5px] truncate max-w-[90px]">
-                              {msg.sender}
-                            </span>
-                            <span className="text-[7px] text-slate-500">
-                              {msg.time}
-                            </span>
-                          </div>
-                          <p className="text-slate-200 text-[8.5px] leading-tight break-words">
-                            {msg.text}
-                          </p>
+                      {chatMessages.length === 0 ? (
+                        <div className="flex h-full flex-col items-center justify-center py-8 text-center text-slate-500 text-[11px]">
+                          <span>👋 Belum ada chat simulasi</span>
+                          <span className="text-[10px] text-slate-600 mt-0.5">
+                            Ketik pesan di bawah untuk uji respons AI
+                          </span>
                         </div>
-                      ))}
+                      ) : (
+                        chatMessages.map((msg) => (
+                          <div
+                            key={msg.id}
+                            className={`rounded-xl p-2 border transition ${
+                              msg.isAi
+                                ? "bg-blue-950/40 border-blue-500/30 text-blue-100 ml-1"
+                                : "bg-[#161f30] border-[#232c42]/60 text-slate-200 mr-1"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-0.5 text-[10px]">
+                              <span
+                                className={`font-bold truncate max-w-[120px] ${
+                                  msg.isAi ? "text-blue-300" : "text-amber-300"
+                                }`}
+                              >
+                                {msg.sender}
+                              </span>
+                              <span className="text-[9px] text-slate-500 font-mono">
+                                {msg.time}
+                              </span>
+                            </div>
+                            <p className="text-[11px] leading-snug break-words">
+                              {msg.text}
+                            </p>
+                          </div>
+                        ))
+                      )}
                     </div>
 
-                    <form onSubmit={handleSendChat} className="mt-2 relative">
+                    {/* Input Chat */}
+                    <form onSubmit={handleSendChat} className="mt-2.5 relative">
                       <input
                         type="text"
-                        placeholder="Ketik komentar..."
+                        placeholder="Ketik komentar simulasi..."
                         value={inputChat}
                         onChange={(e) => setInputChat(e.target.value)}
-                        className="w-full rounded bg-[#161f30] p-1.5 pr-6 text-[9px] text-slate-200 placeholder-slate-500 outline-none border border-[#232c42] focus:border-blue-500/50"
+                        className="w-full rounded-xl bg-[#0b101e] py-2 pl-3 pr-9 text-xs text-slate-200 placeholder-slate-500 outline-none border border-[#232c42] focus:border-blue-500 transition shadow-inner"
                       />
                       <button
                         type="submit"
-                        className="absolute right-1 top-1 text-blue-400 hover:text-white px-1 text-[10px]"
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-lg bg-blue-600 text-white hover:bg-blue-500 transition text-xs active:scale-95"
+                        title="Kirim Komentar"
                       >
                         ➤
                       </button>
                     </form>
                   </div>
 
-                  {/* 2. Real-time LivePortrait Neural Stream Player */}
-                  <div className="relative aspect-[9/16] h-full mx-auto overflow-hidden rounded-xl border border-[#232c42] bg-[#0c0919] shadow-inner">
-                    <RealtimeLivePortraitView
-                      avatarName={selectedAvatar.name}
-                      avatarImage={selectedAvatar.image}
-                      avatarRole={selectedAvatar.role}
-                      isSpeaking={isAvatarSpeaking}
-                      videoUrl={currentLiveVideoUrl || undefined}
-                      onVideoEnded={() => setCurrentLiveVideoUrl(null)}
-                      soundOn={isSoundOn}
-                      isLiveActive={isLiveActive}
-                      className="w-full h-full"
-                    />
+                  {/* 2. Kolom Tengah: 9:16 Video Player Preview */}
+                  <div className="md:col-span-4 flex justify-center">
+                    <div className="relative aspect-[9/16] w-full max-w-[210px] h-full min-h-[340px] overflow-hidden rounded-2xl border-2 border-[#232c42] bg-[#0c0919] shadow-2xl">
+                      <RealtimeLivePortraitView
+                        avatarName={selectedAvatar.name}
+                        avatarImage={selectedAvatar.image}
+                        avatarRole={selectedAvatar.role}
+                        isSpeaking={isAvatarSpeaking}
+                        videoUrl={currentLiveVideoUrl || undefined}
+                        onVideoEnded={() => setCurrentLiveVideoUrl(null)}
+                        isLiveActive={isLiveActive}
+                        className="w-full h-full object-cover"
+                      />
 
-                    {/* Premium Top Status Bar */}
-                    <div className="absolute top-2 left-2 right-2 z-20 flex items-center justify-between pointer-events-none gap-2">
-                      {/* Live/Preview Badge */}
-                      <div className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-black/80 px-3 py-1.5 text-[9px] font-bold text-white backdrop-blur-xl border border-white/10 shadow-[0_0_20px_rgba(0,0,0,0.5)]">
-                        <span
-                          className={`h-2 w-2 rounded-full ${isLiveActive && !isLivePaused ? "bg-red-500 animate-ping shadow-[0_0_10px_rgba(239,68,68,0.9)]" : "bg-cyan-400 animate-pulse shadow-[0_0_10px_rgba(34,211,238,0.7)]"}`}
-                        />
-                        <span
-                          className={`font-mono tracking-wider ${isLiveActive ? "text-red-300" : "text-cyan-300"}`}
-                        >
-                          {isLiveActive
-                            ? isLivePaused
-                              ? "PAUSED"
-                              : "LIVE"
-                            : "PREVIEW"}
-                        </span>
-                        {isLiveActive && (
-                          <>
-                            <span className="text-slate-500 font-normal">
-                              |
-                            </span>
-                            <span className="font-mono text-slate-200">
-                              {formatTime(liveSeconds)}
-                            </span>
-                            <span className="text-slate-500 font-normal">
-                              /
-                            </span>
-                            <span className="font-mono text-slate-400">
-                              {selectedDuration} Jam
-                            </span>
-                          </>
-                        )}
-                      </div>
-
-                      {/* AI Worker + RunPod Status Cluster */}
-                      <div className="pointer-events-auto flex items-center gap-1.5">
-                        {/* AI Worker Status */}
-                        <div
-                          className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[8.5px] font-semibold backdrop-blur-xl border shadow ${
-                            aiWorkerStatus === "online"
-                              ? "bg-black/80 text-emerald-400 border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.25)]"
-                              : aiWorkerStatus === "offline"
-                                ? "bg-black/80 text-amber-400 border-amber-500/40"
-                                : aiWorkerStatus === "error"
-                                  ? "bg-black/80 text-red-400 border-red-500/40"
-                                  : "bg-black/80 text-slate-400 border-white/10"
-                          }`}
-                        >
+                      {/* Top Header Badge Overlay */}
+                      <div className="absolute top-2.5 left-2 right-2 z-20 flex items-center justify-between gap-1 pointer-events-none">
+                        {/* Live / Preview Tag */}
+                        <div className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-black/80 px-2.5 py-1 text-[9px] font-bold text-white backdrop-blur-md border border-white/10 shadow-lg">
                           <span
                             className={`h-1.5 w-1.5 rounded-full ${
-                              aiWorkerStatus === "online"
-                                ? "bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.8)]"
-                                : aiWorkerStatus === "offline"
-                                  ? "bg-amber-400"
-                                  : aiWorkerStatus === "error"
-                                    ? "bg-red-400 animate-ping"
-                                    : "bg-slate-500"
+                              isLiveActive && !isLivePaused
+                                ? "bg-red-500 animate-ping"
+                                : "bg-cyan-400 animate-pulse"
                             }`}
                           />
-                          <span className="font-bold text-white">
+                          <span
+                            className={`font-mono tracking-wider ${
+                              isLiveActive ? "text-red-300" : "text-cyan-300"
+                            }`}
+                          >
+                            {isLiveActive
+                              ? isLivePaused
+                                ? "PAUSED"
+                                : "LIVE"
+                              : "PREVIEW"}
+                          </span>
+                        </div>
+
+                        {/* Avatar Worker Status */}
+                        <div
+                          className={`pointer-events-auto flex items-center gap-1.5 rounded-full px-2 py-1 text-[9px] font-semibold backdrop-blur-md border`}
+                        >
+                          <span className="truncate max-w-[70px]">
                             {selectedAvatar.name}
                           </span>
-                          <span className="text-slate-500">•</span>
-                          <span className="font-mono">
-                            {aiWorkerStatus === "online"
-                              ? "GPU Live ✓"
-                              : aiWorkerStatus === "offline"
-                                ? "Foto Statis"
-                                : aiWorkerStatus === "error"
-                                  ? "Error!"
-                                  : "Menunggu..."}
-                          </span>
-                        </div>
-
-                        {/* RunPod Status Badge */}
-                        <div
-                          className={`flex items-center gap-1.5 rounded-full px-2 py-1.5 text-[8px] font-mono backdrop-blur-xl border shadow ${
-                            runpodStatus === "RUNNING"
-                              ? "bg-black/80 text-emerald-300 border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.2)]"
-                              : runpodStatus === "STOPPED"
-                                ? "bg-black/80 text-slate-400 border-white/10"
-                                : "bg-black/80 text-amber-300 border-amber-500/30"
-                          }`}
-                        >
-                          <span
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              runpodStatus === "RUNNING"
-                                ? "bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.8)]"
-                                : runpodStatus === "STOPPED"
-                                  ? "bg-slate-500"
-                                  : "bg-amber-400 animate-pulse"
-                            }`}
-                          />
-                          <span>RTX 4090</span>
-                          <span className="text-slate-500">|</span>
-                          <span>{runpodStatus}</span>
-                          <button
-                            type="button"
-                            disabled={runpodBusy || isLiveActive}
-                            onClick={() =>
-                              handleRunpodControl(
-                                runpodStatus === "RUNNING" ? "stop" : "start",
-                              )
-                            }
-                            className="ml-0.5 rounded bg-white/10 px-1.5 py-0.5 text-[7.5px] text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40 transition-all"
-                            title={
-                              isLiveActive
-                                ? "RunPod dikontrol otomatis selama live"
-                                : "Kontrol daya RunPod"
-                            }
-                          >
-                            {runpodBusy
-                              ? "..."
-                              : runpodStatus === "RUNNING"
-                                ? "OFF"
-                                : "ON"}
-                          </button>
                         </div>
                       </div>
-                    </div>
 
-                    {/* Product Overlay on Video — Always show when product exists */}
-                    {activeFeaturedProduct &&
-                      activeFeaturedProduct.name &&
-                      activeFeaturedProduct.name !== "Memuat Produk..." && (
-                        <div
-                          className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none"
-                          style={{
-                            background:
-                              "linear-gradient(to top, rgba(5,3,15,0.98) 0%, rgba(5,3,15,0.88) 60%, transparent 100%)",
-                            padding: "14px 12px 10px",
-                          }}
-                        >
-                          {/* Platform header with stock urgency */}
-                          <div className="flex items-center justify-between mb-2">
-                            <span
-                              className={`text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full ${selectedPlatform === "TikTok LIVE" ? "bg-yellow-400/15 text-yellow-400 border border-yellow-400/40 shadow-[0_0_10px_rgba(250,204,21,0.2)]" : selectedPlatform === "Shopee Live" ? "bg-orange-500/15 text-orange-400 border border-orange-400/40" : selectedPlatform === "Instagram Live" ? "bg-purple-500/15 text-purple-300 border border-purple-400/40" : "bg-blue-500/15 text-blue-400 border border-blue-400/40"}`}
-                            >
-                              {selectedPlatform === "TikTok LIVE"
-                                ? "🛒 Keranjang Kuning"
-                                : selectedPlatform === "Shopee Live"
-                                  ? "🏷️ Flash Sale"
-                                  : selectedPlatform === "Instagram Live"
-                                    ? "💜 IG Shop"
+                      {/* Bottom Product Card Overlay */}
+                      {activeFeaturedProduct?.name &&
+                        activeFeaturedProduct.name !== "Memuat Produk..." && (
+                          <div
+                            className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none p-2.5 pt-6"
+                            style={{
+                              background:
+                                "linear-gradient(to top, rgba(5,3,15,0.95) 0%, rgba(5,3,15,0.75) 65%, transparent 100%)",
+                            }}
+                          >
+                            {/* Platform Pill & Stock */}
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span
+                                className={`text-[8.5px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${
+                                  selectedPlatform === "TikTok LIVE"
+                                    ? "bg-yellow-400/20 text-yellow-300 border-yellow-400/40"
+                                    : selectedPlatform === "Shopee Live"
+                                      ? "bg-orange-500/20 text-orange-300 border-orange-400/40"
+                                      : "bg-blue-500/20 text-blue-300 border-blue-400/40"
+                                }`}
+                              >
+                                {selectedPlatform === "TikTok LIVE"
+                                  ? "🛒 Keranjang"
+                                  : selectedPlatform === "Shopee Live"
+                                    ? "🏷️ Flash Sale"
                                     : "🛒 Toko Live"}
-                            </span>
-                            <div className="flex items-center gap-1.5">
-                              {(activeFeaturedProduct.stock || 0) <= 10 && (
-                                <span className="text-[7px] font-black text-red-400 bg-red-500/15 px-1.5 py-0.5 rounded-full border border-red-500/40 animate-pulse">
-                                  STOK HABIS
-                                </span>
-                              )}
-                              <span className="text-[8px] text-slate-400 font-mono">
+                              </span>
+                              <span className="text-[9px] font-mono text-slate-300 bg-black/50 px-1.5 py-0.2 rounded border border-white/10">
                                 Sisa: {activeFeaturedProduct.stock || 0} pcs
                               </span>
                             </div>
-                          </div>
 
-                          {/* Product row */}
-                          <div className="flex items-center gap-2.5">
-                            <div className="relative shrink-0">
-                              {activeFeaturedProduct.image && (
-                                <img
-                                  src={
-                                    activeFeaturedProduct.image.startsWith(
-                                      "http",
-                                    ) ||
-                                    activeFeaturedProduct.image.startsWith("/")
-                                      ? activeFeaturedProduct.image
-                                      : "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80"
-                                  }
-                                  alt={activeFeaturedProduct.name}
-                                  className="h-14 w-14 rounded-xl object-cover border border-white/20 shadow-[0_0_15px_rgba(0,0,0,0.5)]"
-                                />
-                              )}
-                              <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-br from-yellow-400/20 to-orange-500/20 -z-10 blur-sm" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-[11px] font-bold text-white truncate leading-tight drop-shadow-lg">
-                                {activeFeaturedProduct.name}
-                              </p>
-                              <div className="flex items-baseline gap-1.5 mt-1">
-                                <p className="text-[13px] font-black text-emerald-400 leading-none drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
+                            {/* Product Info Row */}
+                            <div className="flex items-center gap-2 rounded-xl bg-black/60 p-1.5 border border-white/10 backdrop-blur-md">
+                              <img
+                                src={
+                                  activeFeaturedProduct.image?.startsWith(
+                                    "http",
+                                  ) ||
+                                  activeFeaturedProduct.image?.startsWith("/")
+                                    ? activeFeaturedProduct.image
+                                    : "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80"
+                                }
+                                alt={activeFeaturedProduct.name}
+                                className="h-9 w-9 shrink-0 rounded-lg object-cover border border-white/20"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[10px] font-bold text-white truncate leading-tight">
+                                  {activeFeaturedProduct.name}
+                                </p>
+                                <p className="text-[10.5px] font-black text-emerald-400 mt-0.5 leading-none">
                                   {typeof activeFeaturedProduct.price ===
                                   "number"
                                     ? `Rp${activeFeaturedProduct.price.toLocaleString("id-ID")}`
                                     : activeFeaturedProduct.price}
                                 </p>
                               </div>
-                              <div className="flex items-center gap-1 mt-1">
-                                <span className="text-[8px] text-yellow-400">
-                                  ★★★★★
-                                </span>
-                                <span className="text-[7.5px] text-slate-400">
-                                  {Math.floor(
-                                    (activeFeaturedProduct.stock || 50) * 8,
-                                  )}
-                                  + Terjual
-                                </span>
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              className={`shrink-0 rounded-xl px-4 py-2.5 text-[11px] font-black leading-tight text-center transition-all duration-200 active:scale-95 hover:brightness-110 hover:shadow-xl ${
-                                selectedPlatform === "Instagram Live"
-                                  ? "bg-gradient-to-br from-pink-500 via-purple-500 to-indigo-600 text-white shadow-lg shadow-purple-500/30"
-                                  : selectedPlatform === "TikTok LIVE"
-                                    ? "bg-gradient-to-br from-yellow-300 to-amber-500 text-black shadow-lg shadow-amber-500/30"
-                                    : selectedPlatform === "Shopee Live"
-                                      ? "bg-gradient-to-br from-orange-400 to-red-600 text-white shadow-lg shadow-orange-500/30"
-                                      : "bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-lg shadow-blue-500/30"
-                              }`}
-                            >
-                              {selectedPlatform === "Instagram Live"
-                                ? "💬 DM"
-                                : selectedPlatform === "TikTok LIVE"
-                                  ? "🛒 Beli"
-                                  : selectedPlatform === "Shopee Live"
-                                    ? "🛍️ Shopee"
-                                    : "🛒 Beli"}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                    {/* Original Promo Banner Toggle */}
-                    {showPromoBanner && false && (
-                      <div
-                        className="absolute bottom-0 left-0 right-0 z-20 animate-fadeIn"
-                        style={{
-                          background:
-                            "linear-gradient(to top, rgba(5,3,15,0.98) 0%, rgba(5,3,15,0.85) 75%, transparent 100%)",
-                          padding: "12px 10px 8px",
-                        }}
-                      >
-                        {/* Platform header label */}
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span
-                            className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${
-                              selectedPlatform === "TikTok LIVE"
-                                ? "bg-yellow-400/15 text-yellow-400 border border-yellow-400/40"
-                                : selectedPlatform === "Shopee Live"
-                                  ? "bg-orange-500/15 text-orange-400 border border-orange-400/40"
-                                  : selectedPlatform === "Instagram Live"
-                                    ? "bg-pink-500/15 text-pink-400 border border-pink-400/40"
-                                    : "bg-blue-500/15 text-blue-400 border border-blue-400/40"
-                            }`}
-                          >
-                            {selectedPlatform === "TikTok LIVE"
-                              ? "🛒 Keranjang Kuning"
-                              : selectedPlatform === "Shopee Live"
-                                ? "🏷️ Flash Sale"
-                                : selectedPlatform === "Instagram Live"
-                                  ? "💜 IG Shop"
-                                  : "🛒 Toko Live"}
-                          </span>
-                          <span className="text-[8px] text-slate-400 font-mono">
-                            Sisa: {activeFeaturedProduct.stock} pcs
-                          </span>
-                        </div>
-
-                        {/* Main product row */}
-                        <div className="flex items-center gap-2.5">
-                          {/* Product thumbnail */}
-                          <div className="relative shrink-0">
-                            <img
-                              src={
-                                activeFeaturedProduct.image?.startsWith(
-                                  "http",
-                                ) ||
-                                activeFeaturedProduct.image?.startsWith("/") ||
-                                activeFeaturedProduct.image?.startsWith("data:")
-                                  ? activeFeaturedProduct.image
-                                  : "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80"
-                              }
-                              alt={activeFeaturedProduct.name}
-                              className="h-12 w-12 rounded-lg object-cover border border-white/20 shadow-md"
-                            />
-                            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[7px] font-black px-1 rounded-full shadow">
-                              -30%
-                            </span>
-                          </div>
-
-                          {/* Product info */}
-                          <div className="flex-1 min-w-0">
-                            <p className="text-[11px] font-bold text-white truncate leading-tight">
-                              {activeFeaturedProduct.name}
-                            </p>
-                            <div className="flex items-baseline gap-1.5 mt-0.5">
-                              <p className="text-[12px] font-black text-emerald-400 leading-none">
-                                {activeFeaturedProduct.price}
-                              </p>
-                              <p className="text-[8.5px] text-slate-500 line-through">
-                                Rp
-                                {(
-                                  Number(
-                                    typeof activeFeaturedProduct.price ===
-                                      "number"
-                                      ? activeFeaturedProduct.price
-                                      : parseInt(
-                                          String(
-                                            activeFeaturedProduct.price,
-                                          ).replace(/[^0-9]/g, ""),
-                                        ) || 99000,
-                                  ) * 1.3
-                                ).toLocaleString("id-ID")}
-                              </p>
                             </div>
                           </div>
-
-                          {/* CTA Button */}
-                          <button
-                            type="button"
-                            onClick={() =>
-                              showToast(
-                                `Simulasi Checkout ${selectedPlatform}: ${activeFeaturedProduct.name}`,
-                              )
-                            }
-                            className={`shrink-0 rounded-lg px-3 py-1.5 text-[10px] font-black leading-tight text-center transition active:scale-95 shadow-md ${
-                              selectedPlatform === "TikTok LIVE"
-                                ? "bg-gradient-to-b from-yellow-300 to-amber-500 text-black hover:brightness-110"
-                                : selectedPlatform === "Shopee Live"
-                                  ? "bg-gradient-to-b from-orange-400 to-red-600 text-white hover:brightness-110"
-                                  : selectedPlatform === "Instagram Live"
-                                    ? "bg-gradient-to-b from-pink-500 via-purple-500 to-indigo-600 text-white hover:brightness-110"
-                                    : "bg-gradient-to-b from-blue-500 to-blue-700 text-white hover:brightness-110"
-                            }`}
-                          >
-                            {selectedPlatform === "TikTok LIVE"
-                              ? "🛒 Beli"
-                              : selectedPlatform === "Shopee Live"
-                                ? "🛍️ Shopee"
-                                : selectedPlatform === "Instagram Live"
-                                  ? "💬 DM"
-                                  : "🛒 Beli"}
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                        )}
+                    </div>
                   </div>
 
-                  {/* 3. Ringkasan Step 4 & Dynamic Performance Estimation */}
-                  <div className="flex w-full md:w-[140px] flex-col gap-2 shrink-0">
+                  {/* 3. Kolom Kanan: Ringkasan Siaran & Estimasi Omzet */}
+                  <div className="md:col-span-4 flex flex-col justify-between rounded-xl border border-[#232c42] bg-[#111827]/80 p-3.5">
                     <div>
-                      <p className="mb-2 text-[10px] font-semibold text-slate-300">
-                        Ringkasan Live
+                      <p className="text-xs font-bold text-white mb-3 flex items-center gap-1.5 border-b border-[#232c42] pb-2">
+                        <span>📋</span> Ringkasan Konfigurasi
                       </p>
-                      <div className="space-y-2 text-[9px]">
-                        <div className="flex items-start gap-1.5">
-                          <span className="text-slate-400 text-xs">⏱️</span>
-                          <div>
-                            <p className="text-slate-500 leading-none">
-                              Durasi
-                            </p>
-                            <p className="font-medium text-slate-200 mt-0.5">
-                              {selectedDuration} Jam
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-start gap-1.5">
-                          <span className="text-slate-400 text-xs">🛍️</span>
-                          <div>
-                            <p className="text-slate-500 leading-none">
-                              Produk
-                            </p>
-                            <p className="font-medium text-slate-200 mt-0.5">
-                              {products.length} Produk
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-start gap-1.5">
-                          <span className="text-slate-400 text-xs">📱</span>
-                          <div>
-                            <p className="text-slate-500 leading-none">
-                              Platform
-                            </p>
-                            <p className="font-medium text-slate-200 mt-0.5">
-                              {selectedPlatform}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-start gap-1.5">
-                          <span className="text-slate-400 text-xs">👤</span>
-                          <div>
-                            <p className="text-slate-500 leading-none">
-                              AI Host
-                            </p>
-                            <p className="font-medium text-slate-200 mt-0.5">
-                              {selectedAvatar.name} ({selectedTone})
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setCurrentStep(3)}
-                        className="mt-2 w-full rounded border border-[#232c42] bg-[#111827] py-1 text-[9px] font-medium text-slate-300 hover:bg-white/5 transition"
-                      >
-                        Ubah Pengaturan
-                      </button>
-                    </div>
 
-                    {/* DYNAMIC PERFORMANCE & REVENUE ESTIMATION */}
-                    <div className="mt-auto border-t border-[#232c42] pt-2">
-                      <p className="mb-1 text-[10px] font-semibold text-slate-300 flex items-center gap-1">
-                        <span>📊</span>
-                        <span>Estimasi Hasil</span>
-                      </p>
-                      <div className="space-y-1.5 text-[9px]">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-blue-400">👁️</span>
-                          <div>
-                            <p className="text-slate-500 leading-tight">
-                              Est. Viewers
-                            </p>
-                            <p className="font-medium text-slate-200 font-mono">
-                              {selectedDuration <= 2
-                                ? "850 - 1.600"
-                                : selectedDuration <= 8
-                                  ? "3.200 - 6.500"
-                                  : "12.000 - 28.000"}
-                            </p>
-                          </div>
+                      <div className="space-y-2.5 text-[11px]">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400 flex items-center gap-1">
+                            ⏱️ Durasi
+                          </span>
+                          <span className="font-semibold text-white">
+                            {selectedDuration} Jam
+                          </span>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-emerald-400">💰</span>
-                          <div>
-                            <p className="text-slate-500 leading-tight">
-                              Potensi Omzet
-                            </p>
-                            <p className="font-bold text-emerald-400 font-mono">
-                              {(() => {
-                                const numP =
-                                  typeof activeFeaturedProduct.price ===
-                                  "number"
-                                    ? activeFeaturedProduct.price
-                                    : parseInt(
-                                        String(
-                                          activeFeaturedProduct.price,
-                                        ).replace(/[^0-9]/g, ""),
-                                      ) || 99000;
-                                const minU =
-                                  selectedDuration <= 2
-                                    ? 12
-                                    : selectedDuration <= 8
-                                      ? 45
-                                      : 160;
-                                const maxU =
-                                  selectedDuration <= 2
-                                    ? 30
-                                    : selectedDuration <= 8
-                                      ? 110
-                                      : 420;
-                                return `Rp${((numP * minU) / 1000000).toFixed(1)}jt - Rp${((numP * maxU) / 1000000).toFixed(1)}jt`;
-                              })()}
-                            </p>
-                          </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400 flex items-center gap-1">
+                            🛍️ Total Produk
+                          </span>
+                          <span className="font-semibold text-white">
+                            {products.length} Item
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400 flex items-center gap-1">
+                            📱 Platform
+                          </span>
+                          <span className="font-semibold text-blue-400">
+                            {selectedPlatform}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400 flex items-center gap-1">
+                            👤 AI Host
+                          </span>
+                          <span className="font-semibold text-slate-200">
+                            {selectedAvatar.name}{" "}
+                            <span className="text-purple-300 font-normal">
+                              ({selectedTone})
+                            </span>
+                          </span>
                         </div>
                       </div>
                     </div>
-                  </div>
-                </div>
 
-                {/* Bottom Action Toolbar */}
-                <div className="mt-4 flex flex-wrap justify-between gap-2 border-t border-[#232c42] pt-3 text-[10px] font-medium text-slate-400">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const nextIdx =
-                        (products.findIndex(
-                          (p) =>
-                            (p.id || p.name) ===
-                            (activeFeaturedProduct.id ||
-                              activeFeaturedProduct.name),
-                        ) +
-                          1) %
-                        products.length;
-                      const nextProd = products[nextIdx];
-                      setActiveFeaturedProduct(nextProd);
-                      showToast(`🎯 Produk sorotan diganti: ${nextProd.name}`);
+                    {/* Estimasi Hasil Live (Viewers & Omzet) */}
+                    <div className="mt-4 pt-3 border-t border-[#232c42] rounded-xl bg-gradient-to-br from-blue-950/30 to-[#0c1221] p-3 border border-blue-500/20">
+                      <p className="text-xs font-bold text-slate-200 mb-2 flex items-center gap-1.5">
+                        <span>📊</span> Proyeksi Hasil Siaran
+                      </p>
 
-                      // Announce switch in chat simulation
-                      const switchMsg: ChatMessage = {
-                        id: String(Date.now()),
-                        sender: `AI Host (${selectedAvatar.name})`,
-                        isAi: true,
-                        avatarColor: "bg-[#4148e2]",
-                        text: `Sekarang kita beralih ke ${nextProd.name} ya kakak! Harganya spesial cuma ${nextProd.price}! Yuk dicek keranjang kuningnya! ✨`,
-                        time: new Date().toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        }),
-                      };
-                      setChatMessages((prev) => [...prev, switchMsg]);
-                      if (isSoundOn) {
-                        speakText(switchMsg.text);
-                      }
-                    }}
-                    className="flex items-center gap-1.5 hover:text-white transition active:scale-95"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                      ></path>
-                    </svg>
-                    Ganti Produk
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      showToast(
-                        `📌 Produk "${activeFeaturedProduct.name}" berhasil disematkan di live!`,
-                      )
-                    }
-                    className="flex items-center gap-1.5 hover:text-white transition active:scale-95"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                      ></path>
-                    </svg>
-                    Pin Produk
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowPromoBanner(!showPromoBanner);
-                      showToast(
-                        `Banner Promo: ${!showPromoBanner ? "Ditampilkan" : "Disembunyikan"}`,
-                      );
-                    }}
-                    className="flex items-center gap-1.5 hover:text-white transition active:scale-95"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                      ></path>
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                      ></path>
-                    </svg>
-                    {showPromoBanner ? "Sembunyikan Promo" : "Tampilkan Promo"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsSoundOn(!isSoundOn);
-                      showToast(`Suara AI: ${!isSoundOn ? "ON" : "MUTE"}`);
-                    }}
-                    className="flex items-center gap-1.5 hover:text-white transition active:scale-95"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
-                      ></path>
-                    </svg>
-                    {isSoundOn ? "Suara ON" : "Suara MUTE"}
-                  </button>
-                </div>
-
-                {/* Fast Render Simulation & Action */}
-                <div className="mt-3 flex items-center justify-between border-t border-[#232c42] pt-3">
-                  <div className="flex items-center gap-2 text-[9px] text-slate-400">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
-                    <span>
-                      Neural Engine Latency:{" "}
-                      <strong className="text-emerald-400 font-mono">
-                        18ms
-                      </strong>{" "}
-                      (Zero Delay)
-                    </span>
+                      <div className="space-y-2 text-[11px]">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">Est. Penonton:</span>
+                          <span className="font-mono font-bold text-blue-300">
+                            {selectedDuration <= 2
+                              ? "850 - 1.600"
+                              : selectedDuration <= 8
+                                ? "3.200 - 6.500"
+                                : "12.000 - 28.000"}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">Potensi Omzet:</span>
+                          <span className="font-mono font-black text-emerald-400 text-xs">
+                            {(() => {
+                              const numP =
+                                typeof activeFeaturedProduct.price === "number"
+                                  ? activeFeaturedProduct.price
+                                  : parseInt(
+                                      String(
+                                        activeFeaturedProduct.price,
+                                      ).replace(/[^0-9]/g, ""),
+                                    ) || 99000;
+                              const minU =
+                                selectedDuration <= 2
+                                  ? 12
+                                  : selectedDuration <= 8
+                                    ? 45
+                                    : 160;
+                              const maxU =
+                                selectedDuration <= 2
+                                  ? 30
+                                  : selectedDuration <= 8
+                                    ? 110
+                                    : 420;
+                              return `Rp${((numP * minU) / 1000000).toFixed(1)}jt - Rp${((numP * maxU) / 1000000).toFixed(1)}jt`;
+                            })()}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
-
-              {/* COLUMN 2: STEP 5 (When Offline) OR LIVE CONTROL CENTER (When Live Active) */}
               {!isLiveActive ? (
-                /* STEP 5: Go Live (Setup & Ingest Connection) */
                 <div
                   className={`flex flex-col rounded-xl border p-4 transition ${currentStep === 5 ? "border-blue-500/60 bg-[#0c1428] ring-1 ring-blue-500/30" : "border-[#232c42] bg-[#0c1221]"}`}
                 >
@@ -3908,9 +3145,6 @@ export default function Dashboard() {
                             }),
                           };
                           setChatMessages((prev) => [...prev, switchMsg]);
-                          if (isSoundOn) {
-                            speakText(switchMsg.text);
-                          }
 
                           // Sync with backend API
                           try {
@@ -3988,9 +3222,6 @@ export default function Dashboard() {
                           }),
                         };
                         setChatMessages((prev) => [...prev, switchMsg]);
-                        if (isSoundOn) {
-                          speakText(switchMsg.text);
-                        }
 
                         // Sync with backend API
                         try {
@@ -4391,7 +3622,6 @@ export default function Dashboard() {
                     isSpeaking={isAvatarSpeaking}
                     videoUrl={currentLiveVideoUrl || undefined}
                     mode="video_ads"
-                    soundOn={isSoundOn}
                     className="absolute inset-0 w-full h-full"
                   />
 

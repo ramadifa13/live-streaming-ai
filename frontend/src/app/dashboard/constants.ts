@@ -8,7 +8,7 @@ export const avatars: Avatar[] = [
     type: "3D",
     language: "Bahasa Indonesia",
     voice: "id-ID-GadisNeural",
-    image: "/avatars/namira.png",
+    image: "/avatars/namira.jpg",
     modelUrl3d: "/models/TufrillaVRM.vrm",
     specialty: "Hard-Selling TikTok Live",
   },

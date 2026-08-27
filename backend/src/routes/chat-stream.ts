@@ -15,14 +15,6 @@ const chatStreamRequestSchema = z.object({
 });
 
 export async function chatStreamRoutes(server: FastifyInstance) {
-  /**
-   * POST /api/chat-stream
-   * Main unified AI Streamer controller for Persona Host.
-   * Handles:
-   * 1. Structured JSON output from LLM (Speech + Action + Emotion + Product)
-   * 2. Edge-TTS viseme / phoneme extraction for 3D WebGL mouth morph targets
- * 3. Preview mode must stay idle and never trigger RunPod rendering
-   */
   server.post("/api/chat-stream", async (request, reply) => {
     const parsed = chatStreamRequestSchema.safeParse(request.body);
 
@@ -41,18 +33,13 @@ export async function chatStreamRoutes(server: FastifyInstance) {
   } = parsed.data;
 
     try {
-      // Step 1: Generate Structured Persona Host Response via LLM
       const lunaResponse = await generateLunaResponse(
         comment,
         activeProduct,
         avatarName,
         tone,
       );
-
-      // Step 2: Generate Visemes & Timestamps for 3D WebGL / Three.js
       const visemeData = generateVisemesFromText(lunaResponse.speech);
-
-      // Step 3: Map linked product (Frontend manages DB now)
       let linkedProduct = null;
       if (
         lunaResponse.target_product_id &&
@@ -62,7 +49,6 @@ export async function chatStreamRoutes(server: FastifyInstance) {
         linkedProduct = activeProduct;
       }
 
-      // Step 4: Preview mode only. Generate audio + visemes, but never render video.
       const tts = await synthesizeSpeech({
         text: lunaResponse.speech,
         avatarName,
