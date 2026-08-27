@@ -2,10 +2,10 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import {
-  generateDynamicSalesResponseGemini,
-  generateVideoSalesScriptGemini,
-  generateLiveSalesPitchFromAIGemini,
-} from "../services/gemini-brain.js";
+  generateDynamicSalesResponse,
+  generateVideoSalesScript,
+  generateLiveSalesPitchFromAI,
+} from "../services/llm-brain.js";
 
 const salesResponseSchema = z.object({
   productId: z.string().optional(),
@@ -65,7 +65,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
 
     // Call Autonomous LLM Sales Brain with RAG Knowledge
     try {
-      const aiResult = await generateDynamicSalesResponseGemini({
+      const aiResult = await generateDynamicSalesResponse({
       userQuestion,
       avatarName,
       tone,
@@ -118,7 +118,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     } = parsed.data;
 
     try {
-      const script = await generateVideoSalesScriptGemini({
+      const script = await generateVideoSalesScript({
         productName,
         productDescription,
         productPrice,
@@ -184,7 +184,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     const tone = body.tone || "Persuasif";
 
     try {
-      const scriptResult = await generateLiveSalesPitchFromAIGemini({
+      const scriptResult = await generateLiveSalesPitchFromAI({
         productName: name,
         productPrice: price,
         productCategory: category,
