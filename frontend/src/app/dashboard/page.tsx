@@ -87,8 +87,7 @@ export default function Dashboard() {
   const [isSynthesizingAudio, setIsSynthesizingAudio] = useState(false);
   const avatarCarouselRef = useRef<HTMLDivElement>(null);
   const [selectedDuration] = useState<number>(1);
-  const [selectedPlatform, setSelectedPlatform] =
-    useState<string>("TikTok LIVE");
+  const [selectedPlatform, setSelectedPlatform] =useState<string>("Shopee Live");
   const [automations, setAutomations] = useState({
     autoReply: true,
     autoPin: true,
