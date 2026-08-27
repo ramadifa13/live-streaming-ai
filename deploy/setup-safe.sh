@@ -188,26 +188,10 @@ echo "[OK] API lama dihentikan."
 
 # ------------------------------------------------------------
 # 5. INSTALL EXACT PYTORCH STACK
-# 5. INSTALL EXACT PYTORCH STACK & RUNTIME DEPENDENCIES
 # ------------------------------------------------------------
 
 echo ""
 echo "[5/10] Menginstall PyTorch 2.1 + CUDA 11.8 ke Virtual Environment..."
-
-# Install dependensi dasar PyTorch & Torchvision secara lengkap
-"$PIP_BIN" install \
-    --no-cache-dir \
-    "typing_extensions>=4.8.0" \
-    "mpmath>=1.3.0" \
-    "sympy>=1.12" \
-    "networkx>=3.0" \
-    "jinja2" \
-    "MarkupSafe" \
-    "filelock" \
-    "fsspec" \
-    "pillow>=9.0,<11.0" \
-    "requests" \
-    "numpy==1.26.4"
 
 "$PIP_BIN" install \
     --no-cache-dir \
