@@ -73,17 +73,19 @@ class AIBroadcaster:
                 print(f"[>] MEMUTAR RESPON AI: {os.path.basename(video_to_play)}")
                 success = self._stream_file(video_to_play)
                 if success:
-                    if last_spoken_video and os.path.exists(last_spoken_video):
-                        os.remove(last_spoken_video)
-                    last_spoken_video = video_to_play
+                    # Hapus video yang baru saja selesai disiarkan agar disk tidak penuh
+                    try:
+                        if os.path.exists(video_to_play):
+                            os.remove(video_to_play)
+                            print(f"[CLEANUP] Video berhasil dihapus setelah tayang: {os.path.basename(video_to_play)}")
+                    except Exception as e:
+                        print(f"[CLEANUP ERROR] Gagal menghapus {video_to_play}: {e}")
+                    
+                    last_spoken_video = None
                     self.last_new_video_time = time.time()
             else:
-                idle_video = last_spoken_video or self.idle_video
-                if not last_spoken_video:
-                    if time.time() - self.last_new_video_time > self.silence_threshold:
-                        print("[WARNING] AI Host idle terlalu lama tanpa respon baru!")
-                        self.last_new_video_time = time.time()
-                self._stream_file(idle_video)
+                # Putar video idle default saat belum ada respon AI baru
+                self._stream_file(self.idle_video)
             
             time.sleep(0.5)
 
