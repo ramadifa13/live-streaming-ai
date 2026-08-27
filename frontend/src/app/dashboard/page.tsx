@@ -1,7 +1,3 @@
-/* eslint-disable react-hooks/set-state-in-effect */
-/* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable react-hooks/immutability */
-/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
@@ -86,8 +82,9 @@ export default function Dashboard() {
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [isSynthesizingAudio, setIsSynthesizingAudio] = useState(false);
   const avatarCarouselRef = useRef<HTMLDivElement>(null);
-  const [selectedDuration] = useState<number>(1);
-  const [selectedPlatform, setSelectedPlatform] =useState<string>("Shopee Live");
+  const [selectedDuration, setSelectedDuration] = useState<number>(1);
+  const [selectedPlatform, setSelectedPlatform] =
+    useState<string>("Shopee Live");
   const [automations, setAutomations] = useState({
     autoReply: true,
     autoPin: true,
@@ -1947,26 +1944,81 @@ export default function Dashboard() {
                 <div className="mb-3 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   {/* Durasi Live */}
                   <div>
-                    <label className="mb-1 block text-[10.5px] font-semibold text-slate-300">
-                      Durasi Live Siaran
-                    </label>
-                    <div className="grid grid-cols-3 gap-1">
-                      {[1, 8, 24].map((dur) => (
+                    <div className="mb-1 flex items-center justify-between">
+                      <label className="text-[10.5px] font-semibold text-slate-300">
+                        Durasi Live Siaran
+                      </label>
+                      <span className="text-[9px] font-mono text-cyan-400">
+                        {selectedDuration === 1
+                          ? "Rp49.000 (Demo)"
+                          : selectedDuration === 2
+                            ? "Rp99.000 (Express)"
+                            : selectedDuration === 8
+                              ? "Rp299.000 (Shift)"
+                              : "Rp699.000 (Marathon)"}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1">
+                      {[
+                        { hours: 1, label: "1 Jam", tag: "Demo" },
+                        { hours: 2, label: "2 Jam", tag: "Express" },
+                        { hours: 8, label: "8 Jam", tag: "Shift" },
+                        { hours: 24, label: "24 Jam", tag: "24/7" },
+                      ].map((item) => (
                         <button
-                          key={dur}
+                          key={item.hours}
                           type="button"
-                          onClick={() =>
-                            dur === 1 &&
-                            showToast("Durasi demo ditetapkan 1 jam")
-                          }
-                          disabled={dur !== 1}
-                          className={`rounded-lg py-1.5 text-xs font-semibold border transition active:scale-95 ${
-                            selectedDuration === dur
-                              ? "border-blue-500 bg-blue-500/25 text-white shadow-sm font-bold"
-                              : "border-[#232c42] bg-[#111827] text-slate-600 cursor-not-allowed"
-                          }`}
+                          disabled={isLiveActive}
+                          onClick={() => {
+                            if (isLiveActive) {
+                              showToast(
+                                "⚠️ Durasi tidak dapat diubah saat siaran sedang aktif!",
+                              );
+                              return;
+                            }
+                            setSelectedDuration(item.hours);
+                            if (item.hours === 1) {
+                              setAutomations({
+                                autoReply: true,
+                                autoPin: false,
+                                autoPromo: false,
+                                autoModeration: false,
+                              });
+                              showToast(
+                                "⏱️ Paket Demo (1 Jam): Auto-Reply aktif (Auto-Pin & Promo terkunci)",
+                              );
+                            } else if (item.hours === 2) {
+                              setAutomations({
+                                autoReply: true,
+                                autoPin: true,
+                                autoPromo: false,
+                                autoModeration: false,
+                              });
+                              showToast(
+                                "⏱️ Paket Express (2 Jam): Auto-Reply & Auto-Pin aktif",
+                              );
+                            } else {
+                              setAutomations({
+                                autoReply: true,
+                                autoPin: true,
+                                autoPromo: true,
+                                autoModeration: true,
+                              });
+                              showToast(
+                                `⏱️ Paket ${item.hours === 8 ? "Shift (8 Jam)" : "Marathon (24 Jam)"}: Semua otomatisasi aktif`,
+                              );
+                            }
+                          }}
+                          className={`rounded-lg py-1 text-[10px] font-semibold border transition active:scale-95 flex flex-col items-center justify-center ${
+                            selectedDuration === item.hours
+                              ? "border-blue-500 bg-blue-500/25 text-white shadow-sm font-bold ring-1 ring-blue-500/50"
+                              : "border-[#232c42] bg-[#111827] text-slate-400 hover:text-slate-200 hover:border-slate-600"
+                          } ${isLiveActive ? "cursor-not-allowed opacity-70" : ""}`}
                         >
-                          {dur} Jam
+                          <span>{item.label}</span>
+                          <span className="text-[8px] text-slate-400 font-normal">
+                            {item.tag}
+                          </span>
                         </button>
                       ))}
                     </div>
@@ -1979,8 +2031,11 @@ export default function Dashboard() {
                     </label>
                     <select
                       value={selectedPlatform}
+                      disabled={isLiveActive}
                       onChange={(e) => handlePlatformSelect(e.target.value)}
-                      className="w-full rounded-lg border border-[#232c42] bg-[#111827] px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-500 font-medium"
+                      className={`w-full rounded-lg border border-[#232c42] bg-[#111827] px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-500 font-medium ${
+                        isLiveActive ? "cursor-not-allowed opacity-70" : ""
+                      }`}
                     >
                       <option value="TikTok LIVE">♪ TikTok LIVE</option>
                       <option value="Shopee Live">🛍️ Shopee Live</option>
@@ -1994,9 +2049,20 @@ export default function Dashboard() {
 
                 {/* Otomatisasi AI (4 Toggles) */}
                 <div className="mb-3">
-                  <label className="mb-1.5 block text-[10.5px] font-semibold text-slate-300">
-                    Sistem Otomatisasi AI Otonom
-                  </label>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <label className="text-[10.5px] font-semibold text-slate-300">
+                      Sistem Otomatisasi AI Otonom
+                    </label>
+                    {isLiveActive ? (
+                      <span className="text-[8.5px] text-amber-400 font-medium bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
+                        🔒 Terkunci saat Live Aktif
+                      </span>
+                    ) : (
+                      <span className="text-[8.5px] text-slate-400">
+                        Fitur disesuaikan dengan durasi paket
+                      </span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-2 text-[10px]">
                     {[
                       {
@@ -2005,6 +2071,7 @@ export default function Dashboard() {
                         desc: "Menjawab live chat",
                         icon: "💬",
                         color: "text-pink-400 bg-pink-500/20",
+                        minHours: 1,
                       },
                       {
                         key: "autoPin" as const,
@@ -2012,6 +2079,7 @@ export default function Dashboard() {
                         desc: "Sematkan katalog",
                         icon: "📌",
                         color: "text-purple-400 bg-purple-500/20",
+                        minHours: 2,
                       },
                       {
                         key: "autoPromo" as const,
@@ -2019,6 +2087,7 @@ export default function Dashboard() {
                         desc: "CTA promo berkala",
                         icon: "🎁",
                         color: "text-emerald-400 bg-emerald-500/20",
+                        minHours: 8,
                       },
                       {
                         key: "autoModeration" as const,
@@ -2026,13 +2095,27 @@ export default function Dashboard() {
                         desc: "Filter kata negatif",
                         icon: "🛡️",
                         color: "text-amber-400 bg-amber-500/20",
+                        minHours: 8,
                       },
                     ].map((item) => {
-                      const isActive = automations[item.key];
+                      const isAllowed = selectedDuration >= item.minHours;
+                      const isActive = isAllowed && automations[item.key];
                       return (
                         <div
                           key={item.key}
                           onClick={() => {
+                            if (isLiveActive) {
+                              showToast(
+                                "⚠️ Pengaturan otomatisasi dikunci selama live streaming!",
+                              );
+                              return;
+                            }
+                            if (!isAllowed) {
+                              showToast(
+                                `🔒 ${item.label} terkunci (Minimal paket ${item.minHours} Jam).`,
+                              );
+                              return;
+                            }
                             setAutomations((prev) => ({
                               ...prev,
                               [item.key]: !isActive,
@@ -2041,7 +2124,13 @@ export default function Dashboard() {
                               `${item.label}: ${!isActive ? "Diaktifkan" : "Dinonaktifkan"}`,
                             );
                           }}
-                          className={`flex items-center gap-2 rounded-lg border p-2 cursor-pointer transition ${
+                          className={`flex items-center gap-2 rounded-lg border p-2 transition ${
+                            isLiveActive
+                              ? "cursor-not-allowed opacity-75"
+                              : !isAllowed
+                                ? "cursor-not-allowed opacity-50 bg-[#0f1422] border-slate-800"
+                                : "cursor-pointer"
+                          } ${
                             isActive
                               ? "border-blue-500/40 bg-[#141d33] shadow-sm"
                               : "border-[#232c42] bg-[#111827] opacity-60 hover:opacity-90"
@@ -2053,15 +2142,30 @@ export default function Dashboard() {
                             {item.icon}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="font-semibold text-slate-200 truncate">
-                              {item.label}
-                            </p>
+                            <div className="flex items-center gap-1">
+                              <p className="font-semibold text-slate-200 truncate">
+                                {item.label}
+                              </p>
+                              {!isAllowed && (
+                                <span className="text-[8px] text-amber-400 font-mono">
+                                  🔒{item.minHours}J
+                                </span>
+                              )}
+                            </div>
                             <p className="text-[8px] text-slate-500 truncate">
-                              {item.desc}
+                              {!isAllowed
+                                ? `Perlu paket ≥${item.minHours} Jam`
+                                : item.desc}
                             </p>
                           </div>
                           <div
-                            className={`h-2 w-2 rounded-full shrink-0 ${isActive ? "bg-emerald-400" : "bg-slate-600"}`}
+                            className={`h-2 w-2 rounded-full shrink-0 ${
+                              isActive
+                                ? "bg-emerald-400"
+                                : isAllowed
+                                  ? "bg-slate-600"
+                                  : "bg-slate-800"
+                            }`}
                           />
                         </div>
                       );

@@ -189,8 +189,7 @@ export const liveWorkflowSteps = [
   },
 ];
 
-export const inventoryRows = [
-];
+export const inventoryRows = [];
 
 export const hostOptions = [
   {

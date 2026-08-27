@@ -114,25 +114,31 @@ try {
       .catch((err) => console.warn("[TTS] Edge-TTS warmup notice:", err));
   }, 1000);
 
-  // Warm up Ollama in background so the first user request is fast
+  // Warm up Gemini AI Brain in background
   setTimeout(() => {
-    const provider = (process.env.LLM_PROVIDER || "auto").toLowerCase();
-    if (provider === "openrouter" || provider === "openai") {
-      console.log(
-        `[LLM-Brain] Skipping Ollama warmup because LLM_PROVIDER=${provider}`,
-      );
+    if (!process.env.GEMINI_API_KEY) {
+      console.warn("[Gemini-Brain] GEMINI_API_KEY is not set in environment.");
       return;
     }
-    import("./services/llm-brain.js")
+    import("./services/gemini-brain.js")
       .then((m) =>
-        m.ollamaChat([{ role: "user", content: "hai" }], {
-          timeoutMs: 120000,
-          retries: 1,
+        m.generateDynamicSalesResponseGemini({
+          userQuestion: "Halo!",
+          avatarName: "Namira",
+          productName: "Produk Demo",
+          productPrice: "Rp99.000",
         }),
       )
-      .then(() => console.log("[LLM-Brain] Ollama warmup completed"))
-      .catch((err) => console.warn("[LLM-Brain] Ollama warmup notice:", err));
-  }, 5000);
+      .then(() =>
+        console.log("[Gemini-Brain] Gemini 3.6 Flash ready & connected"),
+      )
+      .catch((err) =>
+        console.warn(
+          "[Gemini-Brain] Gemini warmup notice:",
+          err?.message || err,
+        ),
+      );
+  }, 3000);
 } catch (error) {
   server.log.error(error);
   process.exit(1);

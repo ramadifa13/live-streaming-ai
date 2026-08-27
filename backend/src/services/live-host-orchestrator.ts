@@ -1,7 +1,8 @@
 import prisma from "../lib/prisma.js";
 import { forwardToRunPodGPU } from "./runpod-bridge.js";
-import { generateDynamicSalesResponse } from "./llm-brain.js";
+import { generateDynamicSalesResponse } from "./gemini-brain.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
+import { synthesizeSpeech } from "./tts.js";
 
 const DEFAULT_INTERVAL_SECONDS = 35;
 
@@ -51,11 +52,13 @@ class LiveHostOrchestrator {
   ];
 
   constructor() {
-    livePlatformConnector.setSpeechCallback((text: string, sessionId?: string) => {
-      if (sessionId) {
-        this.enqueue(sessionId, text);
-      }
-    });
+    livePlatformConnector.setSpeechCallback(
+      (text: string, sessionId?: string) => {
+        if (sessionId) {
+          this.enqueue(sessionId, text);
+        }
+      },
+    );
   }
 
   public async start(config: HostConfig) {
@@ -66,7 +69,7 @@ class LiveHostOrchestrator {
       timer: null,
       queue: Promise.resolve(),
       cycle: 0,
-      usedPromptIndices: new Set()
+      usedPromptIndices: new Set(),
     });
 
     this.schedule(config.sessionId, 10);
@@ -197,16 +200,36 @@ class LiveHostOrchestrator {
 
     const config = state.config;
     const start = Date.now();
+
+    // Pre-buffer TTS audio asynchronously to minimize GPU inference latency
+    let audioBase64: string | undefined = undefined;
+    try {
+      const ttsResult = await synthesizeSpeech({
+        text,
+        voice: config.voice || "id-ID-GadisNeural",
+        avatarName: config.avatarName,
+        tone: config.tone,
+      });
+      if (ttsResult.success && ttsResult.audioBuffer) {
+        audioBase64 = ttsResult.audioBuffer.toString("base64");
+      }
+    } catch (ttsErr) {
+      console.warn(`[LiveHost] TTS pre-buffering fallback notice:`, ttsErr);
+    }
+
     await forwardToRunPodGPU(config.podId, {
       avatarImagePath: "avatars/namira.png",
       text,
       voice: config.voice || "id-ID-GadisNeural",
       tone: config.tone,
+      audioBase64,
       rtmpUrl: config.rtmpUrl,
       streamKey: config.streamKey,
       requireWorker: true,
     });
-    console.log(`[LiveHost] Utterance round-trip for ${sessionId}: ${Date.now() - start}ms`);
+    console.log(
+      `[LiveHost] Utterance round-trip for ${sessionId}: ${Date.now() - start}ms`,
+    );
   }
 }
 

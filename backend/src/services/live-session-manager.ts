@@ -46,9 +46,8 @@ class LiveSessionManager {
     avatarName?: string;
     tone?: string;
   }): Promise<{ sessionId: string; state: SessionState }> {
-
     const podIdStr = await startPodAndWait();
-    const podId = typeof podIdStr === 'string' ? podIdStr : null;
+    const podId = typeof podIdStr === "string" ? podIdStr : null;
     setLiveSessionActive(true);
 
     const session = await prisma.liveSession.create({
@@ -77,7 +76,7 @@ class LiveSessionManager {
       avatarName: params.avatarName || "Namira",
       voice: params.voice || this.pendingVoicePreference || undefined,
       tone: params.tone || "Persuasif",
-      podId: typeof podId === 'string' ? podId : null,
+      podId: typeof podId === "string" ? podId : null,
       onStateChange: undefined,
     };
 
@@ -85,7 +84,7 @@ class LiveSessionManager {
 
     livePlatformConnector.startSession({
       sessionId: session.id,
-      podId: typeof podId === 'string' ? podId : null,
+      podId: typeof podId === "string" ? podId : null,
       platform: params.platform,
       accessToken: params.accessToken,
       liveChatId: params.liveChatId,
@@ -97,20 +96,26 @@ class LiveSessionManager {
       tone: params.tone || "Persuasif",
     });
 
-    livePlatformConnector.setLiveDetectedCallback(async (triggerSessionId?: string) => {
-      // The callback will need to know which session triggered it, or we rely on connector to pass it
-      const sId = triggerSessionId || session.id;
-      const currentSession = this.activeSessions.get(sId);
-      if (currentSession?.state === "pending") {
-        console.log(
-          `[LiveSessionManager] Platform live detected for session ${sId}. Transitioning to live...`,
-        );
-        await this.transitionState("live", sId);
-      }
-    });
+    livePlatformConnector.setLiveDetectedCallback(
+      async (triggerSessionId?: string) => {
+        // The callback will need to know which session triggered it, or we rely on connector to pass it
+        const sId = triggerSessionId || session.id;
+        const currentSession = this.activeSessions.get(sId);
+        if (currentSession?.state === "pending") {
+          console.log(
+            `[LiveSessionManager] Platform live detected for session ${sId}. Transitioning to live...`,
+          );
+          await this.transitionState("live", sId);
+        }
+      },
+    );
 
     await this.transitionState("pending", session.id);
-    this.startPlatformLivePoll(session.id, params.liveVideoId, params.accessToken);
+    this.startPlatformLivePoll(
+      session.id,
+      params.liveVideoId,
+      params.accessToken,
+    );
 
     return {
       sessionId: session.id,
@@ -118,14 +123,17 @@ class LiveSessionManager {
     };
   }
 
-  public async stopSession(sessionId: string, summary?: {
-    durationSeconds?: number;
-    viewers?: number;
-    comments?: number;
-    clicks?: number;
-    sales?: number;
-    productSold?: number;
-  }): Promise<{
+  public async stopSession(
+    sessionId: string,
+    summary?: {
+      durationSeconds?: number;
+      viewers?: number;
+      comments?: number;
+      clicks?: number;
+      sales?: number;
+      productSold?: number;
+    },
+  ): Promise<{
     success: boolean;
     summary?: Record<string, unknown>;
   }> {
@@ -150,9 +158,10 @@ class LiveSessionManager {
       data: { status: "ended" },
     });
 
-
     if (session.podId) {
-       stopPod(session.podId).catch((err) => console.error("Failed to stop GPU Pod:", err));
+      stopPod(session.podId).catch((err) =>
+        console.error("Failed to stop GPU Pod:", err),
+      );
     }
 
     const durationSeconds =
@@ -238,13 +247,13 @@ class LiveSessionManager {
   public getRemainingDurationSeconds(sessionId: string): number {
     const session = this.activeSessions.get(sessionId);
     if (!session) return 0;
-    return Math.max(
-      0,
-      Math.floor((session.deadlineAt - Date.now()) / 1000),
-    );
+    return Math.max(0, Math.floor((session.deadlineAt - Date.now()) / 1000));
   }
 
-  private async transitionState(newState: SessionState, sessionId: string): Promise<void> {
+  private async transitionState(
+    newState: SessionState,
+    sessionId: string,
+  ): Promise<void> {
     const session = this.activeSessions.get(sessionId);
     if (!session) return;
 
@@ -297,9 +306,7 @@ class LiveSessionManager {
       }
 
       if (s.state === "live") {
-        const elapsedSeconds = Math.floor(
-          (Date.now() - s.startedAt) / 1000,
-        );
+        const elapsedSeconds = Math.floor((Date.now() - s.startedAt) / 1000);
         const maxSeconds = s.durationHours * 3600;
 
         if (elapsedSeconds >= maxSeconds) {
@@ -459,7 +466,7 @@ class LiveSessionManager {
     livePlatformConnector.stopSession(sessionId);
 
     if (session.podId) {
-        stopPod(session.podId).catch(() => {});
+      stopPod(session.podId).catch(() => {});
     }
     this.activeSessions.delete(sessionId);
   }

@@ -23,7 +23,7 @@ const liveSessionSchema = z.object({
   avatarId: z.string().min(1),
   voice: z.string().optional(),
   platform: z.string().min(1),
-  durationHours: z.literal(1),
+  durationHours: z.number().int().min(1).default(1),
   autoReply: z.boolean().optional(),
   autoPin: z.boolean().optional(),
   autoPromotion: z.boolean().optional(),
@@ -92,7 +92,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  // POST /api/live-session/start
   server.post("/api/live-session/start", async (request, reply) => {
     const parsed = liveSessionSchema.safeParse(request.body);
 

@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import prisma from "../lib/prisma.js";
-import { generateProductKnowledge } from "../services/llm-brain.js";
+import { generateProductKnowledge } from "../services/gemini-brain.js";
 
 export const PRODUCT_CATEGORIES = [
   "Skincare",
@@ -20,9 +20,13 @@ const productSchema = z.object({
   price: z.number().min(1, "Harga harus lebih dari 0"),
   stock: z.number().min(0, "Stok tidak boleh negatif"),
   sku: z.string().optional(),
-  category: z.enum(PRODUCT_CATEGORIES, {
-    errorMap: () => ({ message: `Kategori harus salah satu dari: ${PRODUCT_CATEGORIES.join(", ")}` }),
-  }).default("General"),
+  category: z
+    .enum(PRODUCT_CATEGORIES, {
+      errorMap: () => ({
+        message: `Kategori harus salah satu dari: ${PRODUCT_CATEGORIES.join(", ")}`,
+      }),
+    })
+    .default("General"),
   image: z.string().optional(),
   link: z.string().optional(),
   benefits: z.string().optional(),

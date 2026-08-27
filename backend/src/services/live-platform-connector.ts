@@ -1,5 +1,5 @@
 import prisma from "../lib/prisma.js";
-import { generateDynamicSalesResponse } from "./llm-brain.js";
+import { generateDynamicSalesResponse } from "./gemini-brain.js";
 
 export interface LiveMetricsSnapshot {
   viewers: number;
@@ -85,7 +85,7 @@ class LivePlatformConnector {
         orders: 0,
         durationSeconds: 0,
         recentComments: [],
-      }
+      },
     };
 
     this.sessions.set(config.sessionId, state);
@@ -183,7 +183,11 @@ class LivePlatformConnector {
         await this.pollYouTubeChat(sessionId, liveChatId, accessToken);
       } else if (p.includes("instagram") && liveVideoId && accessToken) {
         await this.pollInstagramComments(sessionId, liveVideoId, accessToken);
-        await this.checkInstagramLiveStatus(sessionId, liveVideoId, accessToken);
+        await this.checkInstagramLiveStatus(
+          sessionId,
+          liveVideoId,
+          accessToken,
+        );
       }
     } catch (err) {
       state.consecutiveErrors++;
@@ -198,7 +202,11 @@ class LivePlatformConnector {
     }
   }
 
-  private async pollYouTubeChat(sessionId: string, liveChatId: string, accessToken: string) {
+  private async pollYouTubeChat(
+    sessionId: string,
+    liveChatId: string,
+    accessToken: string,
+  ) {
     const state = this.sessions.get(sessionId);
     if (!state) return;
 
@@ -401,9 +409,17 @@ class LivePlatformConnector {
   public getMetricsSnapshot(sessionId: string): LiveMetricsSnapshot {
     const state = this.sessions.get(sessionId);
     if (!state) {
-        return {
-          viewers: 0, peakViewers: 0, comments: 0, aiReplies: 0, clicks: 0, sales: 0, orders: 0, durationSeconds: 0, recentComments: []
-        };
+      return {
+        viewers: 0,
+        peakViewers: 0,
+        comments: 0,
+        aiReplies: 0,
+        clicks: 0,
+        sales: 0,
+        orders: 0,
+        durationSeconds: 0,
+        recentComments: [],
+      };
     }
 
     const duration =

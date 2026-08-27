@@ -21,7 +21,7 @@ class AILiveWorker:
         paths = self._musetalk_paths()
         self.musetalk_checkpoint = paths["unet_config"]
         
-        # Batch size untuk inferensi UNet. RTX 4090 bisa handled 16, GPU kecil gunakan 8.
+        # Batch size untuk inferensi UNet. RTX 4090 bisa handle 16, GPU kecil gunakan 8.
         self.batch_size = int(os.environ.get("MUSETALK_BATCH_SIZE", "8"))
         
         # Lock untuk serialisasi inferensi GPU (mencegah OOM dan memastikan stabilitas)
@@ -31,6 +31,7 @@ class AILiveWorker:
             print(f"[WARNING] Model MuseTalk belum terunduh di {self.musetalk_checkpoint}. Pastikan setup-safe.sh sudah dijalankan.")
         
         self._ensure_musetalk_layout()
+        self._clean_temp_dir()
         
         # Warmup berat (load ~3GB model) — default lazy agar API cepat online
         self._warmed_up = False
@@ -42,13 +43,24 @@ class AILiveWorker:
                 print(f"[WARMUP] Gagal pre-load MuseTalk: {e}")
             
         print("[INFO] Worker siap dengan sistem TTS Chatterbox-TTS-Indonesian (voice cloning) dan Lipsync MuseTalk...")
-    
+
+    def _clean_temp_dir(self):
+        """Clean leftover temporary files from previous runs to save disk."""
+        if os.path.exists(self.temp_dir):
+            for item in os.listdir(self.temp_dir):
+                item_path = os.path.join(self.temp_dir, item)
+                try:
+                    if os.path.isfile(item_path):
+                        os.remove(item_path)
+                except Exception:
+                    pass
+
     def _ensure_warmup(self):
         if self._warmed_up:
             return
         self._warmup_musetalk()
         self._warmed_up = True
-    
+
     def _ensure_musetalk_layout(self):
         """MuseTalk pakai path relatif ./musetalk dan ./models — buat symlink dari worker root."""
         links = {
@@ -57,17 +69,18 @@ class AILiveWorker:
         }
         for link_path, target_path in links.items():
             if not os.path.isdir(target_path):
-                print(f"[WARNING] Target MuseTalk belum ada: {target_path}")
                 continue
             if os.path.islink(link_path):
                 if os.path.realpath(link_path) == os.path.realpath(target_path):
                     continue
                 os.unlink(link_path)
             elif os.path.exists(link_path):
-                print(f"[WARNING] Lewati symlink {link_path} — path sudah ada (bukan symlink)")
                 continue
-            os.symlink(target_path, link_path)
-            print(f"[INFO] Symlink: {link_path} -> {target_path}")
+            try:
+                os.symlink(target_path, link_path)
+                print(f"[INFO] Symlink: {link_path} -> {target_path}")
+            except Exception as link_err:
+                print(f"[WARNING] Could not create symlink {link_path}: {link_err}")
 
     def _musetalk_paths(self):
         models_root = os.path.join(self.musetalk_dir, "models")
@@ -125,22 +138,18 @@ class AILiveWorker:
             from scripts.inference import get_cropped_video
             import yaml
 
-            # Create dummy config just for caching the landmarks
             yaml_path = os.path.join(self.temp_dir, "cache_dummy.yaml")
             os.makedirs(self.temp_dir, exist_ok=True)
             config_data = {
                 "task_0": {
                     "video_path": video_path,
-                    "audio_path": "", # Dummy
+                    "audio_path": "",
                     "bbox_shift": 0
                 }
             }
             with open(yaml_path, "w") as f:
                 yaml.dump(config_data, f)
 
-            # Running get_cropped_video will trigger the DWPose extraction and cache it
-            # inside MuseTalk's expected cache directories.
-            # Just calling it is enough for the cache to be populated.
             get_cropped_video(video_path, bbox_shift=0)
 
             if os.path.exists(yaml_path):
@@ -150,11 +159,9 @@ class AILiveWorker:
         except Exception as e:
             print(f"[WARNING] Failed to pre-cache video {video_path}: {e}")
 
-
     async def _generate_voice(self, text, task_id, host_name, tone="Casual"):
         """Ubah Teks menjadi Suara menggunakan Chatterbox-TTS-Indonesian (voice cloning, GPU)"""
         audio_path = os.path.join(self.temp_dir, f"{task_id}.wav")
-
         chatterbox_url = os.environ.get("CHATTERBOX_SERVICE_URL", "http://127.0.0.1:8090")
         print(f"[INFO] Men-generate suara menggunakan Chatterbox-TTS-Indonesian ({chatterbox_url})...")
 
@@ -195,12 +202,12 @@ class AILiveWorker:
         if os.path.exists(video_path):
             return video_path
             
-        # 2. Cek variasi nama (misal nana / host_2d_statis_nana)
+        # 2. Cek variasi nama
         if os.path.exists(target_dir):
             for f in os.listdir(target_dir):
                 if f.endswith(".mp4") and (host_name.lower() in f.lower() or f.lower().replace(".mp4", "") in host_name.lower()):
                     return os.path.join(target_dir, f)
-            # 3. Ambil file mp4 pertama di folder yang sesuai tipe (2D / 3D)
+            # 3. Ambil file mp4 pertama di folder
             mp4s = [f for f in os.listdir(target_dir) if f.endswith(".mp4")]
             if mp4s:
                 return os.path.join(target_dir, mp4s[0])
@@ -213,129 +220,111 @@ class AILiveWorker:
 
     def _sync_lips(self, idle_video, audio_path, task_id):
         with self._inference_lock:
-            self._ensure_warmup()
-            import yaml
-
-            yaml_path = os.path.join(
-                self.temp_dir,
-                f"{task_id}.yaml"
-            )
-
-            config_data = {
-                "task_0": {
-                    "video_path": idle_video,
-                    "audio_path": audio_path,
-                    "bbox_shift": 0
-                }
-            }
-
-            os.makedirs(self.temp_dir, exist_ok=True)
-            os.makedirs(self.output_dir, exist_ok=True)
-
-            with open(yaml_path, "w") as f:
-                yaml.dump(config_data, f)
-
-            musetalk_dir = self.musetalk_dir
-            paths = self._musetalk_paths()
-            unet_config = paths["unet_config"]
-            unet_model_path = paths["unet_model_path"]
-            whisper_dir = paths["whisper_dir"]
-
-            print("\n==============================================")
-            print("[MuseTalk] VERSION : 1.5")
-            print(f"[MuseTalk] Video   : {idle_video}")
-            print(f"[MuseTalk] Audio   : {audio_path}")
-            print(f"[MuseTalk] Config  : {unet_config}")
-            print(f"[MuseTalk] UNet    : {unet_model_path}")
-            print(f"[MuseTalk] Whisper : {whisper_dir}")
-            print("==============================================\n")
-
-            if not os.path.exists(unet_config):
-                print(f"[ERROR] MuseTalk V1.5 config tidak ditemukan:\n{unet_config}")
-                raise FileNotFoundError(unet_config)
-
-            if not os.path.exists(unet_model_path):
-                print(f"[ERROR] MuseTalk V1.5 checkpoint tidak ditemukan:\n{unet_model_path}")
-                raise FileNotFoundError(unet_model_path)
-
-            if not os.path.exists(whisper_dir):
-                print(f"[ERROR] Whisper model tidak ditemukan:\n{whisper_dir}")
-                raise FileNotFoundError(whisper_dir)
-
-            if musetalk_dir not in sys.path:
-                sys.path.insert(0, musetalk_dir)
-
-            original_cwd = os.getcwd()
-            os.chdir(musetalk_dir)
+            yaml_path = os.path.join(self.temp_dir, f"{task_id}.yaml")
             try:
-                from scripts.inference import main as musetalk_main
+                self._ensure_warmup()
+                import yaml
 
-                args = Namespace(
-                    ffmpeg_path="",
-                    gpu_id=0,
-                    vae_type="sd-vae-ft-mse",
-                    unet_config=unet_config,
-                    unet_model_path=unet_model_path,
-                    whisper_dir=whisper_dir,
-                    inference_config=yaml_path,
-                    bbox_shift=0,
-                    result_dir=self.output_dir,
-                    extra_margin=10,
-                    fps=25,
-                    audio_padding_length_left=2,
-                    audio_padding_length_right=2,
-                    batch_size=self.batch_size,
-                    output_vid_name=f"{task_id}.mp4",
-                    use_saved_coord=True,
-                    saved_coord=True,
-                    use_float16=True,
-                    parsing_mode="jaw",
-                    left_cheek_width=90,
-                    right_cheek_width=90,
-                    version="v15",
-                )
+                config_data = {
+                    "task_0": {
+                        "video_path": idle_video,
+                        "audio_path": audio_path,
+                        "bbox_shift": 0
+                    }
+                }
 
-                print(f"[MuseTalk] Starting V1.5 inference: {task_id}")
-                musetalk_main(args)
+                os.makedirs(self.temp_dir, exist_ok=True)
+                os.makedirs(self.output_dir, exist_ok=True)
+
+                with open(yaml_path, "w") as f:
+                    yaml.dump(config_data, f)
+
+                musetalk_dir = self.musetalk_dir
+                paths = self._musetalk_paths()
+                unet_config = paths["unet_config"]
+                unet_model_path = paths["unet_model_path"]
+                whisper_dir = paths["whisper_dir"]
+
+                if not os.path.exists(unet_config):
+                    raise FileNotFoundError(f"MuseTalk V1.5 config tidak ditemukan: {unet_config}")
+
+                if not os.path.exists(unet_model_path):
+                    raise FileNotFoundError(f"MuseTalk V1.5 checkpoint tidak ditemukan: {unet_model_path}")
+
+                if not os.path.exists(whisper_dir):
+                    raise FileNotFoundError(f"Whisper model tidak ditemukan: {whisper_dir}")
+
+                if musetalk_dir not in sys.path:
+                    sys.path.insert(0, musetalk_dir)
+
+                original_cwd = os.getcwd()
+                os.chdir(musetalk_dir)
+                try:
+                    from scripts.inference import main as musetalk_main
+
+                    args = Namespace(
+                        ffmpeg_path="",
+                        gpu_id=0,
+                        vae_type="sd-vae-ft-mse",
+                        unet_config=unet_config,
+                        unet_model_path=unet_model_path,
+                        whisper_dir=whisper_dir,
+                        inference_config=yaml_path,
+                        bbox_shift=0,
+                        result_dir=self.output_dir,
+                        extra_margin=10,
+                        fps=25,
+                        audio_padding_length_left=2,
+                        audio_padding_length_right=2,
+                        batch_size=self.batch_size,
+                        output_vid_name=f"{task_id}.mp4",
+                        use_saved_coord=True,
+                        saved_coord=True,
+                        use_float16=True,
+                        parsing_mode="jaw",
+                        left_cheek_width=90,
+                        right_cheek_width=90,
+                        version="v15",
+                    )
+
+                    print(f"[MuseTalk] Starting V1.5 inference: {task_id}")
+                    musetalk_main(args)
+                finally:
+                    os.chdir(original_cwd)
+
+                expected_output = os.path.join(self.output_dir, "v15", f"{task_id}.mp4")
+                if os.path.exists(expected_output):
+                    return expected_output
+
+                list_of_files = []
+                for root, dirs, files in os.walk(self.output_dir):
+                    for file in files:
+                        if file.endswith(".mp4") and task_id in file:
+                            list_of_files.append(os.path.join(root, file))
+
+                if not list_of_files:
+                    raise FileNotFoundError(f"Output video MuseTalk untuk {task_id} tidak ditemukan.")
+
+                latest_file = max(list_of_files, key=os.path.getctime)
+                if latest_file != expected_output:
+                    os.replace(latest_file, expected_output)
+
+                return expected_output
+
+            except torch.cuda.OutOfMemoryError as oom:
+                print(f"[MuseTalk OOM ERROR] Out of GPU memory: {oom}")
+                return None
             except Exception as e:
                 print(f"[MuseTalk ERROR] {type(e).__name__}: {e}")
                 return None
             finally:
-                os.chdir(original_cwd)
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 if os.path.exists(yaml_path):
                     try:
                         os.remove(yaml_path)
                     except Exception:
                         pass
-
-            expected_output = os.path.join(
-                self.output_dir,
-                "v15",
-                f"{task_id}.mp4"
-            )
-
-            if os.path.exists(expected_output):
-                print(f"[MuseTalk SUCCESS] Output ditemukan:\n{expected_output}")
-                return expected_output
-
-            list_of_files = []
-            for root, dirs, files in os.walk(self.output_dir):
-                for file in files:
-                    if file.endswith(".mp4") and task_id in file:
-                        list_of_files.append(os.path.join(root, file))
-
-            if not list_of_files:
-                raise FileNotFoundError(
-                    f"Output video MuseTalk untuk {task_id} tidak ditemukan."
-                )
-
-            latest_file = max(list_of_files, key=os.path.getctime)
-
-            if latest_file != expected_output:
-                os.replace(latest_file, expected_output)
-
-            print(f"[MuseTalk SUCCESS] Output:\n{expected_output}")
-            return expected_output
 
     async def run_pipeline(self, host_type, host_name, text_answer, task_id, audio_path=None, tone="Casual"):
         """Fungsi Pemicu Utama"""
@@ -351,18 +340,15 @@ class AILiveWorker:
 
         print(f"\n[MEMPROSES] {task_id} | Host: {host_name} ({host_type.upper()}) | Action: {action_tag}")
 
-        # 2. Modify host_name dynamically to match action video (e.g., namira_raise_hand.mp4)
+        # 2. Modify host_name dynamically to match action video
         dynamic_host_name = host_name
         if action_tag != "idle":
             dynamic_host_name = f"{host_name}_{action_tag}"
 
         idle_video = self._get_idle_video(host_type, dynamic_host_name)
-
-        # 3. Fallback to default if dynamic video is not found
         if not idle_video and dynamic_host_name != host_name:
-            print(f"[INFO] Video untuk aksi '{action_tag}' ({dynamic_host_name}.mp4) tidak ditemukan, fallback ke default {host_name}.mp4")
+            print(f"[INFO] Video untuk aksi '{action_tag}' tidak ditemukan, fallback ke default {host_name}.mp4")
             idle_video = self._get_idle_video(host_type, host_name)
-
 
         if not idle_video:
             print(f"[ERROR] Video '{host_name}.mp4' tidak ada di folder assets/{host_type}")
@@ -390,7 +376,10 @@ class AILiveWorker:
         lipsync_elapsed = round((time.time() - lipsync_start) * 1000)
 
         if audio_file and os.path.exists(audio_file) and audio_file.startswith(self.temp_dir):
-            os.remove(audio_file) # Bersihkan file suara
+            try:
+                os.remove(audio_file)
+            except Exception:
+                pass
 
         total_elapsed = round((time.time() - pipeline_start) * 1000)
         if final_video:
@@ -399,26 +388,3 @@ class AILiveWorker:
                 f"tts={tts_elapsed}ms lipsync={lipsync_elapsed}ms total={total_elapsed}ms"
             )
         return final_video
-
-# --- PENGUJIAN ---
-if __name__ == "__main__":
-    async def run_test():
-        ai = AILiveWorker()
-        
-        # Contoh 1: Menjalankan Host 2D
-        await ai.run_pipeline(
-            host_type="2d",
-            host_name="host_2d_statis", # Pastikan file host_2d_statis.mp4 sudah Anda upload
-            text_answer="Halo kak, selamat datang! Baju ini bahannya adem dan ready warna merah ya.",
-            task_id="komen_2d_01"
-        )
-        
-        # Contoh 2: Menjalankan Host 3D
-        await ai.run_pipeline(
-            host_type="3d",
-            host_name="host_3d_dinamis", # Pastikan file host_3d_dinamis.mp4 sudah Anda upload
-            text_answer="Betul banget kak, silakan cek keranjang kuning di bawah ini.",
-            task_id="komen_3d_01"
-        )
-
-    asyncio.run(run_test())

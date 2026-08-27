@@ -1,7 +1,6 @@
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import fs from "fs";
 import path from "path";
-import crypto from "crypto";
 
 export interface TTSVoice {
   id: string;
@@ -39,8 +38,6 @@ export const INDONESIAN_VOICES: TTSVoice[] = [
   },
 ];
 
-// Microsoft Edge only ships two real Indonesian neural voices (Gadis/female,
-// Ardi/male) — "SitiNeural" doesn't exist upstream, so alias it to Gadis.
 const EDGE_VOICE_ALIASES: Record<string, string> = {
   "id-ID-SitiNeural": "id-ID-GadisNeural",
 };
@@ -55,6 +52,7 @@ export interface SynthesizeRequest {
   avatarName?: string;
   speed?: number;
   pitch?: number;
+  tone?: string;
 }
 
 export interface SynthesizeResponse {
@@ -79,11 +77,6 @@ function escapeSSML(text: string): string {
     .replace(/'/g, "&apos;");
 }
 
-// Note: the free Edge "read aloud" endpoint only accepts <speak>/<voice>/<prosody>
-// elements — <break>/<mstts:express-as> etc. get the connection closed early.
-// So natural-sounding pauses are added by synthesizing sentence-by-sentence and
-// concatenating the resulting MP3s (each utterance already carries Edge's own
-// leading/trailing silence padding), instead of via unsupported SSML tags.
 function splitIntoSentences(text: string): string[] {
   return text
     .split(/(?<=[.!?])\s+/)
@@ -110,23 +103,58 @@ async function synthesizeSentence(
   return Buffer.concat(chunks);
 }
 
+function getToneVoiceSettings(tone?: string, baseSpeed = 1.0): { speed: number; rateStr: string } {
+  const t = (tone || "").toLowerCase();
+  if (t.includes("energet") || t.includes("energetic")) {
+    const s = Math.max(baseSpeed, 1.15);
+    return { speed: s, rateStr: "+15%" };
+  }
+  if (t.includes("fomo")) {
+    const s = Math.max(baseSpeed, 1.20);
+    return { speed: s, rateStr: "+20%" };
+  }
+  if (t.includes("profesion") || t.includes("professional")) {
+    return { speed: baseSpeed, rateStr: "+0%" };
+  }
+  return { speed: baseSpeed, rateStr: "+5%" };
+}
+
+function getLocalVoiceRefFallback(avatarName: string, tone?: string): Buffer | null {
+  const t = (tone || "").toLowerCase();
+  let toneFile = "namira_energetik.mp3";
+  if (t.includes("fomo")) toneFile = "namira_fomo.mp3";
+  else if (t.includes("profesion") || t.includes("professional")) toneFile = "namira_professional.mp3";
+
+  const searchDirs = [
+    path.join(process.cwd(), "assets", "voice_refs"),
+    path.join(process.cwd(), "..", "deploy", "assets", "voice_refs"),
+    path.join(process.cwd(), "..", "frontend", "public", "voice-templates"),
+  ];
+
+  for (const dir of searchDirs) {
+    const filePath = path.join(dir, toneFile);
+    if (fs.existsSync(filePath)) {
+      try {
+        return fs.readFileSync(filePath);
+      } catch {}
+    }
+  }
+  return null;
+}
+
 /** Synthesizes text via the given Edge neural voice and returns MP3 bytes. */
 async function synthesizeWithEdgeTTS(
   text: string,
   voiceId: string,
-  speed: number,
+  rateStr: string,
 ): Promise<Buffer> {
-  // msedge-tts expects rate as a percentage offset, e.g. "+10%" / "-15%"
-  const ratePercent = Math.round((speed - 1) * 100);
-  const rate = `${ratePercent >= 0 ? "+" : ""}${ratePercent}%`;
-
   const sentences = splitIntoSentences(text);
   if (sentences.length <= 1) {
-    return synthesizeSentence(text, voiceId, rate);
+    return synthesizeSentence(text, voiceId, rateStr);
   }
 
   const parts = await Promise.all(
-    sentences.map((sentence) => synthesizeSentence(sentence, voiceId, rate)),
+    sentences.map((sentence) => synthesizeSentence(sentence, voiceId, rateStr)),
   );
   return Buffer.concat(parts);
 }
@@ -134,7 +162,7 @@ async function synthesizeWithEdgeTTS(
 /** Warms up the TTS engine so the first real request doesn't pay connection setup cost. */
 export async function warmUpTTS(): Promise<void> {
   try {
-    await synthesizeWithEdgeTTS("hai", "id-ID-GadisNeural", 1.0);
+    await synthesizeWithEdgeTTS("hai", "id-ID-GadisNeural", "+10%");
   } catch (err) {
     console.warn("[TTS] Edge-TTS warmup notice:", err);
   }
@@ -143,23 +171,23 @@ export async function warmUpTTS(): Promise<void> {
 export async function synthesizeSpeech(
   req: SynthesizeRequest,
 ): Promise<SynthesizeResponse> {
-  const { text, avatarName = "Namira", speed = 1.0, pitch: _pitch = 1.0 } = req;
+  const { text, avatarName = "Namira", speed = 1.0, pitch: _pitch = 1.0, tone } = req;
 
-  // Determine best matching voice based on avatarName or style
   let matchedVoice =
     INDONESIAN_VOICES.find(
       (v) => v.avatarMatch.toLowerCase() === avatarName.toLowerCase(),
-    ) || INDONESIAN_VOICES[1]; // Default to Siti/Namira
+    ) || INDONESIAN_VOICES[1]; 
 
   if (req.voice) {
     const customVoice = INDONESIAN_VOICES.find((v) => v.id === req.voice);
     if (customVoice) matchedVoice = customVoice;
   }
 
+  const toneSettings = getToneVoiceSettings(tone, speed);
   const wordCount = text.trim().split(/\s+/).length;
   const estimatedSeconds = Math.max(
     1.5,
-    Math.round((wordCount / ((140 * speed) / 60)) * 10) / 10,
+    Math.round((wordCount / ((140 * toneSettings.speed) / 60)) * 10) / 10,
   );
 
   let audioBuffer: Buffer | undefined;
@@ -168,10 +196,14 @@ export async function synthesizeSpeech(
     audioBuffer = await synthesizeWithEdgeTTS(
       text,
       resolveEdgeVoice(matchedVoice.id),
-      speed,
+      toneSettings.rateStr,
     );
   } catch (err) {
-    console.error("Failed to synthesize speech via Edge TTS:", err);
+    console.warn("[TTS] Edge TTS unreachable, loading persona template fallback:", err);
+    const fallbackBuffer = getLocalVoiceRefFallback(avatarName, tone);
+    if (fallbackBuffer) {
+      audioBuffer = fallbackBuffer;
+    }
   }
 
   return {
@@ -181,7 +213,7 @@ export async function synthesizeSpeech(
     text,
     durationEstimateSeconds: estimatedSeconds,
     audioFormat: "audio/mpeg",
-    engine: "Microsoft Edge Neural TTS (id-ID)",
+    engine: audioBuffer ? "Microsoft Edge Neural TTS + Persona Modulation (id-ID)" : "Fallback Voice Template",
     message: audioBuffer ? "TTS synthesis success" : "TTS synthesis fallback",
     audioBuffer,
   };

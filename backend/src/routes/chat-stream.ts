@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { generateLunaResponse } from "../services/luna-brain.js";
+import { generateLunaResponse } from "../services/gemini-brain.js";
 import { generateVisemesFromText } from "../services/viseme-generator.js";
 import { synthesizeSpeech } from "../services/tts.js";
 
@@ -23,14 +23,8 @@ export async function chatStreamRoutes(server: FastifyInstance) {
       return { success: false, error: parsed.error.flatten() };
     }
 
-    const {
-      comment,
-      activeProduct,
-      avatarName,
-      tone,
-      voice,
-      mode,
-  } = parsed.data;
+    const { comment, activeProduct, avatarName, tone, voice, mode } =
+      parsed.data;
 
     try {
       const lunaResponse = await generateLunaResponse(

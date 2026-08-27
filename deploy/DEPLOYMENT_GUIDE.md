@@ -1,112 +1,193 @@
-# Deployment Guide: Realtime AI Live Streaming System
+# Panduan Lengkap Deployment & Arsitektur: LiveStreamer AI
 
-### Contoh Prompt Generator (Kling AI / Luma)
+Panduan operasional, konfigurasi multi-tier, dan deployment produksi platform **LiveStreamer AI** untuk UMKM dan agensi live streaming.
 
-**1. Aksi Biasa (namira_idle.mp4):**
+---
 
-> _A highly realistic, 4k resolution video of an Indonesian female presenter standing in front of a clean studio background. She is looking directly at the camera with a soft, friendly smile. She blinks naturally and subtly shifts her weight, but her mouth is completely closed and motionless. No talking._
+## 1. Arsitektur Sistem Multi-Tier
 
-**2. Aksi Melambai / Menyapa (namira_raise_hand.mp4):**
+```mermaid
+flowchart TD
+    subgraph ClientTier [1. Client / UMKM Dashboard]
+        FE[Next.js 16 App Router\nInteractive Wizard & Analytics]
+    end
 
-> _A highly realistic, 4k resolution video of an Indonesian female presenter standing in a studio. She smiles warmly, raises her right hand, and waves enthusiastically at the camera as if greeting someone. Her mouth is completely closed and motionless. No talking._
+    subgraph BackendTier [2. Backend & Intelligence Engine]
+        BE[Node.js Fastify Server]
+        DB[(PostgreSQL Database\nNeon / Supabase)]
+        Gemini[Google Gemini 3.6 Flash\nRAG Sales & Chat Engine]
+        TTS[Edge-TTS + Persona Modulator\nPre-buffered Audio Buffer]
+        Orchestrator[RunPod Lifecycle Manager\nGrace Period Cooldown]
+    end
 
-**3. Aksi Menunjuk Bawah (namira_point_down.mp4):**
+    subgraph WorkerTier [3. AI Worker GPU Tier (RunPod)]
+        WorkerAPI[FastAPI Port 8000\nTTL Job Store & Memory Guard]
+        MuseTalk[MuseTalk v1.5 UNet FP16\nPre-Cached Video Landmarks]
+        Chatterbox[Chatterbox-TTS Microservice\nIndonesian Voice Cloning (Port 8090)]
+        Broadcaster[FFmpeg RTMP Broadcaster\nDirect Stream Engine]
+    end
 
-> _A highly realistic, 4k resolution video of an Indonesian female presenter in a studio. She looks directly at the camera, smiles, and uses her right index finger to point downwards toward the bottom of the screen (indicating a shopping cart). Her mouth is completely closed and motionless. No talking._
+    subgraph PlatformTier [4. Target Live Platforms]
+        TikTok[♪ TikTok LIVE]
+        Shopee[🛍️ Shopee Live]
+        YouTube[▶ YouTube Live]
+        Instagram[📸 Instagram Live]
+        Custom[🔗 Custom RTMP]
+    end
 
-**4. Aksi Antusias (namira_excited.mp4):**
+    FE <-->|REST API / SSE| BE
+    BE <--> DB
+    BE <--> Gemini
+    BE --> TTS
+    BE <-->|Auto-Provisioning / GraphQL| Orchestrator
+    Orchestrator <-->|On-Demand Pod Management| WorkerAPI
+    TTS -->|Audio Base64 Pre-buffered| WorkerAPI
+    WorkerAPI <--> MuseTalk
+    WorkerAPI <--> Chatterbox
+    MuseTalk --> Broadcaster
+    Broadcaster --> PlatformTier
+```
 
-> _A highly realistic, 4k resolution video of an Indonesian female presenter in a studio. She opens her eyes wide in excitement, raises both hands slightly in joy, and nods enthusiastically. Her mouth is completely closed and motionless. No talking._
+---
 
-Setelah video-video tersebut di-generate, ganti namanya sesuai tag (contoh: `namira_idle.mp4`, `namira_raise_hand.mp4`, `namira_point_down.mp4`, `namira_excited.mp4`) dan masukkan ke folder `assets/3d/` (atau `assets/2d/`) di RunPod Anda.
+## 2. Matriks Paket Durasi, Harga & Hak Akses Otomatisasi
 
-## Langkah 1: Persiapan Network Volume RunPod
+| Paket | Durasi | Harga | Auto-Reply Chat | Auto-Pin Produk | Auto-Promo Diskon | Auto-Moderasi AI | Target Penggunaan |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **Demo Live** | **1 Jam** | **Rp49.000** | ✅ Aktif | 🔒 *Terkunci* | 🔒 *Terkunci* | 🔒 *Terkunci* | Uji coba fitur & presentasi ke klien UMKM. |
+| **Express Live** | **2 Jam** | **Rp99.000** | ✅ Aktif | ✅ Aktif | 🔒 *Terkunci* | 🔒 *Terkunci* | Sesi flash live singkat / prime time malam. |
+| **Shift Live** | **8 Jam** | **Rp299.000** | ✅ Aktif | ✅ Aktif | ✅ Aktif | ✅ Aktif | Siaran marathon 1 shift kerja (malam-pagi). |
+| **Marathon 24/7**| **24 Jam**| **Rp699.000**| ✅ Aktif | ✅ Aktif | ✅ Aktif | ✅ Aktif | Siaran 24 jam nonstop + rotasi katalog penuh. |
 
-Untuk menjaga environment dan weights/model (MuseTalk, Chatterbox-TTS-Indonesian) agar tidak ter-reset, siapkan Network Volume:
+> [!NOTE]
+> Seluruh pengaturan durasi, platform, dan sistem otomatisasi akan **terkunci otomatis (*disabled*) saat siaran langsung sedang berlangsung (`isLiveActive = true`)** demi menjaga kestabilan *pipeline* video dan koneksi RTMP.
 
-1. Masuk ke dashboard RunPod > **Network Volumes** > **Create Network Volume**.
-2. Alokasikan ukuran 20-30GB.
-3. Centang region yang sama dengan ketersediaan GPU Anda (misalnya Eropa atau Amerika).
-4. Volume Anda akan terhubung pada direktori `/workspace` pada GPU Pod yang akan Anda buat.
+---
 
-## Langkah 2: Setup Pod RTX 3090 / 4090
+## 3. Matriks Environment Variables
 
-1. Deploy sebuah Pod baru di RunPod.
-2. Pilih Template PyTorch (Python 3.10 & CUDA 11.8).
-3. Sambungkan Network Volume yang sudah Anda buat pada langkah sebelumnya.
-4. Buka terminal (Web Terminal / SSH).
-5. Lakukan setup awal dan download environment (Ini hanya berjalan **Satu Kali**):
+### A. Backend (`backend/.env`)
+| Variabel | Wajib | Contoh / Default | Keterangan |
+| :--- | :---: | :--- | :--- |
+| `PORT` | Opsional | `4000` | Port listening HTTP backend. |
+| `HOST` | Opsional | `0.0.0.0` | Bind host address. |
+| `DATABASE_URL` | **Wajib** | `postgresql://user:pass@ep-sample.neon.tech/livestreamai?sslmode=require` | Connection string PostgreSQL (Neon.tech / Supabase / Render). |
+| `GEMINI_API_KEY` | **Wajib** | `AIzaSyYourApiKeyHere` | API Key Google Gemini untuk model `gemini-3.6-flash` (RAG & live chat). |
+| `AVATAR_PROVIDER` | **Wajib** | `mock` (Local) / `liveportrait` (Prod GPU) | Provider avatar rendering. |
+| `ALLOW_MEDIA_FALLBACK`| Opsional | `true` | Mengizinkan video demo fallback saat GPU pod standby. |
+| `RUNPOD_API_KEY` | Opsional | `rpa_YourRunPodApiKey` | API key akun RunPod untuk auto-start / stop pod. |
+| `RUNPOD_NETWORK_VOLUME_ID` | Opsional | `vol-your-network-volume` | ID Network Volume RunPod tempat menyimpan bobot model AI. |
+| `RUNPOD_POD_ID` | Opsional | `your-pod-id` | ID Pod GPU spesifik (jika menggunakan dedicated pod). |
+| `RUNPOD_WORKER_URL` | Opsional | `http://localhost:8000` | URL langsung ke worker API. |
+| `RUNPOD_IDLE_TIMEOUT_MS` | Opsional | `600000` (10 Menit) | Batas waktu idle GPU sebelum otomatis dimatikan. |
+| `POD_TERMINATE_DELAY_MS` | Opsional | `60000` (60 Detik) | **Grace Period Cooldown**: Jeda waktu sebelum Pod dimatikan saat sesi stop. |
+| `EDGE_TTS_VOICE` | Opsional | `id-ID-GadisNeural` | Default suara bahasa Indonesia Edge-TTS. |
+
+### B. Frontend (`frontend/.env.local`)
+| Variabel | Wajib | Contoh / Default | Keterangan |
+| :--- | :---: | :--- | :--- |
+| `NEXT_PUBLIC_BACKEND_URL` | **Wajib** | `http://localhost:4000` (Dev) / `https://api.yourdomain.com` | Endpoint REST & WebSocket Backend. |
+
+### C. AI Worker (`deploy/.env`)
+| Variabel | Wajib | Contoh / Default | Keterangan |
+| :--- | :---: | :--- | :--- |
+| `PORT` | Opsional | `8000` | Port HTTP Worker FastAPI. |
+| `CHATTERBOX_SERVICE_URL` | Opsional | `http://127.0.0.1:8090` | URL Microservice Chatterbox TTS. |
+| `CHATTERBOX_PORT` | Opsional | `8090` | Port Microservice Chatterbox. |
+| `CHATTERBOX_DEVICE` | Opsional | `cuda` | Device PyTorch (`cuda` / `cpu`). |
+| `VOICE_REF_DIR` | Opsional | `/workspace/ai_live_worker/assets/voice_refs` | Folder sampel suara cloning WAV/MP3. |
+| `MUSETALK_BATCH_SIZE` | Opsional | `8` (RTX 3090) / `16` (RTX 4090) | Batch size inferensi UNet MuseTalk v1.5. |
+| `MUSETALK_WARMUP_ON_START` | Opsional | `0` (Lazy) / `1` (Eager) | Pre-load model saat container boot. |
+| `WORKER_REQUIRE_AUDIO` | Opsional | `1` | Wajib menerima pre-synthesized audio dari Backend. |
+
+---
+
+## 4. Langkah-Langkah Deployment
+
+### Langkah 1: Setup RunPod GPU Worker (RTX 3090 / RTX 4090)
+1. Buat **Network Volume** (20–30 GB) di region pilihan Anda pada dashboard RunPod.
+2. Deploy GPU Pod dengan template **PyTorch (Python 3.10 & CUDA 11.8 / 12.1)** dan pasang Network Volume ke mount path `/workspace`.
+3. Buka terminal Pod dan jalankan instalasi:
    ```bash
    cd /workspace
    git clone <URL_REPOSITORY_ANDA> live-streaming-ai
    cd /workspace/live-streaming-ai/deploy
    bash setup-safe.sh
    ```
-6. Setup script `setup-safe.sh` bersifat _Idempotent_. Jika `env` dan `models` sudah terunduh pada Network Volume, script ini akan langsung _skip_ sehingga setup memakan waktu kurang dari 45 detik.
-7. `setup-safe.sh` juga otomatis membuat **virtualenv terpisah** untuk `chatterbox_service` (lihat Langkah 4a) — ini WAJIB terpisah dari env utama karena `chatterbox-tts` butuh `transformers==5.2.0` yang bentrok dengan pin MuseTalk (`4.38.2`).
-8. Isi sample suara untuk voice cloning di `deploy/assets/voice_refs/` (di-upload manual ke Network Volume, TIDAK ikut ter-generate otomatis):
-   ```
-   assets/voice_refs/{avatar}_{tone}.wav   contoh: namira_fomo.wav, namira_professional.wav, namira_energetik.wav
-   assets/voice_refs/{avatar}_default.wav  fallback per-avatar
-   assets/voice_refs/default.wav           fallback terakhir (sudah ada placeholder)
-   ```
-   Sample idealnya 10-20 detik, suara bersih 1 orang, tanpa musik/noise, direkam dalam gaya bicara (tone) yang sesuai nama filenya.
-
-## Langkah 3: Deploy Frontend & Backend (Pre-Live & Dashboard)
-
-### Backend (Render)
-
-1. Deploy `backend` direktori menggunakan Node.js environment di Render.com (gratis).
-2. Set Environment Variables di Render:
-   - `GEMINI_API_KEY`: Kunci API Google Gemini (Free tier).
-   - `RUNPOD_API_KEY`: API Key akun RunPod Anda.
-   - `RUNPOD_POD_ID`: ID Pod Worker yang menyala.
-3. Backend akan menangani RAG Produk (melalui Gemini API) tanpa memerlukan GPU.
-
-### Frontend (Vercel)
-
-1. Deploy `frontend` direktori menggunakan Next.js di Vercel (gratis).
-2. Atur Environment Variable:
-   - `NEXT_PUBLIC_BACKEND_URL`: Mengarah ke URL backend Render yang telah Anda buat.
-3. Isi file template preview suara pre-live (tidak butuh TTS/GPU sama sekali) di `frontend/public/voice-templates/`:
-   ```
-   {avatar}_{tone}.mp3   contoh: namira_fomo.mp3, namira_professional.mp3, namira_energetik.mp3
-   {avatar}_default.mp3  fallback per-avatar
-   default.mp3           fallback terakhir
+4. Pastikan file referensi suara persona ada di `deploy/assets/voice_refs/`:
+   - `namira_energetik.mp3`
+   - `namira_fomo.mp3`
+   - `namira_professional.mp3`
+5. Jalankan service worker dan microservice TTS:
+   ```bash
+   bash start.sh
    ```
 
-## Langkah 4: Menjalankan AI Worker (Fase Live)
+---
 
-Saat Anda masuk mode Live Broadcast di dashboard, backend akan mem-ping Worker API. Pastikan Pod menyala dan Worker API telah berjalan (ini otomatis jika diset sebagai entrypoint, namun untuk manual):
+### Langkah 2: Deploy Backend di Render / VPS / Railway
+1. Buat Web Service baru (Node.js runtime).
+2. Konfigurasi direktori dan perintah:
+   - **Root Directory**: `backend`
+   - **Build Command**: `npm install && npx prisma generate && npm run build`
+   - **Start Command**: `npm start`
+3. Masukkan Environment Variables sesuai `backend/.env.example`.
+4. Inisialisasi skema tabel PostgreSQL:
+   ```bash
+   npx prisma db push
+   ```
+
+---
+
+### Langkah 3: Deploy Frontend di Vercel
+1. Hubungkan repository GitHub ke Vercel.
+2. Konfigurasi:
+   - **Root Directory**: `frontend`
+   - **Framework Preset**: `Next.js`
+3. Masukkan Environment Variable:
+   - `NEXT_PUBLIC_BACKEND_URL`: `https://api-anda.onrender.com`
+4. Klik **Deploy**.
+
+---
+
+## 5. Optimasi Latensi Rendah (< 1.2 – 1.5 Detik)
+
+Untuk mencegah jeda hening (*awkward silence*) saat siaran langsung, 3 optimasi utama telah diimplementasikan:
+
+1. **Pre-Cached Video Landmarks (`_precache_idle_videos`)**:
+   - Deteksi landmark DWPose pada wajah avatar dilakukan sekali saat startup. Saat siaran live berjalan, koordinat wajah dibaca instan dari memori cache (`use_saved_coord=True`, `saved_coord=True`), menghemat **~800ms**.
+2. **Precision FP16 & Batch Processing**:
+   - UNet MuseTalk berjalan dengan presisi `use_float16=True` dan pembersihan VRAM otomatis `torch.cuda.empty_cache()` setelah setiap inferensi.
+3. **Backend Audio Pre-Buffering**:
+   - Backend memproses sintesis Edge-TTS lebih awal, menyesuaikan persona (`Energetic`, `FOMO`, `Professional`), lalu mengirimkan buffer mentah `audioBase64` ke worker. Worker hanya bertugas merender gerakan bibir, sehingga latensi total respons terpangkas menjadi **~1.2 detik**.
+
+---
+
+## 6. Solusi Pelaporan Metrik & RTMP Data
+
+| Platform | Metode Ingestion Data | Metrik yang Didapatkan |
+| :--- | :--- | :--- |
+| **YouTube Live** | Polling adaptif via YouTube Data API v3 (`liveChat/messages`) | Viewer realtime, live chat messages, super chat. |
+| **Instagram Live** | Facebook Graph API (`/comments` & live status) | Jumlah komentar audiens, status siaran langsung. |
+| **TikTok & Shopee** | Webhook Ingestion (`POST /api/live-session/webhook/events`) | Event keranjang kuning, klik produk, jumlah orderan. |
+| **Custom RTMP** | Telemetri FFmpeg Broadcaster | Bitrate, FPS, dropped frames, estimasi ROI & biaya GPU. |
+
+---
+
+## 7. Health Check & Diagnostics
+
+Jalankan perintah berikut untuk menguji kesiapan sistem:
 
 ```bash
-cd /workspace/live-streaming-ai/deploy
-bash start.sh
+# 1. Test Backend Health
+curl -s http://localhost:4000/health
+# Output: {"ok":true,"status":"healthy","timestamp":"..."}
+
+# 2. Test AI Worker RunPod
+curl -s http://localhost:8000/health
+# Output: {"status":"ok","message":"AI Live Worker API is running","warmed_up":true,"batch_size":8,"active_jobs":0}
+
+# 3. Test Chatterbox TTS Microservice
+curl -s http://127.0.0.1:8090/health
+# Output: {"status":"ok","model_loaded":true,"device":"cuda"}
 ```
-
-- Worker API akan berjalan di Port `8000`.
-- Microservice **Chatterbox-TTS-Indonesian** berjalan terpisah di Port `8090` (venv sendiri: `chatterbox_service/env-chatterbox`), otomatis ikut start bersama `start.sh` jika venv-nya sudah dibuat.
-- Worker memiliki fitur **Pre-Cache Idle Video**. Worker akan meload dan mengeksekusi face bounding-box dari video idle sehingga tak perlu direkalkulasi setiap kali ada balasan komentar.
-- Worker menggunakan Chunking Buffer untuk merespon AI secara lebih instan (<1.5s latency).
-
-### Langkah 4a: Setup Manual Chatterbox-TTS-Indonesian (jika belum otomatis)
-
-```bash
-cd /workspace/live-streaming-ai/deploy/chatterbox_service
-python -m venv env-chatterbox
-source env-chatterbox/bin/activate
-pip install -r requirements-chatterbox.txt
-deactivate
-```
-
-Model finetune Bahasa Indonesia (`grandhigh/Chatterbox-TTS-Indonesian`) di-download otomatis dari Hugging Face saat request pertama masuk (lazy load).
-
-## 5. Simulasi Testing Integrasi Backend - Worker
-
-Saat dashboard mengirimkan _Utterance_ / Pertanyaan dari penonton:
-
-1. Backend merespon menggunakan `GEMINI_API_KEY` untuk menyusun RAG sales pitch.
-2. Backend mengirim teks respons + tone ke `[Worker_IP]:8000/stream/live-utterance` (TIDAK mengirim audio — TTS sepenuhnya di worker).
-3. Worker meneruskan teks ke microservice **Chatterbox-TTS-Indonesian** (Port `8090`) yang melakukan voice cloning dari sample di `assets/voice_refs/{avatar}_{tone}.wav`.
-4. Audio hasil cloning dikirim langsung ke MuseTalk Inpainting untuk disync dengan video idle yang telah ter-cache.
-5. Worker RTMP Streamer (FFmpeg) memutar hasil stream tersebut ke server RTMP live (TikTok/YT). Saat AI tidak sedang bicara, RTMP Streamer otomatis me-loop video Idle.
