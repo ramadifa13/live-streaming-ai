@@ -35,8 +35,6 @@ if [ -d "$WORKER_DIR/env" ]; then
 fi
 
 export COQUI_TOS_AGREED=1
-export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:7b}"
-export OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0:11434}"
 
 check_python_import() {
 	python - "$1" <<'PY'
@@ -64,19 +62,6 @@ echo "Memeriksa ketersediaan FFmpeg..."
 if ! command -v ffmpeg >/dev/null 2>&1; then
 	echo "[ERROR] FFmpeg tidak ditemukan. Worker memerlukan ffmpeg untuk render."
 	exit 1
-fi
-
-# Ollama di RunPod bersifat opsional karena LLM diproses terpusat di Backend
-if [ "${ENABLE_RUNPOD_OLLAMA:-0}" = "1" ]; then
-	echo "Memastikan model Ollama tersedia (${OLLAMA_MODEL})..."
-	if command -v ollama >/dev/null 2>&1; then
-		if ! pgrep -f "ollama serve" >/dev/null 2>&1; then
-			echo "Memulai Ollama (${OLLAMA_HOST})..."
-			OLLAMA_HOST="$OLLAMA_HOST" ollama serve > "$WORKER_DIR/ollama.log" 2>&1 &
-		fi
-	fi
-else
-	echo "[INFO] LLM dipusatkan di Backend (Ollama RunPod dinonaktifkan untuk menghemat VRAM GPU)."
 fi
 
 echo "Memulai AI Worker API (Port 8000)..."
