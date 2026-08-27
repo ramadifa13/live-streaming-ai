@@ -40,7 +40,7 @@ export async function acquireGpuForJob(): Promise<string | null> {
 export async function releaseGpuForJob(podId?: string | null): Promise<void> {
   activeJobLeases = Math.max(0, activeJobLeases - 1);
   if (podId) {
-      await stopPod(podId);
+    await stopPod(podId);
   }
 }
 
@@ -77,7 +77,9 @@ export function startIdleMonitor() {
           `[RunPodManager] GPU has been idle for ${Math.round(elapsedMinutes)} minutes. Initiating auto-shutdown...`,
         );
         try {
-          console.log(`[RunPodManager] Idle monitor skipped (Pods are managed per-session lifecycle now).`);
+          console.log(
+            `[RunPodManager] Idle monitor skipped (Pods are managed per-session lifecycle now).`,
+          );
         } catch (err) {
           console.error(
             `[RunPodManager] Failed to auto-shutdown GPU Pod:`,
@@ -147,7 +149,31 @@ export async function getPodStatus(podId: string): Promise<PodStatus | null> {
 }
 
 /**
- * Sends a request to create a new Pod on-demand
+/**
+ * Daftar GPU hemat biaya yang diizinkan untuk live streaming lipsync.
+ * Mencegah sistem memilih GPU mahal (A100 / H100 / Enterprise cluster).
+ */
+const BUDGET_GPU_TIERS = [
+  {
+    id: "NVIDIA GeForce RTX 4090",
+    label: "RTX 4090 (Utama, ~$0.69/jam, Fast Lipsync)",
+  },
+  {
+    id: "NVIDIA GeForce RTX 3090",
+    label: "RTX 3090 (Hemat, ~$0.39/jam, 24GB VRAM)",
+  },
+  {
+    id: "NVIDIA RTX A5000",
+    label: "RTX A5000 (Alternatif, ~$0.45/jam, 24GB VRAM)",
+  },
+  {
+    id: "NVIDIA RTX A4000",
+    label: "RTX A4000 (Ekonomis, ~$0.35/jam, 16GB VRAM)",
+  },
+];
+
+/**
+ * Sends a request to create a new Pod on-demand with automatic budget GPU fallback.
  */
 export async function createPod(): Promise<string> {
   const volumeId = process.env.RUNPOD_NETWORK_VOLUME_ID;
@@ -164,46 +190,69 @@ export async function createPod(): Promise<string> {
     }
   `;
 
-  try {
-    const data = await runpodGraphQL(mutation, {
-      input: {
-        cloudType: "SECURE",
-        gpuCount: 1,
-        volumeInGb: 0,
-        containerDiskInGb: 5,
-        minVcpuCount: 2,
-        minMemoryInGb: 15,
-        gpuTypeId: "NVIDIA GeForce RTX 4090",
-        name: "LiveStreamingWorker",
-        imageName: "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04",
-        dockerArgs: "bash -c 'cd /workspace/live-streaming-ai/deploy && bash start.sh'",
-        ports: "8000/http,8090/http",
-        networkVolumeId: volumeId
-      },
-    });
+  let lastGpuError: any = null;
 
-    if (data?.podFindAndDeployOnDemand?.id) {
-      const createdPodId = data.podFindAndDeployOnDemand.id;
-      console.log(`[RunPodManager] Created new on-demand Pod ${createdPodId}...`);
-      return createdPodId;
+  for (const gpuTier of BUDGET_GPU_TIERS) {
+    try {
+      console.log(`[RunPodManager] Mencoba alokasi GPU: ${gpuTier.label}...`);
+      const data = await runpodGraphQL(mutation, {
+        input: {
+          cloudType: "SECURE",
+          gpuCount: 1,
+          volumeInGb: 0,
+          containerDiskInGb: 5,
+          minVcpuCount: 2,
+          minMemoryInGb: 15,
+          gpuTypeId: gpuTier.id,
+          name: `LiveWorker-${gpuTier.id.replace(/\s+/g, "_")}`,
+          imageName: "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04",
+          dockerArgs:
+            "bash -c 'cd /workspace/live-streaming-ai/deploy && bash start.sh'",
+          ports: "8000/http,8090/http",
+          networkVolumeId: volumeId,
+        },
+      });
+
+      if (data?.podFindAndDeployOnDemand?.id) {
+        const createdPodId = data.podFindAndDeployOnDemand.id;
+        console.log(
+          `[RunPodManager] Sukses membuat Pod ${createdPodId} dengan ${gpuTier.label}!`,
+        );
+        return createdPodId;
+      }
+    } catch (error: any) {
+      lastGpuError = error;
+      const isFull =
+        error.message &&
+        (error.message.includes("not enough free GPUs") ||
+          error.message.includes("no available") ||
+          error.message.includes("out of stock"));
+      if (isFull) {
+        console.warn(
+          `[RunPodManager] ${gpuTier.id} sedang penuh. Beralih ke tier hemat berikutnya...`,
+        );
+        continue; // Lanjut ke GPU hemat berikutnya
+      }
+      // Jika error otentikasi atau validasi volume, hentikan langsung
+      throw error;
     }
-    throw new Error("Failed to create pod: No ID returned.");
-  } catch (error: any) {
-    if (error.message && error.message.includes("not enough free GPUs")) {
-      console.warn(`[RunPodManager] RunPod has no free GPUs available.`);
-      throw new Error("GPU_HOST_FULL");
-    }
-    throw error;
   }
+
+  console.warn(`[RunPodManager] Semua GPU dalam daftar hemat sedang penuh.`);
+  throw new Error("GPU_HOST_FULL");
 }
 
 /**
  * Resumes the pod and waits (polls) until it is RUNNING and ready to accept requests.
  */
-export async function startPodAndWait(timeoutMs = 120000): Promise<string | null> {
+export async function startPodAndWait(
+  timeoutMs = 120000,
+): Promise<string | null> {
   // We no longer rely on static RUNPOD_POD_ID, we check if we have volume ID configured
   if (!process.env.RUNPOD_NETWORK_VOLUME_ID && !process.env.RUNPOD_POD_ID) {
-    console.log("[RunPodManager] No RUNPOD_NETWORK_VOLUME_ID or RUNPOD_POD_ID. Skipping start.");
+    console.log(
+      "[RunPodManager] No RUNPOD_NETWORK_VOLUME_ID or RUNPOD_POD_ID. Skipping start.",
+    );
     return null;
   }
 
@@ -219,11 +268,11 @@ export async function startPodAndWait(timeoutMs = 120000): Promise<string | null
 
   // If it's already running, we're good
   if (currentPodId) {
-     let status = await getPodStatus(currentPodId);
-     if (status && status.desiredStatus === "RUNNING") {
-        console.log("[RunPodManager] Pod is already running.");
-        return currentPodId;
-     }
+    let status = await getPodStatus(currentPodId);
+    if (status && status.desiredStatus === "RUNNING") {
+      console.log("[RunPodManager] Pod is already running.");
+      return currentPodId;
+    }
   }
 
   // Mekanisme retry untuk membuat Pod jika mesin GPU penuh
@@ -233,38 +282,38 @@ export async function startPodAndWait(timeoutMs = 120000): Promise<string | null
   while (retries > 0) {
     try {
       if (process.env.RUNPOD_NETWORK_VOLUME_ID) {
-          currentPodId = await createPod();
+        currentPodId = await createPod();
       }
       createSuccess = true;
       break;
     } catch (err: any) {
-        if (err.message === "GPU_HOST_FULL") {
-          if (retries > 1) {
-            console.log(
-              `[RunPodManager] GPU penuh, mencoba lagi dalam 10 detik... (${retries - 1} percobaan tersisa)`,
-            );
-            await new Promise((r) => setTimeout(r, 10000));
-            retries--;
-          } else {
-            const allowFallback =
-              (process.env.ALLOW_MEDIA_FALLBACK ?? "false").toLowerCase() ===
-              "true";
-            if (allowFallback) {
-              console.warn(
-                "[RunPodManager] Semua GPU penuh. Beralih ke fallback (tanpa GPU).",
-              );
-              return null; // Bypass proses tunggu agar backend tidak crash
-            }
-            // Jika tidak boleh fallback, hentikan dengan melempar pesan error untuk Frontend
-            throw new Error(
-              "Semua GPU di server sedang penuh. Silakan coba beberapa saat lagi.",
-            );
-          }
+      if (err.message === "GPU_HOST_FULL") {
+        if (retries > 1) {
+          console.log(
+            `[RunPodManager] GPU penuh, mencoba lagi dalam 10 detik... (${retries - 1} percobaan tersisa)`,
+          );
+          await new Promise((r) => setTimeout(r, 10000));
+          retries--;
         } else {
-          // Lemparkan error jika disebabkan oleh hal lain (misal: koneksi terputus/API key salah)
-          throw err;
+          const allowFallback =
+            (process.env.ALLOW_MEDIA_FALLBACK ?? "false").toLowerCase() ===
+            "true";
+          if (allowFallback) {
+            console.warn(
+              "[RunPodManager] Semua GPU penuh. Beralih ke fallback (tanpa GPU).",
+            );
+            return null; // Bypass proses tunggu agar backend tidak crash
+          }
+          // Jika tidak boleh fallback, hentikan dengan melempar pesan error untuk Frontend
+          throw new Error(
+            "Semua GPU di server sedang penuh. Silakan coba beberapa saat lagi.",
+          );
         }
+      } else {
+        // Lemparkan error jika disebabkan oleh hal lain (misal: koneksi terputus/API key salah)
+        throw err;
       }
+    }
   }
 
   if (!createSuccess || !currentPodId) {
@@ -335,7 +384,9 @@ export async function stopPod(podId: string): Promise<boolean> {
 export async function getGpuControlStatus(podId: string | null) {
   const pod = podId ? await getPodStatus(podId) : null;
   return {
-    configured: Boolean(process.env.RUNPOD_NETWORK_VOLUME_ID || process.env.RUNPOD_POD_ID),
+    configured: Boolean(
+      process.env.RUNPOD_NETWORK_VOLUME_ID || process.env.RUNPOD_POD_ID,
+    ),
     podId: podId || process.env.RUNPOD_POD_ID || null,
     desiredStatus: pod?.desiredStatus || "UNKNOWN",
     liveSessionActive,
