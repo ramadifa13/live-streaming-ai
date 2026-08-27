@@ -2,15 +2,20 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKER_DIR="/workspace/ai_live_worker"
+VENV_DIR="$WORKER_DIR/env"
+PYTHON_BIN="$VENV_DIR/bin/python"
+PIP_BIN="$VENV_DIR/bin/pip"
+
+export TMPDIR="/workspace/tmp"
+export PIP_CACHE_DIR="/workspace/tmp/pip_cache"
+mkdir -p "$TMPDIR" "$PIP_CACHE_DIR" "$WORKER_DIR"
+
 export TORCH_CUDA_TAG=cu118
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-11.8}"
 export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:7b}"
 export PIP_NO_CACHE_DIR=1
-
-WORKER_DIR="/workspace/ai_live_worker"
-export TMPDIR="/workspace/tmp"
-export PIP_CACHE_DIR="/workspace/tmp/pip_cache"
-mkdir -p "$TMPDIR" "$PIP_CACHE_DIR" "$WORKER_DIR"
 
 if [ -f "$WORKER_DIR/.setup_complete" ] && [ -d "$WORKER_DIR/env" ] && [ -d "$WORKER_DIR/models" ]; then
     echo "[INFO] Setup already complete, environment and models exist. Skipping setup."
@@ -19,14 +24,14 @@ fi
 
 echo ""
 echo "============================================================"
-echo " MuseTalk RunPod RTX 4090 - SAFE SETUP"
+echo " MuseTalk RunPod RTX 4090/3090 - SAFE SETUP"
 echo "============================================================"
 echo ""
 
-echo "[0/10] Mengecek environment..."
+echo "[0/10] Mengecek environment sistem..."
 
-python --version
-which python
+python3 --version
+which python3
 
 if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "[ERROR] nvidia-smi tidak ditemukan."
@@ -55,11 +60,7 @@ echo ""
 echo "Compiler:"
 gcc --version | head -1
 
-echo ""
-echo "Python:"
-python --version
-
-PY_MAJOR_MINOR="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+PY_MAJOR_MINOR="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 
 if [ "$PY_MAJOR_MINOR" != "3.10" ]; then
     echo "[ERROR] Python 3.10 dibutuhkan."
@@ -70,11 +71,11 @@ fi
 echo "[OK] Python 3.10"
 
 echo ""
-echo "[1.1/10] Menyiapkan Ollama (${OLLAMA_MODEL})..."
+echo "[1/10] Menyiapkan Ollama (${OLLAMA_MODEL})..."
 
 # Ollama di RunPod bersifat opsional. LLM diproses terpusat di backend lokal,
 # sehingga instalasi binary Ollama di RunPod dilewati secara default untuk
-# menghemat waktu setup & disk. Aktifkan hanya untuk setup khusus RunPod LLM.
+# menghemat waktu setup & disk.
 if [ "${ENABLE_RUNPOD_OLLAMA:-0}" = "1" ]; then
     if ! command -v curl >/dev/null 2>&1; then
         echo "curl belum ada. Installing..."
@@ -89,12 +90,7 @@ if [ "${ENABLE_RUNPOD_OLLAMA:-0}" = "1" ]; then
         echo "Ollama sudah terinstall: $(ollama --version)"
     fi
 
-    if ! command -v ollama >/dev/null 2>&1; then
-        echo "[ERROR] Ollama gagal diinstall."
-        exit 1
-    fi
-
-    echo "[OK] Ollama tersedia. Model akan dipastikan saat start.sh (ENABLE_RUNPOD_OLLAMA=1)."
+    echo "[OK] Ollama tersedia."
 else
     echo "[SKIP] Ollama dijalankan di backend lokal (ENABLE_RUNPOD_OLLAMA != 1)."
     echo "[OK] Melewati instalasi Ollama di RunPod."
@@ -111,7 +107,7 @@ fi
 echo "[OK] CUDA toolkit 11.8"
 
 echo ""
-echo "[3/10] Mengecek Hugging Face token..."
+echo "[2/10] Mengecek Hugging Face token..."
 
 if [ -z "${HF_TOKEN:-}" ]; then
     echo ""
@@ -128,11 +124,11 @@ fi
 echo "[OK] HF_TOKEN tersedia."
 
 # ------------------------------------------------------------
-# 4. DISK & VIRTUAL ENVIRONMENT
+# 3. DISK & VIRTUAL ENVIRONMENT
 # ------------------------------------------------------------
 
 echo ""
-echo "[4/10] Mengecek disk & menyiapkan virtual environment..."
+echo "[3/10] Mengecek disk & menginisialisasi Virtual Environment..."
 
 ROOT_AVAIL_GB="$(df -Pk / | awk 'NR==2 {print int($4/1024/1024)}')"
 WORKSPACE_AVAIL_GB="$(df -Pk /workspace 2>/dev/null | awk 'NR==2 {print int($4/1024/1024)}' || echo '0')"
@@ -162,26 +158,28 @@ mkdir -p \
     "$WORKER_DIR/temp" \
     "$WORKER_DIR/output"
 
-# Inisialisasi Virtual Environment di /workspace agar tidak memenuhi root container disk
-if [ ! -d "$WORKER_DIR/env" ]; then
-    echo "Membuat Python Virtual Environment di $WORKER_DIR/env..."
-    python3 -m venv "$WORKER_DIR/env"
+# Inisialisasi Virtual Environment mandiri di /workspace
+if [ ! -f "$PYTHON_BIN" ] || [ ! -f "$PIP_BIN" ]; then
+    echo "Membuat Python Virtual Environment baru di $VENV_DIR..."
+    rm -rf "$VENV_DIR"
+    python3 -m venv "$VENV_DIR"
 fi
 
-echo "Mengaktifkan virtual environment di $WORKER_DIR/env..."
-source "$WORKER_DIR/env/bin/activate"
+export PATH="$VENV_DIR/bin:$PATH"
+source "$VENV_DIR/bin/activate"
 
-# Pastikan pip dan build tools ter-update di dalam venv
-pip install --no-cache-dir --upgrade pip setuptools wheel
+# Update tools di dalam venv
+"$PYTHON_BIN" -m ensurepip --upgrade 2>/dev/null || true
+"$PYTHON_BIN" -m pip install --no-cache-dir --upgrade pip setuptools wheel
 
-echo "[OK] Direktori worker & Virtual Environment siap."
+echo "[OK] Virtual Environment siap: $($PYTHON_BIN --version) at $VENV_DIR"
 
 # ------------------------------------------------------------
-# 5. STOP OLD API
+# 4. STOP OLD API
 # ------------------------------------------------------------
 
 echo ""
-echo "[5/10] Menghentikan API lama jika ada..."
+echo "[4/10] Menghentikan API lama jika ada..."
 
 pkill -f "api_server.py" 2>/dev/null || true
 sleep 2
@@ -189,28 +187,13 @@ sleep 2
 echo "[OK] API lama dihentikan."
 
 # ------------------------------------------------------------
-# 6. CLEAN OLD TORCH STACK (DALAM VENV)
+# 5. INSTALL EXACT PYTORCH STACK
 # ------------------------------------------------------------
 
 echo ""
-echo "[6/10] Menyiapkan PyTorch stack di virtual environment..."
+echo "[5/10] Menginstall PyTorch 2.1 + CUDA 11.8 ke Virtual Environment..."
 
-pip uninstall -y \
-    torch \
-    torchvision \
-    torchaudio \
-    2>/dev/null || true
-
-echo "[OK] Lingkungan PyTorch venv siap."
-
-# ------------------------------------------------------------
-# 7. INSTALL EXACT PYTORCH STACK
-# ------------------------------------------------------------
-
-echo ""
-echo "[7/10] Menginstall PyTorch 2.1 + CUDA 11.8 ke virtual environment..."
-
-pip install \
+"$PIP_BIN" install \
     --no-cache-dir \
     --no-deps \
     "torch==2.1.0+cu118" \
@@ -218,7 +201,7 @@ pip install \
     "torchaudio==2.1.0+cu118" \
     --index-url https://download.pytorch.org/whl/cu118
 
-pip install \
+"$PIP_BIN" install \
     --no-cache-dir \
     --no-deps \
     "numpy==1.26.4"
@@ -226,7 +209,7 @@ pip install \
 echo ""
 echo "Memverifikasi PyTorch..."
 
-python - <<'PY'
+"$PYTHON_BIN" - <<'PY'
 import sys
 import torch
 import torchvision
@@ -262,19 +245,16 @@ if not torch.cuda.is_available():
 gpu = torch.cuda.get_device_name(0)
 print("GPU         :", gpu)
 
-if "4090" not in gpu:
-    print("[WARNING] GPU bukan RTX 4090.")
-
 print("")
 print("PYTORCH STACK OK")
 PY
 
 # ------------------------------------------------------------
-# 8. INSTALL WORKER FILES
+# 6. INSTALL WORKER FILES
 # ------------------------------------------------------------
 
 echo ""
-echo "[8/10] Menyiapkan worker..."
+echo "[6/10] Menyiapkan file worker..."
 
 cp "$SCRIPT_DIR"/*.py "$WORKER_DIR"/ 2>/dev/null || true
 cp "$SCRIPT_DIR"/*.sh "$WORKER_DIR"/ 2>/dev/null || true
@@ -296,19 +276,19 @@ fi
 cd "$WORKER_DIR"
 
 # ------------------------------------------------------------
-# 9. CORE PYTHON DEPENDENCIES
+# 7. CORE PYTHON DEPENDENCIES & FFMPEG
 # ------------------------------------------------------------
 
 echo ""
-echo "[9/10] Installing dependency utama..."
+echo "[7/10] Installing dependency utama worker..."
 
-python -m pip install \
+"$PIP_BIN" install \
     --no-cache-dir \
     "pip<24.1" \
     "setuptools>=65,<71" \
     "wheel<0.42"
 
-python -m pip install \
+"$PIP_BIN" install \
     --no-cache-dir \
     "numpy==1.26.4" \
     "opencv-python-headless==4.8.0.76" \
@@ -319,18 +299,14 @@ python -m pip install \
 
 # requirements worker
 if [ -f "$WORKER_DIR/requirements-worker.txt" ]; then
-
-    echo ""
     echo "Installing requirements-worker.txt..."
-
-    python -m pip install \
+    "$PIP_BIN" install \
         --no-cache-dir \
         -r "$WORKER_DIR/requirements-worker.txt"
-
 fi
 
 # Restore critical versions after requirements-worker
-python -m pip install \
+"$PIP_BIN" install \
     --no-cache-dir \
     --force-reinstall \
     "numpy==1.26.4" \
@@ -339,9 +315,7 @@ python -m pip install \
     "diffusers==0.27.2" \
     "accelerate==0.28.0"
 
-# IMPORTANT:
-# requirements-worker jangan sampai mengubah Torch.
-python -m pip install \
+"$PIP_BIN" install \
     --no-cache-dir \
     --no-deps \
     "torch==2.1.0+cu118" \
@@ -349,31 +323,24 @@ python -m pip install \
     "torchaudio==2.1.0+cu118" \
     --index-url https://download.pytorch.org/whl/cu118
 
-# ------------------------------------------------------------
-# FFMPEG
-# ------------------------------------------------------------
-
 echo ""
 echo "Mengecek FFmpeg..."
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
-
     echo "FFmpeg belum ada. Installing..."
-
     apt-get update -qq
     apt-get install -y -qq ffmpeg espeak-ng
-
 fi
 
 ffmpeg -version | head -1
 
 # ------------------------------------------------------------
-# 10. CLONE MUSETALK + INJECT _load_models_cached
+# 8. CLONE MUSETALK + INJECT _load_models_cached
 # ------------------------------------------------------------
 
 echo ""
 echo "============================================================"
-echo " Menyiapkan MuseTalk"
+echo " [8/10] Menyiapkan MuseTalk"
 echo "============================================================"
 
 cd "$WORKER_DIR"
@@ -402,12 +369,12 @@ sed -i 's/^transformers==.*/transformers==4.38.2/g' requirements.txt || true
 sed -i 's/^diffusers==.*/diffusers==0.27.2/g' requirements.txt || true
 sed -i 's/^huggingface_hub==.*/huggingface_hub>=0.25.0,<0.26.0/g' requirements.txt || true
 
-python -m pip install \
+"$PIP_BIN" install \
     --no-cache-dir \
     -r requirements.txt
 
 # Restore critical versions
-python -m pip install \
+"$PIP_BIN" install \
     --no-cache-dir \
     --force-reinstall \
     "numpy==1.26.4" \
@@ -416,18 +383,13 @@ python -m pip install \
     "accelerate==0.28.0" \
     "huggingface_hub>=0.25.0,<0.26.0"
 
-# Restore EXACT torch stack AGAIN
-python -m pip install \
+"$PIP_BIN" install \
     --no-cache-dir \
     --no-deps \
     "torch==2.1.0+cu118" \
     "torchvision==0.16.0+cu118" \
     "torchaudio==2.1.0+cu118" \
     --index-url https://download.pytorch.org/whl/cu118
-
-# ------------------------------------------------------------
-# INJECT _load_models_cached ke inference.py
-# ------------------------------------------------------------
 
 echo ""
 echo "[*] Menginject _load_models_cached ke MuseTalk..."
@@ -438,7 +400,7 @@ if ! grep -q "_load_models_cached" inference.py 2>/dev/null; then
 
     cp inference.py inference.py.original
 
-    python3 << 'PYINJECT'
+    "$PYTHON_BIN" << 'PYINJECT'
 with open("inference.py.original", "r") as f:
     content = f.read()
 
@@ -505,7 +467,6 @@ def _load_models_cached(args):
 
 '''
 
-# Inject at END of file (after all imports and existing code)
 new_content = content.rstrip() + "\n\n" + inject_code
 
 with open("inference.py", "w") as f:
@@ -519,81 +480,37 @@ else
 fi
 
 # ------------------------------------------------------------
-# MMENGINE / OPENMIM
+# 9. OPENMMLAB / MMCV / MMPOSE
 # ------------------------------------------------------------
 
 echo ""
 echo "============================================================"
-echo " Installing OpenMMLab stack"
+echo " [9/10] Installing OpenMMLab Stack (MMCV, MMDetection, MMPose)"
 echo "============================================================"
 
 cd "$WORKER_DIR"
 
-python -m pip install \
+"$PIP_BIN" install \
     --no-cache-dir \
     "mmengine==0.10.7"
 
-python -m pip install \
+"$PIP_BIN" install \
     --no-cache-dir \
     -U openmim
 
-# ------------------------------------------------------------
-# MMCV
-# ------------------------------------------------------------
-
-echo ""
-echo "============================================================"
-echo " BUILDING MMCV 2.1.0"
-echo "============================================================"
-
-python -m pip uninstall -y \
-    mmcv \
-    mmcv-full \
-    2>/dev/null || true
-
 export MIM_BUILD_TORCH_VERSION=2.1.0
-
-# Ensure build uses CUDA 11.8
 export CUDA_HOME=/usr/local/cuda-11.8
 
-echo ""
-echo "Torch sebelum MMCV:"
-python -c "import torch; print(torch.__version__); print(torch.version.cuda)"
+echo "Installing mmcv==2.1.0..."
+"$PYTHON_BIN" -m mim install "mmcv==2.1.0"
 
-echo ""
-echo "CUDA_HOME=$CUDA_HOME"
-echo "TORCH_CUDA_TAG=$TORCH_CUDA_TAG"
+echo "Installing mmdet..."
+"$PYTHON_BIN" -m mim install "mmdet>=3.1.0"
 
-echo ""
-echo "Mulai build MMCV 2.1.0..."
-echo "Ini bagian yang paling lama."
+echo "Installing mmpose..."
+"$PYTHON_BIN" -m mim install "mmpose>=1.1.0"
 
-mim install "mmcv==2.1.0"
-
-# ------------------------------------------------------------
-# MMDET / MMPOSE
-# ------------------------------------------------------------
-
-echo ""
-echo "Installing MMDetection..."
-
-mim install "mmdet>=3.1.0"
-
-echo ""
-echo "Installing MMPose..."
-
-mim install "mmpose>=1.1.0"
-
-# ------------------------------------------------------------
-# RESTORE TORCH ONE FINAL TIME
-# ------------------------------------------------------------
-
-echo ""
-echo "============================================================"
-echo " FINAL TORCH RESTORE"
-echo "============================================================"
-
-python -m pip install \
+"$PIP_BIN" install \
     --no-cache-dir \
     --no-deps \
     "torch==2.1.0+cu118" \
@@ -601,18 +518,18 @@ python -m pip install \
     "torchaudio==2.1.0+cu118" \
     --index-url https://download.pytorch.org/whl/cu118
 
-python -m pip install \
+"$PIP_BIN" install \
     --no-cache-dir \
     --no-deps \
     "numpy==1.26.4"
 
 # ------------------------------------------------------------
-# DOWNLOAD MODELS
+# 10. DOWNLOAD MODELS & VERIFICATION
 # ------------------------------------------------------------
 
 echo ""
 echo "============================================================"
-echo " Downloading MuseTalk models"
+echo " [10/10] Downloading MuseTalk AI Weights & Final Verification"
 echo "============================================================"
 
 cd "$WORKER_DIR/MuseTalk"
@@ -626,10 +543,8 @@ mkdir -p \
 
 # MuseTalk
 if [ ! -f models/musetalkV15/musetalk.json ]; then
-
     echo "Downloading MuseTalk v1.5..."
-
-    python - <<'PY'
+    "$PYTHON_BIN" - <<'PY'
 import os
 from huggingface_hub import snapshot_download
 
@@ -640,17 +555,14 @@ snapshot_download(
     token=os.environ["HF_TOKEN"],
 )
 PY
-
 else
     echo "MuseTalk model sudah ada."
 fi
 
 # DWPose
 if [ ! -f models/dwpose/dw-ll_ucoco_384.pth ]; then
-
     echo "Downloading DWPose..."
-
-    python - <<'PY'
+    "$PYTHON_BIN" - <<'PY'
 import os
 from huggingface_hub import snapshot_download
 
@@ -660,17 +572,14 @@ snapshot_download(
     token=os.environ["HF_TOKEN"],
 )
 PY
-
 else
     echo "DWPose sudah ada."
 fi
 
 # Whisper
 if [ ! -f models/whisper/config.json ]; then
-
     echo "Downloading Whisper Tiny..."
-
-    python - <<'PY'
+    "$PYTHON_BIN" - <<'PY'
 import os
 from huggingface_hub import snapshot_download
 
@@ -680,17 +589,14 @@ snapshot_download(
     token=os.environ["HF_TOKEN"],
 )
 PY
-
 else
     echo "Whisper sudah ada."
 fi
 
 # VAE
 if [ ! -f models/sd-vae-ft-mse/config.json ]; then
-
     echo "Downloading SD VAE..."
-
-    python - <<'PY'
+    "$PYTHON_BIN" - <<'PY'
 import os
 from huggingface_hub import snapshot_download
 
@@ -700,17 +606,14 @@ snapshot_download(
     token=os.environ["HF_TOKEN"],
 )
 PY
-
 else
     echo "SD VAE sudah ada."
 fi
 
 # Face Parse
 if [ ! -f models/face-parse-bisent/79999_iter.pth ]; then
-
     echo "Downloading face-parse-bisent..."
-
-    python - <<'PY'
+    "$PYTHON_BIN" - <<'PY'
 import os
 from huggingface_hub import snapshot_download
 
@@ -720,19 +623,16 @@ snapshot_download(
     token=os.environ["HF_TOKEN"],
 )
 PY
-
 else
     echo "Face parse model sudah ada."
 fi
 
-# ------------------------------------------------------------
-# CHATTERBOX-TTS-INDONESIAN (isolated venv — conflicting deps with MuseTalk)
-# ------------------------------------------------------------
+# Chatterbox-TTS (isolated venv)
 CHATTERBOX_DIR="$WORKER_DIR/chatterbox_service"
 if [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ]; then
     if [ ! -d "$CHATTERBOX_DIR/env-chatterbox" ]; then
         echo "Membuat virtualenv terpisah untuk Chatterbox-TTS-Indonesian..."
-        python -m venv "$CHATTERBOX_DIR/env-chatterbox"
+        python3 -m venv "$CHATTERBOX_DIR/env-chatterbox"
     fi
     echo "Menginstall dependencies Chatterbox-TTS-Indonesian (venv terpisah)..."
     "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install --upgrade pip
@@ -741,34 +641,20 @@ else
     echo "[INFO] chatterbox_service/requirements-chatterbox.txt tidak ditemukan, lewati setup voice cloning."
 fi
 
-
-# ------------------------------------------------------------
-# SYMLINK
-# ------------------------------------------------------------
-
+# Symlinks
 echo ""
 echo "Menyiapkan symlink..."
-
 cd "$WORKER_DIR"
+ln -sfn "$WORKER_DIR/MuseTalk/musetalk" "$WORKER_DIR/musetalk"
+ln -sfn "$WORKER_DIR/MuseTalk/models" "$WORKER_DIR/models"
 
-ln -sfn \
-    "$WORKER_DIR/MuseTalk/musetalk" \
-    "$WORKER_DIR/musetalk"
-
-ln -sfn \
-    "$WORKER_DIR/MuseTalk/models" \
-    "$WORKER_DIR/models"
-
-# ------------------------------------------------------------
-# FINAL VERIFICATION
-# ------------------------------------------------------------
-
+# Final Verification
 echo ""
 echo "============================================================"
-echo " FINAL VERIFICATION"
+echo " FINAL VERIFICATION TEST"
 echo "============================================================"
 
-python - <<'PY'
+"$PYTHON_BIN" - <<'PY'
 import os
 import re
 import sys
@@ -863,49 +749,41 @@ print("")
 print("ALL CORE VERIFICATION PASSED")
 PY
 
-# ------------------------------------------------------------
-# SAVE COMPLETE FLAG
-# ------------------------------------------------------------
-
 date -Iseconds > "$WORKER_DIR/.setup_complete"
 
 echo ""
 echo "============================================================"
-echo " SETUP SELESAI"
+echo " SETUP SELESAI SUKSES!"
 echo "============================================================"
 echo ""
 echo "Worker directory:"
 echo "  $WORKER_DIR"
 echo ""
 echo "PyTorch:"
-python -c "import torch; print(torch.__version__, torch.version.cuda)"
-
+"$PYTHON_BIN" -c "import torch; print(torch.__version__, torch.version.cuda)"
 echo ""
 echo "GPU:"
-python -c "import torch; print(torch.cuda.get_device_name(0))"
-
+"$PYTHON_BIN" -c "import torch; print(torch.cuda.get_device_name(0))"
 echo ""
 echo "MMCV:"
-python -c "import mmcv; print(mmcv.__version__)"
-
+"$PYTHON_BIN" -c "import mmcv; print(mmcv.__version__)"
 echo ""
-echo "Model files:"
+echo "Model files count:"
 find "$WORKER_DIR/MuseTalk/models" -type f | wc -l
-
 echo ""
 echo "============================================================"
 echo " PENTING"
 echo "============================================================"
 echo ""
-echo "Setup TIDAK menjalankan api_server.py."
+echo "Setup TIDAK menjalankan api_server.py secara otomatis."
 echo ""
-echo "Setelah setup sukses, jalankan:"
+echo "Setelah setup selesai, jalankan:"
 echo ""
 echo "  cd /workspace/ai_live_worker"
 echo "  bash start.sh"
 echo ""
-echo "Health check:"
+echo "Health check API:"
 echo ""
-echo "  curl http://localhost:8000/"
+echo "  curl http://localhost:8000/health"
 echo ""
 echo "============================================================"

@@ -19,7 +19,6 @@ fi
 if [ ! -f "$WORKER_DIR/.setup_complete" ]; then
 	echo "[ERROR] Setup belum selesai (file .setup_complete tidak ditemukan)."
 	echo "        Jalankan: cd /workspace/live-streaming-ai/deploy && bash setup-safe.sh"
-	echo "        Log setup: $WORKER_DIR/setup_log.txt"
 	exit 1
 fi
 
@@ -28,10 +27,12 @@ if [ ! -f "$WORKER_DIR/api_server.py" ]; then
 	exit 1
 fi
 
-
-if [ -d "$WORKER_DIR/env" ]; then
-    echo "Activating virtual environment..."
+if [ -f "$WORKER_DIR/env/bin/python" ]; then
+    PYTHON_BIN="$WORKER_DIR/env/bin/python"
+    export PATH="$WORKER_DIR/env/bin:$PATH"
     source "$WORKER_DIR/env/bin/activate" || true
+else
+    PYTHON_BIN="python"
 fi
 
 export COQUI_TOS_AGREED=1
@@ -39,7 +40,7 @@ export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:7b}"
 export OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0:11434}"
 
 check_python_import() {
-	python - "$1" <<'PY'
+	"$PYTHON_BIN" - "$1" <<'PY'
 import importlib.util
 import sys
 
@@ -80,7 +81,7 @@ else
 fi
 
 echo "Memulai AI Worker API (Port 8000)..."
-python api_server.py > "$WORKER_DIR/api_server.log" 2>&1 &
+"$PYTHON_BIN" api_server.py > "$WORKER_DIR/api_server.log" 2>&1 &
 API_PID=$!
 
 if [ -d "$WORKER_DIR/chatterbox_service/env-chatterbox" ]; then
@@ -88,7 +89,7 @@ if [ -d "$WORKER_DIR/chatterbox_service/env-chatterbox" ]; then
 	(
 		source "$WORKER_DIR/chatterbox_service/env-chatterbox/bin/activate"
 		cd "$WORKER_DIR/chatterbox_service"
-		python server.py > "$WORKER_DIR/chatterbox_service.log" 2>&1
+		"$WORKER_DIR/chatterbox_service/env-chatterbox/bin/python" server.py > "$WORKER_DIR/chatterbox_service.log" 2>&1
 	) &
 	CHATTERBOX_PID=$!
 else
@@ -96,7 +97,7 @@ else
 fi
 
 for attempt in $(seq 1 30); do
-	if curl -fsS "http://127.0.0.1:8000/" >/dev/null 2>&1; then
+	if curl -fsS "http://127.0.0.1:8000/health" >/dev/null 2>&1 || curl -fsS "http://127.0.0.1:8000/" >/dev/null 2>&1; then
 		break
 	fi
 	sleep 1
