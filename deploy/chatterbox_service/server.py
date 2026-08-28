@@ -27,10 +27,28 @@ if _CHATTERBOX_SITE not in sys.path:
 import torch
 import torchaudio as ta
 
-# ── Pytree compatibility shim untuk PyTorch 2.1 (tidak punya register_pytree_node publik) ──
+# ── Pytree compatibility shim untuk PyTorch 2.1 ────────────────────────────────
+# PyTorch 2.1: hanya ada _register_pytree_node (private, signature lama)
+# Transformers 5.x memanggil register_pytree_node(serialized_type_name=...) yang tidak dikenal
+# Solusi: buat wrapper yang buang kwargs tidak dikenal sebelum diteruskan ke fungsi lama
 import torch.utils._pytree as _torch_pytree
-if not hasattr(_torch_pytree, "register_pytree_node") and hasattr(_torch_pytree, "_register_pytree_node"):
-    _torch_pytree.register_pytree_node = _torch_pytree._register_pytree_node
+import inspect as _inspect
+
+if not hasattr(_torch_pytree, "register_pytree_node"):
+    _orig_fn = getattr(_torch_pytree, "_register_pytree_node", None)
+    if _orig_fn is not None:
+        try:
+            _orig_params = set(_inspect.signature(_orig_fn).parameters.keys())
+        except Exception:
+            _orig_params = set()
+
+        def _compat_register_pytree_node(cls, flatten_fn, unflatten_fn, **kwargs):
+            """Wrapper: strip kwargs unknown to PyTorch 2.1's _register_pytree_node."""
+            if _orig_params:
+                kwargs = {k: v for k, v in kwargs.items() if k in _orig_params}
+            return _orig_fn(cls, flatten_fn, unflatten_fn, **kwargs)
+
+        _torch_pytree.register_pytree_node = _compat_register_pytree_node
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
