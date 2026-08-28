@@ -259,6 +259,20 @@ async def start_broadcast(req: BroadcastRequest):
     if broadcaster_process and broadcaster_process.poll() is None:
         return {"success": True, "status": "streaming", "message": "Broadcaster already running"}
 
+    # Bersihkan sisa video lama dan flag lama sebelum mulai siaran baru
+    flag_path = os.path.join(output_dir, "playback_active.flag")
+    if os.path.exists(flag_path):
+        try:
+            os.remove(flag_path)
+        except Exception:
+            pass
+    import glob
+    for f in glob.glob(os.path.join(output_dir, "**", "*.mp4"), recursive=True):
+        try:
+            os.remove(f)
+        except Exception:
+            pass
+
     env = os.environ.copy()
     env["RTMP_URL"] = final_rtmp_url
     env["STREAM_KEY"] = final_stream_key
@@ -292,6 +306,14 @@ async def stop_broadcast():
     if os.path.exists(flag_path):
         try:
             os.remove(flag_path)
+        except Exception:
+            pass
+
+    # Bersihkan file video sisa dari sesi sebelumnya
+    import glob
+    for f in glob.glob(os.path.join(output_dir, "**", "*.mp4"), recursive=True):
+        try:
+            os.remove(f)
         except Exception:
             pass
 

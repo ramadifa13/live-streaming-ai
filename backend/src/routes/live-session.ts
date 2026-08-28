@@ -9,6 +9,7 @@ import {
 } from "../services/rtmp-streamer.js";
 import {
   getRunPodBroadcastStatus,
+  getRunPodQueueStatus,
   startRunPodBroadcast,
   stopRunPodBroadcast,
   triggerWorkerPlayback,
@@ -407,7 +408,23 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         isLive: false,
       };
     }
-    return liveHostOrchestrator.getPipelineStatus(sessionId);
+
+    const status = liveHostOrchestrator.getPipelineStatus(sessionId);
+
+    // Jika Backend bilang sudah ready (sudah kirim >=2 ke GPU),
+    // pastikan GPU juga sudah selesai merender jadi .mp4
+    if (status.ready) {
+      const managedSession = liveSessionManager.getSession(sessionId);
+      if (managedSession?.podId) {
+        const queueStatus = await getRunPodQueueStatus(managedSession.podId);
+        status.generationCount = queueStatus.ready_videos_count;
+        if (queueStatus.ready_videos_count < 2) {
+          status.ready = false;
+        }
+      }
+    }
+
+    return status;
   });
 
   // POST /api/live-stream/stop-broadcast

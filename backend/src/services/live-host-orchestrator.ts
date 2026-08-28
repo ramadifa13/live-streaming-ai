@@ -147,14 +147,17 @@ class LiveHostOrchestrator {
         s.pendingVideos.push({ text, audioBase64 });
         s.generationCount++;
 
+        // LANGSUNG KIRIM KE GPU AGAR LANGSUNG DI-RENDER!
+        await this.submitToGPU(sessionId, text, audioBase64);
+
         console.log(
-          `[LiveHost] 🎞️  Video #${s.generationCount} selesai di-generate (pending — belum ke GPU)`,
+          `[LiveHost] 📝 Video #${s.generationCount} selesai di-generate dan LANGSUNG dikirim ke GPU (Pre-Live)`,
         );
 
         if (s.generationCount >= 2 && !s.pipelineReady) {
           s.pipelineReady = true;
           console.log(
-            `[LiveHost] ✅ Pipeline READY — V1+V2 siap di memory. Menunggu konfirmasi Go Live dari user...`,
+            `[LiveHost] ✅ Backend telah mengirim V1+V2 ke GPU. Menunggu GPU merender .mp4 dan user konfirmasi Go Live...`,
           );
         }
       } catch (err) {
@@ -183,19 +186,10 @@ class LiveHostOrchestrator {
     state.isLive = true; // sinyal ke pre-live loop untuk berhenti
 
     const pendingCount = state.pendingVideos.length;
-    console.log(
-      `[LiveHost] 🚀 Go Live! Mengirim ${pendingCount} video yang sudah siap ke GPU queue...`,
-    );
-
-    // Flush semua pending video secara urut ke GPU queue
-    for (const video of state.pendingVideos) {
-      if (state.abortController.signal.aborted) break;
-      await this.submitToGPU(sessionId, video.text, video.audioBase64);
-    }
     state.pendingVideos = [];
 
     console.log(
-      `[LiveHost] ✅ ${pendingCount} video awal sudah di GPU queue. Memulai live pipeline berkelanjutan...`,
+      `[LiveHost] ✅ Transisi ke Live. ${pendingCount} video sudah masuk di GPU queue sejak pre-live. Memulai live pipeline berkelanjutan...`,
     );
 
     // Mulai continuous live pipeline (tanpa henti sampai stop() dipanggil)
