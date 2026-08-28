@@ -369,38 +369,22 @@ export async function synthesizeSpeech(
     engineUsed = "Microsoft Edge Neural TTS (id-ID)";
   } catch (edgeErr) {
     console.warn(
-      `[TTS] ⚠️  Edge TTS gagal (Tier 1), mencoba Chatterbox-TTS-Indonesian (Tier 2)...`,
+      `[TTS] ⚠️  Edge TTS gagal (Tier 1), menggunakan persona fallback template...`,
       (edgeErr as Error).message,
     );
 
-    // ─── Tier 2: Chatterbox-TTS-Indonesian di RunPod worker port 8090 ────────
-    try {
-      audioBuffer = await synthesizeWithChatterbox(
-        text,
-        avatarName,
-        tone ?? "Persuasif",
-        podId,
-      );
-      engineUsed = "Chatterbox-TTS-Indonesian (RunPod GPU)";
-    } catch (chatterboxErr) {
+    // ─── Tier 2: Template audio lokal (static fallback) ─────────────────
+    const fallbackBuffer = getLocalVoiceRefFallback(avatarName, tone);
+    if (fallbackBuffer) {
+      audioBuffer = fallbackBuffer;
+      engineUsed = "Persona Template (Static Fallback)";
       console.warn(
-        `[TTS] ⚠️  Chatterbox-TTS gagal (Tier 2), menggunakan template lokal (Tier 3):`,
-        (chatterboxErr as Error).message,
+        `[TTS] ⚠️  Menggunakan template suara statis — teks tidak akan sesuai audio!`,
       );
-
-      // ─── Tier 3: Template audio lokal (static fallback) ─────────────────
-      const fallbackBuffer = getLocalVoiceRefFallback(avatarName, tone);
-      if (fallbackBuffer) {
-        audioBuffer = fallbackBuffer;
-        engineUsed = "Persona Template (Static Fallback)";
-        console.warn(
-          `[TTS] ⚠️  Menggunakan template suara statis — teks tidak akan sesuai audio!`,
-        );
-      } else {
-        console.error(
-          `[TTS] ❌ Semua tier TTS gagal dan tidak ada template lokal. audioBuffer=undefined.`,
-        );
-      }
+    } else {
+      console.error(
+        `[TTS] ❌ Semua tier TTS gagal dan tidak ada template lokal. audioBuffer=undefined.`,
+      );
     }
   }
 

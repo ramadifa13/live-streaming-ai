@@ -475,124 +475,14 @@ echo "Installing chumpy & mmpose..."
     "numpy==1.26.4"
 
 # ------------------------------------------------------------
-# 10. CHATTERBOX-TTS (LIGHTWEIGHT INFERENCE ISOLATED VENV)
+# 10. TTS ARCHITECTURE NOTE
 # ------------------------------------------------------------
+# TTS dipusatkan di Backend menggunakan Microsoft Edge Neural TTS
+# dengan dynamic prosody & micro-pauses alami.
+# GPU RunPod difokuskan 100% VRAM dan compute-nya untuk MuseTalk lipsync.
+echo ""
+echo "[OK] Audio TTS ditangani oleh Backend (Edge Neural TTS). GPU didedikasikan penuh untuk MuseTalk."
 
-CHATTERBOX_DIR="$WORKER_DIR/chatterbox_service"
-if [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ] || [ -d "$CHATTERBOX_DIR" ]; then
-    echo ""
-    echo "============================================================"
-    echo " [10a] Menyiapkan Chatterbox-TTS-Indonesian (Voice Cloning)"
-    echo "============================================================"
-
-    mkdir -p "$CHATTERBOX_DIR"
-
-    # Hapus env lama yang corrupt, buat ulang isolated venv
-    rm -rf "$CHATTERBOX_DIR/env-chatterbox"
-    python3 -m venv "$CHATTERBOX_DIR/env-chatterbox"
-
-    CBPIP="$CHATTERBOX_DIR/env-chatterbox/bin/pip"
-    CBPY="$CHATTERBOX_DIR/env-chatterbox/bin/python"
-
-    # Upgrade pip di dalam venv
-    "$CBPY" -m pip install --no-cache-dir --upgrade pip setuptools wheel -q
-
-    # ── Step 1: Install PyTorch 2.1 + CUDA 11.8 (sama persis dengan main env) ──
-    echo "[Chatterbox] Installing PyTorch 2.1 + CUDA 11.8..."
-    "$CBPIP" install \
-        --no-cache-dir \
-        --no-deps \
-        "torch==2.1.0+cu118" \
-        "torchaudio==2.1.0+cu118" \
-        --index-url https://download.pytorch.org/whl/cu118
-
-    # ── Step 2: Pin numpy 1.26.4 (torch 2.1 dikompilasi untuk numpy 1.x) ──
-    echo "[Chatterbox] Pinning numpy==1.26.4..."
-    "$CBPIP" install --no-cache-dir "numpy==1.26.4" --no-deps
-
-    # ── Step 3: Install transformers 4.44.2 (versi terakhir yang TIDAK pakai
-    #            serialized_type_name kwarg → kompatibel dengan PyTorch 2.1 pytree) ──
-    echo "[Chatterbox] Installing transformers==4.44.2 (compatible with PyTorch 2.1)..."
-    "$CBPIP" install \
-        --no-cache-dir \
-        "transformers==4.44.2" \
-        "tokenizers>=0.19,<0.20" \
-        "huggingface_hub>=0.23,<1.0" \
-        "safetensors>=0.4.1" \
-        "regex" "tqdm" "filelock" "pyyaml" "packaging" "requests"
-
-    # Kunci numpy supaya transformers tidak upgrade ke 2.x
-    "$CBPIP" install --no-cache-dir "numpy==1.26.4" --no-deps
-
-    # ── Step 4: Install chatterbox-tts dan dependensinya (no-deps agar torch tidak di-override) ──
-    echo "[Chatterbox] Installing chatterbox-tts dan dependensi inference..."
-    "$CBPIP" install \
-        --no-cache-dir \
-        "fastapi>=0.104" \
-        "uvicorn[standard]" \
-        "pydantic>=2.0" \
-        "diffusers==0.27.2" \
-        "accelerate" \
-        "conformer" \
-        "resemble-perth" \
-        "s3tokenizer" \
-        "spacy-pkuseg" \
-        "pyloudnorm" \
-        "pykakasi"
-
-    "$CBPIP" install \
-        --no-cache-dir \
-        --no-deps \
-        "chatterbox-tts==0.1.7"
-
-    # Kunci final numpy dan torch agar tidak di-downgrade/upgrade oleh dep lain
-    "$CBPIP" install --no-cache-dir "numpy==1.26.4" --no-deps
-    "$CBPIP" install \
-        --no-cache-dir \
-        --no-deps \
-        "torch==2.1.0+cu118" \
-        "torchaudio==2.1.0+cu118" \
-        --index-url https://download.pytorch.org/whl/cu118
-
-    # ── Step 5: Verifikasi chatterbox dapat diimport ──
-    echo "[Chatterbox] Memverifikasi instalasi..."
-    "$CBPY" - <<'CBVERIFY'
-import sys
-
-# Patch pytree untuk PyTorch 2.1 sebelum import transformers
-import torch.utils._pytree as _torch_pytree
-import inspect as _inspect
-if not hasattr(_torch_pytree, "register_pytree_node"):
-    _orig = getattr(_torch_pytree, "_register_pytree_node", None)
-    if _orig:
-        _params = set(_inspect.signature(_orig).parameters.keys())
-        def _compat(cls, flatten_fn, unflatten_fn, **kw):
-            return _orig(cls, flatten_fn, unflatten_fn, **{k:v for k,v in kw.items() if k in _params})
-        _torch_pytree.register_pytree_node = _compat
-
-import torch
-import numpy
-import transformers
-
-print("Python       :", sys.version.split()[0])
-print("Torch        :", torch.__version__)
-print("NumPy        :", numpy.__version__)
-print("Transformers :", transformers.__version__)
-print("CUDA         :", torch.cuda.is_available())
-
-if numpy.__version__.startswith("2."):
-    raise SystemExit("[ERROR] NumPy 2.x terdeteksi — harus 1.26.4!")
-if not torch.__version__.startswith("2.1."):
-    raise SystemExit("[ERROR] Torch harus 2.1.x!")
-
-# Test import chatterbox
-from chatterbox.tts import ChatterboxTTS
-print("ChatterboxTTS: OK (import berhasil)")
-print("[OK] Chatterbox-TTS-Indonesian siap!")
-CBVERIFY
-
-    echo "[OK] Chatterbox-TTS-Indonesian venv siap di $CHATTERBOX_DIR/env-chatterbox."
-fi
 
 
 # ------------------------------------------------------------

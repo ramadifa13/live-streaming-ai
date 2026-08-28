@@ -89,17 +89,7 @@ echo "Memulai AI Worker API (Port 8000)..."
 "$PYTHON_BIN" api_server.py > "$WORKER_DIR/api_server.log" 2>&1 &
 API_PID=$!
 
-if [ -d "$WORKER_DIR/chatterbox_service/env-chatterbox" ]; then
-	echo "Memulai Chatterbox-TTS-Indonesian microservice (Port 8090, venv terpisah)..."
-	(
-		source "$WORKER_DIR/chatterbox_service/env-chatterbox/bin/activate"
-		cd "$WORKER_DIR/chatterbox_service"
-		"$WORKER_DIR/chatterbox_service/env-chatterbox/bin/python" server.py > "$WORKER_DIR/chatterbox_service.log" 2>&1
-	) &
-	CHATTERBOX_PID=$!
-else
-	echo "[INFO] chatterbox_service/env-chatterbox tidak ditemukan — voice cloning live dilewati (lihat deploy/chatterbox_service/requirements-chatterbox.txt untuk setup)."
-fi
+
 
 for attempt in $(seq 1 120); do
 	if curl -fsS "http://127.0.0.1:8000/health" >/dev/null 2>&1 || curl -fsS "http://127.0.0.1:8000/" >/dev/null 2>&1; then
@@ -130,40 +120,14 @@ echo "Broadcaster menunggu perintah backend melalui /stream/start-broadcast."
 echo "Sistem berhasil dijalankan di background! (api_server PID: $API_PID)"
 echo "Log API: $WORKER_DIR/api_server.log"
 
-# Container Watchdog Supervisor: Pantau terus status api_server dan chatterbox
+# Container Watchdog Supervisor: Pantau terus status api_server
 echo "[WATCHDOG] Memulai container supervisor monitor..."
-CHATTERBOX_RETRY_COUNT=0
 while true; do
 	sleep 10
-	# 1. Cek api_server.py
 	if ! kill -0 "$API_PID" 2>/dev/null; then
 		echo "[WATCHDOG ALERT] api_server.py mati! Me-restart api_server..."
 		"$PYTHON_BIN" api_server.py >> "$WORKER_DIR/api_server.log" 2>&1 &
 		API_PID=$!
 		echo "[WATCHDOG] api_server di-restart (PID: $API_PID)"
-	fi
-
-	# 2. Cek chatterbox microservice jika venv tersedia
-	if [ -d "$WORKER_DIR/chatterbox_service/env-chatterbox" ]; then
-		if [ -n "${CHATTERBOX_PID:-}" ] && ! kill -0 "$CHATTERBOX_PID" 2>/dev/null; then
-			CHATTERBOX_RETRY_COUNT=$((CHATTERBOX_RETRY_COUNT + 1))
-			if [ "$CHATTERBOX_RETRY_COUNT" -le 3 ]; then
-				echo "[WATCHDOG ALERT] chatterbox_service mati! Log error terakhir:"
-				tail -n 10 "$WORKER_DIR/chatterbox_service.log" 2>/dev/null || true
-				echo "[WATCHDOG] Me-restart chatterbox (percobaan $CHATTERBOX_RETRY_COUNT/3)..."
-				(
-					source "$WORKER_DIR/chatterbox_service/env-chatterbox/bin/activate"
-					cd "$WORKER_DIR/chatterbox_service"
-					"$WORKER_DIR/chatterbox_service/env-chatterbox/bin/python" server.py >> "$WORKER_DIR/chatterbox_service.log" 2>&1
-				) &
-				CHATTERBOX_PID=$!
-				echo "[WATCHDOG] chatterbox_service di-restart (PID: $CHATTERBOX_PID)"
-			elif [ "$CHATTERBOX_RETRY_COUNT" -eq 4 ]; then
-				echo "[WATCHDOG WARNING] chatterbox_service gagal start 3x berturut-turut. Menghentikan auto-restart chatterbox."
-				echo "                   Periksa log: cat $WORKER_DIR/chatterbox_service.log"
-			fi
-		else
-			CHATTERBOX_RETRY_COUNT=0
-		fi
 	fi
 done
