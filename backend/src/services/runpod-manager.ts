@@ -173,7 +173,6 @@ const BUDGET_GPU_TIERS = [
   },
   {
     id: "NVIDIA GeForce RTX 4090",
-    label: "RTX 4090 (Utama, ~$0.69/jam, Fast Lipsync)",
     label: "RTX 4090 (Utama, ~$0.74/jam, Fast Lipsync)",
   },
   {
