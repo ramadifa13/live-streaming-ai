@@ -172,11 +172,31 @@ export default function Dashboard() {
       return;
     }
     const stages = [
-      { delay: 0, text: "Mengalokasikan Cloud GPU NVIDIA RTX 4090...", index: 0 },
-      { delay: 6000, text: "Menyiapkan Container & Storage Network...", index: 0 },
-      { delay: 12000, text: "Memuat Bobot Model AI (MuseTalk & DWPose)...", index: 1 },
-      { delay: 22000, text: "Inisialisasi Voice Persona & Skrip AI Selling...", index: 2 },
-      { delay: 32000, text: "Menghubungkan Stream RTMP & Handshake Siaran...", index: 3 },
+      {
+        delay: 0,
+        text: "Mengalokasikan Cloud GPU NVIDIA RTX 4090...",
+        index: 0,
+      },
+      {
+        delay: 6000,
+        text: "Menyiapkan Container & Storage Network...",
+        index: 0,
+      },
+      {
+        delay: 12000,
+        text: "Memuat Bobot Model AI (MuseTalk & DWPose)...",
+        index: 1,
+      },
+      {
+        delay: 22000,
+        text: "Inisialisasi Voice Persona & Skrip AI Selling...",
+        index: 2,
+      },
+      {
+        delay: 32000,
+        text: "Menghubungkan Stream RTMP & Handshake Siaran...",
+        index: 3,
+      },
     ];
     const timers = stages.slice(1).map((stage) =>
       setTimeout(() => {
@@ -5664,7 +5684,15 @@ export default function Dashboard() {
                 Menyiapkan Sesi Live Streaming AI
               </h3>
               <p className="text-xs text-slate-400 mb-6">
-                Host AI <span className="text-indigo-300 font-semibold">{selectedAvatar.name}</span> sedang dipersiapkan untuk siaran live di <span className="text-indigo-300 font-semibold">{selectedPlatform}</span>.
+                Host AI{" "}
+                <span className="text-indigo-300 font-semibold">
+                  {selectedAvatar.name}
+                </span>{" "}
+                sedang dipersiapkan untuk siaran live di{" "}
+                <span className="text-indigo-300 font-semibold">
+                  {selectedPlatform}
+                </span>
+                .
               </p>
 
               {/* Active Stage Badge */}
@@ -5678,29 +5706,53 @@ export default function Dashboard() {
 
               {/* Stepper Progress Visualizer */}
               <div className="mb-6 space-y-2.5 rounded-2xl bg-slate-900/90 border border-slate-800/80 p-4 text-left text-xs">
-                <div className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 0 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}>
-                  <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex > 0 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-indigo-600 text-white animate-pulse"}`}>
+                <div
+                  className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 0 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                >
+                  <span
+                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex > 0 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-indigo-600 text-white animate-pulse"}`}
+                  >
                     {connectingStageIndex > 0 ? "✓" : "1"}
                   </span>
-                  <span className="truncate">Alokasi Cloud GPU Dedicated (NVIDIA RTX 4090)</span>
+                  <span className="truncate">
+                    Alokasi Cloud GPU Dedicated (NVIDIA RTX 4090)
+                  </span>
                 </div>
-                <div className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 1 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}>
-                  <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex > 1 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 1 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}>
+                <div
+                  className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 1 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                >
+                  <span
+                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex > 1 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 1 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                  >
                     {connectingStageIndex > 1 ? "✓" : "2"}
                   </span>
-                  <span className="truncate">Inisialisasi Neural Lipsync (MuseTalk & DWPose)</span>
+                  <span className="truncate">
+                    Inisialisasi Neural Lipsync (MuseTalk & DWPose)
+                  </span>
                 </div>
-                <div className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 2 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}>
-                  <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex > 2 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 2 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}>
+                <div
+                  className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 2 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                >
+                  <span
+                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex > 2 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 2 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                  >
                     {connectingStageIndex > 2 ? "✓" : "3"}
                   </span>
-                  <span className="truncate">Menyiapkan Voice Persona & Skrip AI Selling</span>
+                  <span className="truncate">
+                    Menyiapkan Voice Persona & Skrip AI Selling
+                  </span>
                 </div>
-                <div className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 3 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}>
-                  <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex >= 3 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}>
+                <div
+                  className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 3 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                >
+                  <span
+                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex >= 3 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                  >
                     4
                   </span>
-                  <span className="truncate">Koneksi Stream RTMP & Handshake Siaran</span>
+                  <span className="truncate">
+                    Koneksi Stream RTMP & Handshake Siaran
+                  </span>
                 </div>
               </div>
 
@@ -5722,7 +5774,14 @@ export default function Dashboard() {
                 }}
                 className="w-full rounded-xl border border-slate-700/80 bg-slate-800/80 px-4 py-2.5 text-xs font-semibold text-slate-300 hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-300 transition active:scale-95 flex items-center justify-center gap-2"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
                   <path d="M18 6L6 18M6 6l12 12" />
                 </svg>
                 <span>Batalkan Inisialisasi</span>
