@@ -132,6 +132,7 @@ echo "Log API: $WORKER_DIR/api_server.log"
 
 # Container Watchdog Supervisor: Pantau terus status api_server dan chatterbox
 echo "[WATCHDOG] Memulai container supervisor monitor..."
+CHATTERBOX_RETRY_COUNT=0
 while true; do
 	sleep 10
 	# 1. Cek api_server.py
@@ -153,6 +154,24 @@ while true; do
 			) &
 			CHATTERBOX_PID=$!
 			echo "[WATCHDOG] chatterbox_service di-restart (PID: $CHATTERBOX_PID)"
+			CHATTERBOX_RETRY_COUNT=$((CHATTERBOX_RETRY_COUNT + 1))
+			if [ "$CHATTERBOX_RETRY_COUNT" -le 3 ]; then
+				echo "[WATCHDOG ALERT] chatterbox_service mati! Log error terakhir:"
+				tail -n 10 "$WORKER_DIR/chatterbox_service.log" 2>/dev/null || true
+				echo "[WATCHDOG] Me-restart chatterbox (percobaan $CHATTERBOX_RETRY_COUNT/3)..."
+				(
+					source "$WORKER_DIR/chatterbox_service/env-chatterbox/bin/activate"
+					cd "$WORKER_DIR/chatterbox_service"
+					"$WORKER_DIR/chatterbox_service/env-chatterbox/bin/python" server.py >> "$WORKER_DIR/chatterbox_service.log" 2>&1
+				) &
+				CHATTERBOX_PID=$!
+				echo "[WATCHDOG] chatterbox_service di-restart (PID: $CHATTERBOX_PID)"
+			elif [ "$CHATTERBOX_RETRY_COUNT" -eq 4 ]; then
+				echo "[WATCHDOG WARNING] chatterbox_service gagal start 3x berturut-turut. Menghentikan auto-restart chatterbox."
+				echo "                   Periksa log: cat $WORKER_DIR/chatterbox_service.log"
+			fi
+		else
+			CHATTERBOX_RETRY_COUNT=0
 		fi
 	fi
 done
