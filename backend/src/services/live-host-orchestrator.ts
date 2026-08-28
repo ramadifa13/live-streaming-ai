@@ -1,12 +1,12 @@
 import prisma from "../lib/prisma.js";
-import { forwardToRunPodGPU } from "./runpod-bridge.js";
-import { generateDynamicSalesResponse } from "./gemini-brain.js";
+import { forwardToRunPodGPU, getRunPodQueueStatus } from "./runpod-bridge.js";
+import { generateDynamicSalesResponse } from "./groq-brain.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
 import { synthesizeSpeech } from "./tts.js";
 
 const DEFAULT_INTERVAL_SECONDS = 18;
 
-type HostConfig = {
+export type HostConfig = {
   productId: string;
   avatarName: string;
   voice?: string;
@@ -72,6 +72,99 @@ class LiveHostOrchestrator {
     this.stopSession(sessionId);
   }
 
+  /**
+   * Pre-generates the initial talking videos (default 2 videos) before starting live broadcast.
+   * Ensures RTMP stream to Instagram/TikTok doesn't start until 2 video files are fully rendered and ready!
+   */
+  public async prepareInitialVideos(config: HostConfig, count: number = 2): Promise<void> {
+    console.log(
+      `[LiveHost] Mempersiapkan ${count} video awal sebelum live stream dimulai (Session: ${config.sessionId})...`,
+    );
+
+    const product = await prisma.product.findUnique({
+      where: { id: config.productId },
+    });
+    if (!product) {
+      throw new Error(`Produk dengan ID ${config.productId} tidak ditemukan.`);
+    }
+
+    const utterances: string[] = [];
+
+    // Utterance 1: Opening & Product Introduction
+    if (product.copywriting && product.copywriting.trim().length > 0) {
+      utterances.push(product.copywriting.trim());
+    } else {
+      utterances.push(
+        `[RAISE_HAND] Halo semuanya! Selamat datang di live streaming aku bareng ${config.avatarName}! Hari ini kita kedatangan produk spesial ${product.name} dengan harga promo cuma Rp${product.price.toLocaleString("id-ID")}. Jangan lupa tap love dan tap keranjang kuning ya kak!`,
+      );
+    }
+
+    // Utterance 2: Key Benefits & Promotion Callout
+    if (count >= 2) {
+      try {
+        const result = await generateDynamicSalesResponse({
+          userQuestion: `Jelaskan satu manfaat utama produk dan cara pakainya dengan bahasa live yang natural dan ajak penonton checkout. Gunakan data ini: ${product.description || ""} ${product.benefits || ""}`,
+          avatarName: config.avatarName,
+          tone: config.tone,
+          productName: product.name,
+          productPrice: `Rp${product.price.toLocaleString("id-ID")}`,
+          productDescription: product.description || "",
+          productCategory: product.category || "General",
+          productBenefits: product.benefits || "",
+          productUsage: product.usage || "",
+          productFaq: product.faq || "",
+          productStock: product.stock,
+        });
+        utterances.push(result.replyText);
+      } catch (err) {
+        utterances.push(
+          `[POINT_DOWN] Buat kakak-kakak yang baru gabung, ${product.name} ini punya banyak keunggulan dan stoknya tinggal ${product.stock} pcs lagi! Yuk mumpung promo live berlangsung, langsung checkout sekarang ya kak!`,
+        );
+      }
+    }
+
+    // Render each initial video synchronously on the GPU worker
+    for (let i = 0; i < utterances.length; i++) {
+      const text = utterances[i]!;
+      console.log(`[LiveHost] Rendering video pre-buffer ${i + 1}/${utterances.length}...`);
+
+      let audioBase64: string | undefined = undefined;
+      try {
+        const ttsResult = await synthesizeSpeech({
+          text,
+          voice: config.voice || "id-ID-GadisNeural",
+          avatarName: config.avatarName,
+          tone: config.tone,
+        });
+        if (ttsResult.success && ttsResult.audioBuffer) {
+          audioBase64 = ttsResult.audioBuffer.toString("base64");
+        }
+      } catch (ttsErr) {
+        console.warn(`[LiveHost] TTS prebuffer notice:`, ttsErr);
+      }
+
+      await forwardToRunPodGPU(config.podId, {
+        avatarImagePath: "avatars/namira.png",
+        text,
+        voice: config.voice || "id-ID-GadisNeural",
+        tone: config.tone,
+        audioBase64,
+        rtmpUrl: config.rtmpUrl,
+        streamKey: config.streamKey,
+        requireWorker: true,
+        wait: true,
+      });
+
+      console.log(
+        `[LiveHost] Video pre-buffer ${i + 1}/${utterances.length} selesai di-render dan siap di antrean!`,
+      );
+    }
+
+    console.log(
+      `[LiveHost] Semua ${utterances.length} video awal telah siap. Transmisi live stream aman dimulai.`,
+    );
+  }
+
   public startSession(config: HostConfig) {
     this.stopSession(config.sessionId);
 
@@ -79,19 +172,13 @@ class LiveHostOrchestrator {
       config,
       timer: null,
       queue: Promise.resolve(),
-      cycle: 0,
+      cycle: 1, // 1 because initial utterances are already rendered
       usedPromptIndices: new Set(),
     };
     this.sessions.set(config.sessionId, state);
 
-    // Initial prebuffer: render 2 segmen pembuka agar stream langsung mengalir instan
-    const prebufferCount = this.getPrebufferCount();
-    for (let i = 0; i < prebufferCount; i++) {
-      void this.createProactiveUtterance(config.sessionId);
-    }
-
-    // Mulai loop siaran berkelanjutan (hanya jeda 4-5 detik natural antar segmen)
-    this.schedule(config.sessionId, 6);
+    // Mulai loop siaran berkelanjutan berikutnya
+    this.schedule(config.sessionId, this.intervalSeconds());
   }
 
   public stopSession(sessionId: string) {
@@ -149,13 +236,6 @@ class LiveHostOrchestrator {
     return 0;
   }
 
-  private getPrebufferCount() {
-    const configured = Number(process.env.LIVE_HOST_PREBUFFER_COUNT);
-    return Number.isInteger(configured) && configured >= 1 && configured <= 5
-      ? configured
-      : 2;
-  }
-
   private intervalSeconds() {
     const configured = Number(process.env.LIVE_HOST_INTERVAL_SECONDS);
     return Number.isFinite(configured) && configured >= 5
@@ -196,12 +276,6 @@ class LiveHostOrchestrator {
       return;
     }
 
-    if (state.cycle === 0 && product.copywriting) {
-      state.cycle += 1;
-      this.enqueue(sessionId, product.copywriting);
-      return;
-    }
-
     try {
       const promptIndex = this.getNextPromptIndex(sessionId);
       const result = await generateDynamicSalesResponse({
@@ -223,7 +297,10 @@ class LiveHostOrchestrator {
         this.enqueue(sessionId, result.replyText);
       }
     } catch (orchestratorErr) {
-      console.error("[LiveHostOrchestrator] Error generating proactive sales pitch:", orchestratorErr);
+      console.error(
+        "[LiveHostOrchestrator] Error generating proactive sales pitch:",
+        orchestratorErr,
+      );
       if (this.sessions.has(sessionId)) {
         this.enqueue(
           sessionId,
@@ -265,6 +342,7 @@ class LiveHostOrchestrator {
       rtmpUrl: config.rtmpUrl,
       streamKey: config.streamKey,
       requireWorker: true,
+      wait: false,
     });
     console.log(
       `[LiveHost] Utterance round-trip for ${sessionId}: ${Date.now() - start}ms`,

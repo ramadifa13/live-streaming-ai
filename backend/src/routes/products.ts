@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import prisma from "../lib/prisma.js";
-import { generateProductKnowledge } from "../services/gemini-brain.js";
+import { generateProductKnowledge } from "../services/groq-brain.js";
 
 export const PRODUCT_CATEGORIES = [
   "Skincare",

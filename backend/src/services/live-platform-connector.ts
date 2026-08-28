@@ -1,5 +1,5 @@
 import prisma from "../lib/prisma.js";
-import { generateDynamicSalesResponse } from "./gemini-brain.js";
+import { generateDynamicSalesResponse } from "./groq-brain.js";
 
 export interface LiveMetricsSnapshot {
   viewers: number;

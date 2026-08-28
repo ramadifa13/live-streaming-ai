@@ -2,10 +2,11 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import {
-  generateDynamicSalesResponseGemini,
-  generateVideoSalesScriptGemini,
-  generateLiveSalesPitchFromAIGemini,
-} from "../services/gemini-brain.js";
+  generateDynamicSalesResponseGroq,
+  generateVideoSalesScriptGroq,
+  generateLiveSalesPitchFromAIGroq,
+  getAvailableGroqModels,
+} from "../services/groq-brain.js";
 
 const salesResponseSchema = z.object({
   productId: z.string().optional(),
@@ -27,6 +28,25 @@ const videoScriptSchema = z.object({
 });
 
 export async function aiBrainRoutes(server: FastifyInstance) {
+  // GET /api/ai/models (Get all available Groq models dynamically)
+  server.get("/api/ai/models", async (_request, reply) => {
+    try {
+      const models = await getAvailableGroqModels();
+      return {
+        success: true,
+        data: models,
+        total: models.length,
+      };
+    } catch (err: any) {
+      server.log.error(err);
+      reply.code(500);
+      return {
+        success: false,
+        error: err.message || "Failed to fetch available Groq models",
+      };
+    }
+  });
+
   // POST /api/ai/sales-response (Autonomous LLM Sales Brain with RAG & Conversational Pivot)
   server.post("/api/ai/sales-response", async (request, reply) => {
     const parsed = salesResponseSchema.safeParse(request.body);
@@ -65,37 +85,40 @@ export async function aiBrainRoutes(server: FastifyInstance) {
 
     // Call Autonomous LLM Sales Brain with RAG Knowledge
     try {
-      const aiResult = await generateDynamicSalesResponseGemini({
-      userQuestion,
-      avatarName,
-      tone,
-      productName,
-      productPrice,
-      productDescription,
-      productCategory,
-      productBenefits,
-      productUsage,
-      productFaq,
-      productStock,
+      const aiResult = await generateDynamicSalesResponseGroq({
+        userQuestion,
+        avatarName,
+        tone,
+        productName,
+        productPrice,
+        productDescription,
+        productCategory,
+        productBenefits,
+        productUsage,
+        productFaq,
+        productStock,
       });
 
       return {
-      success: true,
-      data: {
-        avatar: avatarName,
-        tone,
-        intent: aiResult.intent,
-        action: aiResult.action,
-        engine: aiResult.engineUsed,
-        replyText: aiResult.replyText,
-        productFeatured: productName,
-        timestamp: new Date().toISOString(),
-      },
-    };
+        success: true,
+        data: {
+          avatar: avatarName,
+          tone,
+          intent: aiResult.intent,
+          action: aiResult.action,
+          engine: aiResult.engineUsed,
+          replyText: aiResult.replyText,
+          productFeatured: productName,
+          timestamp: new Date().toISOString(),
+        },
+      };
     } catch (err: any) {
       server.log.error(err);
       reply.code(500);
-      return { success: false, error: err.message || "Failed to generate dynamic sales response" };
+      return {
+        success: false,
+        error: err.message || "Failed to generate dynamic sales response",
+      };
     }
   });
 
@@ -118,7 +141,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     } = parsed.data;
 
     try {
-      const script = await generateVideoSalesScriptGemini({
+      const script = await generateVideoSalesScriptGroq({
         productName,
         productDescription,
         productPrice,
@@ -127,19 +150,22 @@ export async function aiBrainRoutes(server: FastifyInstance) {
         style,
       });
       return {
-      success: true,
-      data: {
-        product: productName,
-        category: productCategory,
-        format: "MP4 9:16 (Vertical Video Ads)",
-        style,
-        script,
-      },
-    };
+        success: true,
+        data: {
+          product: productName,
+          category: productCategory,
+          format: "MP4 9:16 (Vertical Video Ads)",
+          style,
+          script,
+        },
+      };
     } catch (err: any) {
       server.log.error(err);
       reply.code(500);
-      return { success: false, error: err.message || "Failed to generate video script" };
+      return {
+        success: false,
+        error: err.message || "Failed to generate video script",
+      };
     }
   });
 
@@ -184,7 +210,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     const tone = body.tone || "Persuasif";
 
     try {
-      const scriptResult = await generateLiveSalesPitchFromAIGemini({
+      const scriptResult = await generateLiveSalesPitchFromAIGroq({
         productName: name,
         productPrice: price,
         productCategory: category,

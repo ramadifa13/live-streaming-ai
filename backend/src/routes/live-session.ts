@@ -80,7 +80,9 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       },
     });
 
-    const managedSession = session?.id ? liveSessionManager.getSession(session.id) : null;
+    const managedSession = session?.id
+      ? liveSessionManager.getSession(session.id)
+      : null;
     const effectiveStatus = managedSession?.state || session?.status || "ready";
 
     return {
@@ -189,17 +191,22 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     if (parsed.data.sessionId) liveHostOrchestrator.stop(parsed.data.sessionId);
-    const sessionObj = liveSessionManager.getSession(parsed.data.sessionId || '');
+    const sessionObj = liveSessionManager.getSession(
+      parsed.data.sessionId || "",
+    );
     await stopRunPodBroadcast(sessionObj?.podId).catch(() => {});
     stopBroadcast();
-    const result = await liveSessionManager.stopSession(parsed.data.sessionId || '', {
-      durationSeconds: parsed.data.durationSeconds,
-      viewers: parsed.data.viewers,
-      comments: parsed.data.comments,
-      clicks: parsed.data.clicks,
-      sales: parsed.data.sales,
-      productSold: parsed.data.productSold,
-    });
+    const result = await liveSessionManager.stopSession(
+      parsed.data.sessionId || "",
+      {
+        durationSeconds: parsed.data.durationSeconds,
+        viewers: parsed.data.viewers,
+        comments: parsed.data.comments,
+        clicks: parsed.data.clicks,
+        sales: parsed.data.sales,
+        productSold: parsed.data.productSold,
+      },
+    );
 
     return {
       success: result.success,
@@ -228,15 +235,20 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       stockCount,
       ctaLabel,
     } = parsed.data;
-    const managedSession = parsed.data.sessionId ? liveSessionManager.getSession(parsed.data.sessionId) : null;
+    const managedSession = parsed.data.sessionId
+      ? liveSessionManager.getSession(parsed.data.sessionId)
+      : null;
     const liveSession = parsed.data.sessionId
-      ? await prisma.liveSession.findUnique({ where: { id: parsed.data.sessionId } })
+      ? await prisma.liveSession.findUnique({
+          where: { id: parsed.data.sessionId },
+        })
       : null;
 
     if (parsed.data.sessionId && managedSession && liveSession) {
       try {
         await warmupWorker(managedSession?.podId);
-        await liveHostOrchestrator.start({
+
+        const hostConfig = {
           productId: liveSession.productId,
           avatarName: managedSession.avatarName,
           tone: managedSession.tone,
@@ -244,32 +256,52 @@ export async function liveSessionRoutes(server: FastifyInstance) {
           streamKey,
           voice: liveSession.voice || undefined,
           podId: managedSession.podId,
-          sessionId: parsed.data.sessionId
-        });
+          sessionId: parsed.data.sessionId,
+        };
+
+        // Pastikan 2 video awal AI sudah 100% selesai di-render sebelum RTMP siaran dimulai
+        await liveHostOrchestrator.prepareInitialVideos(hostConfig, 2);
+
+        // Mulai background orchestrator untuk siaran langsung berkelanjutan
+        liveHostOrchestrator.start(hostConfig);
       } catch (error) {
-        if (parsed.data.sessionId) liveHostOrchestrator.stop(parsed.data.sessionId);
-        if (parsed.data.sessionId) await liveSessionManager.stopSession(parsed.data.sessionId).catch(() => {});
+        if (parsed.data.sessionId)
+          liveHostOrchestrator.stop(parsed.data.sessionId);
+        if (parsed.data.sessionId)
+          await liveSessionManager
+            .stopSession(parsed.data.sessionId)
+            .catch(() => {});
         reply.code(502);
         return {
           success: false,
-          error: `AI Worker pre-buffer gagal: ${error instanceof Error ? error.message : String(error)}`,
+          error: `AI Worker pre-buffer gagal (2 video awal belum siap): ${error instanceof Error ? error.message : String(error)}`,
         };
       }
     }
 
-    const result = await startRunPodBroadcast(managedSession?.podId, { rtmpUrl, streamKey });
+    const result = await startRunPodBroadcast(managedSession?.podId, {
+      rtmpUrl,
+      streamKey,
+    });
 
     if (result.success && parsed.data.sessionId) {
-      if (parsed.data.sessionId) await liveSessionManager.markBroadcastLive(parsed.data.sessionId);
+      if (parsed.data.sessionId)
+        await liveSessionManager.markBroadcastLive(parsed.data.sessionId);
     }
 
     if (!result.success) {
       reply.code(502);
-      if (parsed.data.sessionId) await liveSessionManager.stopSession(parsed.data.sessionId).catch(() => {});
+      if (parsed.data.sessionId)
+        await liveSessionManager
+          .stopSession(parsed.data.sessionId)
+          .catch(() => {});
       if (sessionId) {
         await prisma.liveSession
           .updateMany({
-            where: { id: sessionId as string, status: { in: ["starting", "pending"] } },
+            where: {
+              id: sessionId as string,
+              status: { in: ["starting", "pending"] },
+            },
             data: { status: "ended" },
           })
           .catch(() => {});
@@ -277,7 +309,10 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     } else if (parsed.data.sessionId) {
       await prisma.liveSession
         .updateMany({
-          where: { id: sessionId as string, status: { in: ["starting", "pending"] } },
+          where: {
+            id: sessionId as string,
+            status: { in: ["starting", "pending"] },
+          },
           data: { status: "pending" },
         })
         .catch(() => {});
@@ -292,9 +327,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
   // POST /api/live-stream/stop-broadcast
   server.post("/api/live-stream/stop-broadcast", async (request, reply) => {
     const parsed = liveStopSchema.safeParse(request.body);
-    if (!parsed.success) { reply.code(400); return { error: parsed.error.flatten() }; }
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: parsed.error.flatten() };
+    }
     if (parsed.data.sessionId) liveHostOrchestrator.stop(parsed.data.sessionId);
-    const sessionObj = liveSessionManager.getSession(parsed.data.sessionId || '');
+    const sessionObj = liveSessionManager.getSession(
+      parsed.data.sessionId || "",
+    );
     await stopRunPodBroadcast(sessionObj?.podId).catch(() => {});
     const res = stopBroadcast();
     return {
@@ -362,7 +402,10 @@ export async function liveSessionRoutes(server: FastifyInstance) {
   // POST /api/webhooks/platform-events
   server.post("/api/webhooks/platform-events", async (request, reply) => {
     const sessionId = (request.query as any).sessionId;
-    if (!sessionId) { reply.code(400); return { error: "Missing sessionId in query" }; }
+    if (!sessionId) {
+      reply.code(400);
+      return { error: "Missing sessionId in query" };
+    }
     const webhookSchema = z.object({
       platform: z.string(),
       eventType: z.enum([
@@ -381,8 +424,13 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     const { platform, eventType, data } = parsed.data;
-    await livePlatformConnector.ingestEvent(sessionId, platform, eventType, data);
-    const metrics = livePlatformConnector.getMetricsSnapshot(sessionId || '');
+    await livePlatformConnector.ingestEvent(
+      sessionId,
+      platform,
+      eventType,
+      data,
+    );
+    const metrics = livePlatformConnector.getMetricsSnapshot(sessionId || "");
 
     return {
       success: true,
@@ -400,19 +448,25 @@ export async function liveSessionRoutes(server: FastifyInstance) {
   // GET /api/live-session/metrics
   server.get("/api/live-session/metrics", async (request) => {
     const querySessionId = (request.query as any).sessionId;
-    const session = querySessionId ? await prisma.liveSession.findUnique({
-      where: { id: querySessionId },
-      include: { avatar: true },
-    }) : await prisma.liveSession.findFirst({
-      where: { status: { in: ["starting", "pending", "live"] } },
-      orderBy: { createdAt: "desc" },
-      include: { avatar: true },
-    });
+    const session = querySessionId
+      ? await prisma.liveSession.findUnique({
+          where: { id: querySessionId },
+          include: { avatar: true },
+        })
+      : await prisma.liveSession.findFirst({
+          where: { status: { in: ["starting", "pending", "live"] } },
+          orderBy: { createdAt: "desc" },
+          include: { avatar: true },
+        });
 
-    const sessionId = session?.id || '';
-    const managedSession = sessionId ? liveSessionManager.getSession(sessionId) : null;
+    const sessionId = session?.id || "";
+    const managedSession = sessionId
+      ? liveSessionManager.getSession(sessionId)
+      : null;
     const streamStatus = getStreamStatus();
-    const workerBroadcast = await getRunPodBroadcastStatus(managedSession?.podId).catch(() => null);
+    const workerBroadcast = await getRunPodBroadcastStatus(
+      managedSession?.podId,
+    ).catch(() => null);
     const metrics = livePlatformConnector.getMetricsSnapshot(sessionId);
 
     const sessionStatus = managedSession?.state || session?.status || "idle";

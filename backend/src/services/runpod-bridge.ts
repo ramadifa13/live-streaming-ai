@@ -14,6 +14,7 @@ export interface RunPod2DStreamParams {
   audioBase64?: string;
   audioUrl?: string;
   requireWorker?: boolean;
+  wait?: boolean;
 }
 
 export interface RunPod2DStreamResult {
@@ -27,6 +28,14 @@ export interface RunPodBroadcastResult {
   success: boolean;
   status: string;
   error?: string;
+}
+
+export interface RunPodQueueStatus {
+  success: boolean;
+  ready_videos_count: number;
+  ready_videos?: string[];
+  active_processing_count?: number;
+  broadcasting?: boolean;
 }
 
 import { getWorkerUrl } from "./runpod-manager.js";
@@ -110,6 +119,16 @@ export async function getRunPodBroadcastStatus(
   return workerRequestWithRetry(podId, "/stream/broadcast-status");
 }
 
+export async function getRunPodQueueStatus(
+  podId: string | null | undefined,
+): Promise<RunPodQueueStatus> {
+  return workerRequestWithRetry(podId, "/stream/queue-status", undefined, 2).catch(() => ({
+    success: false,
+    ready_videos_count: 0,
+    broadcasting: false,
+  }));
+}
+
 export async function warmupWorker(
   podId: string | null | undefined,
 ): Promise<void> {
@@ -124,8 +143,8 @@ export async function forwardToRunPodGPU(
 
   try {
     const controller = new AbortController();
-    // Tingkatkan timeout menjadi 60 detik (60000ms) agar Backend sabar menunggu RunPod
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    // Tingkatkan timeout menjadi 180 detik agar Backend sabar menunggu render video RunPod
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
 
     let avatarName = "namira";
     if (params.avatarImagePath) {
@@ -154,6 +173,7 @@ export async function forwardToRunPodGPU(
           stream_key: params.streamKey || "",
           audio_base64: params.audioBase64 || "",
           audio_url: params.audioUrl || "",
+          wait: params.wait ?? false,
         }),
       },
       3,
@@ -161,9 +181,9 @@ export async function forwardToRunPodGPU(
 
     clearTimeout(timeoutId);
     let completedData = data;
-    if (data.job_id) {
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+    if (data.job_id && data.status === "processing") {
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         const statusData = await workerRequestWithRetry(
           podId,
           `/stream/status/${data.job_id}`,
@@ -176,7 +196,7 @@ export async function forwardToRunPodGPU(
           completedData = statusData;
           break;
         }
-        if (attempt === 99) throw new Error("RunPod video job timeout");
+        if (attempt === 59) throw new Error("RunPod video job timeout (120s limit)");
       }
     }
 

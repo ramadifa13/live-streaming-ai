@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { generateLunaResponse } from "../services/gemini-brain.js";
+import { generateLunaResponse } from "../services/groq-brain.js";
 import { generateVisemesFromText } from "../services/viseme-generator.js";
 import { synthesizeSpeech } from "../services/tts.js";
 

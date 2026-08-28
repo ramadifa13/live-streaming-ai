@@ -52,59 +52,64 @@ flowchart TD
 
 ## 2. Matriks Paket Durasi, Harga & Hak Akses Otomatisasi
 
-| Paket | Durasi | Harga | Auto-Reply Chat | Auto-Pin Produk | Auto-Promo Diskon | Auto-Moderasi AI | Target Penggunaan |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Demo Live** | **1 Jam** | **Rp49.000** | ✅ Aktif | 🔒 *Terkunci* | 🔒 *Terkunci* | 🔒 *Terkunci* | Uji coba fitur & presentasi ke klien UMKM. |
-| **Express Live** | **2 Jam** | **Rp99.000** | ✅ Aktif | ✅ Aktif | 🔒 *Terkunci* | 🔒 *Terkunci* | Sesi flash live singkat / prime time malam. |
-| **Shift Live** | **8 Jam** | **Rp299.000** | ✅ Aktif | ✅ Aktif | ✅ Aktif | ✅ Aktif | Siaran marathon 1 shift kerja (malam-pagi). |
-| **Marathon 24/7**| **24 Jam**| **Rp699.000**| ✅ Aktif | ✅ Aktif | ✅ Aktif | ✅ Aktif | Siaran 24 jam nonstop + rotasi katalog penuh. |
+| Paket             |   Durasi   |     Harga     | Auto-Reply Chat | Auto-Pin Produk | Auto-Promo Diskon | Auto-Moderasi AI | Target Penggunaan                             |
+| :---------------- | :--------: | :-----------: | :-------------: | :-------------: | :---------------: | :--------------: | :-------------------------------------------- |
+| **Demo Live**     | **1 Jam**  | **Rp49.000**  |    ✅ Aktif     |  🔒 _Terkunci_  |   🔒 _Terkunci_   |  🔒 _Terkunci_   | Uji coba fitur & presentasi ke klien UMKM.    |
+| **Express Live**  | **2 Jam**  | **Rp99.000**  |    ✅ Aktif     |    ✅ Aktif     |   🔒 _Terkunci_   |  🔒 _Terkunci_   | Sesi flash live singkat / prime time malam.   |
+| **Shift Live**    | **8 Jam**  | **Rp299.000** |    ✅ Aktif     |    ✅ Aktif     |     ✅ Aktif      |     ✅ Aktif     | Siaran marathon 1 shift kerja (malam-pagi).   |
+| **Marathon 24/7** | **24 Jam** | **Rp699.000** |    ✅ Aktif     |    ✅ Aktif     |     ✅ Aktif      |     ✅ Aktif     | Siaran 24 jam nonstop + rotasi katalog penuh. |
 
 > [!NOTE]
-> Seluruh pengaturan durasi, platform, dan sistem otomatisasi akan **terkunci otomatis (*disabled*) saat siaran langsung sedang berlangsung (`isLiveActive = true`)** demi menjaga kestabilan *pipeline* video dan koneksi RTMP.
+> Seluruh pengaturan durasi, platform, dan sistem otomatisasi akan **terkunci otomatis (_disabled_) saat siaran langsung sedang berlangsung (`isLiveActive = true`)** demi menjaga kestabilan _pipeline_ video dan koneksi RTMP.
 
 ---
 
 ## 3. Matriks Environment Variables
 
 ### A. Backend (`backend/.env`)
-| Variabel | Wajib | Contoh / Default | Keterangan |
-| :--- | :---: | :--- | :--- |
-| `PORT` | Opsional | `4000` | Port listening HTTP backend. |
-| `HOST` | Opsional | `0.0.0.0` | Bind host address. |
-| `DATABASE_URL` | **Wajib** | `postgresql://user:pass@ep-sample.neon.tech/livestreamai?sslmode=require` | Connection string PostgreSQL (Neon.tech / Supabase / Render). |
-| `GEMINI_API_KEY` | **Wajib** | `AIzaSyYourApiKeyHere` | API Key Google Gemini untuk model `gemini-3.6-flash` (RAG & live chat). |
-| `AVATAR_PROVIDER` | **Wajib** | `mock` (Local) / `liveportrait` (Prod GPU) | Provider avatar rendering. |
-| `ALLOW_MEDIA_FALLBACK`| Opsional | `true` | Mengizinkan video demo fallback saat GPU pod standby. |
-| `RUNPOD_API_KEY` | Opsional | `rpa_YourRunPodApiKey` | API key akun RunPod untuk auto-start / stop pod. |
-| `RUNPOD_NETWORK_VOLUME_ID` | Opsional | `vol-your-network-volume` | ID Network Volume RunPod tempat menyimpan bobot model AI. |
-| `RUNPOD_POD_ID` | Opsional | `your-pod-id` | ID Pod GPU spesifik (jika menggunakan dedicated pod). |
-| `RUNPOD_WORKER_URL` | Opsional | `http://localhost:8000` | URL langsung ke worker API. |
-| `RUNPOD_IDLE_TIMEOUT_MS` | Opsional | `600000` (10 Menit) | Batas waktu idle GPU sebelum otomatis dimatikan. |
-| `POD_TERMINATE_DELAY_MS` | Opsional | `60000` (60 Detik) | **Grace Period Cooldown**: Jeda waktu sebelum Pod dimatikan saat sesi stop. |
-| `EDGE_TTS_VOICE` | Opsional | `id-ID-GadisNeural` | Default suara bahasa Indonesia Edge-TTS. |
+
+| Variabel                   |   Wajib   | Contoh / Default                                                          | Keterangan                                                                        |
+| :------------------------- | :-------: | :------------------------------------------------------------------------ | :-------------------------------------------------------------------------------- |
+| `PORT`                     | Opsional  | `4000`                                                                    | Port listening HTTP backend.                                                      |
+| `HOST`                     | Opsional  | `0.0.0.0`                                                                 | Bind host address.                                                                |
+| `DATABASE_URL`             | **Wajib** | `postgresql://user:pass@ep-sample.neon.tech/livestreamai?sslmode=require` | Connection string PostgreSQL (Neon.tech / Supabase / Render).                     |
+| `GROQ_API_KEY`             | **Wajib** | `gsk_YourGroqApiKeyHere`                                                  | API Key Groq untuk dynamic LLM & model discovery (https://console.groq.com/keys). |
+| `GEMINI_API_KEY`           | Opsional  | `AIzaSyYourApiKeyHere`                                                    | API Key Google Gemini (opsional fallback).                                        |
+| `AVATAR_PROVIDER`          | **Wajib** | `mock` (Local) / `liveportrait` (Prod GPU)                                | Provider avatar rendering.                                                        |
+| `ALLOW_MEDIA_FALLBACK`     | Opsional  | `true`                                                                    | Mengizinkan video demo fallback saat GPU pod standby.                             |
+| `RUNPOD_API_KEY`           | Opsional  | `rpa_YourRunPodApiKey`                                                    | API key akun RunPod untuk auto-start / stop pod.                                  |
+| `RUNPOD_NETWORK_VOLUME_ID` | Opsional  | `vol-your-network-volume`                                                 | ID Network Volume RunPod tempat menyimpan bobot model AI.                         |
+| `RUNPOD_POD_ID`            | Opsional  | `your-pod-id`                                                             | ID Pod GPU spesifik (jika menggunakan dedicated pod).                             |
+| `RUNPOD_WORKER_URL`        | Opsional  | `http://localhost:8000`                                                   | URL langsung ke worker API.                                                       |
+| `RUNPOD_IDLE_TIMEOUT_MS`   | Opsional  | `600000` (10 Menit)                                                       | Batas waktu idle GPU sebelum otomatis dimatikan.                                  |
+| `POD_TERMINATE_DELAY_MS`   | Opsional  | `60000` (60 Detik)                                                        | **Grace Period Cooldown**: Jeda waktu sebelum Pod dimatikan saat sesi stop.       |
+| `EDGE_TTS_VOICE`           | Opsional  | `id-ID-GadisNeural`                                                       | Default suara bahasa Indonesia Edge-TTS.                                          |
 
 ### B. Frontend (`frontend/.env.local`)
-| Variabel | Wajib | Contoh / Default | Keterangan |
-| :--- | :---: | :--- | :--- |
+
+| Variabel                  |   Wajib   | Contoh / Default                                             | Keterangan                         |
+| :------------------------ | :-------: | :----------------------------------------------------------- | :--------------------------------- |
 | `NEXT_PUBLIC_BACKEND_URL` | **Wajib** | `http://localhost:4000` (Dev) / `https://api.yourdomain.com` | Endpoint REST & WebSocket Backend. |
 
 ### C. AI Worker (`deploy/.env`)
-| Variabel | Wajib | Contoh / Default | Keterangan |
-| :--- | :---: | :--- | :--- |
-| `PORT` | Opsional | `8000` | Port HTTP Worker FastAPI. |
-| `CHATTERBOX_SERVICE_URL` | Opsional | `http://127.0.0.1:8090` | URL Microservice Chatterbox TTS. |
-| `CHATTERBOX_PORT` | Opsional | `8090` | Port Microservice Chatterbox. |
-| `CHATTERBOX_DEVICE` | Opsional | `cuda` | Device PyTorch (`cuda` / `cpu`). |
-| `VOICE_REF_DIR` | Opsional | `/workspace/ai_live_worker/assets/voice_refs` | Folder sampel suara cloning WAV/MP3. |
-| `MUSETALK_BATCH_SIZE` | Opsional | `8` (RTX 3090) / `16` (RTX 4090) | Batch size inferensi UNet MuseTalk v1.5. |
-| `MUSETALK_WARMUP_ON_START` | Opsional | `0` (Lazy) / `1` (Eager) | Pre-load model saat container boot. |
-| `WORKER_REQUIRE_AUDIO` | Opsional | `1` | Wajib menerima pre-synthesized audio dari Backend. |
+
+| Variabel                   |  Wajib   | Contoh / Default                              | Keterangan                                         |
+| :------------------------- | :------: | :-------------------------------------------- | :------------------------------------------------- |
+| `PORT`                     | Opsional | `8000`                                        | Port HTTP Worker FastAPI.                          |
+| `CHATTERBOX_SERVICE_URL`   | Opsional | `http://127.0.0.1:8090`                       | URL Microservice Chatterbox TTS.                   |
+| `CHATTERBOX_PORT`          | Opsional | `8090`                                        | Port Microservice Chatterbox.                      |
+| `CHATTERBOX_DEVICE`        | Opsional | `cuda`                                        | Device PyTorch (`cuda` / `cpu`).                   |
+| `VOICE_REF_DIR`            | Opsional | `/workspace/ai_live_worker/assets/voice_refs` | Folder sampel suara cloning WAV/MP3.               |
+| `MUSETALK_BATCH_SIZE`      | Opsional | `8` (RTX 3090) / `16` (RTX 4090)              | Batch size inferensi UNet MuseTalk v1.5.           |
+| `MUSETALK_WARMUP_ON_START` | Opsional | `0` (Lazy) / `1` (Eager)                      | Pre-load model saat container boot.                |
+| `WORKER_REQUIRE_AUDIO`     | Opsional | `1`                                           | Wajib menerima pre-synthesized audio dari Backend. |
 
 ---
 
 ## 4. Langkah-Langkah Deployment
 
 ### Langkah 1: Setup RunPod GPU Worker (RTX 3090 / RTX 4090)
+
 1. Buat **Network Volume** (20–30 GB) di region pilihan Anda pada dashboard RunPod.
 2. Deploy GPU Pod dengan template **PyTorch (Python 3.10 & CUDA 11.8 / 12.1)** dan pasang Network Volume ke mount path `/workspace`.
 3. Buka terminal Pod dan jalankan instalasi:
@@ -126,6 +131,7 @@ flowchart TD
 ---
 
 ### Langkah 2: Deploy Backend di Render / VPS / Railway
+
 1. Buat Web Service baru (Node.js runtime).
 2. Konfigurasi direktori dan perintah:
    - **Root Directory**: `backend`
@@ -140,6 +146,7 @@ flowchart TD
 ---
 
 ### Langkah 3: Deploy Frontend di Vercel
+
 1. Hubungkan repository GitHub ke Vercel.
 2. Konfigurasi:
    - **Root Directory**: `frontend`
@@ -152,7 +159,7 @@ flowchart TD
 
 ## 5. Optimasi Latensi Rendah (< 1.2 – 1.5 Detik)
 
-Untuk mencegah jeda hening (*awkward silence*) saat siaran langsung, 3 optimasi utama telah diimplementasikan:
+Untuk mencegah jeda hening (_awkward silence_) saat siaran langsung, 3 optimasi utama telah diimplementasikan:
 
 1. **Pre-Cached Video Landmarks (`_precache_idle_videos`)**:
    - Deteksi landmark DWPose pada wajah avatar dilakukan sekali saat startup. Saat siaran live berjalan, koordinat wajah dibaca instan dari memori cache (`use_saved_coord=True`, `saved_coord=True`), menghemat **~800ms**.
@@ -165,12 +172,12 @@ Untuk mencegah jeda hening (*awkward silence*) saat siaran langsung, 3 optimasi 
 
 ## 6. Solusi Pelaporan Metrik & RTMP Data
 
-| Platform | Metode Ingestion Data | Metrik yang Didapatkan |
-| :--- | :--- | :--- |
-| **YouTube Live** | Polling adaptif via YouTube Data API v3 (`liveChat/messages`) | Viewer realtime, live chat messages, super chat. |
-| **Instagram Live** | Facebook Graph API (`/comments` & live status) | Jumlah komentar audiens, status siaran langsung. |
-| **TikTok & Shopee** | Webhook Ingestion (`POST /api/live-session/webhook/events`) | Event keranjang kuning, klik produk, jumlah orderan. |
-| **Custom RTMP** | Telemetri FFmpeg Broadcaster | Bitrate, FPS, dropped frames, estimasi ROI & biaya GPU. |
+| Platform            | Metode Ingestion Data                                         | Metrik yang Didapatkan                                  |
+| :------------------ | :------------------------------------------------------------ | :------------------------------------------------------ |
+| **YouTube Live**    | Polling adaptif via YouTube Data API v3 (`liveChat/messages`) | Viewer realtime, live chat messages, super chat.        |
+| **Instagram Live**  | Facebook Graph API (`/comments` & live status)                | Jumlah komentar audiens, status siaran langsung.        |
+| **TikTok & Shopee** | Webhook Ingestion (`POST /api/live-session/webhook/events`)   | Event keranjang kuning, klik produk, jumlah orderan.    |
+| **Custom RTMP**     | Telemetri FFmpeg Broadcaster                                  | Bitrate, FPS, dropped frames, estimasi ROI & biaya GPU. |
 
 ---
 

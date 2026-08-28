@@ -72,6 +72,7 @@ class GenerateVideoRequest(BaseModel):
     audioBase64: Optional[str] = None
     audio_url: Optional[str] = None
     audioUrl: Optional[str] = None
+    wait: Optional[bool] = False
 
 # Mount output folder to serve the generated video files
 output_dir = worker.output_dir
@@ -184,7 +185,7 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
 
 @app.post("/stream/generate-neural-video")
 @app.post("/stream/live-utterance")
-async def generate_neural_video(req: GenerateVideoRequest):
+async def generate_neural_video(req: GenerateVideoRequest, wait: bool = False):
     prune_old_jobs()
     task_id = f"task_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
     jobs[task_id] = {
@@ -192,9 +193,41 @@ async def generate_neural_video(req: GenerateVideoRequest):
         "created_at": time.time(),
     }
 
+    should_wait = req.wait or wait
+    if should_wait:
+        await process_video_task(req, task_id)
+        job_result = jobs.get(task_id, {})
+        if job_result.get("status") == "error":
+            raise HTTPException(status_code=500, detail=job_result.get("error", "Video render failed"))
+        return {
+            "success": True,
+            "job_id": task_id,
+            "status": "done",
+            "video_url": job_result.get("video_url"),
+        }
+
     # Start the task in background
     asyncio.create_task(process_video_task(req, task_id))
     return {"success": True, "job_id": task_id, "status": "processing"}
+
+@app.get("/stream/queue-status")
+async def get_queue_status():
+    import glob
+    video_files = [
+        os.path.basename(f)
+        for f in glob.glob(os.path.join(output_dir, "**", "*.mp4"), recursive=True)
+    ]
+    active_processing = [
+        jid for jid, info in jobs.items() if info.get("status") == "processing"
+    ]
+    is_broadcasting = broadcaster_process is not None and broadcaster_process.poll() is None
+    return {
+        "success": True,
+        "ready_videos_count": len(video_files),
+        "ready_videos": video_files,
+        "active_processing_count": len(active_processing),
+        "broadcasting": is_broadcasting,
+    }
 
 class BroadcastRequest(BaseModel):
     rtmp_url: Optional[str] = None

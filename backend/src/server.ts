@@ -114,15 +114,15 @@ try {
       .catch((err) => console.warn("[TTS] Edge-TTS warmup notice:", err));
   }, 1000);
 
-  // Warm up Gemini AI Brain in background
+  // Warm up Groq AI Brain in background
   setTimeout(() => {
-    if (!process.env.GEMINI_API_KEY) {
-      console.warn("[Gemini-Brain] GEMINI_API_KEY is not set in environment.");
+    if (!process.env.GROQ_API_KEY && !process.env.GEMINI_API_KEY) {
+      console.warn("[Groq-Brain] GROQ_API_KEY is not set in environment.");
       return;
     }
-    import("./services/gemini-brain.js")
+    import("./services/groq-brain.js")
       .then((m) =>
-        m.generateDynamicSalesResponseGemini({
+        m.generateDynamicSalesResponseGroq({
           userQuestion: "Halo!",
           avatarName: "Namira",
           productName: "Produk Demo",
@@ -130,13 +130,10 @@ try {
         }),
       )
       .then(() =>
-        console.log("[Gemini-Brain] Gemini 3.6 Flash ready & connected"),
+        console.log("[Groq-Brain] Groq Dynamic LLM Brain ready & connected"),
       )
       .catch((err) =>
-        console.warn(
-          "[Gemini-Brain] Gemini warmup notice:",
-          err?.message || err,
-        ),
+        console.warn("[Groq-Brain] Groq warmup notice:", err?.message || err),
       );
   }, 3000);
 } catch (error) {
