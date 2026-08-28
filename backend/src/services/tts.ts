@@ -191,7 +191,7 @@ async function synthesizeWithEdgeTTS(
   voiceId: string,
   rateStr: string,
 ): Promise<Buffer> {
-  // Strict 3.5s timeout per Edge TTS synthesis to avoid blocking pipeline buffer
+  // 8s timeout — RunPod network ke Microsoft Edge TTS butuh lebih dari 3.5s
   return await Promise.race([
     (async () => {
       try {
@@ -209,8 +209,8 @@ async function synthesizeWithEdgeTTS(
     })(),
     new Promise<Buffer>((_, reject) =>
       setTimeout(
-        () => reject(new Error("Edge-TTS timed out (3.5s limit)")),
-        3500,
+        () => reject(new Error("Edge-TTS timed out (8s limit)")),
+        8000,
       ),
     ),
   ]);

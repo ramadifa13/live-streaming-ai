@@ -14,14 +14,23 @@ Voice cloning reference lookup order (first match wins):
 """
 import io
 import os
+import sys
 import time
 import contextlib
 
+# ── sys.path: prioritaskan site-packages dari env-chatterbox ──────────────────
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_CHATTERBOX_SITE = os.path.join(_SCRIPT_DIR, "env-chatterbox", "lib", "python3.10", "site-packages")
+if _CHATTERBOX_SITE not in sys.path:
+    sys.path.insert(0, _CHATTERBOX_SITE)
+
 import torch
 import torchaudio as ta
-import torch.utils._pytree
-if not hasattr(torch.utils._pytree, "register_pytree_node") and hasattr(torch.utils._pytree, "_register_pytree_node"):
-    torch.utils._pytree.register_pytree_node = torch.utils._pytree._register_pytree_node
+
+# ── Pytree compatibility shim untuk PyTorch 2.1 (tidak punya register_pytree_node publik) ──
+import torch.utils._pytree as _torch_pytree
+if not hasattr(_torch_pytree, "register_pytree_node") and hasattr(_torch_pytree, "_register_pytree_node"):
+    _torch_pytree.register_pytree_node = _torch_pytree._register_pytree_node
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
