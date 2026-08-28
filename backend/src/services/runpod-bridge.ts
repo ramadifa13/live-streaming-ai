@@ -136,6 +136,7 @@ export async function getRunPodQueueStatus(
   ).catch(() => ({
     success: false,
     ready_videos_count: 0,
+    active_processing_count: 0,
     broadcasting: false,
   }));
 }
