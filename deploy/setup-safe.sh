@@ -10,6 +10,10 @@ PIP_BIN="$VENV_DIR/bin/pip"
 
 export TMPDIR="/workspace/tmp"
 export PIP_CACHE_DIR="/workspace/tmp/pip_cache"
+
+# Bersihkan total semua cache lama sebelum mulai agar storage selalu fresh dan bersih
+echo "[*] Membersihkan cache temporary lama..."
+rm -rf /workspace/tmp/* /workspace/tmp/.* /root/.cache/pip /root/.cache/huggingface 2>/dev/null || true
 mkdir -p "$TMPDIR" "$PIP_CACHE_DIR" "$WORKER_DIR"
 
 export TORCH_CUDA_TAG=cu118
@@ -137,19 +141,11 @@ echo "Root free: ${ROOT_AVAIL_GB} GB | Workspace free: ${WORKSPACE_AVAIL_GB} GB"
 
 # Prioritaskan cek ruang di /workspace jika terpasang Network Volume
 if [ "$WORKSPACE_AVAIL_GB" -gt 0 ]; then
-    if [ "$WORKSPACE_AVAIL_GB" -lt 8 ]; then
-        echo "[ERROR] Workspace disk (/workspace) kurang dari 8 GB."
-        echo "Pastikan Network Volume Anda memiliki ruang minimal 8-15 GB."
+    if [ "$WORKSPACE_AVAIL_GB" -lt 5 ]; then
+        echo "[ERROR] Workspace disk (/workspace) kurang dari 5 GB."
         exit 1
     fi
     echo "[OK] Ruang penyimpanan Network Volume (/workspace) mencukupi: ${WORKSPACE_AVAIL_GB} GB."
-else
-    if [ "$ROOT_AVAIL_GB" -lt 8 ]; then
-        echo "[ERROR] Root disk kurang dari 8 GB."
-        echo "Tambahkan Container Disk atau pasang Network Volume di /workspace."
-        exit 1
-    fi
-    echo "[OK] Ruang penyimpanan Root mencukupi: ${ROOT_AVAIL_GB} GB."
 fi
 
 mkdir -p \
@@ -182,6 +178,7 @@ echo ""
 echo "[4/10] Menghentikan API lama jika ada..."
 
 pkill -f "api_server.py" 2>/dev/null || true
+pkill -f "chatterbox_service/server.py" 2>/dev/null || true
 sleep 2
 
 echo "[OK] API lama dihentikan."
@@ -294,12 +291,6 @@ echo "[7/10] Installing dependency utama worker..."
 
 "$PIP_BIN" install \
     --no-cache-dir \
-    "pip<24.1" \
-    "setuptools>=65,<71" \
-    "wheel<0.42"
-
-"$PIP_BIN" install \
-    --no-cache-dir \
     "numpy==1.26.4" \
     "opencv-python-headless==4.8.0.76" \
     "huggingface_hub>=0.25.0,<0.26.0" \
@@ -315,19 +306,11 @@ if [ -f "$WORKER_DIR/requirements-worker.txt" ]; then
         -r "$WORKER_DIR/requirements-worker.txt"
 fi
 
-# Restore critical versions after requirements-worker
-"$PIP_BIN" install \
-    --no-cache-dir \
-    --force-reinstall \
-    "numpy==1.26.4" \
-    "huggingface_hub>=0.25.0,<0.26.0" \
-    "transformers==4.38.2" \
-    "diffusers==0.27.2" \
-    "accelerate==0.28.0"
-
+# Ensure critical torch and numpy are untouched
 "$PIP_BIN" install \
     --no-cache-dir \
     --no-deps \
+    "numpy==1.26.4" \
     "torch==2.1.0+cu118" \
     "torchvision==0.16.0+cu118" \
     "torchaudio==2.1.0+cu118" \
@@ -360,49 +343,6 @@ if [ ! -d "$WORKER_DIR/MuseTalk/.git" ]; then
 else
     echo "MuseTalk sudah ada, skip clone."
 fi
-
-cd "$WORKER_DIR/MuseTalk"
-
-# Backup requirements asli
-if [ ! -f requirements.original.txt ]; then
-    cp requirements.txt requirements.original.txt
-fi
-
-# Patch dependency upstream
-sed -i 's/^numpy==.*/numpy==1.26.4/g' requirements.txt || true
-sed -i 's/^numpy>=.*/numpy==1.26.4/g' requirements.txt || true
-sed -i 's/^opencv-python==.*/opencv-python==4.8.0.76/g' requirements.txt || true
-sed -i 's/^tensorflow==.*/# tensorflow dihapus untuk inference headless/g' requirements.txt || true
-sed -i 's/^tensorboard==.*/# tensorboard dihapus untuk inference headless/g' requirements.txt || true
-sed -i 's/^gradio==.*/# gradio dihapus untuk inference headless/g' requirements.txt || true
-sed -i 's/^transformers==.*/transformers==4.38.2/g' requirements.txt || true
-sed -i 's/^diffusers==.*/diffusers==0.27.2/g' requirements.txt || true
-sed -i 's/^huggingface_hub==.*/huggingface_hub>=0.25.0,<0.26.0/g' requirements.txt || true
-
-"$PIP_BIN" install \
-    --no-cache-dir \
-    -r requirements.txt
-
-# Restore critical versions
-"$PIP_BIN" install \
-    --no-cache-dir \
-    --force-reinstall \
-    "numpy==1.26.4" \
-    "transformers==4.38.2" \
-    "diffusers==0.27.2" \
-    "accelerate==0.28.0" \
-    "huggingface_hub>=0.25.0,<0.26.0"
-
-"$PIP_BIN" install \
-    --no-cache-dir \
-    --no-deps \
-    "torch==2.1.0+cu118" \
-    "torchvision==0.16.0+cu118" \
-    "torchaudio==2.1.0+cu118" \
-    --index-url https://download.pytorch.org/whl/cu118
-
-echo ""
-echo "[*] Menginject _load_models_cached ke MuseTalk..."
 
 cd "$WORKER_DIR/MuseTalk/scripts"
 
@@ -534,7 +474,45 @@ echo "Installing mmpose..."
     "numpy==1.26.4"
 
 # ------------------------------------------------------------
-# 10. DOWNLOAD MODELS & VERIFICATION
+# 10. CHATTERBOX-TTS (LIGHTWEIGHT INFERENCE ISOLATED VENV)
+# ------------------------------------------------------------
+
+CHATTERBOX_DIR="$WORKER_DIR/chatterbox_service"
+if [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ]; then
+    echo ""
+    echo "============================================================"
+    echo " Menyiapkan Chatterbox-TTS-Indonesian (Voice Cloning)"
+    echo "============================================================"
+    
+    if [ ! -d "$CHATTERBOX_DIR/env-chatterbox" ]; then
+        python3 -m venv "$CHATTERBOX_DIR/env-chatterbox"
+    fi
+    
+    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install --no-cache-dir --upgrade pip
+    
+    # Pasang PyTorch CUDA 11.8 ke venv Chatterbox
+    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install \
+        --no-cache-dir \
+        "torch==2.1.0+cu118" \
+        "torchaudio==2.1.0+cu118" \
+        --index-url https://download.pytorch.org/whl/cu118
+        
+    # Pasang chatterbox-tts tanpa menarik duplikasi torch 2.6
+    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install \
+        --no-cache-dir \
+        --no-deps \
+        "chatterbox-tts==0.1.7"
+        
+    # Pasang dependensi inferensi Chatterbox yang ringan
+    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install \
+        --no-cache-dir \
+        conformer resemble-perth s3tokenizer spacy-pkuseg pyloudnorm pykakasi safetensors soundfile librosa huggingface_hub fastapi uvicorn pydantic
+        
+    echo "[OK] Chatterbox-TTS-Indonesian siap di $CHATTERBOX_DIR/env-chatterbox."
+fi
+
+# ------------------------------------------------------------
+# 11. DOWNLOAD MODELS & VERIFICATION
 # ------------------------------------------------------------
 
 echo ""
@@ -637,35 +615,9 @@ else
     echo "Face parse model sudah ada."
 fi
 
-# ------------------------------------------------------------
-# CHATTERBOX-TTS-INDONESIAN (Custom Voice Cloning Microservice)
-# ------------------------------------------------------------
-CHATTERBOX_DIR="$WORKER_DIR/chatterbox_service"
-if [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ]; then
-    echo "Menyiapkan Chatterbox-TTS-Indonesian (Custom Voice Cloning)..."
-    if [ ! -d "$CHATTERBOX_DIR/env-chatterbox" ]; then
-        python3 -m venv "$CHATTERBOX_DIR/env-chatterbox"
-    fi
-    
-    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install --no-cache-dir --upgrade pip
-    
-    # Pasang PyTorch CUDA 11.8 ke venv Chatterbox terlebih dahulu
-    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install \
-        --no-cache-dir \
-        "torch==2.1.0+cu118" \
-        "torchaudio==2.1.0+cu118" \
-        --index-url https://download.pytorch.org/whl/cu118
-        
-    # Pasang chatterbox microservice dependencies
-    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install \
-        --no-cache-dir \
-        -r "$CHATTERBOX_DIR/requirements-chatterbox.txt"
-        
-    echo "[OK] Chatterbox-TTS-Indonesian siap di $CHATTERBOX_DIR/env-chatterbox."
-fi
-
-# Bersihkan cache sementara pip dan wheel build agar disk 30 GB tetap lega
-rm -rf /workspace/tmp/* 2>/dev/null || true
+# Bersihkan total semua cache temporary
+rm -rf /workspace/tmp/* /workspace/tmp/.* /root/.cache/pip /root/.cache/huggingface 2>/dev/null || true
+mkdir -p "$TMPDIR" "$PIP_CACHE_DIR" "$WORKER_DIR"
 
 # Symlinks
 echo ""
