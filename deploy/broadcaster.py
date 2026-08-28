@@ -27,16 +27,30 @@ class AIBroadcaster:
             self.rtmp_url
         ]
         
-        self.master_process = subprocess.Popen(master_command, stdin=subprocess.PIPE)
-        print("[SUKSES] Terhubung ke Platform Live Streaming!")
-        
-        if not os.path.exists(self.idle_video):
-            print(f"[WARNING] Video idle tidak ditemukan: {self.idle_video}")
+    def _ensure_master_process(self):
+        if self.master_process is None or self.master_process.poll() is not None:
+            print("[BROADCASTER] Menginisialisasi ulang Master FFmpeg RTMP Connection...")
+            master_command = [
+                "ffmpeg",
+                "-y",
+                "-f", "mpegts",
+                "-i", "pipe:0",
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-ar", "44100",
+                "-f", "flv",
+                self.rtmp_url
+            ]
+            self.master_process = subprocess.Popen(master_command, stdin=subprocess.PIPE)
 
     def _stream_file(self, video_path):
         if not video_path or not os.path.exists(video_path):
             print(f"[ERROR] File video tidak ditemukan: {video_path}")
             return False
+        
+        self._ensure_master_process()
+        
         worker_command = [
             "ffmpeg",
             "-re",

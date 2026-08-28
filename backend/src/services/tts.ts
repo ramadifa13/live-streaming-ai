@@ -70,9 +70,41 @@ export interface SynthesizeResponse {
   audioBuffer?: Buffer;
 }
 
+/** Membersihkan teks dari emoji, simbol aneh, dan format mata uang agar dibacakan lancar oleh TTS */
+export function sanitizeForLiveTTS(text: string): string {
+  if (!text) return "";
+  return (
+    text
+      // Hapus Action Tags seperti [IDLE], [EXCITED], [POINT_DOWN]
+      .replace(/\[[A-Z_]+\]/gi, "")
+      // Hapus Emoji Unicode
+      .replace(
+        /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu,
+        "",
+      )
+      // Konversi simbol mata uang dan angka
+      .replace(/Rp\s?(\d+(?:\.\d+)?(?:\,\d+)?)/gi, "$1 rupiah")
+      .replace(/\$(\d+(?:\.\d+)?)/g, "$1 dollar")
+      .replace(/\b(\d+)k\b/gi, "$1 ribu")
+      // Ganti karakter XML khusus
+      .replace(/&/g, " dan ")
+      .replace(/</g, "")
+      .replace(/>/g, "")
+      .replace(/["']/g, "")
+      .replace(/[%]/g, " persen ")
+      // Rapikan spasi ganda dan tanda baca ganda
+      .replace(/[!]{2,}/g, "!")
+      .replace(/[?]{2,}/g, "?")
+      .replace(/[.]{2,}/g, ".")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+}
+
 /** Escapes text for safe embedding inside the SSML msedge-tts builds internally. */
 function escapeSSML(text: string): string {
-  return text
+  const clean = sanitizeForLiveTTS(text);
+  return clean
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -81,7 +113,8 @@ function escapeSSML(text: string): string {
 }
 
 function splitIntoSentences(text: string): string[] {
-  return text
+  const clean = sanitizeForLiveTTS(text);
+  return clean
     .split(/(?<=[.!?])\s+/)
     .map((s) => s.trim())
     .filter(Boolean);

@@ -268,8 +268,16 @@ async def start_broadcast(req: BroadcastRequest):
     if not final_rtmp_url or not final_stream_key:
         raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
 
+    # Hentikan broadcaster lama jika ada agar tidak bentrok RTMP URL
     if broadcaster_process and broadcaster_process.poll() is None:
-        return {"success": True, "status": "streaming", "message": "Broadcaster already running"}
+        try:
+            broadcaster_process.terminate()
+            broadcaster_process.wait(timeout=2)
+        except Exception:
+            try:
+                broadcaster_process.kill()
+            except Exception:
+                pass
 
     # Reset counter saat siaran baru dimulai
     total_videos_rendered = 0

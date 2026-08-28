@@ -390,7 +390,11 @@ class LiveHostOrchestrator {
       productStock: product.stock,
     });
 
-    const text = result.replyText;
+    let text = (result?.replyText || "").trim();
+    if (text.length < 10) {
+      text = `[EXCITED] Halo kakak-kakak yang baru gabung, selamat datang di live streaming kami! Khusus hari ini produk ${product.name} lagi ada promo harga spesial cuma ${product.price.toLocaleString("id-ID")} rupiah aja. Yuk langsung tap keranjang kuning sekarang juga sebelum kehabisan!`;
+    }
+
     let audioBase64: string | undefined;
 
     try {

@@ -382,6 +382,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         sessionId,
         startedAt: new Date().toISOString(),
         pipelineStatus: liveHostOrchestrator.getPipelineStatus(sessionId),
+        pipelineStatus: await liveHostOrchestrator.getPipelineStatus(sessionId),
       };
     } catch (error) {
       liveHostOrchestrator.stop(sessionId);
@@ -396,6 +397,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
 
   // GET /api/live-stream/pipeline-status?sessionId=xxx
   // Polling endpoint untuk frontend: cek apakah V1+V2 sudah dikirim ke GPU.
+  // Polling endpoint untuk frontend: cek apakah V1+V2 sudah dikirim dan berapa video selesai dirender di GPU.
   server.get("/api/live-stream/pipeline-status", async (request) => {
     const { sessionId } = request.query as { sessionId?: string };
     if (!sessionId) {
@@ -415,6 +417,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     // Double-check ke getRunPodQueueStatus DIHAPUS karena bisa return < 2
     // saat broadcaster sedang hapus file (race condition) — menyebabkan ready = false palsu.
 
+    const status = await liveHostOrchestrator.getPipelineStatus(sessionId);
     return status;
   });
 
