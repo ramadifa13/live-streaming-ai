@@ -171,23 +171,50 @@ Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.product
 
 Pertanyaan Penonton: "${userQuestion}"`;
 
-  try {
-    const response = await client.models.generateContent({
-      model: MODEL_NAME,
-      contents: systemPrompt,
-    });
+  const candidateModels = [
+    process.env.GEMINI_MODEL_NAME || "gemini-2.5-flash",
+    "gemini-1.5-flash",
+    "gemini-2.0-flash",
+    "gemini-3.6-flash",
+  ];
 
-    const text = response.text || "";
-    return {
-      replyText: text.trim(),
-      engineUsed: `Google Gemini 3.6 Flash`,
-      intent: "dynamic_llm",
-      action: "reply",
-    };
-  } catch (err: unknown) {
-    console.warn("[Gemini-Brain] generateDynamicSalesResponse failed:", err);
-    throw new Error(`AI Sales Brain (Gemini 3.6 Flash) is offline / unreachable: ${err instanceof Error ? err.message : String(err)}`);
+  for (const model of candidateModels) {
+    try {
+      const response = await client.models.generateContent({
+        model: model,
+        contents: systemPrompt,
+      });
+
+      const text = response.text || "";
+      if (text.trim()) {
+        return {
+          replyText: text.trim(),
+          engineUsed: `Google Gemini (${model})`,
+          intent: "dynamic_llm",
+          action: "reply",
+        };
+      }
+    } catch (err: any) {
+      console.warn(`[Gemini-Brain] Model ${model} failed (${err?.status || err?.message}), mencoba model cadangan...`);
+    }
   }
+
+  // Graceful conversational fallback (anti-crash saat API Google mencapai limit free tier harian)
+  console.warn("[Gemini-Brain] Menggunakan Resilient Offline Sales Pitch Template agar live stream terus berjalan...");
+  const pitchTemplates = [
+    `Halo semuanya! Selamat datang di live streaming aku bareng ${avatarName}! Hari ini spesial banget karena produk ${productName} lagi ada diskon khusus cuma ${productPrice}! Jangan sampai kehabisan ya, langsung tap keranjang kuning sekarang!`,
+    `Buat kakak yang lagi cari produk berkualitas, ${productName} ini solusinya banget! ${productBenefits ? productBenefits : "Kualitas premium dan sudah terbukti"}. Harganya lagi hemat cuma ${productPrice}, stoknya tinggal ${productStock} pcs lagi nih kak!`,
+    `Yang baru gabung jangan lupa follow dan tap-tap layarnya ya kak! Produk unggulan kita ${productName} lagi best seller banget hari ini. Yuk checkout sekarang juga sebelum promonya berakhir!`,
+    `Banyak banget yang tanya keunggulan ${productName}, selain ${productBenefits ? productBenefits : "hasilnya maksimal"}, cara pakainya juga super praktis! Mumpung live masih berlangsung dengan harga promo ${productPrice}, buruan amankan ya!`,
+  ];
+  const randomPitch = pitchTemplates[Math.floor(Math.random() * pitchTemplates.length)];
+
+  return {
+    replyText: randomPitch,
+    engineUsed: "Resilient Offline Sales Engine (Fallback)",
+    intent: "fallback_sales_pitch",
+    action: "reply",
+  };
 }
 
 export const generateDynamicSalesResponse = generateDynamicSalesResponseGemini;

@@ -202,24 +202,34 @@ class LiveHostOrchestrator {
       return;
     }
 
-    const promptIndex = this.getNextPromptIndex(sessionId);
-    const result = await generateDynamicSalesResponse({
-      userQuestion: `${this.prompts[promptIndex]} Gunakan copywriting produk ini sebagai acuan: ${product.copywriting || "Tidak tersedia"}`,
-      avatarName: state.config.avatarName,
-      tone: state.config.tone,
-      productName: product.name,
-      productPrice: `Rp${product.price.toLocaleString("id-ID")}`,
-      productDescription: product.description || "",
-      productCategory: product.category || "General",
-      productBenefits: product.benefits || "",
-      productUsage: product.usage || "",
-      productFaq: product.faq || "",
-      productStock: product.stock,
-    });
+    try {
+      const promptIndex = this.getNextPromptIndex(sessionId);
+      const result = await generateDynamicSalesResponse({
+        userQuestion: `${this.prompts[promptIndex]} Gunakan copywriting produk ini sebagai acuan: ${product.copywriting || "Tidak tersedia"}`,
+        avatarName: state.config.avatarName,
+        tone: state.config.tone,
+        productName: product.name,
+        productPrice: `Rp${product.price.toLocaleString("id-ID")}`,
+        productDescription: product.description || "",
+        productCategory: product.category || "General",
+        productBenefits: product.benefits || "",
+        productUsage: product.usage || "",
+        productFaq: product.faq || "",
+        productStock: product.stock,
+      });
 
-    // Check if session still exists after the async call
-    if (this.sessions.has(sessionId)) {
-      this.enqueue(sessionId, result.replyText);
+      // Check if session still exists after the async call
+      if (this.sessions.has(sessionId)) {
+        this.enqueue(sessionId, result.replyText);
+      }
+    } catch (orchestratorErr) {
+      console.error("[LiveHostOrchestrator] Error generating proactive sales pitch:", orchestratorErr);
+      if (this.sessions.has(sessionId)) {
+        this.enqueue(
+          sessionId,
+          `Halo kakak yang baru gabung! Jangan lupa tap keranjang kuning sekarang mumpung ${product.name} lagi promo cuma Rp${product.price.toLocaleString("id-ID")} ya!`,
+        );
+      }
     }
   }
 
