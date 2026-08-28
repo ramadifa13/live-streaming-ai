@@ -198,3 +198,69 @@ curl -s http://localhost:8000/health
 curl -s http://127.0.0.1:8090/health
 # Output: {"status":"ok","model_loaded":true,"device":"cuda"}
 ```
+
+---
+
+## 8. Panduan Update Kode (Git Pull) & Pembersihan Berkas di RunPod
+
+Saat ada pembaruan kode pada repository (perbaikan worker, broadcaster, atau sinkronisasi API), Anda **TIDAK PERLU mengunduh ulang model AI (3GB+) atau menjalankan setup dari nol**.
+
+Cukup ikuti langkah cepat di bawah ini langsung dari terminal RunPod:
+
+### A. Perintah Cepat Update & Restart (1-Liner)
+
+```bash
+cd /workspace/live-streaming-ai && \
+git pull origin main && \
+cp -r deploy/* /workspace/ai_live_worker/ 2>/dev/null || true && \
+cd /workspace/ai_live_worker && \
+pkill -f "api_server.py" 2>/dev/null || true && \
+pkill -f "broadcaster.py" 2>/dev/null || true && \
+bash start.sh
+```
+
+> [!TIP]
+> Perintah di atas akan menghentikan worker lama, menyinkronkan file Python terbaru (`live_worker.py`, `broadcaster.py`, `api_server.py`), dan menjalankan kembali `start.sh` dalam hitungan detik.
+
+---
+
+### B. Pembersihan Berkas Sampah & Storage Cleanup
+
+Untuk mencegah disk Network Volume penuh akibat log panjang atau sisa render video:
+
+```bash
+# 1. Bersihkan sisa temporary audio, frame crops, dan file .yaml MuseTalk
+rm -rf /workspace/ai_live_worker/temp/*
+
+# 2. Bersihkan file video segmen lama di folder output (Aman: tidak menghapus idle.mp4)
+find /workspace/ai_live_worker/output -name "task_*.mp4" -delete 2>/dev/null || true
+find /workspace/ai_live_worker/output -name "temp_*.mp4" -delete 2>/dev/null || true
+find /workspace/ai_live_worker/output -name "*.tmp" -delete 2>/dev/null || true
+
+# 3. Kosongkan (truncate) log yang berukuran besar tanpa menghapus filenya
+> /workspace/ai_live_worker/api_server.log 2>/dev/null || true
+> /workspace/ai_live_worker/broadcaster.log 2>/dev/null || true
+> /workspace/ai_live_worker/chatterbox_service.log 2>/dev/null || true
+> /workspace/ai_live_worker/logs/master_ffmpeg.log 2>/dev/null || true
+
+# 4. Bersihkan cache instalasi pip & PyTorch untuk menghemat ruang disk
+rm -rf ~/.cache/pip ~/.cache/torch/hub /tmp/gpu_inference.lock 2>/dev/null || true
+```
+
+---
+
+### C. Troubleshooting Update Git
+
+Jika `git pull` gagal karena ada perubahan lokal atau file konflik di Pod:
+
+```bash
+cd /workspace/live-streaming-ai
+# Reset perubahan lokal dan paksa sinkronisasi dengan remote repository
+git fetch --all
+git reset --hard origin/main
+# Salin ulang file deploy
+cp -r deploy/* /workspace/ai_live_worker/
+# Restart service
+cd /workspace/ai_live_worker && bash start.sh
+```
+
