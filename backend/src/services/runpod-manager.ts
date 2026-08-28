@@ -212,7 +212,7 @@ export async function createPod(): Promise<string> {
           name: `LiveWorker-${gpuTier.id.replace(/\s+/g, "_")}`,
           imageName: "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04",
           dockerArgs:
-            "bash -c 'if [ -f /workspace/ai_live_worker/start.sh ]; then cd /workspace/ai_live_worker && bash start.sh; elif [ -f /workspace/live-streaming-ai/deploy/start.sh ]; then cd /workspace/live-streaming-ai/deploy && bash start.sh; fi; sleep infinity'",
+            "bash -c 'for i in $(seq 1 30); do if [ -f /workspace/ai_live_worker/start.sh ]; then cd /workspace/ai_live_worker && bash start.sh; elif [ -f /workspace/live-streaming-ai/deploy/start.sh ]; then cd /workspace/live-streaming-ai/deploy && bash start.sh; fi; sleep 2; done; sleep infinity'",
           ports: "8000/http,8090/http",
           networkVolumeId: volumeId,
           volumeMountPath: "/workspace",
