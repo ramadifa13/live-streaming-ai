@@ -16,6 +16,7 @@ import {
   releaseGpuForJob,
   updateGpuActivity,
 } from "./runpod-manager.js";
+import { synthesizeSpeech } from "./tts.js";
 
 export type VideoJobStatus = "queued" | "processing" | "done" | "error";
 
@@ -193,6 +194,25 @@ async function runLivePortrait(
       }
     }
 
+    updateJob(jobId, {
+      progress: 20,
+      stage: "Synthesizing TTS audio (Piper-TTS) & starting job...",
+    });
+
+    let audioBase64: string | undefined;
+    try {
+      const ttsRes = await synthesizeSpeech({
+        text: params.scriptText,
+        avatarName: finalAvatarFileName,
+        tone: params.tone,
+      });
+      if (ttsRes.audioBuffer) {
+        audioBase64 = ttsRes.audioBuffer.toString("base64");
+      }
+    } catch (ttsErr) {
+      console.warn("[videoAvatarService] TTS synthesis notice:", ttsErr);
+    }
+
     const payload = {
       avatar_name: finalAvatarFileName,
       avatar_image_path: avatarImagePath,
@@ -201,6 +221,7 @@ async function runLivePortrait(
       speed:
         params.tone === "Energetic" || params.tone === "Semangat" ? 1.1 : 1.0,
       tone: params.tone || "Persuasif",
+      audio_base64: audioBase64,
     };
 
     updateJob(jobId, {

@@ -237,6 +237,7 @@ export async function createPod(): Promise<string> {
           dockerArgs:
             "bash -c 'for i in $(seq 1 30); do if [ -f /workspace/ai_live_worker/start.sh ]; then cd /workspace/ai_live_worker && bash start.sh; elif [ -f /workspace/live-streaming-ai/deploy/start.sh ]; then cd /workspace/live-streaming-ai/deploy && bash start.sh; fi; sleep 2; done; sleep infinity'",
           ports: "8000/http,8090/http",
+          ports: "8000/http",
           networkVolumeId: volumeId,
           volumeMountPath: "/workspace",
         },

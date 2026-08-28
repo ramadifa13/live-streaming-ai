@@ -177,6 +177,7 @@ export async function triggerWorkerPlayback(
 
 /**
  * Menunggu secara bertahap hingga seluruh container AI worker di RunPod (Port 8000 & 8090) siap merespon.
+ * Menunggu secara bertahap hingga container AI worker di RunPod (Port 8000) siap merespon.
  */
 export async function warmupWorker(
   podId: string | null | undefined,

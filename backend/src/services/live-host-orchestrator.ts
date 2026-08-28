@@ -134,8 +134,39 @@ class LiveHostOrchestrator {
       `[LiveHost] 🎬 Pipeline background dimulai (Session: ${config.sessionId}). Generating V1...`,
     );
 
+    // Kirim warmup ke worker agar model unet ter-load ke VRAM sebelum render dimulai.
+    // Ini menghindari overhead load model (10-30 detik) di setiap video pertama.
+    void this.warmupWorkerModel(config.sessionId);
+
     void this.runPreLivePipeline(config.sessionId);
   }
+
+  /**
+   * Kirim request warmup minimal ke worker agar model ter-load ke VRAM sekali.
+   * Tidak menunggu response — hanya trigger agar model siap saat V1 tiba.
+   */
+  private async warmupWorkerModel(sessionId: string): Promise<void> {
+    const state = this.sessions.get(sessionId);
+    if (!state?.config.podId) return;
+
+    try {
+      const { forwardToRunPodGPU } = await import("./runpod-bridge.js");
+      console.log(`[LiveHost] 🔥 Warmup worker model (pre-load unet ke VRAM) — session: ${sessionId}`);
+      await forwardToRunPodGPU(state.config.podId, {
+        avatarImagePath: "avatars/namira.png",
+        text: "halo",
+        voice: state.config.voice || "id-ID-GadisNeural",
+        tone: state.config.tone,
+        requireWorker: false, // Non-fatal jika gagal
+        wait: false,
+      });
+      console.log(`[LiveHost] ✅ Worker model warmup request terkirim.`);
+    } catch (err) {
+      // Non-fatal — warmup hanya optimasi
+      console.warn(`[LiveHost] Warmup model notice (non-fatal):`, (err as Error).message);
+    }
+  }
+
 
   /** Pre-live loop: generate V1 dan V2 ke GPU, lalu tunggu Go Live */
   private async runPreLivePipeline(sessionId: string): Promise<void> {
@@ -353,9 +384,12 @@ class LiveHostOrchestrator {
       renderedCount = state?.videosQueued ?? 0;
     }
 
+    // BUG FIX: dulu kondisi kedua selalu true sehingga ready=true langsung
+    // setelah 2 video DIKIRIM ke GPU, padahal GPU butuh 70-155 detik untuk render.
+    // Sekarang: wajib ada >= 1 video yang sudah benar-benar SELESAI dirender di worker.
     const isReady =
       (state?.videosQueued ?? 0) >= 2 &&
-      (renderedCount >= 1 || (state?.videosQueued ?? 0) >= 2);
+      renderedCount >= 1; // Video harus sudah selesai dirender di GPU, bukan hanya dikirim
 
     return {
       ready: isReady,
@@ -413,7 +447,6 @@ class LiveHostOrchestrator {
         voice: state.config.voice || "id-ID-GadisNeural",
         avatarName: state.config.avatarName,
         tone: state.config.tone,
-        podId: state.config.podId,
       });
       if (ttsResult.success && ttsResult.audioBuffer) {
         audioBase64 = ttsResult.audioBuffer.toString("base64");
@@ -464,7 +497,6 @@ class LiveHostOrchestrator {
         voice: state.config.voice || "id-ID-GadisNeural",
         avatarName: state.config.avatarName,
         tone: state.config.tone,
-        podId: state.config.podId,
       });
       if (ttsResult.success && ttsResult.audioBuffer) {
         audioBase64 = ttsResult.audioBuffer.toString("base64");

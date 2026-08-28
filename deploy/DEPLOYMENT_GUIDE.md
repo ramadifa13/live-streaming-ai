@@ -249,4 +249,3 @@ cp -r deploy/* /workspace/ai_live_worker/
 # Restart service
 cd /workspace/ai_live_worker && bash start.sh
 ```
-

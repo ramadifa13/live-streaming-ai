@@ -336,6 +336,7 @@ export async function startInstagramBroadcast(
   let thumbFilter = "";
   let inputsBeforeAudio = [
     "-re",
+    "-fflags", "+genpts",   // Generate PTS konsisten saat video di-loop → mencegah timestamp gap
     ...(isVideo ? ["-stream_loop", "-1"] : ["-loop", "1"]),
     "-i",
     mediaToUse,
@@ -505,11 +506,13 @@ export async function startInstagramBroadcast(
     "-maxrate",
     "3000k",
     "-bufsize",
-    "7500k", // 3:1 ratio (maxrate × 2.5) → CBR lebih stabil
+    "5000k", // 2× bitrate (standard) → buffer lebih kecil = latency lebih rendah & stabil
     "-pix_fmt",
     "yuv420p",
     "-g",
-    "60",
+    "30", // Keyframe setiap 1 detik @30fps → recovery cepat jika ada packet loss
+    "-sc_threshold",
+    "0", // Disable scene change detection → keyframe interval konsisten
     "-r",
     "30",
     "-x264-params",

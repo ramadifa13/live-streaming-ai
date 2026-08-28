@@ -276,6 +276,7 @@ if [ -d "$SCRIPT_DIR/chatterbox_service" ]; then
     cp "$SCRIPT_DIR/chatterbox_service"/requirements-chatterbox.txt "$WORKER_DIR/chatterbox_service"/ 2>/dev/null || true
 fi
 
+
 if [ -f "$SCRIPT_DIR/requirements-worker.txt" ]; then
     cp "$SCRIPT_DIR/requirements-worker.txt" "$WORKER_DIR/"
 fi

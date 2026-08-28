@@ -75,6 +75,7 @@ class AILiveWorker:
                 print(f"[WARMUP] Gagal pre-load MuseTalk: {e}")
             
         print("[INFO] Worker siap dengan sistem TTS Chatterbox-TTS-Indonesian (voice cloning) dan Lipsync MuseTalk...")
+        print("[INFO] Worker siap dengan Lipsync MuseTalk (Audio diproses terpusat di Backend via Piper-TTS)...")
 
     def _clean_temp_dir(self):
         """Clean leftover temporary files from previous runs to save disk."""
@@ -278,6 +279,9 @@ class AILiveWorker:
                 yaml_path = os.path.join(self.temp_dir, f"{task_id}.yaml")
                 try:
                     import yaml
+            yaml_path = os.path.join(self.temp_dir, f"{task_id}.yaml")
+            try:
+                import yaml
 
                     # Pre-normalize audio to 16kHz PCM WAV for robust Whisper feature extraction
                     norm_audio_path = os.path.join(self.temp_dir, f"{task_id}_16k.wav")
@@ -435,6 +439,7 @@ class AILiveWorker:
         if audio_path and os.path.exists(audio_path):
             audio_file = audio_path
             print(" -> Menggunakan audio dari backend (pre-synthesized)...")
+            print(" -> Menggunakan audio dari backend (Piper-TTS pre-synthesized)...")
         else:
             # Backend audio tidak tersedia (Edge TTS mungkin timeout sebelum fallback ke Chatterbox)
             # Coba Chatterbox-TTS-Indonesian lokal di port 8090 sebagai safety net
@@ -450,6 +455,8 @@ class AILiveWorker:
                 # Jika tidak strict, lanjut tanpa audio (akan error di lipsync)
                 return None
         tts_elapsed = round((time.time() - tts_start) * 1000)
+            print(f"[ERROR] Audio dari backend tidak tersedia untuk {task_id}. Backend TTS via Piper wajib aktif.")
+            return None
 
         lipsync_start = time.time()
         print(" -> Generating Video Lipsync (MuseTalk)...")

@@ -106,13 +106,8 @@ try {
   // Start GPU idle monitor
   import("./services/runpod-manager.js").then((m) => m.startIdleMonitor());
 
-  // Warm up Edge-TTS in background so the first synthesize request is fast
-  setTimeout(() => {
-    import("./services/tts.js")
-      .then((m) => m.warmUpTTS())
-      .then(() => console.log("[TTS] Edge-TTS warmup completed"))
-      .catch((err) => console.warn("[TTS] Edge-TTS warmup notice:", err));
-  }, 1000);
+  // Piper-TTS dipakai offline — tidak perlu warmup network seperti Edge-TTS.
+  // Model akan di-load otomatis pada request TTS pertama.
 
   // Warm up Groq AI Brain in background
   setTimeout(() => {

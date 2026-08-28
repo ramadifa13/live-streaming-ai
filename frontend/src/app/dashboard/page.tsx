@@ -363,8 +363,27 @@ export default function Dashboard() {
 
   const speakText = async (
     text: string,
-    opts?: { voice?: string; lang?: string; tone?: string; avatar?: string },
+    opts?: {
+      voice?: string;
+      lang?: string;
+      tone?: string;
+      avatar?: string;
+      speed?: number;
+    },
   ) => {
+    if (isPlayingAudio) {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current = null;
+      }
+      setIsPlayingAudio(false);
+      setIsAvatarSpeaking(false);
+      setIsSynthesizingAudio(false);
+      return;
+    }
+
+    setIsSynthesizingAudio(true);
+    setIsAvatarSpeaking(true);
     try {
       const res = await fetch("/api/tts/synthesize", {
         method: "POST",
@@ -372,20 +391,41 @@ export default function Dashboard() {
         body: JSON.stringify({
           text,
           voice: opts?.voice || selectedVoice,
-          speed: speechSpeed,
+          avatarName: opts?.avatar || selectedAvatar.name,
+          speed: opts?.speed ?? speechSpeed,
+          tone: opts?.tone || selectedTone,
         }),
       });
 
-      if (res.ok && res.headers.get("Content-Type")?.includes("audio")) {
+      if (res.ok) {
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         currentAudioRef.current = audio;
-        audio.onended = () => URL.revokeObjectURL(url);
+        setIsPlayingAudio(true);
+        setIsSynthesizingAudio(false);
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          setIsPlayingAudio(false);
+          setIsAvatarSpeaking(false);
+        };
+        audio.onerror = () => {
+          setIsPlayingAudio(false);
+          setIsAvatarSpeaking(false);
+          setIsSynthesizingAudio(false);
+        };
         await audio.play().catch(() => {});
+      } else {
+        setIsPlayingAudio(false);
+        setIsAvatarSpeaking(false);
+        setIsSynthesizingAudio(false);
+        showToast("⚠️ Gagal memproses audio dari backend.");
       }
     } catch (err) {
-      console.warn("[speakText] Audio playback fallback notice:", err);
+      console.warn("[speakText] Audio playback notice:", err);
+      setIsPlayingAudio(false);
+      setIsAvatarSpeaking(false);
+      setIsSynthesizingAudio(false);
     }
   };
 
@@ -681,61 +721,27 @@ export default function Dashboard() {
   };
 
   const handlePlayAudioPreview = async (
-    _voice: string = selectedVoice,
+    voice: string = selectedVoice,
     _lang: string = selectedLang,
     tone: string = selectedTone,
     speed: number = speechSpeed,
   ) => {
-    if (isPlayingAudio) {
-      if (currentAudioRef.current) {
-        currentAudioRef.current.pause();
-        currentAudioRef.current.currentTime = 0;
-      }
-      setIsPlayingAudio(false);
-      setIsAvatarSpeaking(false);
-      setIsSynthesizingAudio(false);
-      return;
-    }
+    const previewText =
+      tone === "FOMO"
+        ? `Halo kak! Khusus promo hari ini, stok ${activeFeaturedProduct?.name && activeFeaturedProduct.name !== "Memuat Produk..." ? activeFeaturedProduct.name : "produk ini"} terbatas ya, yuk buruan checkout sekarang juga!`
+        : tone === "Professional"
+          ? `Halo semuanya, selamat datang. Saya ${selectedAvatar.name}. Hari ini kami mereview spesifikasi dan keunggulan ${activeFeaturedProduct?.name && activeFeaturedProduct.name !== "Memuat Produk..." ? activeFeaturedProduct.name : "produk unggulan kami"}.`
+          : `Halo semuanya! Selamat datang di live streaming. Saya ${selectedAvatar.name}. Yuk langsung cek penawaran dan voucher spesial hari ini ya!`;
 
-    setIsPlayingAudio(true);
-    setIsAvatarSpeaking(true);
-    const toneSlug: Record<string, string> = {
-      Energetic: "energetik",
-      FOMO: "fomo",
-      Professional: "professional",
-    };
-    const avatarSlug = selectedAvatar.name.toLowerCase();
-    const candidates = [
-      `/voice-templates/${avatarSlug}_${toneSlug[tone] || "casual"}.mp3`,
-      `/voice-templates/${avatarSlug}_default.mp3`,
-      `/voice-templates/default.mp3`,
-    ];
-
-    const tryPlay = (index: number) => {
-      const src = candidates[index];
-      const audio = new Audio(src);
-      currentAudioRef.current = audio;
-
-      audio.onended = () => {
-        setIsPlayingAudio(false);
-        setIsAvatarSpeaking(false);
-      };
-
-      audio.onerror = () => {
-        if (index + 1 < candidates.length) {
-          tryPlay(index + 1);
-        } else {
-          setIsPlayingAudio(false);
-          setIsAvatarSpeaking(false);
-          showToast("🔇 Template suara belum tersedia untuk kombinasi ini.");
-        }
-      };
-
-      audio.play().catch(() => audio.onerror?.(new Event("error")));
-    };
-
-    tryPlay(0);
-    showToast(`🔊 Memutar suara ${selectedAvatar.name} (${tone} • ${speed}x)`);
+    showToast(
+      `🔊 Memutar suara ${selectedAvatar.name} (${tone} • ${speed}x)...`,
+    );
+    await speakText(previewText, {
+      voice,
+      tone,
+      speed,
+      avatar: selectedAvatar.name,
+    });
   };
 
   const scrollAvatars = (direction: "left" | "right") => {
@@ -1127,8 +1133,12 @@ export default function Dashboard() {
 
     if (!isAiAutoReplyOn) return;
 
-    const replyText =
-      "Halo semuanya, selamat datang kembali hari ini kita akan membahas hal yang super seru!";
+    const prodName =
+      activeFeaturedProduct?.name &&
+      activeFeaturedProduct.name !== "Memuat Produk..."
+        ? activeFeaturedProduct.name
+        : "produk kami";
+    const replyText = `Halo kak! Terima kasih atas pertanyaannya. Mengenai ${prodName}, produk ini sudah ready stock dan ada diskon spesial buat yang langsung checkout sekarang juga ya!`;
 
     const aiMsg: ChatMessage = {
       id: String(Date.now() + 1),
@@ -1140,7 +1150,12 @@ export default function Dashboard() {
     };
 
     setChatMessages((prev) => [...prev, aiMsg]);
-    handlePlayAudioPreview();
+    speakText(replyText, {
+      avatar: selectedAvatar.name,
+      tone: selectedTone,
+      voice: selectedVoice,
+      speed: speechSpeed,
+    });
   };
 
   // Handle Copy Clipboard

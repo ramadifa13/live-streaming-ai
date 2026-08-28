@@ -165,9 +165,14 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
         host_name = "namira"
 
         if req.audio_base64:
+        audio_b64 = req.audio_base64 or req.audioBase64
+        if audio_b64:
             try:
                 raw_audio = base64.b64decode(req.audio_base64)
                 fd, audio_path = tempfile.mkstemp(suffix=".mp3", dir=worker.temp_dir)
+                raw_audio = base64.b64decode(audio_b64)
+                suffix = ".wav" if len(raw_audio) >= 4 and raw_audio[:4] == b"RIFF" else ".mp3"
+                fd, audio_path = tempfile.mkstemp(suffix=suffix, dir=worker.temp_dir)
                 os.close(fd)
                 with open(audio_path, "wb") as audio_file:
                     audio_file.write(raw_audio)
@@ -180,6 +185,8 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                 return
         elif req.audio_url:
             audio_path = req.audio_url
+        elif req.audio_url or req.audioUrl:
+            audio_path = req.audio_url or req.audioUrl
 
         # Apply timeout safety to avoid stuck tasks (5 minutes timeout for cold-start / warmup)
         final_video_path = await asyncio.wait_for(
