@@ -790,18 +790,29 @@ export default function Dashboard() {
           productStock: activeFeaturedProduct.stock,
         }),
       });
-      const json = await res.json();
-      if (res.ok && json.data) {
+      const text = await res.text();
+      let json: any = null;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        throw new Error(
+          res.ok
+            ? "Format data AI tidak valid"
+            : `Backend error (${res.status}): ${text.slice(0, 80) || "Internal Server Error"}`,
+        );
+      }
+
+      if (res.ok && json?.data) {
         setLiveSalesScriptData(json.data);
         showToast("✨ Naskah promosi AI Host berhasil dibuat dari RAG produk!");
       } else {
-        throw new Error(json.error || "AI service offline");
+        throw new Error(json?.error || "AI service offline");
       }
     } catch (err: unknown) {
       console.error("Failed to load live sales script:", err);
       setLiveSalesScriptData(null);
       showToast(
-        `❌ ${(err as Error)?.message || "AI Host tidak dapat dijangkau. Pastikan Ollama atau LLM aktif."}`,
+        `❌ ${(err as Error)?.message || "AI Host tidak dapat dijangkau. Pastikan backend aktif."}`,
       );
     } finally {
       setIsLoadingLiveScript(false);
