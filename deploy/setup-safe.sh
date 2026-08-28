@@ -487,8 +487,10 @@ if [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ]; then
     
     # Hapus env-chatterbox lama yang corrupt jika ada
     rm -rf "$CHATTERBOX_DIR/env-chatterbox" 2>/dev/null || true
+    python3 -m venv --system-site-packages "$CHATTERBOX_DIR/env-chatterbox"
     python3 -m venv "$CHATTERBOX_DIR/env-chatterbox"
     
+    # Pasang chatterbox-tts tanpa menarik duplikasi torch kedua kali (memakai torch yang sudah ada di main venv)
     # Hubungkan site-packages main venv ke env-chatterbox (hemat 5GB disk & PyTorch CUDA langsung siap)
     SITE_PACKAGES_DIR="$(ls -d "$CHATTERBOX_DIR/env-chatterbox/lib/python3."*/site-packages 2>/dev/null | head -1)"
     MAIN_SITE_PACKAGES="$(ls -d "$WORKER_DIR/env/lib/python3."*/site-packages 2>/dev/null | head -1)"
@@ -500,8 +502,15 @@ if [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ]; then
     "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install \
         --no-cache-dir \
         --no-deps \
+        "chatterbox-tts==0.1.7"
         "chatterbox-tts==0.1.7" \
         conformer resemble-perth s3tokenizer spacy-pkuseg pyloudnorm pykakasi
+        
+    # Pasang dependensi inferensi Chatterbox yang super ringan (< 30 MB)
+    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install \
+        --no-cache-dir \
+        --no-deps \
+        conformer resemble-perth s3tokenizer spacy-pkuseg pyloudnorm pykakasi safetensors soundfile librosa huggingface_hub fastapi uvicorn pydantic
         
     echo "[OK] Chatterbox-TTS-Indonesian siap di $CHATTERBOX_DIR/env-chatterbox."
 fi
