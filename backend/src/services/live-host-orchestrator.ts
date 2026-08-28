@@ -303,6 +303,7 @@ class LiveHostOrchestrator {
             voice: s.config.voice || "id-ID-GadisNeural",
             avatarName: s.config.avatarName,
             tone: s.config.tone,
+            podId: s.config.podId,
           });
           if (ttsResult.success && ttsResult.audioBuffer) {
             audioBase64 = ttsResult.audioBuffer.toString("base64");
@@ -353,6 +354,7 @@ class LiveHostOrchestrator {
         voice: state.config.voice || "id-ID-GadisNeural",
         avatarName: state.config.avatarName,
         tone: state.config.tone,
+        podId: state.config.podId,
       });
       if (ttsResult.success && ttsResult.audioBuffer) {
         audioBase64 = ttsResult.audioBuffer.toString("base64");

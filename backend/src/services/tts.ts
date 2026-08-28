@@ -1,6 +1,7 @@
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import fs from "fs";
 import path from "path";
+import { getWorkerUrl } from "./runpod-manager.js";
 
 export interface TTSVoice {
   id: string;
@@ -53,6 +54,8 @@ export interface SynthesizeRequest {
   speed?: number;
   pitch?: number;
   tone?: string;
+  /** podId RunPod untuk resolve URL Chatterbox TTS (port 8090) sebagai fallback Edge TTS */
+  podId?: string | null;
 }
 
 export interface SynthesizeResponse {
@@ -103,14 +106,17 @@ async function synthesizeSentence(
   return Buffer.concat(chunks);
 }
 
-function getToneVoiceSettings(tone?: string, baseSpeed = 1.0): { speed: number; rateStr: string } {
+function getToneVoiceSettings(
+  tone?: string,
+  baseSpeed = 1.0,
+): { speed: number; rateStr: string } {
   const t = (tone || "").toLowerCase();
   if (t.includes("energet") || t.includes("energetic")) {
     const s = Math.max(baseSpeed, 1.15);
     return { speed: s, rateStr: "+15%" };
   }
   if (t.includes("fomo")) {
-    const s = Math.max(baseSpeed, 1.20);
+    const s = Math.max(baseSpeed, 1.2);
     return { speed: s, rateStr: "+20%" };
   }
   if (t.includes("profesion") || t.includes("professional")) {
@@ -119,11 +125,15 @@ function getToneVoiceSettings(tone?: string, baseSpeed = 1.0): { speed: number; 
   return { speed: baseSpeed, rateStr: "+5%" };
 }
 
-function getLocalVoiceRefFallback(avatarName: string, tone?: string): Buffer | null {
+function getLocalVoiceRefFallback(
+  avatarName: string,
+  tone?: string,
+): Buffer | null {
   const t = (tone || "").toLowerCase();
   let toneFile = "namira_energetik.mp3";
   if (t.includes("fomo")) toneFile = "namira_fomo.mp3";
-  else if (t.includes("profesion") || t.includes("professional")) toneFile = "namira_professional.mp3";
+  else if (t.includes("profesion") || t.includes("professional"))
+    toneFile = "namira_professional.mp3";
 
   const searchDirs = [
     path.join(process.cwd(), "assets", "voice_refs"),
@@ -159,6 +169,52 @@ async function synthesizeWithEdgeTTS(
   return Buffer.concat(parts);
 }
 
+/**
+ * Fallback TTS: panggil Chatterbox-TTS-Indonesian microservice di GPU worker (port 8090).
+ * Dipakai saat Edge TTS gagal karena network restriction atau timeout.
+ */
+async function synthesizeWithChatterbox(
+  text: string,
+  avatarName: string,
+  tone: string,
+  podId?: string | null,
+): Promise<Buffer> {
+  // Build URL port 8090 dari podId atau env
+  const workerBase = getWorkerUrl(podId);
+  // Ganti port 8000 → 8090 untuk Chatterbox microservice
+  const chatterboxUrl = workerBase
+    .replace(/:8000(\/|$)/, ":8090$1")
+    .replace(/(-8000)(\.proxy\.runpod)/, "-8090$2");
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 25_000);
+
+  try {
+    const res = await fetch(`${chatterboxUrl}/synthesize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        avatar: avatarName.toLowerCase(),
+        tone,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      throw new Error(`Chatterbox HTTP ${res.status}: ${await res.text()}`);
+    }
+
+    const arrayBuffer = await res.arrayBuffer();
+    console.log(
+      `[TTS] ✅ Chatterbox-TTS-Indonesian berhasil (${arrayBuffer.byteLength} bytes, podId=${podId ?? "local"})`,
+    );
+    return Buffer.from(arrayBuffer);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /** Warms up the TTS engine so the first real request doesn't pay connection setup cost. */
 export async function warmUpTTS(): Promise<void> {
   try {
@@ -171,12 +227,19 @@ export async function warmUpTTS(): Promise<void> {
 export async function synthesizeSpeech(
   req: SynthesizeRequest,
 ): Promise<SynthesizeResponse> {
-  const { text, avatarName = "Namira", speed = 1.0, pitch: _pitch = 1.0, tone } = req;
+  const {
+    text,
+    avatarName = "Namira",
+    speed = 1.0,
+    pitch: _pitch = 1.0,
+    tone,
+    podId,
+  } = req;
 
   let matchedVoice =
     INDONESIAN_VOICES.find(
       (v) => v.avatarMatch.toLowerCase() === avatarName.toLowerCase(),
-    ) || INDONESIAN_VOICES[1]; 
+    ) || INDONESIAN_VOICES[1];
 
   if (req.voice) {
     const customVoice = INDONESIAN_VOICES.find((v) => v.id === req.voice);
@@ -191,18 +254,50 @@ export async function synthesizeSpeech(
   );
 
   let audioBuffer: Buffer | undefined;
+  let engineUsed = "Fallback Voice Template";
 
+  // ─── Tier 1: Microsoft Edge Neural TTS ───────────────────────────────────
   try {
     audioBuffer = await synthesizeWithEdgeTTS(
       text,
       resolveEdgeVoice(matchedVoice.id),
       toneSettings.rateStr,
     );
-  } catch (err) {
-    console.warn("[TTS] Edge TTS unreachable, loading persona template fallback:", err);
-    const fallbackBuffer = getLocalVoiceRefFallback(avatarName, tone);
-    if (fallbackBuffer) {
-      audioBuffer = fallbackBuffer;
+    engineUsed = "Microsoft Edge Neural TTS (id-ID)";
+  } catch (edgeErr) {
+    console.warn(
+      `[TTS] ⚠️  Edge TTS gagal (Tier 1), mencoba Chatterbox-TTS-Indonesian (Tier 2)...`,
+      (edgeErr as Error).message,
+    );
+
+    // ─── Tier 2: Chatterbox-TTS-Indonesian di RunPod worker port 8090 ────────
+    try {
+      audioBuffer = await synthesizeWithChatterbox(
+        text,
+        avatarName,
+        tone ?? "Persuasif",
+        podId,
+      );
+      engineUsed = "Chatterbox-TTS-Indonesian (RunPod GPU)";
+    } catch (chatterboxErr) {
+      console.warn(
+        `[TTS] ⚠️  Chatterbox-TTS gagal (Tier 2), menggunakan template lokal (Tier 3):`,
+        (chatterboxErr as Error).message,
+      );
+
+      // ─── Tier 3: Template audio lokal (static fallback) ─────────────────
+      const fallbackBuffer = getLocalVoiceRefFallback(avatarName, tone);
+      if (fallbackBuffer) {
+        audioBuffer = fallbackBuffer;
+        engineUsed = "Persona Template (Static Fallback)";
+        console.warn(
+          `[TTS] ⚠️  Menggunakan template suara statis — teks tidak akan sesuai audio!`,
+        );
+      } else {
+        console.error(
+          `[TTS] ❌ Semua tier TTS gagal dan tidak ada template lokal. audioBuffer=undefined.`,
+        );
+      }
     }
   }
 
@@ -213,8 +308,10 @@ export async function synthesizeSpeech(
     text,
     durationEstimateSeconds: estimatedSeconds,
     audioFormat: "audio/mpeg",
-    engine: audioBuffer ? "Microsoft Edge Neural TTS + Persona Modulation (id-ID)" : "Fallback Voice Template",
-    message: audioBuffer ? "TTS synthesis success" : "TTS synthesis fallback",
+    engine: engineUsed,
+    message: audioBuffer
+      ? `TTS synthesis success (${engineUsed})`
+      : "TTS synthesis failed — semua tier gagal",
     audioBuffer,
   };
 }

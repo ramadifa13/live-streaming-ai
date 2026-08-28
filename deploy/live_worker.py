@@ -357,16 +357,20 @@ class AILiveWorker:
         tts_start = time.time()
         if audio_path and os.path.exists(audio_path):
             audio_file = audio_path
-            print(" -> Menggunakan audio dari backend...")
+            print(" -> Menggunakan audio dari backend (pre-synthesized)...")
         else:
-            if os.environ.get("WORKER_REQUIRE_AUDIO", "0") == "1":
-                print("[ERROR] Backend audio wajib tersedia, tetapi audio_path tidak valid.")
-                return None
-            print(" -> Generating Suara (Chatterbox-TTS-Indonesian)...")
+            # Backend audio tidak tersedia (Edge TTS mungkin timeout sebelum fallback ke Chatterbox)
+            # Coba Chatterbox-TTS-Indonesian lokal di port 8090 sebagai safety net
+            print(" -> Audio dari backend tidak tersedia, mencoba Chatterbox-TTS lokal (safety net)...")
             try:
                 audio_file = await self._generate_voice(text_answer, task_id, host_name, tone=tone)
-            except Exception as e:
-                print(f"[ERROR] Gagal membuat suara: {e}")
+                print(f" -> Chatterbox TTS berhasil sebagai safety net: {audio_file}")
+            except Exception as chatterbox_err:
+                print(f"[ERROR] Chatterbox TTS juga gagal: {chatterbox_err}")
+                if os.environ.get("WORKER_REQUIRE_AUDIO", "0") == "1":
+                    print("[ERROR] WORKER_REQUIRE_AUDIO=1 dan semua TTS gagal — skip video ini.")
+                    return None
+                # Jika tidak strict, lanjut tanpa audio (akan error di lipsync)
                 return None
         tts_elapsed = round((time.time() - tts_start) * 1000)
 
