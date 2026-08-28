@@ -358,7 +358,9 @@ export async function startPodAndWait(
   const workerUrl = getWorkerUrl(currentPodId);
   const healthStart = Date.now();
   const healthTimeout = 180000;
-  console.log(`[RunPodManager] [Pod ${currentPodId}] Menunggu AI Worker di ${workerUrl} siap...`);
+  console.log(
+    `[RunPodManager] [Pod ${currentPodId}] Menunggu AI Worker di ${workerUrl} siap...`,
+  );
 
   while (Date.now() - healthStart < healthTimeout) {
     const elapsed = Math.round((Date.now() - healthStart) / 1000);
