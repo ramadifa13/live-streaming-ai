@@ -33,6 +33,7 @@ export interface RunPodBroadcastResult {
 export interface RunPodQueueStatus {
   success: boolean;
   ready_videos_count: number;
+  queued_videos_count?: number;
   ready_videos?: string[];
   active_processing_count?: number;
   broadcasting?: boolean;

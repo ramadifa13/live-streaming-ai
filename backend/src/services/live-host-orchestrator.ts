@@ -89,11 +89,20 @@ class LiveHostOrchestrator {
     console.log(`[LiveHost] Pipeline untuk session ${sessionId} dihentikan.`);
   }
 
+  public stopAll() {
+    for (const [sId, state] of this.sessions.entries()) {
+      state.abortController.abort();
+      console.log(
+        `[LiveHost] Pipeline untuk session ${sId} dihentikan (stopAll).`,
+      );
+    }
+    this.sessions.clear();
+  }
+
   // ============================================================================
   // TAHAP 1 — PRE-LIVE PIPELINE
   // Dipanggil saat broadcast RTMP dimulai.
-  // Generate V1+V2 (lalu terus sampai MAX_PRE_BUFFER) ke memory.
-  // GPU queue TIDAK diisi sampai go-live-confirm dipanggil.
+  // Generate V1+V2 ke GPU.
   // ============================================================================
 
   /**
@@ -101,7 +110,7 @@ class LiveHostOrchestrator {
    * Return immediately — pipeline jalan non-blocking di background.
    */
   public startPipelineBackground(config: HostConfig): void {
-    this.stop(config.sessionId); // stop sesi lama jika ada
+    this.stopAll(); // Hentikan semua sesi lama agar tidak berjalan bersamaan
 
     const state: OrchestratorState = {
       config,
@@ -123,16 +132,16 @@ class LiveHostOrchestrator {
     void this.runPreLivePipeline(config.sessionId);
   }
 
-  /** Pre-live loop: generate konten ke memory, berhenti saat isLive atau MAX_PRE_BUFFER */
+  /** Pre-live loop: generate V1 dan V2 ke GPU, lalu tunggu Go Live */
   private async runPreLivePipeline(sessionId: string): Promise<void> {
     while (true) {
       const state = this.sessions.get(sessionId);
       if (!state || state.abortController.signal.aborted) break;
       if (state.isLive) break; // live pipeline sudah ambil alih
 
-      // Jangan generate lebih dari MAX_PRE_BUFFER — hemat resource
-      if (state.pendingVideos.length >= MAX_PRE_BUFFER) {
-        await new Promise((r) => setTimeout(r, 500));
+      // Di pre-live, cukup buat maksimal 2 video awal (V1 dan V2)
+      if (state.videosQueued >= 2) {
+        await new Promise((r) => setTimeout(r, 2000));
         continue;
       }
 
@@ -142,29 +151,35 @@ class LiveHostOrchestrator {
 
         const s = this.sessions.get(sessionId);
         if (!s || s.abortController.signal.aborted || s.isLive) break;
-        if (!text) continue;
+        if (!text) {
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
 
         s.pendingVideos.push({ text, audioBase64 });
         s.generationCount++;
 
-        // LANGSUNG KIRIM KE GPU AGAR LANGSUNG DI-RENDER!
+        // KIRIM KE GPU AGAR DI-RENDER
         await this.submitToGPU(sessionId, text, audioBase64);
 
         console.log(
-          `[LiveHost] 📝 Video #${s.generationCount} selesai di-generate dan LANGSUNG dikirim ke GPU (Pre-Live)`,
+          `[LiveHost] 📝 Video #${s.generationCount} selesai di-generate dan dikirim ke GPU (Pre-Live)`,
         );
 
-        if (s.generationCount >= 2 && !s.pipelineReady) {
+        if (s.videosQueued >= 2 && !s.pipelineReady) {
           s.pipelineReady = true;
           console.log(
-            `[LiveHost] ✅ Backend telah mengirim V1+V2 ke GPU. Menunggu GPU merender .mp4 dan user konfirmasi Go Live...`,
+            `[LiveHost] ✅ Backend telah mengirim V1+V2 ke GPU. Siap untuk Go Live.`,
           );
         }
+
+        // Beri jeda 2 detik antar submission
+        await new Promise((r) => setTimeout(r, 2000));
       } catch (err) {
         const s = this.sessions.get(sessionId);
         if (!s || s.abortController.signal.aborted) break;
         console.warn(`[LiveHost] Pre-live generation error (non-fatal):`, err);
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 3000));
       }
     }
   }
@@ -172,7 +187,6 @@ class LiveHostOrchestrator {
   // ============================================================================
   // TAHAP 2 — LIVE PIPELINE
   // Dipanggil dari go-live-confirm setelah user klik siaran di Instagram.
-  // Flush pending → GPU, lalu terus generate+submit tanpa henti.
   // ============================================================================
 
   /**
@@ -196,40 +210,63 @@ class LiveHostOrchestrator {
     void this.runLivePipeline(sessionId);
   }
 
-  /** Live loop: generate + submit ke GPU dengan batas antrian MAX_PRE_BUFFER */
+  /**
+   * ZERO-IDLE NONSTOP PIPELINE:
+   * Menjaga buffer selalu berisi 2-3 video bicara di disk RunPod.
+   * Karena render video (6s) jauh lebih cepat dari durasi bicara (20s),
+   * antrean video bicara TIDAK AKAN PERNAH KOSONG sehingga AI Host bicara 100% nonstop.
+   */
   private async runLivePipeline(sessionId: string): Promise<void> {
+    console.log(
+      `[LiveHost] 🎙️ ZERO-IDLE Nonstop Pipeline aktif untuk session: ${sessionId}`,
+    );
+
     while (true) {
       const state = this.sessions.get(sessionId);
       if (!state || state.abortController.signal.aborted) break;
 
       try {
-        // Jangan terus generate jika antrian GPU sudah penuh (misal: MAX_PRE_BUFFER / 5)
-        const queueStatus = await getRunPodQueueStatus(state.config.podId);
-        const currentQueue =
-          (queueStatus.ready_videos_count || 0) +
-          (queueStatus.active_processing_count || 0);
+        let queuedOnDisk = 0;
+        let isWorkerBusy = false;
 
-        if (currentQueue >= MAX_PRE_BUFFER) {
-          await new Promise((r) => setTimeout(r, 2000));
-          continue; // Tunggu GPU worker mengosongkan antrian
+        if (state.config.podId) {
+          try {
+            const queueStatus = await getRunPodQueueStatus(state.config.podId);
+            queuedOnDisk =
+              queueStatus.queued_videos_count !== undefined
+                ? queueStatus.queued_videos_count
+                : queueStatus.ready_videos_count || 0;
+            isWorkerBusy = (queueStatus.active_processing_count ?? 0) > 0;
+          } catch {}
         }
 
+        // Jika antrean video bicara di disk sudah ada >= 3 video ATAU GPU sedang merender:
+        // Tunggu 3 detik lalu cek kembali agar GPU tidak overload
+        if (queuedOnDisk >= 3 || isWorkerBusy) {
+          await new Promise((r) => setTimeout(r, 3000));
+          continue;
+        }
+
+        // Jika antrean di disk < 3 dan GPU standby: LANGSUNG buat 1 video bicara baru!
         const { text, audioBase64 } =
           await this.generateAndSynthesize(sessionId);
 
         const s = this.sessions.get(sessionId);
         if (!s || s.abortController.signal.aborted) break;
-        if (!text) continue;
+        if (!text) {
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
 
         await this.submitToGPU(sessionId, text, audioBase64);
 
-        // Jeda ringan antar iterasi
-        await new Promise((r) => setTimeout(r, 1000));
+        // Beri jeda 4 detik untuk memberi GPU waktu menyelesaikan render
+        await new Promise((r) => setTimeout(r, 4000));
       } catch (err: any) {
         const s = this.sessions.get(sessionId);
         if (!s || s.abortController.signal.aborted) break;
-        console.warn(`[LiveHost] Live pipeline error (non-fatal):`, err);
-        await new Promise((r) => setTimeout(r, 2000));
+        console.warn(`[LiveHost] Zero-Idle pipeline notice:`, err);
+        await new Promise((r) => setTimeout(r, 3000));
       }
     }
     console.log(`[LiveHost] Live pipeline selesai untuk session ${sessionId}.`);
@@ -240,10 +277,7 @@ class LiveHostOrchestrator {
   // ============================================================================
 
   /**
-   * Tunggu sampai V1+V2 sudah dikirim ke GPU queue (videosQueued >= 2).
-   * Tidak perlu tunggu file .mp4 selesai di disk — GPU sudah mulai render begitu request diterima.
-   * Bug 3 fix: hapus polling ready_videos_count dari disk (race condition dengan broadcaster delete).
-   * @returns true jika ready, false jika timeout
+   * Tunggu sampai minimal 1 video sudah selesai dirender di GPU atau V1+V2 dikirim.
    */
   public async waitForPipelineReady(
     sessionId: string,
@@ -254,7 +288,6 @@ class LiveHostOrchestrator {
       const state = this.sessions.get(sessionId);
       if (!state || state.abortController.signal.aborted) return false;
 
-      // Cukup pastikan >= 2 video sudah dikirim ke GPU queue
       if (state.videosQueued >= 2) {
         console.log(
           `[LiveHost] ✅ waitForPipelineReady: videosQueued=${state.videosQueued} >= 2 — pipeline ready (session: ${sessionId})`,
@@ -271,13 +304,25 @@ class LiveHostOrchestrator {
   }
 
   /** Status pipeline untuk polling frontend (GET /api/live-stream/pipeline-status) */
-  public getPipelineStatus(sessionId: string) {
+  public async getPipelineStatus(sessionId: string) {
     const state = this.sessions.get(sessionId);
+    let renderedCount = 0;
+    if (state?.config.podId) {
+      try {
+        const queueStatus = await getRunPodQueueStatus(state.config.podId);
+        renderedCount = queueStatus.ready_videos_count || 0;
+      } catch {}
+    } else {
+      renderedCount = state?.videosQueued ?? 0;
+    }
+
+    const isReady =
+      (state?.videosQueued ?? 0) >= 2 &&
+      (renderedCount >= 1 || (state?.videosQueued ?? 0) >= 2);
+
     return {
-      // Bug fix: gunakan videosQueued >= 2 sebagai kondisi ready, bukan pipelineReady boolean.
-      // pipelineReady di-set saat generationCount >= 2 tapi bisa lagging jika submitToGPU throw.
-      ready: (state?.videosQueued ?? 0) >= 2,
-      generationCount: state?.generationCount ?? 0,
+      ready: isReady,
+      generationCount: renderedCount,
       videosQueued: state?.videosQueued ?? 0,
       pendingCount: state?.pendingVideos.length ?? 0,
       isLive: state?.isLive ?? false,

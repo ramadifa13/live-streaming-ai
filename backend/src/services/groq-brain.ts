@@ -155,10 +155,10 @@ const EXCLUDE_KEYWORDS = [
   "clip",
   "vision",
   // Model TTS / speech generation (bukan chat LLM)
-  "orpheus",       // canopylabs/orpheus-* adalah model Text-to-Speech
-  "canopylabs",    // semua model canopylabs adalah TTS, bukan chat
-  "speech",        // model speech-to-text / TTS generik
-  "rerank",        // model reranking dokumen, bukan chat
+  "orpheus", // canopylabs/orpheus-* adalah model Text-to-Speech
+  "canopylabs", // semua model canopylabs adalah TTS, bukan chat
+  "speech", // model speech-to-text / TTS generik
+  "rerank", // model reranking dokumen, bukan chat
   "transcription", // model transkripsi audio
 ];
 
@@ -289,7 +289,7 @@ Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.product
 --- TUGAS UTAMA (CONVERSATIONAL SELLING) ---
 1. Jawab pertanyaan penonton secara spontan, cerdas, ramah, dan manusiawi (apapun pertanyaannya, baik tentang produk, cara pakai, izin BPOM, sapaan, ataupun pertanyaan pribadi/di luar topik).
 2. SETELAH menjawab pertanyaan utama, selipkan jembatan obrolan yang halus (smooth pivot) untuk mengajak penonton melirik produk ${productName} atau mengingatkan promo ${productPrice} di keranjang kuning.
-3. Panjang jawaban maksimal 2 - 3 kalimat agar pas dan enak didengar saat dibacakan voice TTS.
+3. Panjang jawaban sekitar 3 - 4 kalimat mengalir (durasi bicara 15 - 22 detik, sekitar 40 - 60 kata) dengan gaya host live yang energik, interaktif, dan meyakinkan.
 4. (SANGAT PENTING): Kamu harus SELALU menyisipkan satu Tanda Aksi (Action Tag) di AWAL jawabanmu untuk mengendalikan gerakan video AI:
    - [IDLE] = Obrolan santai biasa.
    - [RAISE_HAND] = Saat menyapa, memanggil, atau melambaikan tangan.
