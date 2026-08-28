@@ -252,7 +252,19 @@ class LiveHostOrchestrator {
     while (Date.now() - start < timeoutMs) {
       const state = this.sessions.get(sessionId);
       if (!state || state.abortController.signal.aborted) return false;
-      if (state.pipelineReady) return true;
+
+      // Pastikan GPU sudah merender setidaknya 2 video
+      if (state.pipelineReady) {
+        try {
+          const queueStatus = await getRunPodQueueStatus(state.config.podId);
+          if (queueStatus.ready_videos_count >= 2) {
+            return true;
+          }
+        } catch (err) {
+          console.warn(`[LiveHost] waitForPipelineReady queueStatus error:`, err);
+        }
+      }
+
       await new Promise((r) => setTimeout(r, 500));
     }
     console.warn(

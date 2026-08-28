@@ -382,10 +382,8 @@ class LivePlatformConnector {
         aiResponseText = response.replyText;
         state.metrics.aiReplies += 1;
         this.globalSpeechCallback?.(response.replyText, sessionId);
-      } catch {
-        aiResponseText = `Terima kasih pertanyaannya kak ${sender}! Produk ini lagi promo spesial, yuk langsung checkout sekarang yaa! ✨`;
-        state.metrics.aiReplies += 1;
-        this.globalSpeechCallback?.(aiResponseText, sessionId);
+      } catch (err) {
+        console.warn(`[LivePlatformConnector] Failed to generate AI reply for comment:`, err);
       }
     }
 

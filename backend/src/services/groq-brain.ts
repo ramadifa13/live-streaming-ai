@@ -579,13 +579,7 @@ Kembalikan HANYA JSON valid:
     }
   }
 
-  // Graceful fallback output
-  return {
-    speech: `Halo kak! Terima kasih komentarnya ya! Yuk jangan lupa tap keranjang kuning mumpung harganya lagi diskon!`,
-    action: "POINT_CART",
-    emotion: "happy",
-    target_product_id: product?.id || null,
-  };
+  throw new Error("Gagal menghasilkan respons AI untuk komentar penonton.");
 }
 
 export const generateLunaResponseGroq = generateLunaResponse;
