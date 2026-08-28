@@ -485,16 +485,30 @@ if [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ]; then
     echo " Menyiapkan Chatterbox-TTS-Indonesian (Voice Cloning)"
     echo "============================================================"
     
+    if [ ! -d "$CHATTERBOX_DIR/env-chatterbox" ]; then
+        python3 -m venv "$CHATTERBOX_DIR/env-chatterbox"
+    fi
     # Hapus env-chatterbox lama yang corrupt jika ada
     rm -rf "$CHATTERBOX_DIR/env-chatterbox" 2>/dev/null || true
     python3 -m venv --system-site-packages "$CHATTERBOX_DIR/env-chatterbox"
     
+    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install --no-cache-dir --upgrade pip
+    
+    # Pasang PyTorch CUDA 11.8 ke venv Chatterbox
     # Pasang chatterbox-tts tanpa menarik duplikasi torch kedua kali (memakai torch yang sudah ada di main venv)
+    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install \
+        --no-cache-dir \
+        "torch==2.1.0+cu118" \
+        "torchaudio==2.1.0+cu118" \
+        --index-url https://download.pytorch.org/whl/cu118
+        
+    # Pasang chatterbox-tts tanpa menarik duplikasi torch 2.6
     "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install \
         --no-cache-dir \
         --no-deps \
         "chatterbox-tts==0.1.7"
         
+    # Pasang dependensi inferensi Chatterbox yang ringan
     # Pasang dependensi inferensi Chatterbox yang super ringan (< 30 MB)
     "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install \
         --no-cache-dir \
