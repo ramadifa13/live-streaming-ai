@@ -3284,14 +3284,15 @@ export default function Dashboard() {
                     </li>
                   </ol>
 
-                  {pipelineStatus && (
-                    <div className="mb-6 rounded bg-black/40 p-3 border border-white/5">
-                      <p className="text-[10px] text-slate-400 font-semibold mb-2 uppercase">
-                        Status Persiapan AI Backend
-                      </p>
-                      <div className="flex items-center gap-3">
-                        {pipelineStatus.ready ? (
-                          <span className="text-emerald-400 text-xs flex items-center gap-1">
+                  {/* Status Persiapan Video AI */}
+                  <div className="mb-6 rounded-xl bg-black/40 p-4 border border-white/10">
+                    <p className="text-[10px] text-slate-400 font-semibold mb-2 uppercase tracking-wider">
+                      Status Render Video AI
+                    </p>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        {pipelineStatus?.ready ? (
+                          <span className="text-emerald-400 text-xs font-semibold flex items-center gap-1.5 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/30">
                             <svg
                               className="w-4 h-4"
                               fill="none"
@@ -3305,67 +3306,84 @@ export default function Dashboard() {
                                 d="M5 13l4 4L19 7"
                               />
                             </svg>
-                            Video Pembuka Siap
+                            Video AI Siap ({pipelineStatus.generationCount || 1}
+                            /2)
                           </span>
                         ) : (
-                          <span className="text-blue-400 text-xs flex items-center gap-1">
-                            <span className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                            Merender Video Pembuka...
+                          <span className="text-amber-400 text-xs font-semibold flex items-center gap-2 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/30">
+                            <span className="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                            Merender Video AI di GPU (
+                            {pipelineStatus?.generationCount || 0}/2)...
                           </span>
                         )}
-                        <span className="text-xs text-slate-500">
-                          (Antrean: {pipelineStatus.pendingCount})
-                        </span>
                       </div>
+                      <span className="text-[11px] text-slate-400">
+                        Antrean: {pipelineStatus?.pendingCount ?? 0}
+                      </span>
+                    </div>
+
+                    {!pipelineStatus?.ready && (
+                      <p className="mt-2.5 text-[11px] text-amber-300/80 leading-relaxed">
+                        ⏳ GPU sedang memproses gerakan bibir & suara. Tombol
+                        siaran akan muncul otomatis saat video pembuka selesai.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Tombol Konfirmasi Siaran HANYA MUNCUL KETIKA VIDEO SUDAH READY */}
+                  {pipelineStatus?.ready ? (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!currentLiveSessionId) return;
+                        setIsConnectingLive(true);
+                        try {
+                          const res = await fetch(
+                            "/api/live-stream/go-live-confirm",
+                            {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                sessionId: currentLiveSessionId,
+                              }),
+                            },
+                          );
+                          const json = await res.json();
+                          if (res.ok && json.success) {
+                            setIsWaitingForGoLive(false);
+                            setIsLiveActive(true);
+                            setIsLivePaused(false);
+                            setLiveSessionPhase("live");
+                            setLiveSeconds(0);
+                            showToast("✅ AI Host aktif! Siaran live dimulai.");
+                          } else {
+                            showToast(`❌ Gagal konfirmasi: ${json.error}`);
+                          }
+                        } catch {
+                          showToast("❌ Error koneksi saat konfirmasi.");
+                        } finally {
+                          setIsConnectingLive(false);
+                        }
+                      }}
+                      disabled={isConnectingLive}
+                      className={`w-full py-3.5 rounded-lg text-sm font-bold text-white transition ${
+                        isConnectingLive
+                          ? "bg-slate-700 cursor-not-allowed opacity-80"
+                          : "bg-green-600 hover:bg-green-500 active:scale-95 shadow-[0_0_20px_rgba(34,197,94,0.45)]"
+                      }`}
+                    >
+                      {isConnectingLive
+                        ? "Menyambungkan..."
+                        : "✅ Konfirmasi Siaran Dimulai"}
+                    </button>
+                  ) : (
+                    <div className="w-full py-3 px-4 rounded-lg bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
+                      <span className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-xs text-slate-300 font-medium">
+                        Menunggu Render Video AI Selesai...
+                      </span>
                     </div>
                   )}
-
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (!currentLiveSessionId) return;
-                      setIsConnectingLive(true);
-                      try {
-                        const res = await fetch(
-                          "/api/live-stream/go-live-confirm",
-                          {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                              sessionId: currentLiveSessionId,
-                            }),
-                          },
-                        );
-                        const json = await res.json();
-                        if (res.ok && json.success) {
-                          setIsWaitingForGoLive(false);
-                          setIsLiveActive(true);
-                          setIsLivePaused(false);
-                          setLiveSessionPhase("live");
-                          setLiveSeconds(0);
-                          showToast("✅ AI Host aktif! Siaran live dimulai.");
-                        } else {
-                          showToast(`❌ Gagal konfirmasi: ${json.error}`);
-                        }
-                      } catch {
-                        showToast("❌ Error koneksi saat konfirmasi.");
-                      } finally {
-                        setIsConnectingLive(false);
-                      }
-                    }}
-                    disabled={isConnectingLive || !pipelineStatus?.ready}
-                    className={`w-full py-3 rounded-lg text-sm font-bold text-white transition ${
-                      isConnectingLive || !pipelineStatus?.ready
-                        ? "bg-slate-700 cursor-not-allowed opacity-80"
-                        : "bg-green-600 hover:bg-green-500 active:scale-95 shadow-[0_0_15px_rgba(34,197,94,0.4)]"
-                    }`}
-                  >
-                    {isConnectingLive
-                      ? "Menyambungkan..."
-                      : pipelineStatus && !pipelineStatus.ready
-                        ? "Tunggu AI Siap..."
-                        : "✅ Konfirmasi Siaran Dimulai"}
-                  </button>
                   <button
                     type="button"
                     onClick={async () => {
@@ -6026,46 +6044,54 @@ export default function Dashboard() {
                     </label>
                   </div>
 
-                  <button
-                    type="button"
-                    disabled={!pipelineStatus?.ready || !hasConfirmedBroadcast}
-                    onClick={async () => {
-                      if (!currentLiveSessionId) return;
-                      try {
-                        const res = await fetch(
-                          "/api/live-stream/go-live-confirm",
-                          {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                              sessionId: currentLiveSessionId,
-                            }),
-                          },
-                        );
-                        const json = await res.json();
-                        if (res.ok && json.success) {
-                          setIsConnectingLive(false);
-                          setIsWaitingForGoLive(false);
-                          setIsLiveActive(true);
-                          setIsLivePaused(false);
-                          setLiveSessionPhase("live");
-                          setLiveSeconds(0);
-                          showToast("🔥 AI Host aktif! Siaran live dimulai.");
-                        } else {
-                          showToast(`❌ Gagal konfirmasi: ${json.error}`);
+                  {pipelineStatus?.ready ? (
+                    <button
+                      type="button"
+                      disabled={!hasConfirmedBroadcast}
+                      onClick={async () => {
+                        if (!currentLiveSessionId) return;
+                        try {
+                          const res = await fetch(
+                            "/api/live-stream/go-live-confirm",
+                            {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                sessionId: currentLiveSessionId,
+                              }),
+                            },
+                          );
+                          const json = await res.json();
+                          if (res.ok && json.success) {
+                            setIsConnectingLive(false);
+                            setIsWaitingForGoLive(false);
+                            setIsLiveActive(true);
+                            setIsLivePaused(false);
+                            setLiveSessionPhase("live");
+                            setLiveSeconds(0);
+                            showToast("🔥 AI Host aktif! Siaran live dimulai.");
+                          } else {
+                            showToast(`❌ Gagal konfirmasi: ${json.error}`);
+                          }
+                        } catch {
+                          showToast("❌ Error koneksi saat konfirmasi.");
                         }
-                      } catch {
-                        showToast("❌ Error koneksi saat konfirmasi.");
-                      }
-                    }}
-                    className="w-full flex items-center justify-center py-2.5 rounded-lg font-bold text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 hover:shadow-emerald-500/25"
-                  >
-                    {!pipelineStatus?.ready
-                      ? "Menunggu Video AI Siap..."
-                      : !hasConfirmedBroadcast
+                      }}
+                      className="w-full flex items-center justify-center py-3 rounded-lg font-bold text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 hover:shadow-emerald-500/25"
+                    >
+                      {!hasConfirmedBroadcast
                         ? "Centang konfirmasi di atas"
                         : "GO! Mulai Live Control"}
-                  </button>
+                    </button>
+                  ) : (
+                    <div className="w-full py-3 px-4 rounded-lg bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
+                      <span className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-xs text-slate-300 font-medium">
+                        Menunggu Render Video AI Selesai (
+                        {pipelineStatus?.generationCount || 0}/2)...
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
 
