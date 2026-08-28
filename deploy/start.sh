@@ -96,6 +96,7 @@ else
 	echo "[INFO] chatterbox_service/env-chatterbox tidak ditemukan — voice cloning live dilewati (lihat deploy/chatterbox_service/requirements-chatterbox.txt untuk setup)."
 fi
 
+for attempt in $(seq 1 30); do
 for attempt in $(seq 1 120); do
 	if curl -fsS "http://127.0.0.1:8000/health" >/dev/null 2>&1 || curl -fsS "http://127.0.0.1:8000/" >/dev/null 2>&1; then
 		echo "[OK] AI Worker API aktif dan merespon!"
@@ -103,10 +104,15 @@ for attempt in $(seq 1 120); do
 	fi
 	sleep 1
 	if ! kill -0 "$API_PID" 2>/dev/null; then
+		echo "[ERROR] api_server.py gagal start. Lihat log:"
+		echo "        tail -50 $WORKER_DIR/api_server.log"
 		echo "[ERROR] api_server.py gagal start (proses mati). Log:"
 		tail -50 "$WORKER_DIR/api_server.log" 2>/dev/null || true
 		exit 1
 	fi
+	if [ "$attempt" -eq 30 ]; then
+		echo "[ERROR] api_server.py timeout start. Lihat log:"
+		echo "        tail -50 $WORKER_DIR/api_server.log"
 	if [ "$attempt" -eq 120 ]; then
 		echo "[ERROR] api_server.py timeout 120s. Log:"
 		tail -50 "$WORKER_DIR/api_server.log" 2>/dev/null || true
