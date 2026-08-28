@@ -101,15 +101,22 @@ export function sanitizeForLiveTTS(text: string): string {
   );
 }
 
-/** Escapes text for safe embedding inside the SSML msedge-tts builds internally. */
+/** Escapes text and inserts micro-pauses at punctuation to create natural breathing rhythm */
 function escapeSSML(text: string): string {
   const clean = sanitizeForLiveTTS(text);
-  return clean
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+  return (
+    clean
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;")
+      // Sisipkan micro-pause alami di koma dan titik koma
+      .replace(/,\s*/g, ", ")
+      .replace(/;\s*/g, "; ")
+      // Rapikan tanda seru agar intonasi berenergi
+      .replace(/!\s*/g, "! ")
+  );
 }
 
 function splitIntoSentences(text: string): string[] {
@@ -124,10 +131,18 @@ async function synthesizeSentence(
   sentence: string,
   voiceId: string,
   rate: string,
+  pitch: string = "+4Hz",
+  volume: string = "+5%",
 ): Promise<Buffer> {
   const tts = new MsEdgeTTS();
   await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-  const { audioStream } = tts.toStream(escapeSSML(sentence), { rate });
+
+  // Kirim rate, pitch, dan volume untuk artikulasi suara manusia hidup
+  const { audioStream } = tts.toStream(escapeSSML(sentence), {
+    rate,
+    pitch,
+    volume,
+  });
 
   const chunks: Buffer[] = [];
   await new Promise<void>((resolve, reject) => {
@@ -142,20 +157,42 @@ async function synthesizeSentence(
 function getToneVoiceSettings(
   tone?: string,
   baseSpeed = 1.0,
-): { speed: number; rateStr: string } {
+): { speed: number; rateStr: string; pitchStr: string; volumeStr: string } {
   const t = (tone || "").toLowerCase();
+
+  // Energetic / Live Shopping Host: Cepat, nada sedikit tinggi (+6Hz), antusias
   if (t.includes("energet") || t.includes("energetic")) {
-    const s = Math.max(baseSpeed, 1.15);
-    return { speed: s, rateStr: "+15%" };
+    const s = Math.max(baseSpeed, 1.12);
+    return { speed: s, rateStr: "+12%", pitchStr: "+6Hz", volumeStr: "+10%" };
   }
-  if (t.includes("fomo")) {
-    const s = Math.max(baseSpeed, 1.2);
-    return { speed: s, rateStr: "+20%" };
+
+  // FOMO / Flash Sale: Cepat & mendesak, pitch naik (+8Hz)
+  if (t.includes("fomo") || t.includes("flash") || t.includes("promo")) {
+    const s = Math.max(baseSpeed, 1.18);
+    return { speed: s, rateStr: "+16%", pitchStr: "+8Hz", volumeStr: "+15%" };
   }
-  if (t.includes("profesion") || t.includes("professional")) {
-    return { speed: baseSpeed, rateStr: "+0%" };
+
+  // Professional / Edukasi: Nada tenang, stabil (+2Hz), tempo sedang
+  if (
+    t.includes("profesion") ||
+    t.includes("professional") ||
+    t.includes("edukatif")
+  ) {
+    return {
+      speed: baseSpeed,
+      rateStr: "+2%",
+      pitchStr: "+2Hz",
+      volumeStr: "+0%",
+    };
   }
-  return { speed: baseSpeed, rateStr: "+5%" };
+
+  // Friendly / Santai / Persuasif (Default): Ramah, hangat, tempo luwes
+  return {
+    speed: Math.max(baseSpeed, 1.06),
+    rateStr: "+8%",
+    pitchStr: "+4Hz",
+    volumeStr: "+5%",
+  };
 }
 
 function getLocalVoiceRefFallback(
@@ -190,19 +227,35 @@ async function synthesizeWithEdgeTTS(
   text: string,
   voiceId: string,
   rateStr: string,
+  pitchStr: string = "+4Hz",
+  volumeStr: string = "+5%",
 ): Promise<Buffer> {
   // 8s timeout — RunPod network ke Microsoft Edge TTS butuh lebih dari 3.5s
   return await Promise.race([
     (async () => {
       try {
-        return await synthesizeSentence(text, voiceId, rateStr);
+        return await synthesizeSentence(
+          text,
+          voiceId,
+          rateStr,
+          pitchStr,
+          volumeStr,
+        );
       } catch (singleErr) {
         const sentences = splitIntoSentences(text);
         if (sentences.length <= 1) throw singleErr;
         // Jika teks panjang gagal, sintesis secara sekuensial
         const parts: Buffer[] = [];
         for (const sentence of sentences) {
-          parts.push(await synthesizeSentence(sentence, voiceId, rateStr));
+          parts.push(
+            await synthesizeSentence(
+              sentence,
+              voiceId,
+              rateStr,
+              pitchStr,
+              volumeStr,
+            ),
+          );
         }
         return Buffer.concat(parts);
       }
@@ -310,6 +363,8 @@ export async function synthesizeSpeech(
       text,
       resolveEdgeVoice(matchedVoice.id),
       toneSettings.rateStr,
+      toneSettings.pitchStr,
+      toneSettings.volumeStr,
     );
     engineUsed = "Microsoft Edge Neural TTS (id-ID)";
   } catch (edgeErr) {
