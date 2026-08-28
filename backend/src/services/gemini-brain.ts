@@ -8,7 +8,9 @@ const MODEL_NAME = "gemini-3.6-flash";
 function getAiClient(): GoogleGenAI {
   const key = process.env.GEMINI_API_KEY || apiKey;
   if (!key) {
-    throw new Error("GEMINI_API_KEY is missing. Please set it in .env for Gemini 3.6 Flash.");
+    throw new Error(
+      "GEMINI_API_KEY is missing. Please set it in .env for Gemini 3.6 Flash.",
+    );
   }
   return new GoogleGenAI({ apiKey: key });
 }
@@ -116,10 +118,15 @@ export const LunaEmotionEnum = z.enum([
 export type LunaEmotion = z.infer<typeof LunaEmotionEnum>;
 
 export const LunaStructuredOutputSchema = z.object({
-  speech: z.string().describe("Jawaban verbal Luna dalam Bahasa Indonesia santai untuk TTS"),
+  speech: z
+    .string()
+    .describe("Jawaban verbal Luna dalam Bahasa Indonesia santai untuk TTS"),
   action: LunaActionEnum.describe("Aksi fisik 3D/gesture avatar"),
   emotion: LunaEmotionEnum.describe("Ekspresi wajah avatar"),
-  target_product_id: z.string().nullable().describe("ID produk jika sedang memegang/mempromosikan produk"),
+  target_product_id: z
+    .string()
+    .nullable()
+    .describe("ID produk jika sedang memegang/mempromosikan produk"),
 });
 export type LunaStructuredOutput = z.infer<typeof LunaStructuredOutputSchema>;
 
@@ -171,12 +178,79 @@ Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.product
 
 Pertanyaan Penonton: "${userQuestion}"`;
 
-  const candidateModels = [
-    process.env.GEMINI_MODEL_NAME || "gemini-2.5-flash",
-    "gemini-1.5-flash",
-    "gemini-2.0-flash",
-    "gemini-3.6-flash",
-  ];
+  // 1. Coba GROQ API jika dikonfigurasi (100% Gratis, Super Cepat > 300 token/s, 14.400 req/hari)
+  const groqApiKey = process.env.GROQ_API_KEY;
+  if (groqApiKey) {
+    try {
+      const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${groqApiKey}`,
+        },
+        body: JSON.stringify({
+          model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+          messages: [
+            { role: "system", content: "Kamu adalah AI Live Streamer sales profesional berbahasa Indonesia santai." },
+            { role: "user", content: systemPrompt },
+          ],
+          temperature: 0.7,
+          max_tokens: 300,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (groqRes.ok) {
+        const groqData = (await groqRes.json()) as any;
+        const text = groqData.choices?.[0]?.message?.content || "";
+        if (text.trim()) {
+          return {
+            replyText: text.trim(),
+            engineUsed: `Groq Cloud (${process.env.GROQ_MODEL || "Llama-3.3-70B"})`,
+            intent: "dynamic_llm",
+            action: "reply",
+          };
+        }
+      }
+    } catch (groqErr: any) {
+      console.warn(`[Groq-Brain] Gagal: ${groqErr.message}, beralih ke engine cadangan...`);
+    }
+  }
+
+  // 2. Coba OpenRouter API jika dikonfigurasi (Gratis tanpa batas dengan model :free)
+  const openRouterApiKey = process.env.OPENROUTER_API_KEY;
+  if (openRouterApiKey) {
+    try {
+      const openRouterRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${openRouterApiKey}`,
+        },
+        body: JSON.stringify({
+          model: process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct:free",
+          messages: [{ role: "user", content: systemPrompt }],
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (openRouterRes.ok) {
+        const orData = (await openRouterRes.json()) as any;
+        const text = orData.choices?.[0]?.message?.content || "";
+        if (text.trim()) {
+          return {
+            replyText: text.trim(),
+            engineUsed: `OpenRouter (${process.env.OPENROUTER_MODEL || "Llama-3.3-70B:free"})`,
+            intent: "dynamic_llm",
+            action: "reply",
+          };
+        }
+      }
+    } catch (orErr: any) {
+      console.warn(`[OpenRouter-Brain] Gagal: ${orErr.message}, beralih ke engine cadangan...`);
+    }
+  }
+
+  // 3. Coba Google Gemini API
+  const candidateModels = [process.env.GEMINI_MODEL_NAME || MODEL_NAME];
 
   for (const model of candidateModels) {
     try {
@@ -195,19 +269,24 @@ Pertanyaan Penonton: "${userQuestion}"`;
         };
       }
     } catch (err: any) {
-      console.warn(`[Gemini-Brain] Model ${model} failed (${err?.status || err?.message}), mencoba model cadangan...`);
+      console.warn(
+        `[Gemini-Brain] Model ${model} failed (${err?.status || err?.message}), mencoba model cadangan...`,
+      );
     }
   }
 
   // Graceful conversational fallback (anti-crash saat API Google mencapai limit free tier harian)
-  console.warn("[Gemini-Brain] Menggunakan Resilient Offline Sales Pitch Template agar live stream terus berjalan...");
+  console.warn(
+    "[Gemini-Brain] Menggunakan Resilient Offline Sales Pitch Template agar live stream terus berjalan...",
+  );
   const pitchTemplates = [
     `Halo semuanya! Selamat datang di live streaming aku bareng ${avatarName}! Hari ini spesial banget karena produk ${productName} lagi ada diskon khusus cuma ${productPrice}! Jangan sampai kehabisan ya, langsung tap keranjang kuning sekarang!`,
     `Buat kakak yang lagi cari produk berkualitas, ${productName} ini solusinya banget! ${productBenefits ? productBenefits : "Kualitas premium dan sudah terbukti"}. Harganya lagi hemat cuma ${productPrice}, stoknya tinggal ${productStock} pcs lagi nih kak!`,
     `Yang baru gabung jangan lupa follow dan tap-tap layarnya ya kak! Produk unggulan kita ${productName} lagi best seller banget hari ini. Yuk checkout sekarang juga sebelum promonya berakhir!`,
     `Banyak banget yang tanya keunggulan ${productName}, selain ${productBenefits ? productBenefits : "hasilnya maksimal"}, cara pakainya juga super praktis! Mumpung live masih berlangsung dengan harga promo ${productPrice}, buruan amankan ya!`,
   ];
-  const randomPitch = pitchTemplates[Math.floor(Math.random() * pitchTemplates.length)];
+  const randomPitch =
+    pitchTemplates[Math.floor(Math.random() * pitchTemplates.length)];
 
   return {
     replyText: randomPitch,
@@ -273,7 +352,11 @@ Kembalikan HANYA JSON valid tanpa markdown backticks atau pengantar:
     });
 
     const text = (response.text || "").trim();
-    const parsed = JSON.parse(text) as { hook?: string; showcase?: string; cta?: string };
+    const parsed = JSON.parse(text) as {
+      hook?: string;
+      showcase?: string;
+      cta?: string;
+    };
     if (!parsed.hook || !parsed.showcase || !parsed.cta) {
       throw new Error("AI returned incomplete live sales script format");
     }
@@ -295,8 +378,13 @@ Kembalikan HANYA JSON valid tanpa markdown backticks atau pengantar:
       fullScript: `${cleanHook}\n\n${cleanShowcase}\n\n${cleanCta}`,
     };
   } catch (err: unknown) {
-    console.warn("[Gemini-Brain] generateLiveSalesPitchFromAIGemini failed:", err);
-    throw new Error(`AI Sales Script Generator (Gemini 3.6 Flash) failed: ${err instanceof Error ? err.message : String(err)}`);
+    console.warn(
+      "[Gemini-Brain] generateLiveSalesPitchFromAIGemini failed:",
+      err,
+    );
+    throw new Error(
+      `AI Sales Script Generator (Gemini 3.6 Flash) failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
@@ -328,7 +416,9 @@ Berikan hanya naskahnya langsung tanpa intro/outro tambahan, dalam bahasa Indone
 
     return (response.text || "").trim();
   } catch (e: unknown) {
-    throw new Error(`AI Video Script Generator (Gemini 3.6 Flash) failed: ${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(
+      `AI Video Script Generator (Gemini 3.6 Flash) failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
 }
 
@@ -407,7 +497,9 @@ Komentar Penonton: "${userComment}"`;
     throw new Error("Invalid output format from Gemini");
   } catch (err: unknown) {
     console.warn("[Gemini-Brain] generateLunaResponse failed:", err);
-    throw new Error(`AI Host Brain (Gemini 3.6 Flash) failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `AI Host Brain (Gemini 3.6 Flash) failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
@@ -445,6 +537,8 @@ Kembalikan JSON valid dengan keys: description, benefits, usage, faq, targetAudi
     return parsed;
   } catch (err: unknown) {
     console.warn("[Gemini-Brain] generateProductKnowledge failed:", err);
-    throw new Error(`AI Product Knowledge (Gemini 3.6 Flash) failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `AI Product Knowledge (Gemini 3.6 Flash) failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
