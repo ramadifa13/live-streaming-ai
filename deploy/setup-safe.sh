@@ -460,10 +460,9 @@ echo "Installing mmdet..."
 "$PYTHON_BIN" -m mim install "mmdet>=3.1.0"
 
 echo "Installing mmpose..."
-"$PYTHON_BIN" -m mim install "mmpose>=1.1.0"
-echo "Installing chumpy & mmpose..."
-"$PIP_BIN" install --no-cache-dir --no-build-isolation "chumpy" || true
-"$PYTHON_BIN" -m mim install "mmpose>=1.1.0" --no-build-isolation || "$PIP_BIN" install --no-cache-dir "mmpose>=1.1.0" --no-build-isolation
+"$PIP_BIN" install --no-cache-dir --no-build-isolation "chumpy" 2>/dev/null || "$PIP_BIN" install --no-cache-dir --no-deps "chumpy" 2>/dev/null || true
+"$PIP_BIN" install --no-cache-dir --no-deps "mmpose>=1.1.0"
+"$PIP_BIN" install --no-cache-dir "xtcocotools" "json-tricks" "munkres" "scipy" || true
 
 "$PIP_BIN" install \
     --no-cache-dir \
