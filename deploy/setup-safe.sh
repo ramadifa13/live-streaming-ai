@@ -187,7 +187,6 @@ sleep 2
 echo "[OK] API lama dihentikan."
 
 # ------------------------------------------------------------
-# 5. INSTALL EXACT PYTORCH STACK
 # 5. INSTALL EXACT PYTORCH STACK & RUNTIME DEPENDENCIES
 # ------------------------------------------------------------
 
@@ -216,11 +215,6 @@ echo "[5/10] Menginstall PyTorch 2.1 + CUDA 11.8 ke Virtual Environment..."
     "torchvision==0.16.0+cu118" \
     "torchaudio==2.1.0+cu118" \
     --index-url https://download.pytorch.org/whl/cu118
-
-"$PIP_BIN" install \
-    --no-cache-dir \
-    --no-deps \
-    "numpy==1.26.4"
 
 echo ""
 echo "Memverifikasi PyTorch..."
@@ -375,11 +369,6 @@ if [ ! -f requirements.original.txt ]; then
 fi
 
 # Patch dependency upstream
-sed -i 's/^torch==.*/# torch dipasang via wheel terpisah/g' requirements.txt || true
-sed -i 's/^torch>=.*/# torch dipasang via wheel terpisah/g' requirements.txt || true
-sed -i 's/^torchvision==.*/# torchvision dipasang via wheel terpisah/g' requirements.txt || true
-sed -i 's/^torchvision>=.*/# torchvision dipasang via wheel terpisah/g' requirements.txt || true
-sed -i 's/^torchaudio==.*/# torchaudio dipasang via wheel terpisah/g' requirements.txt || true
 sed -i 's/^numpy==.*/numpy==1.26.4/g' requirements.txt || true
 sed -i 's/^numpy>=.*/numpy==1.26.4/g' requirements.txt || true
 sed -i 's/^opencv-python==.*/opencv-python==4.8.0.76/g' requirements.txt || true
@@ -392,17 +381,25 @@ sed -i 's/^huggingface_hub==.*/huggingface_hub>=0.25.0,<0.26.0/g' requirements.t
 
 "$PIP_BIN" install \
     --no-cache-dir \
-    --no-deps \
-    -r requirements.txt || true
+    -r requirements.txt
 
-# Restore critical versions tanpa uninstall torch
+# Restore critical versions
 "$PIP_BIN" install \
     --no-cache-dir \
+    --force-reinstall \
     "numpy==1.26.4" \
     "transformers==4.38.2" \
     "diffusers==0.27.2" \
     "accelerate==0.28.0" \
     "huggingface_hub>=0.25.0,<0.26.0"
+
+"$PIP_BIN" install \
+    --no-cache-dir \
+    --no-deps \
+    "torch==2.1.0+cu118" \
+    "torchvision==0.16.0+cu118" \
+    "torchaudio==2.1.0+cu118" \
+    --index-url https://download.pytorch.org/whl/cu118
 
 echo ""
 echo "[*] Menginject _load_models_cached ke MuseTalk..."
@@ -667,10 +664,8 @@ if [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ]; then
     echo "[OK] Chatterbox-TTS-Indonesian siap di $CHATTERBOX_DIR/env-chatterbox."
 fi
 
-# Bersihkan total semua cache lama sebelum mulai agar storage selalu fresh dan bersih
-echo "[*] Membersihkan cache sementara dan file build lama..."
-rm -rf /workspace/tmp/* /workspace/tmp/.* /root/.cache/pip /root/.cache/huggingface 2>/dev/null || true
-mkdir -p "$TMPDIR" "$PIP_CACHE_DIR" "$WORKER_DIR"
+# Bersihkan cache sementara pip dan wheel build agar disk 30 GB tetap lega
+rm -rf /workspace/tmp/* 2>/dev/null || true
 
 # Symlinks
 echo ""
