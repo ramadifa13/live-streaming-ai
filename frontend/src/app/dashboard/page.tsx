@@ -159,6 +159,33 @@ export default function Dashboard() {
   const [streamKey, setStreamKey] = useState("live_sec_892348a7b9c1e2f");
   const [showTutorialModal, setShowTutorialModal] = useState(false);
   const [isConnectingLive, setIsConnectingLive] = useState(false);
+  const [connectingStageIndex, setConnectingStageIndex] = useState(0);
+  const [connectingStageText, setConnectingStageText] = useState(
+    "Mengalokasikan Cloud GPU RTX 4090...",
+  );
+  const connectingAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!isConnectingLive) {
+      setConnectingStageIndex(0);
+      setConnectingStageText("Mengalokasikan Cloud GPU RTX 4090...");
+      return;
+    }
+    const stages = [
+      { delay: 0, text: "Mengalokasikan Cloud GPU NVIDIA RTX 4090...", index: 0 },
+      { delay: 6000, text: "Menyiapkan Container & Storage Network...", index: 0 },
+      { delay: 12000, text: "Memuat Bobot Model AI (MuseTalk & DWPose)...", index: 1 },
+      { delay: 22000, text: "Inisialisasi Voice Persona & Skrip AI Selling...", index: 2 },
+      { delay: 32000, text: "Menghubungkan Stream RTMP & Handshake Siaran...", index: 3 },
+    ];
+    const timers = stages.slice(1).map((stage) =>
+      setTimeout(() => {
+        setConnectingStageIndex(stage.index);
+        setConnectingStageText(stage.text);
+      }, stage.delay),
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [isConnectingLive]);
   const [isLiveActive, setIsLiveActive] = useState(false);
   const [isLivePaused, setIsLivePaused] = useState(false);
   const [liveSessionPhase, setLiveSessionPhase] = useState<
@@ -2997,12 +3024,18 @@ export default function Dashboard() {
                                     : "rtmp://live.livestreamer.ai/live";
 
                         try {
+                          const backendUrl =
+                            process.env.NEXT_PUBLIC_BACKEND_URL || "";
+                          const controller = new AbortController();
+                          connectingAbortRef.current = controller;
+
                           // 1. Start live session record in DB with full automation settings
                           const sessionRes = await fetch(
-                            "/api/live-session/start",
+                            `${backendUrl}/api/live-session/start`,
                             {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
+                              signal: controller.signal,
                               body: JSON.stringify({
                                 productId: activeFeaturedProduct.id || "1",
                                 avatarId: selectedAvatar.id || "1",
@@ -3033,10 +3066,11 @@ export default function Dashboard() {
 
                           // 2. Trigger real FFmpeg RTMP broadcast transmission & verify handshake
                           const bcastRes = await fetch(
-                            "/api/live-stream/broadcast",
+                            `${backendUrl}/api/live-stream/broadcast`,
                             {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
+                              signal: controller.signal,
                               body: JSON.stringify({
                                 rtmpUrl: activeTargetRtmp,
                                 streamKey: streamKey,
@@ -5602,6 +5636,95 @@ export default function Dashboard() {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        {/* ============================================================ */}
+        {/* FULL PAGE BLUR LOADING OVERLAY (AI SERVER INITIALIZATION)     */}
+        {/* ============================================================ */}
+        {isConnectingLive && (
+          <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 backdrop-blur-xl p-4 animate-in fade-in duration-300">
+            <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-indigo-500/30 bg-[#0a0f1d]/95 p-8 text-center shadow-2xl shadow-indigo-500/20">
+              {/* Decorative radial glows */}
+              <div className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-80 h-80 bg-gradient-to-br from-blue-600/30 via-indigo-600/20 to-purple-600/30 blur-3xl rounded-full" />
+              <div className="pointer-events-none absolute -bottom-24 left-1/2 -translate-x-1/2 w-80 h-80 bg-gradient-to-tr from-emerald-600/20 to-blue-600/20 blur-3xl rounded-full" />
+
+              {/* Animated AI Glowing Pulse Sphere */}
+              <div className="relative mx-auto mb-6 flex h-24 w-24 items-center justify-center">
+                <div className="absolute inset-0 rounded-full border-4 border-indigo-500/20 animate-ping opacity-75" />
+                <div className="absolute inset-0 rounded-full border-4 border-t-indigo-500 border-r-purple-500 border-b-transparent border-l-transparent animate-spin" />
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 shadow-xl shadow-indigo-500/40 animate-pulse">
+                  <span className="text-3xl">✨</span>
+                </div>
+              </div>
+
+              {/* Header Title */}
+              <h3 className="text-xl font-extrabold text-white tracking-wide mb-1">
+                Menyiapkan Sesi Live Streaming AI
+              </h3>
+              <p className="text-xs text-slate-400 mb-6">
+                Host AI <span className="text-indigo-300 font-semibold">{selectedAvatar.name}</span> sedang dipersiapkan untuk siaran live di <span className="text-indigo-300 font-semibold">{selectedPlatform}</span>.
+              </p>
+
+              {/* Active Stage Badge */}
+              <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-4 py-1.5 text-xs font-semibold text-indigo-300 mb-6">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                </span>
+                <span>{connectingStageText}</span>
+              </div>
+
+              {/* Stepper Progress Visualizer */}
+              <div className="mb-6 space-y-2.5 rounded-2xl bg-slate-900/90 border border-slate-800/80 p-4 text-left text-xs">
+                <div className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 0 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}>
+                  <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex > 0 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-indigo-600 text-white animate-pulse"}`}>
+                    {connectingStageIndex > 0 ? "✓" : "1"}
+                  </span>
+                  <span className="truncate">Alokasi Cloud GPU Dedicated (NVIDIA RTX 4090)</span>
+                </div>
+                <div className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 1 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}>
+                  <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex > 1 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 1 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}>
+                    {connectingStageIndex > 1 ? "✓" : "2"}
+                  </span>
+                  <span className="truncate">Inisialisasi Neural Lipsync (MuseTalk & DWPose)</span>
+                </div>
+                <div className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 2 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}>
+                  <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex > 2 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 2 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}>
+                    {connectingStageIndex > 2 ? "✓" : "3"}
+                  </span>
+                  <span className="truncate">Menyiapkan Voice Persona & Skrip AI Selling</span>
+                </div>
+                <div className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 3 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}>
+                  <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex >= 3 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}>
+                    4
+                  </span>
+                  <span className="truncate">Koneksi Stream RTMP & Handshake Siaran</span>
+                </div>
+              </div>
+
+              {/* Cancel Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (connectingAbortRef.current) {
+                    connectingAbortRef.current.abort();
+                  }
+                  setIsConnectingLive(false);
+                  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "";
+                  fetch(`${backendUrl}/api/live-session/stop`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({}),
+                  }).catch(() => {});
+                  showToast("⚠️ Proses inisialisasi live dibatalkan.");
+                }}
+                className="w-full rounded-xl border border-slate-700/80 bg-slate-800/80 px-4 py-2.5 text-xs font-semibold text-slate-300 hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-300 transition active:scale-95 flex items-center justify-center gap-2"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+                <span>Batalkan Inisialisasi</span>
+              </button>
             </div>
           </div>
         )}

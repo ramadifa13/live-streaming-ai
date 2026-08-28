@@ -24,9 +24,14 @@ export function isLiveSessionActive(): boolean {
 export async function acquireGpuForJob(): Promise<string | null> {
   activeJobLeases += 1;
   try {
-    if ((process.env.GPU_PROVIDER ?? "mock").toLowerCase() === "mock") {
+    const provider = (
+      process.env.GPU_PROVIDER ??
+      process.env.AVATAR_PROVIDER ??
+      "mock"
+    ).toLowerCase();
+    if (provider === "mock") {
       console.log(
-        "[RunPodManager] GPU_PROVIDER=mock. Skipping GPU acquisition.",
+        "[RunPodManager] GPU/Avatar provider is mock. Skipping GPU acquisition.",
       );
       return null;
     }
@@ -207,9 +212,10 @@ export async function createPod(): Promise<string> {
           name: `LiveWorker-${gpuTier.id.replace(/\s+/g, "_")}`,
           imageName: "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04",
           dockerArgs:
-            "bash -c 'cd /workspace/live-streaming-ai/deploy && bash start.sh'",
+            "bash -c 'if [ -f /workspace/ai_live_worker/start.sh ]; then cd /workspace/ai_live_worker && bash start.sh; elif [ -f /workspace/live-streaming-ai/deploy/start.sh ]; then cd /workspace/live-streaming-ai/deploy && bash start.sh; fi; sleep infinity'",
           ports: "8000/http,8090/http",
           networkVolumeId: volumeId,
+          volumeMountPath: "/workspace",
         },
       });
 
@@ -257,8 +263,15 @@ export async function startPodAndWait(
   }
 
   // Skip pod start if using mock provider
-  if ((process.env.GPU_PROVIDER ?? "mock").toLowerCase() === "mock") {
-    console.log("[RunPodManager] GPU_PROVIDER=mock. Skipping pod start.");
+  const currentProvider = (
+    process.env.GPU_PROVIDER ??
+    process.env.AVATAR_PROVIDER ??
+    "mock"
+  ).toLowerCase();
+  if (currentProvider === "mock") {
+    console.log(
+      "[RunPodManager] GPU/Avatar provider is mock. Skipping pod start.",
+    );
     return null;
   }
 
