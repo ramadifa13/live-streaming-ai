@@ -73,6 +73,9 @@ class GenerateVideoRequest(BaseModel):
     audio_url: Optional[str] = None
     audioUrl: Optional[str] = None
     wait: Optional[bool] = False
+    rtmp_url: Optional[str] = None
+    stream_key: Optional[str] = None
+    idle_video_loop: Optional[bool] = False
 
 # Mount output folder to serve the generated video files
 output_dir = worker.output_dir
