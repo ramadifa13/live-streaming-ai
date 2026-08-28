@@ -627,24 +627,34 @@ else
     echo "Face parse model sudah ada."
 fi
 
-# Chatterbox-TTS (isolated venv)
-# Chatterbox-TTS (OPTIONAL / SKIPPED BY DEFAULT)
+# ------------------------------------------------------------
+# CHATTERBOX-TTS-INDONESIAN (Custom Voice Cloning Microservice)
+# ------------------------------------------------------------
 CHATTERBOX_DIR="$WORKER_DIR/chatterbox_service"
 if [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ]; then
-if [ "${ENABLE_RUNPOD_CHATTERBOX:-0}" = "1" ] && [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ]; then
+    echo "Menyiapkan Chatterbox-TTS-Indonesian (Custom Voice Cloning)..."
     if [ ! -d "$CHATTERBOX_DIR/env-chatterbox" ]; then
-        echo "Membuat virtualenv terpisah untuk Chatterbox-TTS-Indonesian..."
         python3 -m venv "$CHATTERBOX_DIR/env-chatterbox"
     fi
-    echo "Menginstall dependencies Chatterbox-TTS-Indonesian (venv terpisah)..."
-    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install --upgrade pip
-    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install -r "$CHATTERBOX_DIR/requirements-chatterbox.txt"
-else
-    echo "[INFO] chatterbox_service/requirements-chatterbox.txt tidak ditemukan, lewati setup voice cloning."
-    echo "[SKIP] Chatterbox TTS dilewati (Sintesis suara dipusatkan di Backend Edge-TTS untuk efisiensi disk & latensi 1.2s)."
+    
+    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install --no-cache-dir --upgrade pip
+    
+    # Pasang PyTorch CUDA 11.8 ke venv Chatterbox terlebih dahulu
+    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install \
+        --no-cache-dir \
+        "torch==2.1.0+cu118" \
+        "torchaudio==2.1.0+cu118" \
+        --index-url https://download.pytorch.org/whl/cu118
+        
+    # Pasang chatterbox microservice dependencies
+    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install \
+        --no-cache-dir \
+        -r "$CHATTERBOX_DIR/requirements-chatterbox.txt"
+        
+    echo "[OK] Chatterbox-TTS-Indonesian siap di $CHATTERBOX_DIR/env-chatterbox."
 fi
 
-# Bersihkan cache sementara pip dan wheel build agar tidak memakan kuota disk
+# Bersihkan cache sementara pip dan wheel build agar disk 30 GB tetap lega
 rm -rf /workspace/tmp/* 2>/dev/null || true
 
 # Symlinks
