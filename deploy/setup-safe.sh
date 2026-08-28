@@ -10,10 +10,6 @@ PIP_BIN="$VENV_DIR/bin/pip"
 
 export TMPDIR="/workspace/tmp"
 export PIP_CACHE_DIR="/workspace/tmp/pip_cache"
-
-# Bersihkan total semua cache lama sebelum mulai agar storage selalu fresh dan bersih
-echo "[*] Membersihkan cache sementara dan file build lama..."
-rm -rf /workspace/tmp/* /root/.cache/pip /root/.cache/huggingface /workspace/ai_live_worker/chatterbox_service/env-chatterbox 2>/dev/null || true
 mkdir -p "$TMPDIR" "$PIP_CACHE_DIR" "$WORKER_DIR"
 
 export TORCH_CUDA_TAG=cu118
@@ -631,23 +627,15 @@ else
     echo "Face parse model sudah ada."
 fi
 
-# Chatterbox-TTS (OPTIONAL / SKIPPED BY DEFAULT)
 # ------------------------------------------------------------
 # CHATTERBOX-TTS-INDONESIAN (Custom Voice Cloning Microservice)
 # ------------------------------------------------------------
 CHATTERBOX_DIR="$WORKER_DIR/chatterbox_service"
-if [ "${ENABLE_RUNPOD_CHATTERBOX:-0}" = "1" ] && [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ]; then
 if [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ]; then
     echo "Menyiapkan Chatterbox-TTS-Indonesian (Custom Voice Cloning)..."
     if [ ! -d "$CHATTERBOX_DIR/env-chatterbox" ]; then
-        echo "Membuat virtualenv terpisah untuk Chatterbox-TTS-Indonesian..."
         python3 -m venv "$CHATTERBOX_DIR/env-chatterbox"
     fi
-    echo "Menginstall dependencies Chatterbox-TTS-Indonesian (venv terpisah)..."
-    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install --upgrade pip
-    "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install -r "$CHATTERBOX_DIR/requirements-chatterbox.txt"
-else
-    echo "[SKIP] Chatterbox TTS dilewati (Sintesis suara dipusatkan di Backend Edge-TTS untuk efisiensi disk & latensi 1.2s)."
     
     "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install --no-cache-dir --upgrade pip
     
@@ -666,7 +654,6 @@ else
     echo "[OK] Chatterbox-TTS-Indonesian siap di $CHATTERBOX_DIR/env-chatterbox."
 fi
 
-# Bersihkan cache sementara pip dan wheel build agar tidak memakan kuota disk
 # Bersihkan cache sementara pip dan wheel build agar disk 30 GB tetap lega
 rm -rf /workspace/tmp/* 2>/dev/null || true
 
