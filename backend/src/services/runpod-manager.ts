@@ -160,8 +160,21 @@ export async function getPodStatus(podId: string): Promise<PodStatus | null> {
  */
 const BUDGET_GPU_TIERS = [
   {
+    id: "NVIDIA RTX 4500 Ada Generation",
+    label: "RTX PRO 4500 (Tersedia, ~$0.72/jam, 32GB VRAM, Fast Ada Lovelace)",
+  },
+  {
+    id: "NVIDIA RTX 4000 Ada Generation",
+    label: "RTX 4000 Ada (Super Hemat, ~$0.28/jam, 20GB VRAM)",
+  },
+  {
+    id: "NVIDIA RTX 4000 SFF Ada Generation",
+    label: "RTX PRO 4000 (Hemat, ~$0.57/jam, 24GB VRAM)",
+  },
+  {
     id: "NVIDIA GeForce RTX 4090",
     label: "RTX 4090 (Utama, ~$0.69/jam, Fast Lipsync)",
+    label: "RTX 4090 (Utama, ~$0.74/jam, Fast Lipsync)",
   },
   {
     id: "NVIDIA GeForce RTX 3090",
