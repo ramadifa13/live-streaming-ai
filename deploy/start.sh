@@ -146,14 +146,6 @@ while true; do
 	# 2. Cek chatterbox microservice jika venv tersedia
 	if [ -d "$WORKER_DIR/chatterbox_service/env-chatterbox" ]; then
 		if [ -n "${CHATTERBOX_PID:-}" ] && ! kill -0 "$CHATTERBOX_PID" 2>/dev/null; then
-			echo "[WATCHDOG ALERT] chatterbox_service mati! Me-restart chatterbox..."
-			(
-				source "$WORKER_DIR/chatterbox_service/env-chatterbox/bin/activate"
-				cd "$WORKER_DIR/chatterbox_service"
-				"$WORKER_DIR/chatterbox_service/env-chatterbox/bin/python" server.py >> "$WORKER_DIR/chatterbox_service.log" 2>&1
-			) &
-			CHATTERBOX_PID=$!
-			echo "[WATCHDOG] chatterbox_service di-restart (PID: $CHATTERBOX_PID)"
 			CHATTERBOX_RETRY_COUNT=$((CHATTERBOX_RETRY_COUNT + 1))
 			if [ "$CHATTERBOX_RETRY_COUNT" -le 3 ]; then
 				echo "[WATCHDOG ALERT] chatterbox_service mati! Log error terakhir:"
