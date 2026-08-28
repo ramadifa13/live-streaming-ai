@@ -634,7 +634,10 @@ Kembalikan HANYA JSON valid:
           model: model,
           messages: [
             { role: "system", content: systemPrompt },
-            { role: "user", content: `Komentar Penonton: "${userComment}". Kembalikan HANYA format JSON.` },
+            {
+              role: "user",
+              content: `Komentar Penonton: "${userComment}". Kembalikan HANYA format JSON.`,
+            },
           ],
           temperature: 0.7,
         });
@@ -655,13 +658,11 @@ Kembalikan HANYA JSON valid:
   }
 
   // Resilient fallback for viewer comments
-  const productName = product?.name || "produk kami";
-  const productId = product?.id || null;
   return {
-    speech: `Halo kak, makasih banyak ya udah mampir dan komen di live kita! ${product ? `Yuk langsung dicek ${productName} di keranjang kuning mumpung lagi diskon!` : ""}`,
+    speech: `Halo kak, makasih banyak ya udah mampir dan komen di live kita! ${product ? `Yuk langsung dicek ${product.name} di keranjang kuning mumpung lagi diskon!` : ""}`,
     action: "TALK_EXPRESSIVE",
     emotion: "happy",
-    target_product_id: productId,
+    target_product_id: product ? product.id : null,
   };
 }
 
@@ -718,7 +719,10 @@ Gambar produk: ${input.image || "Tidak tersedia"}`;
           model: model,
           messages: [
             { role: "system", content: systemPrompt },
-            { role: "user", content: `${userPrompt}\nKembalikan HANYA format JSON valid.` },
+            {
+              role: "user",
+              content: `${userPrompt}\nKembalikan HANYA format JSON valid.`,
+            },
           ],
           temperature: 0.7,
         });
@@ -739,7 +743,9 @@ Gambar produk: ${input.image || "Tidak tersedia"}`;
 
   // Resilient fallback for product knowledge
   return {
-    description: input.description || `Produk ${input.name} berkualitas premium untuk kebutuhan Anda.`,
+    description:
+      input.description ||
+      `Produk ${input.name} berkualitas premium untuk kebutuhan Anda.`,
     benefits: `Kualitas terbaik, tahan lama, dan terbukti bermanfaat untuk penggunaan sehari-hari.`,
     usage: `Gunakan sesuai petunjuk kemasan secara rutin untuk hasil optimal.`,
     faq: `Produk dijamin 100% original dan aman digunakan.`,
