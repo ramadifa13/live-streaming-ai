@@ -448,6 +448,8 @@ cd "$WORKER_DIR"
     --no-cache-dir \
     -U openmim
 
+export MIM_BUILD_TORCH_VERSION=2.1.0
+export CUDA_HOME=/usr/local/cuda-11.8
 # Kunci numpy 1.26.4 agar OpenMIM tidak memakai NumPy 2.x
 "$PIP_BIN" install --no-cache-dir "numpy==1.26.4"
 
@@ -457,6 +459,8 @@ echo "Installing mmcv==2.1.0..."
 echo "Installing mmdet..."
 "$PYTHON_BIN" -m mim install "mmdet>=3.1.0"
 
+echo "Installing mmpose..."
+"$PYTHON_BIN" -m mim install "mmpose>=1.1.0"
 echo "Installing chumpy & mmpose..."
 "$PIP_BIN" install --no-cache-dir --no-build-isolation "chumpy" || true
 "$PYTHON_BIN" -m mim install "mmpose>=1.1.0" --no-build-isolation || "$PIP_BIN" install --no-cache-dir "mmpose>=1.1.0" --no-build-isolation
