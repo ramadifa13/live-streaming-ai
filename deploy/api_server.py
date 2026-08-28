@@ -62,12 +62,16 @@ app = FastAPI(title="LiveStreamer AI Worker", lifespan=lifespan)
 class GenerateVideoRequest(BaseModel):
     text: str
     avatar_name: str = "namira"
+    avatarName: Optional[str] = None
     avatar_image_path: Optional[str] = None
+    avatarImagePath: Optional[str] = None
     voice: Optional[str] = None
     speed: float = 1.0
     tone: str = "Persuasif"
     audio_base64: Optional[str] = None
+    audioBase64: Optional[str] = None
     audio_url: Optional[str] = None
+    audioUrl: Optional[str] = None
 
 # Mount output folder to serve the generated video files
 output_dir = worker.output_dir
@@ -193,19 +197,26 @@ async def generate_neural_video(req: GenerateVideoRequest):
     return {"success": True, "job_id": task_id, "status": "processing"}
 
 class BroadcastRequest(BaseModel):
-    rtmp_url: str
-    stream_key: str
+    rtmp_url: Optional[str] = None
+    rtmpUrl: Optional[str] = None
+    stream_key: Optional[str] = None
+    streamKey: Optional[str] = None
     idle_video: str = "/workspace/ai_live_worker/assets/3d/namira.mp4"
 
 @app.post("/stream/start-broadcast")
 async def start_broadcast(req: BroadcastRequest):
     global broadcaster_process
+    final_rtmp_url = req.rtmp_url or req.rtmpUrl or ""
+    final_stream_key = req.stream_key or req.streamKey or ""
+    if not final_rtmp_url or not final_stream_key:
+        raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
+
     if broadcaster_process and broadcaster_process.poll() is None:
         return {"success": True, "status": "streaming", "message": "Broadcaster already running"}
 
     env = os.environ.copy()
-    env["RTMP_URL"] = req.rtmp_url
-    env["STREAM_KEY"] = req.stream_key
+    env["RTMP_URL"] = final_rtmp_url
+    env["STREAM_KEY"] = final_stream_key
     env["IDLE_VIDEO"] = req.idle_video
     env["OUTPUT_FOLDER"] = output_dir
     env["WORKER_REQUIRE_AUDIO"] = "1"
