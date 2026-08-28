@@ -655,11 +655,13 @@ Kembalikan HANYA JSON valid:
   }
 
   // Resilient fallback for viewer comments
+  const productName = product?.name || "produk kami";
+  const productId = product?.id || null;
   return {
-    speech: `Halo kak, makasih banyak ya udah mampir dan komen di live kita! ${product ? `Yuk langsung dicek ${product.name} di keranjang kuning mumpung lagi diskon!` : ""}`,
+    speech: `Halo kak, makasih banyak ya udah mampir dan komen di live kita! ${product ? `Yuk langsung dicek ${productName} di keranjang kuning mumpung lagi diskon!` : ""}`,
     action: "TALK_EXPRESSIVE",
     emotion: "happy",
-    target_product_id: product ? product.id : null,
+    target_product_id: productId,
   };
 }
 
