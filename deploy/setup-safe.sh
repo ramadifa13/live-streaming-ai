@@ -627,8 +627,10 @@ else
     echo "Face parse model sudah ada."
 fi
 
+# Chatterbox-TTS (isolated venv)
 # Chatterbox-TTS (OPTIONAL / SKIPPED BY DEFAULT)
 CHATTERBOX_DIR="$WORKER_DIR/chatterbox_service"
+if [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ]; then
 if [ "${ENABLE_RUNPOD_CHATTERBOX:-0}" = "1" ] && [ -f "$CHATTERBOX_DIR/requirements-chatterbox.txt" ]; then
     if [ ! -d "$CHATTERBOX_DIR/env-chatterbox" ]; then
         echo "Membuat virtualenv terpisah untuk Chatterbox-TTS-Indonesian..."
@@ -638,6 +640,7 @@ if [ "${ENABLE_RUNPOD_CHATTERBOX:-0}" = "1" ] && [ -f "$CHATTERBOX_DIR/requireme
     "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install --upgrade pip
     "$CHATTERBOX_DIR/env-chatterbox/bin/pip" install -r "$CHATTERBOX_DIR/requirements-chatterbox.txt"
 else
+    echo "[INFO] chatterbox_service/requirements-chatterbox.txt tidak ditemukan, lewati setup voice cloning."
     echo "[SKIP] Chatterbox TTS dilewati (Sintesis suara dipusatkan di Backend Edge-TTS untuk efisiensi disk & latensi 1.2s)."
 fi
 
