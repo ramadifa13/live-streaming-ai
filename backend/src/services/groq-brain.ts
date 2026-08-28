@@ -144,7 +144,7 @@ let cachedModels: string[] = [];
 let cacheTimestamp = 0;
 const CACHE_TTL_MS = 60 * 1000; // Cache 1 menit
 
-// Keywords non-chat yang harus difilter (misal: audio whisper, guardrail, embedding)
+// Keywords non-chat yang harus difilter (misal: audio whisper, guardrail, embedding, TTS)
 const EXCLUDE_KEYWORDS = [
   "whisper",
   "guard",
@@ -154,6 +154,12 @@ const EXCLUDE_KEYWORDS = [
   "audio",
   "clip",
   "vision",
+  // Model TTS / speech generation (bukan chat LLM)
+  "orpheus",       // canopylabs/orpheus-* adalah model Text-to-Speech
+  "canopylabs",    // semua model canopylabs adalah TTS, bukan chat
+  "speech",        // model speech-to-text / TTS generik
+  "rerank",        // model reranking dokumen, bukan chat
+  "transcription", // model transkripsi audio
 ];
 
 /**
@@ -232,9 +238,6 @@ export async function getAvailableChatModels(): Promise<string[]> {
   return chatModels;
 }
 
-/**
- * Mengacak (randomize) urutan model Groq yang tersedia di setiap request secara murni dinamis.
- */
 export async function getRandomCandidateModels(): Promise<string[]> {
   const available = await getAvailableChatModels();
   const shuffled = [...available];

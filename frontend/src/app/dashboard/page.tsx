@@ -207,6 +207,14 @@ export default function Dashboard() {
     return () => timers.forEach(clearTimeout);
   }, [isConnectingLive]);
   const [isLiveActive, setIsLiveActive] = useState(false);
+  const [isWaitingForGoLive, setIsWaitingForGoLive] = useState(false);
+  const [currentLiveSessionId, setCurrentLiveSessionId] = useState<string | null>(null);
+  const [pipelineStatus, setPipelineStatus] = useState<{
+    ready: boolean;
+    generationCount: number;
+    videosQueued: number;
+    pendingCount: number;
+  } | null>(null);
   const [isLivePaused, setIsLivePaused] = useState(false);
   const [liveSessionPhase, setLiveSessionPhase] = useState<
     "idle" | "pending" | "live" | "ended"
@@ -602,6 +610,23 @@ export default function Dashboard() {
 
     return () => clearInterval(interval);
   }, [isLiveActive, isLivePaused]);
+
+  // Poll Pipeline Status when waiting for Go Live
+  useEffect(() => {
+    if (!isWaitingForGoLive || !currentLiveSessionId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/live-stream/pipeline-status?sessionId=${currentLiveSessionId}`);
+        if (res.ok) {
+          const json = await res.json();
+          setPipelineStatus(json);
+        }
+      } catch (err) {}
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [isWaitingForGoLive, currentLiveSessionId]);
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -2583,8 +2608,7 @@ export default function Dashboard() {
                     </div>
                   </div>
                 </div>
-              </div>
-              {!isLiveActive ? (
+              {!isLiveActive && !isWaitingForGoLive ? (
                 <div
                   className={`flex flex-col rounded-xl border p-4 transition ${currentStep === 5 ? "border-blue-500/60 bg-[#0c1428] ring-1 ring-blue-500/30" : "border-[#232c42] bg-[#0c1221]"}`}
                 >
@@ -3114,15 +3138,21 @@ export default function Dashboard() {
 
                           const bcastJson = await bcastRes.json();
 
-                          if (bcastRes.ok && bcastJson.data?.success) {
+                          if (bcastRes.ok && bcastJson.success) {
                             setIsConnectingLive(false);
-                            setIsLiveActive(true);
-                            setIsLivePaused(false);
-                            setLiveSessionPhase("pending");
-                            setLiveSeconds(0);
-                            showToast(
-                              `📡 RTMP terhubung! Menunggu ${selectedPlatform} memulai live...`,
-                            );
+                            if (bcastJson.waitingForGoLive) {
+                              // Tahap 1 selesai: Idle loop jalan, tunggu konfirmasi di dashboard
+                              setIsWaitingForGoLive(true);
+                              setCurrentLiveSessionId(sessionJson.data?.id);
+                              showToast(bcastJson.message || "RTMP terhubung! Menunggu konfirmasi Go Live...");
+                            } else {
+                              // Legacy flow
+                              setIsLiveActive(true);
+                              setIsLivePaused(false);
+                              setLiveSessionPhase("pending");
+                              setLiveSeconds(0);
+                              showToast(`📡 RTMP terhubung! Menunggu ${selectedPlatform} memulai live...`);
+                            }
                           } else {
                             await fetch("/api/live-session/stop", {
                               method: "POST",
@@ -3180,6 +3210,99 @@ export default function Dashboard() {
                       🔒 Anda dapat menghentikan live kapan saja
                     </p>
                   </div>
+                </div>
+              ) : isWaitingForGoLive ? (
+                /* MENUNGGU KONFIRMASI GO LIVE DARI USER */
+                <div className="flex flex-col rounded-xl border border-yellow-500/40 bg-[#0e1222] p-5 shadow-2xl shadow-yellow-900/10">
+                  <div className="mb-4 flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-yellow-500 animate-pulse" />
+                    <p className="text-[11px] font-black uppercase tracking-widest text-yellow-400">
+                      Menunggu Siaran
+                    </p>
+                  </div>
+                  <h3 className="text-sm font-bold text-white mb-2">Tindakan Diperlukan:</h3>
+                  <ol className="list-decimal pl-4 text-xs text-slate-300 space-y-2 mb-6">
+                    <li>Buka aplikasi <strong>{selectedPlatform}</strong> di HP/Web Anda.</li>
+                    <li>Pastikan preview kamera menampilkan video idle Avatar.</li>
+                    <li>Klik tombol <strong>"Siarkan Langsung" / "Go Live"</strong> di dalam aplikasi tersebut.</li>
+                    <li>Setelah siaran berjalan, tekan tombol konfirmasi di bawah ini.</li>
+                  </ol>
+
+                  {pipelineStatus && (
+                    <div className="mb-6 rounded bg-black/40 p-3 border border-white/5">
+                      <p className="text-[10px] text-slate-400 font-semibold mb-2 uppercase">Status Persiapan AI Backend</p>
+                      <div className="flex items-center gap-3">
+                        {pipelineStatus.ready ? (
+                          <span className="text-emerald-400 text-xs flex items-center gap-1">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                            Video Pembuka Siap
+                          </span>
+                        ) : (
+                          <span className="text-blue-400 text-xs flex items-center gap-1">
+                            <span className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                            Merender Video Pembuka...
+                          </span>
+                        )}
+                        <span className="text-xs text-slate-500">
+                          (Antrean: {pipelineStatus.pendingCount})
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!currentLiveSessionId) return;
+                      setIsConnectingLive(true);
+                      try {
+                        const res = await fetch("/api/live-stream/go-live-confirm", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ sessionId: currentLiveSessionId }),
+                        });
+                        const json = await res.json();
+                        if (res.ok && json.success) {
+                          setIsWaitingForGoLive(false);
+                          setIsLiveActive(true);
+                          setIsLivePaused(false);
+                          setLiveSessionPhase("live");
+                          setLiveSeconds(0);
+                          showToast("✅ AI Host aktif! Siaran live dimulai.");
+                        } else {
+                          showToast(`❌ Gagal konfirmasi: ${json.error}`);
+                        }
+                      } catch {
+                        showToast("❌ Error koneksi saat konfirmasi.");
+                      } finally {
+                        setIsConnectingLive(false);
+                      }
+                    }}
+                    disabled={isConnectingLive || (pipelineStatus && !pipelineStatus.ready)}
+                    className={`w-full py-3 rounded-lg text-sm font-bold text-white transition ${
+                      isConnectingLive || (pipelineStatus && !pipelineStatus.ready)
+                        ? "bg-slate-700 cursor-not-allowed opacity-80"
+                        : "bg-green-600 hover:bg-green-500 active:scale-95 shadow-[0_0_15px_rgba(34,197,94,0.4)]"
+                    }`}
+                  >
+                    {isConnectingLive ? "Menyambungkan..." : (pipelineStatus && !pipelineStatus.ready ? "Tunggu AI Siap..." : "✅ Konfirmasi Siaran Dimulai")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await fetch("/api/live-stream/stop-broadcast", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ sessionId: currentLiveSessionId }),
+                      }).catch(() => {});
+                      setIsWaitingForGoLive(false);
+                      setCurrentLiveSessionId(null);
+                      showToast("Siaran dibatalkan.");
+                    }}
+                    className="mt-3 w-full py-2 text-xs font-semibold text-slate-400 hover:text-white transition"
+                  >
+                    Batal
+                  </button>
                 </div>
               ) : (
                 /* LIVE CONTROL CENTER (Appears dynamically when isLiveActive === true) */

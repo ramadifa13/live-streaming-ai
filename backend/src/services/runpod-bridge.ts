@@ -49,10 +49,11 @@ async function workerRequest(
   path: string,
   init?: RequestInit,
 ) {
+  const signal = init?.signal || AbortSignal.timeout(60000);
   const response = await fetch(`${getWorkerUrl(podId)}${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-    signal: AbortSignal.timeout(15000),
+    signal,
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok)
@@ -73,10 +74,15 @@ async function workerRequestWithRetry(
     } catch (err: any) {
       lastError = err;
       const status = Number(err.message?.match(/\d{3}/)?.[0]);
-      if (status === 502 || status === 503 || status === 504) {
+      if (
+        status === 502 ||
+        status === 503 ||
+        status === 504 ||
+        err.name === "TimeoutError"
+      ) {
         const backoff = 1000 * Math.pow(2, attempt);
         console.warn(
-          `[RunPodBridge] Worker returned ${status}, retrying in ${backoff}ms...`,
+          `[RunPodBridge] Worker connection retry in ${backoff}ms (${err.message})...`,
         );
         await new Promise((resolve) => setTimeout(resolve, backoff));
         continue;
@@ -122,17 +128,83 @@ export async function getRunPodBroadcastStatus(
 export async function getRunPodQueueStatus(
   podId: string | null | undefined,
 ): Promise<RunPodQueueStatus> {
-  return workerRequestWithRetry(podId, "/stream/queue-status", undefined, 2).catch(() => ({
+  return workerRequestWithRetry(
+    podId,
+    "/stream/queue-status",
+    undefined,
+    2,
+  ).catch(() => ({
     success: false,
     ready_videos_count: 0,
     broadcasting: false,
   }));
 }
 
-export async function warmupWorker(
+/**
+ * Kirim sinyal ke worker RunPod untuk berhenti memutar idle video loop
+ * dan mulai memutar video dari GPU queue (dipakai saat go-live-confirm).
+ *
+ * Graceful fallback: jika worker belum support /stream/start-playback,
+ * warning dicatat dan eksekusi tetap berlanjut.
+ */
+export async function triggerWorkerPlayback(
   podId: string | null | undefined,
 ): Promise<void> {
-  await workerRequestWithRetry(podId, "/", undefined, 3);
+  try {
+    await workerRequestWithRetry(
+      podId,
+      "/stream/start-playback",
+      {
+        method: "POST",
+        body: JSON.stringify({ action: "start_playback" }),
+      },
+      2,
+    );
+    console.log(
+      "[RunPodBridge] ▶️  Worker playback triggered — idle loop berhenti, queue mulai diputar.",
+    );
+  } catch (err: any) {
+    // Worker mungkin belum support endpoint ini — tidak fatal.
+    // Video di queue akan tetap diputar oleh worker.
+    console.warn(
+      "[RunPodBridge] /stream/start-playback tidak didukung worker (non-fatal):",
+      err?.message ?? err,
+    );
+  }
+}
+
+/**
+ * Menunggu secara bertahap hingga seluruh container AI worker di RunPod (Port 8000 & 8090) siap merespon.
+ */
+export async function warmupWorker(
+  podId: string | null | undefined,
+  maxWaitSeconds = 60,
+): Promise<void> {
+  console.log(`[RunPodBridge] Memeriksa kesiapan AI Worker di RunPod...`);
+  const start = Date.now();
+  for (let attempt = 0; attempt < maxWaitSeconds; attempt++) {
+    try {
+      const health = await workerRequest(podId, "/health", {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (health && health.status === "ok") {
+        console.log(
+          `[RunPodBridge] AI Worker online dan siap melayani render video! (${Math.round((Date.now() - start) / 1000)}s)`,
+        );
+        // Beri jeda 2 detik agar microservice TTS 8090 stabil
+        await new Promise((r) => setTimeout(r, 2000));
+        return;
+      }
+    } catch (err) {
+      if (attempt % 5 === 0) {
+        console.log(
+          `[RunPodBridge] Menunggu AI Worker inisialisasi (${attempt + 1}s)...`,
+        );
+      }
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  console.warn(`[RunPodBridge] Selesai menunggu inisialisasi.`);
 }
 
 export async function forwardToRunPodGPU(
@@ -142,10 +214,6 @@ export async function forwardToRunPodGPU(
   const workerUrl = getWorkerUrl(podId);
 
   try {
-    const controller = new AbortController();
-    // Tingkatkan timeout menjadi 180 detik agar Backend sabar menunggu render video RunPod
-    const timeoutId = setTimeout(() => controller.abort(), 180000);
-
     let avatarName = "namira";
     if (params.avatarImagePath) {
       const parts = params.avatarImagePath.split("/");
@@ -155,13 +223,13 @@ export async function forwardToRunPodGPU(
       }
     }
 
+    // 1. Kirim task ke worker API (non-blocking)
     const data = await workerRequestWithRetry(
       podId,
       `/stream/live-utterance`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
         body: JSON.stringify({
           avatar_name: avatarName,
           avatar_image_path: params.avatarImagePath || "avatars/namira.png",
@@ -173,30 +241,47 @@ export async function forwardToRunPodGPU(
           stream_key: params.streamKey || "",
           audio_base64: params.audioBase64 || "",
           audio_url: params.audioUrl || "",
-          wait: params.wait ?? false,
+          wait: false, // Gunakan polling agar tidak terkena HTTP timeout
+          idle_video_loop: true, // Worker memutar idle video saat antrian kosong → tidak ada freeze
         }),
       },
       3,
     );
 
-    clearTimeout(timeoutId);
     let completedData = data;
-    if (data.job_id && data.status === "processing") {
-      for (let attempt = 0; attempt < 60; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        const statusData = await workerRequestWithRetry(
-          podId,
-          `/stream/status/${data.job_id}`,
-          undefined,
-          2,
-        );
-        if (statusData.status === "error")
-          throw new Error(statusData.error || "RunPod video job gagal");
-        if (statusData.status === "done") {
-          completedData = statusData;
-          break;
+
+    // 2. Jika dipanggil dengan mode menunggu (seperti prebuffer 2 video awal)
+    const shouldWait = params.wait ?? false;
+    if (data.job_id && (shouldWait || data.status === "processing")) {
+      const maxAttempts = shouldWait ? 90 : 1; // 90 × polling = maks 180 detik untuk render awal
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        // Adaptive polling: lebih cepat di awal (render pendek), lebih lambat setelah lama
+        // Attempt 0–9: poll tiap 1000ms → deteksi render cepat (<10 dtk) segera
+        // Attempt 10+: poll tiap 2000ms → hemat request untuk render lama
+        const pollInterval = attempt < 10 ? 1000 : 2000;
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        try {
+          const statusData = await workerRequest(
+            podId,
+            `/stream/status/${data.job_id}`,
+            { signal: AbortSignal.timeout(10000) },
+          );
+          if (statusData.status === "error") {
+            throw new Error(statusData.error || "RunPod video job gagal");
+          }
+          if (statusData.status === "done") {
+            completedData = statusData;
+            break;
+          }
+        } catch (pollErr: any) {
+          console.warn(
+            `[RunPodBridge] Polling status check retry (${attempt + 1}):`,
+            pollErr.message,
+          );
         }
-        if (attempt === 59) throw new Error("RunPod video job timeout (120s limit)");
+        if (shouldWait && attempt === maxAttempts - 1) {
+          throw new Error("RunPod video job timeout (180s limit exceeded)");
+        }
       }
     }
 

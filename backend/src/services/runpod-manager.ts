@@ -160,32 +160,32 @@ export async function getPodStatus(podId: string): Promise<PodStatus | null> {
  */
 const BUDGET_GPU_TIERS = [
   {
+    id: "NVIDIA GeForce RTX 4090",
+    label: "RTX 4090 (Utama, Fast Lipsync)",
+  },
+  {
     id: "NVIDIA RTX 4500 Ada Generation",
-    label: "RTX PRO 4500 (Tersedia, ~$0.72/jam, 32GB VRAM, Fast Ada Lovelace)",
+    label: "RTX PRO 4500 (32GB VRAM)",
   },
   {
     id: "NVIDIA RTX 4000 Ada Generation",
-    label: "RTX 4000 Ada (Super Hemat, ~$0.28/jam, 20GB VRAM)",
+    label: "RTX 4000 Ada (20GB VRAM)",
   },
   {
     id: "NVIDIA RTX 4000 SFF Ada Generation",
-    label: "RTX PRO 4000 (Hemat, ~$0.57/jam, 24GB VRAM)",
-  },
-  {
-    id: "NVIDIA GeForce RTX 4090",
-    label: "RTX 4090 (Utama, ~$0.74/jam, Fast Lipsync)",
+    label: "RTX PRO 4000 (24GB VRAM)",
   },
   {
     id: "NVIDIA GeForce RTX 3090",
-    label: "RTX 3090 (Hemat, ~$0.39/jam, 24GB VRAM)",
+    label: "RTX 3090 (24GB VRAM)",
   },
   {
     id: "NVIDIA RTX A5000",
-    label: "RTX A5000 (Alternatif, ~$0.45/jam, 24GB VRAM)",
+    label: "RTX A5000 (24GB VRAM)",
   },
   {
     id: "NVIDIA RTX A4000",
-    label: "RTX A4000 (Ekonomis, ~$0.35/jam, 16GB VRAM)",
+    label: "RTX A4000 (16GB VRAM)",
   },
 ];
 
@@ -209,12 +209,23 @@ export async function createPod(): Promise<string> {
 
   let lastGpuError: any = null;
 
-  for (const gpuTier of BUDGET_GPU_TIERS) {
+  // Jika user menentukan spesifik GPU di .env via RUNPOD_GPU_TYPE
+  const preferredGpu = process.env.RUNPOD_GPU_TYPE;
+  const tiersToTry = preferredGpu
+    ? [
+        { id: preferredGpu, label: preferredGpu },
+        ...BUDGET_GPU_TIERS.filter((t) => t.id !== preferredGpu),
+      ]
+    : BUDGET_GPU_TIERS;
+
+  const cloudType = process.env.RUNPOD_CLOUD_TYPE || "ALL";
+
+  for (const gpuTier of tiersToTry) {
     try {
       console.log(`[RunPodManager] Mencoba alokasi GPU: ${gpuTier.label}...`);
       const data = await runpodGraphQL(mutation, {
         input: {
-          cloudType: "SECURE",
+          cloudType: cloudType,
           gpuCount: 1,
           volumeInGb: 0,
           containerDiskInGb: 5,
@@ -240,18 +251,21 @@ export async function createPod(): Promise<string> {
       }
     } catch (error: any) {
       lastGpuError = error;
+      const errMsg = (error?.message || "").toLowerCase();
       const isFull =
-        error.message &&
-        (error.message.includes("not enough free GPUs") ||
-          error.message.includes("no available") ||
-          error.message.includes("out of stock"));
+        errMsg.includes("not enough free gpus") ||
+        errMsg.includes("no available") ||
+        errMsg.includes("out of stock") ||
+        errMsg.includes("supply_constraint") ||
+        errMsg.includes("no longer any instances available") ||
+        errMsg.includes("specifications");
+
       if (isFull) {
         console.warn(
-          `[RunPodManager] ${gpuTier.id} sedang penuh. Beralih ke tier hemat berikutnya...`,
+          `[RunPodManager] ${gpuTier.id} sedang penuh (${cloudType}). Beralih ke tier hemat berikutnya...`,
         );
-        continue; // Lanjut ke GPU hemat berikutnya
+        continue;
       }
-      // Jika error otentikasi atau validasi volume, hentikan langsung
       throw error;
     }
   }
@@ -266,7 +280,18 @@ export async function createPod(): Promise<string> {
 export async function startPodAndWait(
   timeoutMs = 120000,
 ): Promise<string | null> {
-  // We no longer rely on static RUNPOD_POD_ID, we check if we have volume ID configured
+  // If static RUNPOD_POD_ID is configured in .env, use it directly without creating new pod!
+  if (process.env.RUNPOD_POD_ID) {
+    const staticPodId = process.env.RUNPOD_POD_ID.trim();
+    if (staticPodId.length > 0) {
+      console.log(
+        `[RunPodManager] Menggunakan Pod statis yang sudah aktif: ${staticPodId}`,
+      );
+      updateGpuActivity();
+      return staticPodId;
+    }
+  }
+
   if (!process.env.RUNPOD_NETWORK_VOLUME_ID && !process.env.RUNPOD_POD_ID) {
     console.log(
       "[RunPodManager] No RUNPOD_NETWORK_VOLUME_ID or RUNPOD_POD_ID. Skipping start.",
@@ -289,18 +314,7 @@ export async function startPodAndWait(
 
   updateGpuActivity();
 
-  let currentPodId = process.env.RUNPOD_POD_ID || null;
-
-  // If it's already running, we're good
-  if (currentPodId) {
-    let status = await getPodStatus(currentPodId);
-    if (status && status.desiredStatus === "RUNNING") {
-      console.log("[RunPodManager] Pod is already running.");
-      return currentPodId;
-    }
-  }
-
-  // Mekanisme retry untuk membuat Pod jika mesin GPU penuh
+  let currentPodId: string | null = null;
   let retries = 3;
   let createSuccess = false;
 

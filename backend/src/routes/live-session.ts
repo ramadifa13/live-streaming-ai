@@ -11,6 +11,7 @@ import {
   getRunPodBroadcastStatus,
   startRunPodBroadcast,
   stopRunPodBroadcast,
+  triggerWorkerPlayback,
   warmupWorker,
 } from "../services/runpod-bridge.js";
 import { livePlatformConnector } from "../services/live-platform-connector.js";
@@ -215,6 +216,9 @@ export async function liveSessionRoutes(server: FastifyInstance) {
   });
 
   // POST /api/live-stream/broadcast
+  // Tahap 1: Kirim stream RTMP ke platform + mulai pipeline generate V1, V2, dst di background.
+  // AI host BELUM bicara — worker masih putar idle video.
+  // User harus klik "Go Live"/"Mulai Siaran" di Instagram, lalu konfirmasi di dashboard.
   server.post("/api/live-stream/broadcast", async (request, reply) => {
     const parsed = broadcastSchema.safeParse(request.body);
 
@@ -244,50 +248,18 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         })
       : null;
 
-    if (parsed.data.sessionId && managedSession && liveSession) {
-      try {
-        await warmupWorker(managedSession?.podId);
-
-        const hostConfig = {
-          productId: liveSession.productId,
-          avatarName: managedSession.avatarName,
-          tone: managedSession.tone,
-          rtmpUrl,
-          streamKey,
-          voice: liveSession.voice || undefined,
-          podId: managedSession.podId,
-          sessionId: parsed.data.sessionId,
-        };
-
-        // Pastikan 2 video awal AI sudah 100% selesai di-render sebelum RTMP siaran dimulai
-        await liveHostOrchestrator.prepareInitialVideos(hostConfig, 2);
-
-        // Mulai background orchestrator untuk siaran langsung berkelanjutan
-        liveHostOrchestrator.start(hostConfig);
-      } catch (error) {
-        if (parsed.data.sessionId)
-          liveHostOrchestrator.stop(parsed.data.sessionId);
-        if (parsed.data.sessionId)
-          await liveSessionManager
-            .stopSession(parsed.data.sessionId)
-            .catch(() => {});
-        reply.code(502);
-        return {
-          success: false,
-          error: `AI Worker pre-buffer gagal (2 video awal belum siap): ${error instanceof Error ? error.message : String(error)}`,
-        };
-      }
+    // Warmup GPU worker terlebih dahulu
+    if (managedSession) {
+      await warmupWorker(managedSession.podId).catch((err) =>
+        console.warn("[Broadcast] Warmup notice:", err),
+      );
     }
 
+    // Mulai RTMP stream ke platform → worker tampilkan idle video
     const result = await startRunPodBroadcast(managedSession?.podId, {
       rtmpUrl,
       streamKey,
     });
-
-    if (result.success && parsed.data.sessionId) {
-      if (parsed.data.sessionId)
-        await liveSessionManager.markBroadcastLive(parsed.data.sessionId);
-    }
 
     if (!result.success) {
       reply.code(502);
@@ -306,7 +278,26 @@ export async function liveSessionRoutes(server: FastifyInstance) {
           })
           .catch(() => {});
       }
-    } else if (parsed.data.sessionId) {
+      return { success: false, data: result };
+    }
+
+    // Langsung mulai pipeline background (V1, V2, V3... generate ke memory, belum ke GPU)
+    if (managedSession && liveSession) {
+      const hostConfig = {
+        productId: liveSession.productId,
+        avatarName: managedSession.avatarName,
+        tone: managedSession.tone,
+        voice: liveSession.voice || undefined,
+        podId: managedSession.podId,
+        sessionId: parsed.data.sessionId!,
+        rtmpUrl,
+        streamKey,
+      };
+      liveHostOrchestrator.startPipelineBackground(hostConfig);
+    }
+
+    // Update DB ke "pending" — menunggu konfirmasi Go Live
+    if (parsed.data.sessionId) {
       await prisma.liveSession
         .updateMany({
           where: {
@@ -319,9 +310,104 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     return {
-      success: result.success,
+      success: true,
+      waitingForGoLive: true,
+      message:
+        "RTMP aktif — idle video berjalan. Pipeline sedang generate V1+V2 di background. " +
+        "Silakan klik 'Siarkan Langsung' / 'Go Live' di " +
+        (platform || "platform") +
+        ", lalu konfirmasi di dashboard.",
       data: result,
     };
+  });
+
+  // POST /api/live-stream/go-live-confirm
+  // Tahap 2: Dipanggil setelah user klik "Go Live" di platform dan kembali ke dashboard.
+  // Menunggu V1+V2 siap → flush ke GPU queue → AI host mulai bicara.
+  server.post("/api/live-stream/go-live-confirm", async (request, reply) => {
+    const schema = z.object({
+      sessionId: z.string().min(1),
+      rtmpUrl: z.string().optional(),
+      streamKey: z.string().optional(),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: parsed.error.flatten() };
+    }
+
+    const { sessionId } = parsed.data;
+    const managedSession = liveSessionManager.getSession(sessionId);
+    const liveSession = await prisma.liveSession.findUnique({
+      where: { id: sessionId },
+    });
+
+    if (!managedSession || !liveSession) {
+      reply.code(404);
+      return { error: "Sesi live tidak ditemukan atau sudah berakhir." };
+    }
+
+    try {
+      // Tunggu sampai V1+V2 selesai di-generate ke memory (max 3 menit)
+      console.log(
+        `[GoLiveConfirm] Session ${sessionId}: Menunggu V1+V2 siap...`,
+      );
+      const isReady = await liveHostOrchestrator.waitForPipelineReady(
+        sessionId,
+        180_000,
+      );
+
+      if (!isReady) {
+        // Pipeline timeout — tetap lanjut, kirim apapun yang sudah di-generate
+        console.warn(
+          `[GoLiveConfirm] Pipeline timeout — melanjutkan dengan video yang tersedia...`,
+        );
+      }
+
+      // Sinyal ke worker: stop idle loop, mulai putar dari queue
+      await triggerWorkerPlayback(managedSession.podId);
+
+      // Flush pending videos ke GPU queue → AI langsung bicara
+      await liveHostOrchestrator.startLivePipeline(sessionId);
+
+      // Tandai session sebagai live di DB
+      await liveSessionManager.markBroadcastLive(sessionId);
+
+      console.log(
+        `[GoLiveConfirm] ✅ Session ${sessionId}: AI Host aktif! Live streaming dimulai.`,
+      );
+      return {
+        success: true,
+        message: "AI Host aktif! V1+V2 sudah diputar, pipeline terus berjalan.",
+        sessionId,
+        startedAt: new Date().toISOString(),
+        pipelineStatus: liveHostOrchestrator.getPipelineStatus(sessionId),
+      };
+    } catch (error) {
+      liveHostOrchestrator.stop(sessionId);
+      await liveSessionManager.stopSession(sessionId).catch(() => {});
+      reply.code(502);
+      return {
+        success: false,
+        error: `Gagal memulai AI Host: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  });
+
+  // GET /api/live-stream/pipeline-status?sessionId=xxx
+  // Polling endpoint untuk frontend: cek apakah V1+V2 sudah siap sebelum user konfirmasi.
+  server.get("/api/live-stream/pipeline-status", async (request) => {
+    const { sessionId } = request.query as { sessionId?: string };
+    if (!sessionId) {
+      return {
+        ready: false,
+        generationCount: 0,
+        videosQueued: 0,
+        pendingCount: 0,
+        isLive: false,
+      };
+    }
+    return liveHostOrchestrator.getPipelineStatus(sessionId);
   });
 
   // POST /api/live-stream/stop-broadcast

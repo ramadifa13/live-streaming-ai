@@ -505,24 +505,29 @@ export async function startInstagramBroadcast(
     "-map",
     `${productImagePath ? "2" : "1"}:a`, // audio from anullsrc
 
-    // Video encoding
+    // Video encoding — dioptimasi untuk live streaming real-time
     "-c:v",
     "libx264",
     "-preset",
-    "veryfast",
-    ...(isVideo ? [] : ["-tune", "stillimage"]),
+    "ultrafast", // Encoding lebih cepat → latency lebih rendah untuk live
+    "-tune",
+    "zerolatency", // Meminimalkan latency buffer → cocok untuk RTMP live
+    "-vsync",
+    "cfr", // Constant frame rate → gerakan avatar konsisten 30fps
     "-b:v",
     "2500k",
     "-maxrate",
-    "2500k",
+    "3000k",
     "-bufsize",
-    "5000k",
+    "7500k", // 3:1 ratio (maxrate × 2.5) → CBR lebih stabil
     "-pix_fmt",
     "yuv420p",
     "-g",
     "60",
     "-r",
     "30",
+    "-x264-params",
+    "nal-hrd=cbr:force-cfr=1", // CBR ketat untuk koneksi RTMP yang stabil
 
     // Audio encoding
     "-c:a",

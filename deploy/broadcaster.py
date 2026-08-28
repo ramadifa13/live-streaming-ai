@@ -61,6 +61,9 @@ class AIBroadcaster:
         last_spoken_video = None
         
         while True:
+            playback_flag = os.path.join(self.output_folder, "playback_active.flag")
+            playback_active = os.path.exists(playback_flag)
+
             search_pattern = os.path.join(self.output_folder, "**", "*.mp4")
             new_videos = sorted(
                 [path for path in glob.glob(search_pattern, recursive=True)
@@ -68,7 +71,8 @@ class AIBroadcaster:
                 key=os.path.getctime,
             )
             
-            if new_videos:
+            # Jika playback sudah diaktifkan (lewat konfirmasi user) & ada video baru
+            if playback_active and new_videos:
                 video_to_play = new_videos[0]
                 print(f"[>] MEMUTAR RESPON AI: {os.path.basename(video_to_play)}")
                 success = self._stream_file(video_to_play)
@@ -84,7 +88,7 @@ class AIBroadcaster:
                     last_spoken_video = None
                     self.last_new_video_time = time.time()
             else:
-                # Putar video idle default saat belum ada respon AI baru
+                # Putar video idle saat idle, atau saat video masih di-generate (menunggu start-playback)
                 self._stream_file(self.idle_video)
             
             time.sleep(0.5)
