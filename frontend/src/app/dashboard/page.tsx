@@ -2608,6 +2608,8 @@ export default function Dashboard() {
                     </div>
                   </div>
                 </div>
+              </div>
+
               {!isLiveActive && !isWaitingForGoLive ? (
                 <div
                   className={`flex flex-col rounded-xl border p-4 transition ${currentStep === 5 ? "border-blue-500/60 bg-[#0c1428] ring-1 ring-blue-500/30" : "border-[#232c42] bg-[#0c1221]"}`}
