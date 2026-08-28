@@ -5638,6 +5638,8 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+        )}
+
         {/* ============================================================ */}
         {/* FULL PAGE BLUR LOADING OVERLAY (AI SERVER INITIALIZATION)     */}
         {/* ============================================================ */}
