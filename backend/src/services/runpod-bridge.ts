@@ -87,6 +87,7 @@ export async function startRunPodBroadcast(
 ): Promise<RunPodBroadcastResult> {
   return workerRequestWithRetry(podId, "/stream/start-broadcast", {
     method: "POST",
+    body: JSON.stringify(params),
     body: JSON.stringify({
       rtmp_url: params.rtmpUrl,
       stream_key: params.streamKey,
