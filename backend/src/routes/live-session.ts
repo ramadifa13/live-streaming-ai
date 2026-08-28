@@ -417,7 +417,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       const managedSession = liveSessionManager.getSession(sessionId);
       if (managedSession?.podId) {
         const queueStatus = await getRunPodQueueStatus(managedSession.podId);
-        status.generationCount = queueStatus.ready_videos_count;
+        // Do not overwrite generationCount here as it tracks total generated videos
         if (queueStatus.ready_videos_count < 2) {
           status.ready = false;
         }

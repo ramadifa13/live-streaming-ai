@@ -639,7 +639,13 @@ export default function Dashboard() {
         );
         if (res.ok) {
           const json = await res.json();
-          setPipelineStatus(json);
+          setPipelineStatus((prev) => {
+            if (!prev) return json;
+            return {
+              ...json,
+              generationCount: Math.max(prev.generationCount, json.generationCount)
+            };
+          });
         }
       } catch (err) {}
     }, 2000);

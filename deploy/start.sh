@@ -120,6 +120,25 @@ if ! kill -0 "$API_PID" 2>/dev/null; then
 	exit 1
 fi
 
+if [ -n "${CHATTERBOX_PID:-}" ]; then
+	echo "Menunggu Chatterbox-TTS (Port 8090) inisialisasi..."
+	for attempt in $(seq 1 120); do
+		if curl -fsS "http://127.0.0.1:8090/health" >/dev/null 2>&1 || curl -fsS "http://127.0.0.1:8090/" >/dev/null 2>&1; then
+			echo "[OK] Chatterbox-TTS aktif dan merespon!"
+			break
+		fi
+		sleep 2
+		if ! kill -0 "$CHATTERBOX_PID" 2>/dev/null; then
+			echo "[WARN] Chatterbox proses mati (non-fatal, live jalan tanpa voice clone)."
+			break
+		fi
+		if [ "$attempt" -eq 120 ]; then
+			echo "[WARN] Chatterbox timeout 240s (non-fatal)."
+			break
+		fi
+	done
+fi
+
 echo "Broadcaster menunggu perintah backend melalui /stream/start-broadcast."
 
 echo "Sistem berhasil dijalankan di background! (api_server PID: $API_PID)"
