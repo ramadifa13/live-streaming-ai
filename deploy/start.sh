@@ -61,10 +61,10 @@ echo "Menyiapkan symlink MuseTalk (./musetalk, ./models)..."
 ln -sfn "$WORKER_DIR/MuseTalk/musetalk" "$WORKER_DIR/musetalk"
 ln -sfn "$WORKER_DIR/MuseTalk/models" "$WORKER_DIR/models"
 
-echo "Memeriksa ketersediaan FFmpeg..."
+echo "Memeriksa ketersediaan FFmpeg dan pustaka sistem..."
 if ! command -v ffmpeg >/dev/null 2>&1; then
-	echo "[ERROR] FFmpeg tidak ditemukan. Worker memerlukan ffmpeg untuk render."
-	exit 1
+	echo "Menginstall FFmpeg dan dependensi grafis sistem..."
+	apt-get update -qq && apt-get install -y -qq ffmpeg libgl1 libglib2.0-0 >/dev/null 2>&1 || true
 fi
 
 # Ollama di RunPod bersifat opsional karena LLM diproses terpusat di Backend
