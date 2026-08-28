@@ -1,5 +1,5 @@
 import prisma from "../lib/prisma.js";
-import { forwardToRunPodGPU } from "./runpod-bridge.js";
+import { forwardToRunPodGPU, getRunPodQueueStatus } from "./runpod-bridge.js";
 import { generateDynamicSalesResponse } from "./groq-brain.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
 import { synthesizeSpeech } from "./tts.js";
@@ -30,13 +30,13 @@ interface PendingVideo {
 interface OrchestratorState {
   config: HostConfig;
   abortController: AbortController; // stop signal untuk semua pipeline loop
-  pipelineReady: boolean;            // true ketika V1+V2 sudah selesai di-generate ke memory
-  generationCount: number;           // total video yang sudah di-generate (pending + queued)
-  videosQueued: number;              // total video yang sudah masuk GPU queue
-  pendingVideos: PendingVideo[];     // video yang sudah di-generate, menunggu go-live-confirm
+  pipelineReady: boolean; // true ketika V1+V2 sudah selesai di-generate ke memory
+  generationCount: number; // total video yang sudah di-generate (pending + queued)
+  videosQueued: number; // total video yang sudah masuk GPU queue
+  pendingVideos: PendingVideo[]; // video yang sudah di-generate, menunggu go-live-confirm
   usedPromptIndices: Set<number>;
-  isLive: boolean;                   // true setelah go-live-confirm dipanggil
-  commentQueue: Promise<void>;       // promise chain khusus reply komentar audiens
+  isLive: boolean; // true setelah go-live-confirm dipanggil
+  commentQueue: Promise<void>; // promise chain khusus reply komentar audiens
 }
 
 class LiveHostOrchestrator {
@@ -137,7 +137,8 @@ class LiveHostOrchestrator {
       }
 
       try {
-        const { text, audioBase64 } = await this.generateAndSynthesize(sessionId);
+        const { text, audioBase64 } =
+          await this.generateAndSynthesize(sessionId);
 
         const s = this.sessions.get(sessionId);
         if (!s || s.abortController.signal.aborted || s.isLive) break;
@@ -201,21 +202,35 @@ class LiveHostOrchestrator {
     void this.runLivePipeline(sessionId);
   }
 
-  /** Live loop: generate + submit ke GPU tanpa delay sampai abort */
+  /** Live loop: generate + submit ke GPU dengan batas antrian MAX_PRE_BUFFER */
   private async runLivePipeline(sessionId: string): Promise<void> {
     while (true) {
       const state = this.sessions.get(sessionId);
       if (!state || state.abortController.signal.aborted) break;
 
       try {
-        const { text, audioBase64 } = await this.generateAndSynthesize(sessionId);
+        // Jangan terus generate jika antrian GPU sudah penuh (misal: MAX_PRE_BUFFER / 5)
+        const queueStatus = await getRunPodQueueStatus(state.config.podId);
+        const currentQueue =
+          (queueStatus.ready_videos_count || 0) +
+          (queueStatus.active_processing_count || 0);
+
+        if (currentQueue >= MAX_PRE_BUFFER) {
+          await new Promise((r) => setTimeout(r, 2000));
+          continue; // Tunggu GPU worker mengosongkan antrian
+        }
+
+        const { text, audioBase64 } =
+          await this.generateAndSynthesize(sessionId);
 
         const s = this.sessions.get(sessionId);
         if (!s || s.abortController.signal.aborted) break;
         if (!text) continue;
 
         await this.submitToGPU(sessionId, text, audioBase64);
-        // ← tidak ada delay — langsung generate video berikutnya
+
+        // Jeda ringan antar iterasi
+        await new Promise((r) => setTimeout(r, 1000));
       } catch (err: any) {
         const s = this.sessions.get(sessionId);
         if (!s || s.abortController.signal.aborted) break;

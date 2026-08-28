@@ -2,7 +2,7 @@ import prisma from "../lib/prisma.js";
 import {
   setLiveSessionActive,
   startPodAndWait,
-  stopPod,
+  releaseGpuForJob,
 } from "./runpod-manager.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
 import { liveHostOrchestrator } from "./live-host-orchestrator.js";
@@ -159,7 +159,7 @@ class LiveSessionManager {
     });
 
     if (session.podId) {
-      stopPod(session.podId).catch((err) =>
+      releaseGpuForJob(session.podId).catch((err) =>
         console.error("Failed to stop GPU Pod:", err),
       );
     }
@@ -466,7 +466,7 @@ class LiveSessionManager {
     livePlatformConnector.stopSession(sessionId);
 
     if (session.podId) {
-      stopPod(session.podId).catch(() => {});
+      releaseGpuForJob(session.podId).catch(() => {});
     }
     this.activeSessions.delete(sessionId);
   }

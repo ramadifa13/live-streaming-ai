@@ -428,15 +428,27 @@ export async function startPodAndWait(
 export async function stopPod(podId: string): Promise<boolean> {
   if (!podId) return true;
 
+  if (process.env.RUNPOD_POD_ID === podId) {
+    console.log(
+      `[RunPodManager] Pod ${podId} is a static pod, skipping termination.`,
+    );
+    return true;
+  }
+
   const mutation = `
     mutation podTerminate($input: PodTerminateInput!) {
       podTerminate(input: $input)
     }
   `;
 
-  const data = await runpodGraphQL(mutation, { input: { podId } });
-  console.log(`[RunPodManager] Terminating Pod ${podId}...`);
-  return !!data;
+  try {
+    const data = await runpodGraphQL(mutation, { input: { podId } });
+    console.log(`[RunPodManager] Terminating Pod ${podId}...`);
+    return !!data;
+  } catch (err: any) {
+    console.error(`[RunPodManager] Error terminating Pod ${podId}:`, err);
+    return false;
+  }
 }
 
 export async function getGpuControlStatus(podId: string | null) {

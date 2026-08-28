@@ -1,3 +1,6 @@
+/* eslint-disable react-hooks/immutability */
+/* eslint-disable react-hooks/set-state-in-effect */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
@@ -122,7 +125,7 @@ export default function Dashboard() {
     } catch (err) {
       console.error("Failed to load products from local storage:", err);
       setProducts([]);
-      setActiveFeaturedProduct({} as any);
+      setActiveFeaturedProduct({} as Product);
     }
   }, []);
 
@@ -158,7 +161,11 @@ export default function Dashboard() {
   const [customRtmpUrl, setCustomRtmpUrl] = useState("");
   const [streamKey, setStreamKey] = useState("live_sec_892348a7b9c1e2f");
   const [showTutorialModal, setShowTutorialModal] = useState(false);
+  const [isLiveActive, setIsLiveActive] = useState(false);
+  const [isLivePaused, setIsLivePaused] = useState(false);
   const [isConnectingLive, setIsConnectingLive] = useState(false);
+  const [hasConfirmedBroadcast, setHasConfirmedBroadcast] = useState(false);
+  const [isWaitingForGoLive, setIsWaitingForGoLive] = useState(false);
   const [connectingStageIndex, setConnectingStageIndex] = useState(0);
   const [connectingStageText, setConnectingStageText] = useState(
     "Mengalokasikan Cloud GPU RTX 4090...",
@@ -197,6 +204,11 @@ export default function Dashboard() {
         text: "Menghubungkan Stream RTMP & Handshake Siaran...",
         index: 3,
       },
+      {
+        delay: 42000,
+        text: "Generate AI Host...",
+        index: 4,
+      },
     ];
     const timers = stages.slice(1).map((stage) =>
       setTimeout(() => {
@@ -206,16 +218,15 @@ export default function Dashboard() {
     );
     return () => timers.forEach(clearTimeout);
   }, [isConnectingLive]);
-  const [isLiveActive, setIsLiveActive] = useState(false);
-  const [isWaitingForGoLive, setIsWaitingForGoLive] = useState(false);
-  const [currentLiveSessionId, setCurrentLiveSessionId] = useState<string | null>(null);
+  const [currentLiveSessionId, setCurrentLiveSessionId] = useState<
+    string | null
+  >(null);
   const [pipelineStatus, setPipelineStatus] = useState<{
     ready: boolean;
     generationCount: number;
     videosQueued: number;
     pendingCount: number;
   } | null>(null);
-  const [isLivePaused, setIsLivePaused] = useState(false);
   const [liveSessionPhase, setLiveSessionPhase] = useState<
     "idle" | "pending" | "live" | "ended"
   >("idle");
@@ -453,6 +464,7 @@ export default function Dashboard() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                  sessionId: currentLiveSessionId,
                   durationSeconds: maxAllowedSeconds,
                   viewers: metrics.viewers,
                   comments: metrics.comments,
@@ -466,7 +478,11 @@ export default function Dashboard() {
                 });
             } catch {}
             try {
-              fetch("/api/live-stream/stop-broadcast", { method: "POST" });
+              fetch("/api/live-stream/stop-broadcast", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({}),
+              });
             } catch {}
 
             return maxAllowedSeconds;
@@ -613,11 +629,14 @@ export default function Dashboard() {
 
   // Poll Pipeline Status when waiting for Go Live
   useEffect(() => {
-    if (!isWaitingForGoLive || !currentLiveSessionId) return;
+    if ((!isWaitingForGoLive && !isConnectingLive) || !currentLiveSessionId)
+      return;
 
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/live-stream/pipeline-status?sessionId=${currentLiveSessionId}`);
+        const res = await fetch(
+          `/api/live-stream/pipeline-status?sessionId=${currentLiveSessionId}`,
+        );
         if (res.ok) {
           const json = await res.json();
           setPipelineStatus(json);
@@ -626,7 +645,7 @@ export default function Dashboard() {
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [isWaitingForGoLive, currentLiveSessionId]);
+  }, [isWaitingForGoLive, isConnectingLive, currentLiveSessionId]);
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -766,11 +785,11 @@ export default function Dashboard() {
       } else {
         throw new Error(json.error || "AI service offline");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Failed to load live sales script:", err);
       setLiveSalesScriptData(null);
       showToast(
-        `❌ ${err?.message || "AI Host tidak dapat dijangkau. Pastikan Ollama atau LLM aktif."}`,
+        `❌ ${(err as Error)?.message || "AI Host tidak dapat dijangkau. Pastikan Ollama atau LLM aktif."}`,
       );
     } finally {
       setIsLoadingLiveScript(false);
@@ -915,11 +934,8 @@ export default function Dashboard() {
     }
     setShowEditProductModal(false);
     showToast("✅ RAG Knowledge Base produk berhasil diperbarui!");
-
-    // Persist to backend database logic removed
   };
 
-  // Handle Delete Product (Deletes directly from Database)
   const handleDeleteProduct = async (id?: string) => {
     if (!id) return;
     if (
@@ -982,20 +998,19 @@ export default function Dashboard() {
       return;
     }
 
-    const imported = rawItems.map((p: any) => ({
+    const imported = rawItems.map((p: CsvRawItem) => ({
       id: `prod_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-      name: p.name,
-      price: `Rp${p.price.toLocaleString("id-ID")}`,
+      name: p.name || "",
+      price: typeof p.price === "number" ? `Rp${p.price.toLocaleString("id-ID")}` : `Rp${p.price || 0}`,
       stock: Number(p.stock) || 0,
       tag: p.category || "General",
-      image: p.image,
-      link: p.link,
+      image: p.image || "",
+      link: p.link || "",
       description: p.description,
       benefits: p.benefits,
       usage: p.usage,
       faq: p.faq,
-      targetAudience: p.targetAudience,
-    }));
+    } as Product));
     setProducts((prev) => [...imported, ...prev]);
     if (imported.length > 0) setActiveFeaturedProduct(imported[0] as any);
     setShowCsvModal(false);
@@ -3052,6 +3067,7 @@ export default function Dashboard() {
                       disabled={isConnectingLive}
                       onClick={async () => {
                         setIsConnectingLive(true);
+                        setHasConfirmedBroadcast(false);
                         showToast(
                           `⏳ Menghubungkan ke server ${selectedPlatform}... Memverifikasi RTMP Ingest Handshake...`,
                         );
@@ -3141,19 +3157,25 @@ export default function Dashboard() {
                           const bcastJson = await bcastRes.json();
 
                           if (bcastRes.ok && bcastJson.success) {
-                            setIsConnectingLive(false);
                             if (bcastJson.waitingForGoLive) {
-                              // Tahap 1 selesai: Idle loop jalan, tunggu konfirmasi di dashboard
+                              // We DO NOT close the loading modal (isConnectingLive stays true)
+                              // Set this to true to trigger polling and keep internal state correct
                               setIsWaitingForGoLive(true);
                               setCurrentLiveSessionId(sessionJson.data?.id);
-                              showToast(bcastJson.message || "RTMP terhubung! Menunggu konfirmasi Go Live...");
+                              showToast(
+                                bcastJson.message ||
+                                  "RTMP terhubung! Sedang mengenerate Video AI...",
+                              );
                             } else {
                               // Legacy flow
+                              setIsConnectingLive(false);
                               setIsLiveActive(true);
                               setIsLivePaused(false);
                               setLiveSessionPhase("pending");
                               setLiveSeconds(0);
-                              showToast(`📡 RTMP terhubung! Menunggu ${selectedPlatform} memulai live...`);
+                              showToast(
+                                `📡 RTMP terhubung! Menunggu ${selectedPlatform} memulai live...`,
+                              );
                             }
                           } else {
                             await fetch("/api/live-session/stop", {
@@ -3222,21 +3244,49 @@ export default function Dashboard() {
                       Menunggu Siaran
                     </p>
                   </div>
-                  <h3 className="text-sm font-bold text-white mb-2">Tindakan Diperlukan:</h3>
+                  <h3 className="text-sm font-bold text-white mb-2">
+                    Tindakan Diperlukan:
+                  </h3>
                   <ol className="list-decimal pl-4 text-xs text-slate-300 space-y-2 mb-6">
-                    <li>Buka aplikasi <strong>{selectedPlatform}</strong> di HP/Web Anda.</li>
-                    <li>Pastikan preview kamera menampilkan video idle Avatar.</li>
-                    <li>Klik tombol <strong>"Siarkan Langsung" / "Go Live"</strong> di dalam aplikasi tersebut.</li>
-                    <li>Setelah siaran berjalan, tekan tombol konfirmasi di bawah ini.</li>
+                    <li>
+                      Buka aplikasi <strong>{selectedPlatform}</strong> di
+                      HP/Web Anda.
+                    </li>
+                    <li>
+                      Pastikan preview kamera menampilkan video idle Avatar.
+                    </li>
+                    <li>
+                      Klik tombol{" "}
+                      <strong>"Siarkan Langsung" / "Go Live"</strong> di dalam
+                      aplikasi tersebut.
+                    </li>
+                    <li>
+                      Setelah siaran berjalan, tekan tombol konfirmasi di bawah
+                      ini.
+                    </li>
                   </ol>
 
                   {pipelineStatus && (
                     <div className="mb-6 rounded bg-black/40 p-3 border border-white/5">
-                      <p className="text-[10px] text-slate-400 font-semibold mb-2 uppercase">Status Persiapan AI Backend</p>
+                      <p className="text-[10px] text-slate-400 font-semibold mb-2 uppercase">
+                        Status Persiapan AI Backend
+                      </p>
                       <div className="flex items-center gap-3">
                         {pipelineStatus.ready ? (
                           <span className="text-emerald-400 text-xs flex items-center gap-1">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                            <svg
+                              className="w-4 h-4"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M5 13l4 4L19 7"
+                              />
+                            </svg>
                             Video Pembuka Siap
                           </span>
                         ) : (
@@ -3258,11 +3308,16 @@ export default function Dashboard() {
                       if (!currentLiveSessionId) return;
                       setIsConnectingLive(true);
                       try {
-                        const res = await fetch("/api/live-stream/go-live-confirm", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ sessionId: currentLiveSessionId }),
-                        });
+                        const res = await fetch(
+                          "/api/live-stream/go-live-confirm",
+                          {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              sessionId: currentLiveSessionId,
+                            }),
+                          },
+                        );
                         const json = await res.json();
                         if (res.ok && json.success) {
                           setIsWaitingForGoLive(false);
@@ -3280,14 +3335,18 @@ export default function Dashboard() {
                         setIsConnectingLive(false);
                       }
                     }}
-                    disabled={isConnectingLive || (pipelineStatus && !pipelineStatus.ready)}
+                    disabled={isConnectingLive || !pipelineStatus?.ready}
                     className={`w-full py-3 rounded-lg text-sm font-bold text-white transition ${
-                      isConnectingLive || (pipelineStatus && !pipelineStatus.ready)
+                      isConnectingLive || !pipelineStatus?.ready
                         ? "bg-slate-700 cursor-not-allowed opacity-80"
                         : "bg-green-600 hover:bg-green-500 active:scale-95 shadow-[0_0_15px_rgba(34,197,94,0.4)]"
                     }`}
                   >
-                    {isConnectingLive ? "Menyambungkan..." : (pipelineStatus && !pipelineStatus.ready ? "Tunggu AI Siap..." : "✅ Konfirmasi Siaran Dimulai")}
+                    {isConnectingLive
+                      ? "Menyambungkan..."
+                      : pipelineStatus && !pipelineStatus.ready
+                        ? "Tunggu AI Siap..."
+                        : "✅ Konfirmasi Siaran Dimulai"}
                   </button>
                   <button
                     type="button"
@@ -3295,7 +3354,9 @@ export default function Dashboard() {
                       await fetch("/api/live-stream/stop-broadcast", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ sessionId: currentLiveSessionId }),
+                        body: JSON.stringify({
+                          sessionId: currentLiveSessionId,
+                        }),
                       }).catch(() => {});
                       setIsWaitingForGoLive(false);
                       setCurrentLiveSessionId(null);
@@ -5477,6 +5538,10 @@ export default function Dashboard() {
                     try {
                       await fetch("/api/live-stream/stop-broadcast", {
                         method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          sessionId: currentLiveSessionId,
+                        }),
                       });
                     } catch {}
 
@@ -5485,6 +5550,7 @@ export default function Dashboard() {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
+                          sessionId: currentLiveSessionId,
                           durationSeconds: liveSeconds,
                           viewers: metrics.viewers,
                           comments: metrics.comments,
@@ -5871,15 +5937,119 @@ export default function Dashboard() {
                   className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 3 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
                 >
                   <span
-                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex >= 3 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex > 3 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 3 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
                   >
-                    4
+                    {connectingStageIndex > 3 ? "✓" : "4"}
                   </span>
                   <span className="truncate">
                     Koneksi Stream RTMP & Handshake Siaran
                   </span>
                 </div>
+                <div
+                  className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 4 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                >
+                  <span
+                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${pipelineStatus?.ready ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex >= 4 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                  >
+                    {pipelineStatus?.ready ? "✓" : "5"}
+                  </span>
+                  <span className="truncate">
+                    Generate AI Host (Video{" "}
+                    {Math.min(pipelineStatus?.generationCount || 0, 2)}/2
+                    Selesai)
+                  </span>
+                </div>
               </div>
+
+              {/* Note for RTMP & GO Button */}
+              {isWaitingForGoLive && (
+                <div className="mb-6 p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-left animate-in fade-in slide-in-from-bottom-2">
+                  <p className="text-yellow-400 font-bold text-xs mb-1">
+                    ⚠️ Konfirmasi Siaran
+                  </p>
+                  <p className="text-slate-300 text-xs mb-3">
+                    Video AI telah siap. Jika menggunakan RTMP (seperti
+                    Instagram),{" "}
+                    <strong>
+                      mulai siaran di platform tersebut terlebih dahulu
+                    </strong>
+                    . Jika sudah, klik tombol <strong>GO</strong> di bawah ini
+                    agar AI Live Control muncul. AI akan terus men-generate
+                    video di background hingga durasi selesai (Max Queue 5).
+                  </p>
+
+                  <div className="mb-4 text-left p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-sm">
+                    <p className="font-semibold text-white mb-1">
+                      ⚠️ Wajib Lakukan Sebelum Klik GO:
+                    </p>
+                    <ol className="list-decimal pl-4 space-y-1 text-slate-300">
+                      <li>
+                        Pastikan Anda sudah menyalin <strong>Stream Key</strong>{" "}
+                        ke platform.
+                      </li>
+                      <li>
+                        Tekan tombol <strong>Mulai Siaran / Go Live</strong> di
+                        aplikasi {selectedPlatform} Anda.
+                      </li>
+                    </ol>
+                    <label className="mt-3 flex items-start gap-2 cursor-pointer p-2 hover:bg-white/5 rounded-md transition">
+                      <input
+                        type="checkbox"
+                        checked={hasConfirmedBroadcast}
+                        onChange={(e) =>
+                          setHasConfirmedBroadcast(e.target.checked)
+                        }
+                        className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-emerald-500 focus:ring-emerald-500"
+                      />
+                      <span className="text-white text-sm">
+                        Saya sudah memulai siaran di {selectedPlatform} dan
+                        stream siap tayang
+                      </span>
+                    </label>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={!pipelineStatus?.ready || !hasConfirmedBroadcast}
+                    onClick={async () => {
+                      if (!currentLiveSessionId) return;
+                      try {
+                        const res = await fetch(
+                          "/api/live-stream/go-live-confirm",
+                          {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              sessionId: currentLiveSessionId,
+                            }),
+                          },
+                        );
+                        const json = await res.json();
+                        if (res.ok && json.success) {
+                          setIsConnectingLive(false);
+                          setIsWaitingForGoLive(false);
+                          setIsLiveActive(true);
+                          setIsLivePaused(false);
+                          setLiveSessionPhase("live");
+                          setLiveSeconds(0);
+                          showToast("🔥 AI Host aktif! Siaran live dimulai.");
+                        } else {
+                          showToast(`❌ Gagal konfirmasi: ${json.error}`);
+                        }
+                      } catch {
+                        showToast("❌ Error koneksi saat konfirmasi.");
+                      }
+                    }}
+                    className="w-full flex items-center justify-center py-2.5 rounded-lg font-bold text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 hover:shadow-emerald-500/25"
+                  >
+                    {!pipelineStatus?.ready
+                      ? "Menunggu Video AI Siap..."
+                      : !hasConfirmedBroadcast
+                        ? "Centang konfirmasi di atas"
+                        : "GO! Mulai Live Control"}
+                  </button>
+                </div>
+              )}
 
               {/* Cancel Button */}
               <button

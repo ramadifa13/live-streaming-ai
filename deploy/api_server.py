@@ -236,6 +236,18 @@ class BroadcastRequest(BaseModel):
     streamKey: Optional[str] = None
     idle_video: str = "/workspace/ai_live_worker/assets/3d/namira.mp4"
 
+class PlaybackRequest(BaseModel):
+    action: str
+
+@app.post("/stream/start-playback")
+async def start_playback(req: PlaybackRequest):
+    flag_path = os.path.join(output_dir, "playback_active.flag")
+    if req.action == "start_playback":
+        with open(flag_path, "w") as f:
+            f.write("1")
+        return {"success": True, "message": "Playback flag created, queue will be played."}
+    return {"success": False, "message": "Unknown action"}
+
 @app.post("/stream/start-broadcast")
 async def start_broadcast(req: BroadcastRequest):
     global broadcaster_process
@@ -274,6 +286,15 @@ async def stop_broadcast():
         except subprocess.TimeoutExpired:
             broadcaster_process.kill()
     broadcaster_process = None
+    
+    # Reset playback flag
+    flag_path = os.path.join(output_dir, "playback_active.flag")
+    if os.path.exists(flag_path):
+        try:
+            os.remove(flag_path)
+        except Exception:
+            pass
+
     return {"success": True, "status": "stopped"}
 
 @app.get("/stream/broadcast-status")
