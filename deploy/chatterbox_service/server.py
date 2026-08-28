@@ -15,6 +15,7 @@ Voice cloning reference lookup order (first match wins):
 import io
 import os
 import time
+import contextlib
 
 import torch
 import torchaudio as ta
@@ -29,6 +30,36 @@ VOICE_REF_DIR = os.environ.get(
     "VOICE_REF_DIR", os.path.join(os.path.dirname(__file__), "..", "assets", "voice_refs")
 )
 DEVICE = os.environ.get("CHATTERBOX_DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
+
+@contextlib.contextmanager
+def gpu_lock(lock_path="/tmp/gpu_inference.lock"):
+    """File-based inter-process lock to prevent concurrent GPU execution between MuseTalk and Chatterbox."""
+    lock_file = None
+    try:
+        try:
+            import fcntl
+            lock_file = open(lock_path, "w")
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        except (ImportError, AttributeError, OSError):
+            pass
+        yield
+    finally:
+        if lock_file:
+            try:
+                import fcntl
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                lock_file.close()
+            except Exception:
+                pass
+
+# VRAM Isolation: Batasi Chatterbox 25% VRAM agar tidak bentrok dengan MuseTalk
+if torch.cuda.is_available() and DEVICE == "cuda":
+    try:
+        vram_fraction = float(os.environ.get("CHATTERBOX_VRAM_FRACTION", "0.25"))
+        torch.cuda.set_per_process_memory_fraction(vram_fraction, device=0)
+        print(f"[Chatterbox] CUDA VRAM fraction set to {vram_fraction*100:.0f}%")
+    except Exception as vram_err:
+        print(f"[Chatterbox WARNING] Could not set per-process VRAM fraction: {vram_err}")
 
 # Tone -> (exaggeration, cfg_weight). Chatterbox has no explicit "style" input,
 # but these two knobs meaningfully change delivery energy/pacing per Resemble's
@@ -50,21 +81,22 @@ _model = None
 def get_model():
     global _model
     if _model is None:
-        from chatterbox.tts import ChatterboxTTS
+        with gpu_lock():
+            from chatterbox.tts import ChatterboxTTS
 
-        print(f"[Chatterbox] Loading base model on {DEVICE}...")
-        model = ChatterboxTTS.from_pretrained(device=DEVICE)
+            print(f"[Chatterbox] Loading base model on {DEVICE}...")
+            model = ChatterboxTTS.from_pretrained(device=DEVICE)
 
-        print(f"[Chatterbox] Downloading Indonesian finetune checkpoint ({MODEL_REPO})...")
-        checkpoint_path = hf_hub_download(repo_id=MODEL_REPO, filename=CHECKPOINT_FILENAME)
-        t3_state = load_file(checkpoint_path, device="cpu")
-        model.t3.load_state_dict(t3_state)
+            print(f"[Chatterbox] Downloading Indonesian finetune checkpoint ({MODEL_REPO})...")
+            checkpoint_path = hf_hub_download(repo_id=MODEL_REPO, filename=CHECKPOINT_FILENAME)
+            t3_state = load_file(checkpoint_path, device="cpu")
+            model.t3.load_state_dict(t3_state)
 
-        if DEVICE == "cuda":
-            torch.cuda.empty_cache()
+            if DEVICE == "cuda":
+                torch.cuda.empty_cache()
 
-        _model = model
-        print("[Chatterbox] Model ready.")
+            _model = model
+            print("[Chatterbox] Model ready.")
     return _model
 
 
@@ -107,12 +139,22 @@ async def synthesize(req: SynthesizeRequest):
     voice_ref = resolve_voice_ref(req.avatar, req.tone)
     preset = TONE_PRESETS.get(req.tone, DEFAULT_TONE_PRESET)
 
-    wav = model.generate(
-        req.text,
-        audio_prompt_path=voice_ref,
-        exaggeration=preset["exaggeration"],
-        cfg_weight=preset["cfg_weight"],
-    )
+    try:
+        with gpu_lock():
+            wav = model.generate(
+                req.text,
+                audio_prompt_path=voice_ref,
+                exaggeration=preset["exaggeration"],
+                cfg_weight=preset["cfg_weight"],
+            )
+    except torch.cuda.OutOfMemoryError as oom:
+        print(f"[Chatterbox OOM] Out of GPU memory: {oom}")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        raise HTTPException(status_code=500, detail="Chatterbox GPU OOM")
+    finally:
+        if DEVICE == "cuda":
+            torch.cuda.empty_cache()
 
     buffer = io.BytesIO()
     ta.save(buffer, wav, model.sr, format="wav")

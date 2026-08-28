@@ -191,19 +191,29 @@ async function synthesizeWithEdgeTTS(
   voiceId: string,
   rateStr: string,
 ): Promise<Buffer> {
-  // Gunakan 1 single WebSocket connection untuk seluruh teks (menghindari koneksi konkuren yang di-drop server Edge)
-  try {
-    return await synthesizeSentence(text, voiceId, rateStr);
-  } catch (singleErr) {
-    const sentences = splitIntoSentences(text);
-    if (sentences.length <= 1) throw singleErr;
-    // Jika teks panjang gagal, sintesis secara sekuensial (bukan Promise.all bersamaan)
-    const parts: Buffer[] = [];
-    for (const sentence of sentences) {
-      parts.push(await synthesizeSentence(sentence, voiceId, rateStr));
-    }
-    return Buffer.concat(parts);
-  }
+  // Strict 3.5s timeout per Edge TTS synthesis to avoid blocking pipeline buffer
+  return await Promise.race([
+    (async () => {
+      try {
+        return await synthesizeSentence(text, voiceId, rateStr);
+      } catch (singleErr) {
+        const sentences = splitIntoSentences(text);
+        if (sentences.length <= 1) throw singleErr;
+        // Jika teks panjang gagal, sintesis secara sekuensial
+        const parts: Buffer[] = [];
+        for (const sentence of sentences) {
+          parts.push(await synthesizeSentence(sentence, voiceId, rateStr));
+        }
+        return Buffer.concat(parts);
+      }
+    })(),
+    new Promise<Buffer>((_, reject) =>
+      setTimeout(
+        () => reject(new Error("Edge-TTS timed out (3.5s limit)")),
+        3500,
+      ),
+    ),
+  ]);
 }
 
 /**
@@ -218,13 +228,14 @@ async function synthesizeWithChatterbox(
 ): Promise<Buffer> {
   // Build URL port 8090 dari podId atau env
   const workerBase = getWorkerUrl(podId);
-  // Ganti port 8000 → 8090 untuk Chatterbox microservice
+  // Ganti port 8000 -> 8090 untuk Chatterbox microservice
   const chatterboxUrl = workerBase
     .replace(/:8000(\/|$)/, ":8090$1")
     .replace(/(-8000)(\.proxy\.runpod)/, "-8090$2");
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 25_000);
+  // Pangkas timeout ke 6 detik untuk mencegah buffer starving di siaran live
+  const timeoutId = setTimeout(() => controller.abort(), 6_000);
 
   try {
     const res = await fetch(`${chatterboxUrl}/synthesize`, {

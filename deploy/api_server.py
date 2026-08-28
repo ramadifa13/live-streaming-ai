@@ -42,6 +42,47 @@ def prune_old_jobs():
                 jobs.pop(key, None)
 
 broadcaster_process: Optional[subprocess.Popen] = None
+current_broadcast_env: Optional[Dict[str, str]] = None
+watchdog_task: Optional[asyncio.Task] = None
+
+async def periodic_cleanup_and_watchdog():
+    """Background supervisor: auto-restarts crashed broadcaster and cleans up temp files."""
+    global broadcaster_process, current_broadcast_env
+    while True:
+        try:
+            await asyncio.sleep(5)
+            # 1. Watchdog for broadcaster
+            if current_broadcast_env and broadcaster_process is not None:
+                ret = broadcaster_process.poll()
+                if ret is not None:
+                    print(f"[WATCHDOG ALERT] Broadcaster crash terdeteksi (exit code: {ret}). Me-restart broadcaster otomatis...")
+                    log_path = os.path.join(output_dir, "broadcaster.log")
+                    try:
+                        broadcaster_process = subprocess.Popen(
+                            ["python", os.path.join(os.path.dirname(__file__), "broadcaster.py")],
+                            cwd=os.path.dirname(__file__),
+                            env=current_broadcast_env,
+                            stdout=open(log_path, "a"),
+                            stderr=subprocess.STDOUT,
+                        )
+                        print(f"[WATCHDOG SUCCESS] Broadcaster berhasil di-restart (PID: {broadcaster_process.pid})")
+                    except Exception as restart_err:
+                        print(f"[WATCHDOG ERROR] Gagal me-restart broadcaster: {restart_err}")
+
+            # 2. Cleanup orphaned temp files older than 30 minutes
+            now = time.time()
+            if os.path.exists(worker.temp_dir):
+                for fname in os.listdir(worker.temp_dir):
+                    fpath = os.path.join(worker.temp_dir, fname)
+                    try:
+                        if os.path.isfile(fpath) and (now - os.path.getmtime(fpath) > 1800):
+                            os.remove(fpath)
+                    except Exception:
+                        pass
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[WATCHDOG NOTICE] Background supervisor error: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -49,10 +90,16 @@ async def lifespan(app: FastAPI):
     print("[AI-Worker] FastAPI Server starting up. Initializing directories...")
     os.makedirs(worker.output_dir, exist_ok=True)
     os.makedirs(worker.temp_dir, exist_ok=True)
+    
+    global watchdog_task
+    watchdog_task = asyncio.create_task(periodic_cleanup_and_watchdog())
     yield
     # Shutdown
-    global broadcaster_process
+    global broadcaster_process, current_broadcast_env
     print("[AI-Worker] FastAPI Server shutting down. Cleaning up processes...")
+    if watchdog_task:
+        watchdog_task.cancel()
+    current_broadcast_env = None
     if broadcaster_process and broadcaster_process.poll() is None:
         broadcaster_process.terminate()
         try:
@@ -184,8 +231,8 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
             "created_at": time.time(),
         }
     finally:
-        # Bersihkan audio temp file hanya jika sudah tidak digunakan
-        if audio_path and os.path.exists(audio_path) and task_id in jobs and jobs[task_id].get("status") == "done":
+        # Bersihkan audio temp file yang dibuat oleh API server
+        if audio_path and os.path.exists(audio_path) and audio_path.startswith(worker.temp_dir):
             try:
                 os.remove(audio_path)
             except Exception:
@@ -262,7 +309,7 @@ async def start_playback(req: PlaybackRequest):
 
 @app.post("/stream/start-broadcast")
 async def start_broadcast(req: BroadcastRequest):
-    global broadcaster_process, total_videos_rendered
+    global broadcaster_process, total_videos_rendered, current_broadcast_env
     final_rtmp_url = req.rtmp_url or req.rtmpUrl or ""
     final_stream_key = req.stream_key or req.streamKey or ""
     if not final_rtmp_url or not final_stream_key:
@@ -290,11 +337,13 @@ async def start_broadcast(req: BroadcastRequest):
         except Exception:
             pass
     import glob
+    idle_abs = os.path.abspath(req.idle_video) if req.idle_video else ""
     for f in glob.glob(os.path.join(output_dir, "**", "*.mp4"), recursive=True):
-        try:
-            os.remove(f)
-        except Exception:
-            pass
+        if os.path.abspath(f) != idle_abs:
+            try:
+                os.remove(f)
+            except Exception:
+                pass
 
     env = os.environ.copy()
     env["RTMP_URL"] = final_rtmp_url
@@ -302,6 +351,7 @@ async def start_broadcast(req: BroadcastRequest):
     env["IDLE_VIDEO"] = req.idle_video
     env["OUTPUT_FOLDER"] = output_dir
     env["WORKER_REQUIRE_AUDIO"] = "1"
+    current_broadcast_env = env
 
     log_path = os.path.join(output_dir, "broadcaster.log")
     broadcaster_process = subprocess.Popen(
@@ -315,7 +365,8 @@ async def start_broadcast(req: BroadcastRequest):
 
 @app.post("/stream/stop-broadcast")
 async def stop_broadcast():
-    global broadcaster_process, total_videos_rendered
+    global broadcaster_process, total_videos_rendered, current_broadcast_env
+    current_broadcast_env = None
     if broadcaster_process and broadcaster_process.poll() is None:
         broadcaster_process.terminate()
         try:
@@ -335,13 +386,14 @@ async def stop_broadcast():
         except Exception:
             pass
 
-    # Bersihkan file video sisa dari sesi sebelumnya
+    # Bersihkan file video sisa dari sesi sebelumnya (kecuali idle video default)
     import glob
     for f in glob.glob(os.path.join(output_dir, "**", "*.mp4"), recursive=True):
-        try:
-            os.remove(f)
-        except Exception:
-            pass
+        if not f.endswith("idle.mp4") and not f.endswith("namira.mp4"):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
 
     return {"success": True, "status": "stopped"}
 

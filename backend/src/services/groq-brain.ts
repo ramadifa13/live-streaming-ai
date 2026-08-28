@@ -238,16 +238,34 @@ export async function getAvailableChatModels(): Promise<string[]> {
   return chatModels;
 }
 
+const FALLBACK_CHAT_MODELS = [
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  "mixtral-8x7b-32768",
+  "llama3-70b-8192",
+  "gemma2-9b-it",
+];
+
 export async function getRandomCandidateModels(): Promise<string[]> {
-  const available = await getAvailableChatModels();
-  const shuffled = [...available];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const temp = shuffled[i]!;
-    shuffled[i] = shuffled[j]!;
-    shuffled[j] = temp;
+  try {
+    const available = await getAvailableChatModels();
+    if (available && available.length > 0) {
+      const shuffled = [...available];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const temp = shuffled[i]!;
+        shuffled[i] = shuffled[j]!;
+        shuffled[j] = temp;
+      }
+      return shuffled;
+    }
+  } catch (err) {
+    console.warn(
+      "[Groq-Brain] Dynamic model fetch failed, using resilient static fallback model list:",
+      err,
+    );
   }
-  return shuffled;
+  return [...FALLBACK_CHAT_MODELS];
 }
 
 // ==============================================================================

@@ -37,15 +37,21 @@ export default function RealtimeLivePortraitView({
 
   // When videoUrl changes, safely play the video
   useEffect(() => {
-    if (videoRef.current && videoUrl) {
-      videoRef.current.muted = !soundOn;
-      videoRef.current.playsInline = true;
-      const playPromise = videoRef.current.play();
+    const video = videoRef.current;
+    if (video) {
+      video.muted = videoUrl ? !soundOn : true;
+      video.playsInline = true;
+      const targetSrc = videoUrl || resolvedFillerSrc;
+      if (video.src !== targetSrc && !video.src.endsWith(targetSrc)) {
+        video.src = targetSrc;
+        video.load();
+      }
+      const playPromise = video.play();
       if (playPromise !== undefined) {
         playPromise.catch(() => {});
       }
     }
-  }, [videoUrl, soundOn]);
+  }, [videoUrl, soundOn, resolvedFillerSrc]);
 
   const isGpuLive = mode === "live" && isLiveActive && !!videoUrl;
 
@@ -53,31 +59,18 @@ export default function RealtimeLivePortraitView({
     <div
       className={`relative w-full h-full overflow-hidden bg-[#07050f] select-none ${className}`}
     >
-      {/* ── Visual Output (Video Lipsync or Continuous Idle Video) ── */}
-      {videoUrl ? (
-        <video
-          key={videoUrl} // Force remount when URL changes (new lip-sync video)
-          ref={videoRef}
-          src={videoUrl}
-          autoPlay
-          playsInline
-          muted={!soundOn}
-          onEnded={onVideoEnded}
-          className="w-full h-full object-cover"
-        />
-      ) : (
-        // CONTINUOUS IDLE & FILLER VIDEO: Selalu memutar video avatar dinamis secara mulus
-        <video
-          key={`idle-${avatarName}`}
-          src={resolvedFillerSrc}
-          autoPlay
-          loop
-          playsInline
-          muted
-          poster={resolvedImageSrc}
-          className="w-full h-full object-cover"
-        />
-      )}
+      {/* ── Visual Output (Smooth Dynamic Video Player) ── */}
+      <video
+        ref={videoRef}
+        src={videoUrl || resolvedFillerSrc}
+        autoPlay
+        loop={!videoUrl}
+        playsInline
+        muted={videoUrl ? !soundOn : true}
+        poster={resolvedImageSrc}
+        onEnded={onVideoEnded}
+        className="w-full h-full object-cover transition-opacity duration-300"
+      />
 
       {/* ── VIGNETTE OVERLAY (premium depth) ── */}
       <div className="absolute inset-0 bg-gradient-to-t from-[#07050f]/70 via-transparent to-black/30 pointer-events-none" />

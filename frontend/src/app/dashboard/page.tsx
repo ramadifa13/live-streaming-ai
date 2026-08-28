@@ -349,6 +349,18 @@ export default function Dashboard() {
 
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
+  useEffect(() => {
+    return () => {
+      if (videoPollingRef.current) {
+        clearInterval(videoPollingRef.current);
+      }
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current = null;
+      }
+    };
+  }, []);
+
   const speakText = async (
     text: string,
     opts?: { voice?: string; lang?: string; tone?: string; avatar?: string },
@@ -998,19 +1010,25 @@ export default function Dashboard() {
       return;
     }
 
-    const imported = rawItems.map((p: CsvRawItem) => ({
-      id: `prod_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-      name: p.name || "",
-      price: typeof p.price === "number" ? `Rp${p.price.toLocaleString("id-ID")}` : `Rp${p.price || 0}`,
-      stock: Number(p.stock) || 0,
-      tag: p.category || "General",
-      image: p.image || "",
-      link: p.link || "",
-      description: p.description,
-      benefits: p.benefits,
-      usage: p.usage,
-      faq: p.faq,
-    } as Product));
+    const imported = rawItems.map(
+      (p: CsvRawItem) =>
+        ({
+          id: `prod_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+          name: p.name || "",
+          price:
+            typeof p.price === "number"
+              ? `Rp${p.price.toLocaleString("id-ID")}`
+              : `Rp${p.price || 0}`,
+          stock: Number(p.stock) || 0,
+          tag: p.category || "General",
+          image: p.image || "",
+          link: p.link || "",
+          description: p.description,
+          benefits: p.benefits,
+          usage: p.usage,
+          faq: p.faq,
+        }) as Product,
+    );
     setProducts((prev) => [...imported, ...prev]);
     if (imported.length > 0) setActiveFeaturedProduct(imported[0] as any);
     setShowCsvModal(false);

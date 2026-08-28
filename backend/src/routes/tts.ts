@@ -29,13 +29,20 @@ export async function ttsRoutes(server: FastifyInstance) {
     }
 
     const result = await synthesizeSpeech(parsed.data);
-    
+
     if (result.audioBuffer) {
-      reply.header('Content-Type', 'audio/wav');
-      reply.header('X-Voice-Duration-Est', result.durationEstimateSeconds.toString());
+      const isWav =
+        result.audioBuffer.length >= 4 &&
+        result.audioBuffer.toString("ascii", 0, 4) === "RIFF";
+      const contentType = isWav ? "audio/wav" : "audio/mpeg";
+      reply.header("Content-Type", contentType);
+      reply.header(
+        "X-Voice-Duration-Est",
+        result.durationEstimateSeconds.toString(),
+      );
       return reply.send(result.audioBuffer);
     }
-    
+
     return {
       success: true,
       data: result,

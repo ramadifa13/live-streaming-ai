@@ -5,12 +5,35 @@ import asyncio
 import torch
 import threading
 import sys
+import contextlib
 from argparse import Namespace
+
+@contextlib.contextmanager
+def gpu_lock(lock_path="/tmp/gpu_inference.lock"):
+    """File-based inter-process lock to prevent concurrent GPU execution between MuseTalk and Chatterbox."""
+    lock_file = None
+    try:
+        try:
+            import fcntl
+            lock_file = open(lock_path, "w")
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        except (ImportError, AttributeError, OSError):
+            pass
+        yield
+    finally:
+        if lock_file:
+            try:
+                import fcntl
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                lock_file.close()
+            except Exception:
+                pass
 
 class AILiveWorker:
     def __init__(self):
-        # Konfigurasi Direktori Server RunPod
-        self.base_dir = "/workspace/ai_live_worker"
+        # Konfigurasi Direktori Server RunPod (Dynamic with Fallback)
+        default_base = "/workspace/ai_live_worker" if os.path.exists("/workspace/ai_live_worker") else os.path.dirname(os.path.abspath(__file__))
+        self.base_dir = os.environ.get("WORKER_ROOT", default_base)
         self.assets_2d = os.path.join(self.base_dir, "assets", "2d")
         self.assets_3d = os.path.join(self.base_dir, "assets", "3d")
         self.temp_dir = os.path.join(self.base_dir, "temp")
@@ -24,7 +47,16 @@ class AILiveWorker:
         # Batch size untuk inferensi UNet. RTX 4090 bisa handle 16, GPU kecil gunakan 8.
         self.batch_size = int(os.environ.get("MUSETALK_BATCH_SIZE", "8"))
         
-        # Lock untuk serialisasi inferensi GPU (mencegah OOM dan memastikan stabilitas)
+        # VRAM Isolation: Batasi MuseTalk 70% VRAM agar Chatterbox & system punya headroom
+        if torch.cuda.is_available():
+            try:
+                vram_fraction = float(os.environ.get("MUSETALK_VRAM_FRACTION", "0.70"))
+                torch.cuda.set_per_process_memory_fraction(vram_fraction, device=0)
+                print(f"[INFO] MuseTalk CUDA VRAM fraction set to {vram_fraction*100:.0f}%")
+            except Exception as vram_err:
+                print(f"[WARNING] Could not set MuseTalk per-process VRAM fraction: {vram_err}")
+
+        # Lock untuk serialisasi inferensi GPU intra-process
         self._inference_lock = threading.Lock()
         
         if not os.path.exists(self.musetalk_checkpoint):
@@ -194,24 +226,46 @@ class AILiveWorker:
         return audio_path
 
     def _get_idle_video(self, host_type, host_name):
-        """Cari file bahan baku video di folder 2D/3D"""
+        """Cari file bahan baku video di folder 2D/3D dengan multi-directory fallback"""
         target_dir = self.assets_2d if str(host_type).lower() == "2d" else self.assets_3d
-        
-        # 1. Cek nama persis
-        video_path = os.path.join(target_dir, f"{host_name}.mp4")
-        if os.path.exists(video_path):
-            return video_path
-            
-        # 2. Cek variasi nama
-        if os.path.exists(target_dir):
-            for f in os.listdir(target_dir):
-                if f.endswith(".mp4") and (host_name.lower() in f.lower() or f.lower().replace(".mp4", "") in host_name.lower()):
-                    return os.path.join(target_dir, f)
-            # 3. Ambil file mp4 pertama di folder
-            mp4s = [f for f in os.listdir(target_dir) if f.endswith(".mp4")]
-            if mp4s:
-                return os.path.join(target_dir, mp4s[0])
-                
+        candidate_dirs = [
+            target_dir,
+            self.assets_3d,
+            self.assets_2d,
+            os.path.join(self.base_dir, "assets"),
+            os.path.join(self.base_dir, "assets", "avatars"),
+        ]
+
+        # 1. Cek nama persis di semua direktori kandidat
+        for d in candidate_dirs:
+            if os.path.exists(d):
+                p = os.path.join(d, f"{host_name}.mp4")
+                if os.path.exists(p):
+                    return p
+                # Cek case-insensitive
+                for f in os.listdir(d):
+                    if f.lower() == f"{host_name.lower()}.mp4":
+                        return os.path.join(d, f)
+
+        # 2. Cek variasi nama / substring
+        for d in candidate_dirs:
+            if os.path.exists(d):
+                for f in os.listdir(d):
+                    if f.endswith(".mp4") and (host_name.lower() in f.lower() or f.lower().replace(".mp4", "") in host_name.lower()):
+                        return os.path.join(d, f)
+
+        # 3. Cek file IDLE_VIDEO dari environment variable jika ada
+        env_idle = os.environ.get("IDLE_VIDEO")
+        if env_idle and os.path.exists(env_idle):
+            return env_idle
+
+        # 4. Fallback: ambil sembarang file mp4 pertama di direktori assets
+        for d in candidate_dirs:
+            if os.path.exists(d):
+                mp4s = [f for f in os.listdir(d) if f.endswith(".mp4") and not f.startswith("temp_")]
+                if mp4s:
+                    return os.path.join(d, mp4s[0])
+
         return None
 
     async def _sync_lips_async(self, idle_video, audio_path, task_id):
@@ -220,111 +274,134 @@ class AILiveWorker:
 
     def _sync_lips(self, idle_video, audio_path, task_id):
         with self._inference_lock:
-            yaml_path = os.path.join(self.temp_dir, f"{task_id}.yaml")
-            try:
-                self._ensure_warmup()
-                import yaml
-
-                config_data = {
-                    "task_0": {
-                        "video_path": idle_video,
-                        "audio_path": audio_path,
-                        "bbox_shift": 0
-                    }
-                }
-
-                os.makedirs(self.temp_dir, exist_ok=True)
-                os.makedirs(self.output_dir, exist_ok=True)
-
-                with open(yaml_path, "w") as f:
-                    yaml.dump(config_data, f)
-
-                musetalk_dir = self.musetalk_dir
-                paths = self._musetalk_paths()
-                unet_config = paths["unet_config"]
-                unet_model_path = paths["unet_model_path"]
-                whisper_dir = paths["whisper_dir"]
-
-                if not os.path.exists(unet_config):
-                    raise FileNotFoundError(f"MuseTalk V1.5 config tidak ditemukan: {unet_config}")
-
-                if not os.path.exists(unet_model_path):
-                    raise FileNotFoundError(f"MuseTalk V1.5 checkpoint tidak ditemukan: {unet_model_path}")
-
-                if not os.path.exists(whisper_dir):
-                    raise FileNotFoundError(f"Whisper model tidak ditemukan: {whisper_dir}")
-
-                if musetalk_dir not in sys.path:
-                    sys.path.insert(0, musetalk_dir)
-
-                original_cwd = os.getcwd()
-                os.chdir(musetalk_dir)
+            with gpu_lock():
+                yaml_path = os.path.join(self.temp_dir, f"{task_id}.yaml")
                 try:
-                    from scripts.inference import main as musetalk_main
+                    import yaml
 
-                    args = Namespace(
-                        ffmpeg_path="",
-                        gpu_id=0,
-                        vae_type="sd-vae-ft-mse",
-                        unet_config=unet_config,
-                        unet_model_path=unet_model_path,
-                        whisper_dir=whisper_dir,
-                        inference_config=yaml_path,
-                        bbox_shift=0,
-                        result_dir=self.output_dir,
-                        extra_margin=10,
-                        fps=25,
-                        audio_padding_length_left=2,
-                        audio_padding_length_right=2,
-                        batch_size=self.batch_size,
-                        output_vid_name=f"{task_id}.mp4",
-                        use_saved_coord=True,
-                        saved_coord=True,
-                        use_float16=True,
-                        parsing_mode="jaw",
-                        left_cheek_width=90,
-                        right_cheek_width=90,
-                        version="v15",
-                    )
+                    # Pre-normalize audio to 16kHz PCM WAV for robust Whisper feature extraction
+                    norm_audio_path = os.path.join(self.temp_dir, f"{task_id}_16k.wav")
+                    norm_cmd = [
+                        "ffmpeg", "-y", "-i", audio_path,
+                        "-ac", "1", "-ar", "16000",
+                        "-c:a", "pcm_s16le",
+                        norm_audio_path
+                    ]
+                    target_audio = audio_path
+                    try:
+                        subprocess.run(norm_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                        if os.path.exists(norm_audio_path):
+                            target_audio = norm_audio_path
+                    except Exception as norm_err:
+                        print(f"[MuseTalk WARNING] Audio 16kHz normalization notice: {norm_err}")
 
-                    print(f"[MuseTalk] Starting V1.5 inference: {task_id}")
-                    musetalk_main(args)
-                finally:
-                    os.chdir(original_cwd)
+                    config_data = {
+                        "task_0": {
+                            "video_path": idle_video,
+                            "audio_path": target_audio,
+                            "bbox_shift": 0
+                        }
+                    }
 
-                expected_output = os.path.join(self.output_dir, "v15", f"{task_id}.mp4")
-                if os.path.exists(expected_output):
+                    os.makedirs(self.temp_dir, exist_ok=True)
+                    os.makedirs(self.output_dir, exist_ok=True)
+
+                    with open(yaml_path, "w") as f:
+                        yaml.dump(config_data, f)
+
+                    musetalk_dir = self.musetalk_dir
+                    paths = self._musetalk_paths()
+                    unet_config = paths["unet_config"]
+                    unet_model_path = paths["unet_model_path"]
+                    whisper_dir = paths["whisper_dir"]
+
+                    if not os.path.exists(unet_config):
+                        raise FileNotFoundError(f"MuseTalk V1.5 config tidak ditemukan: {unet_config}")
+
+                    if not os.path.exists(unet_model_path):
+                        raise FileNotFoundError(f"MuseTalk V1.5 checkpoint tidak ditemukan: {unet_model_path}")
+
+                    if not os.path.exists(whisper_dir):
+                        raise FileNotFoundError(f"Whisper model tidak ditemukan: {whisper_dir}")
+
+                    if musetalk_dir not in sys.path:
+                        sys.path.insert(0, musetalk_dir)
+
+                    original_cwd = os.getcwd()
+                    os.chdir(musetalk_dir)
+                    try:
+                        from scripts.inference import main as musetalk_main
+
+                        args = Namespace(
+                            ffmpeg_path="",
+                            gpu_id=0,
+                            vae_type="sd-vae-ft-mse",
+                            unet_config=unet_config,
+                            unet_model_path=unet_model_path,
+                            whisper_dir=whisper_dir,
+                            inference_config=yaml_path,
+                            bbox_shift=0,
+                            result_dir=self.output_dir,
+                            extra_margin=10,
+                            fps=25,
+                            audio_padding_length_left=2,
+                            audio_padding_length_right=2,
+                            batch_size=self.batch_size,
+                            output_vid_name=f"{task_id}.mp4",
+                            use_saved_coord=True,
+                            saved_coord=True,
+                            use_float16=True,
+                            parsing_mode="jaw",
+                            left_cheek_width=90,
+                            right_cheek_width=90,
+                            version="v15",
+                        )
+
+                        print(f"[MuseTalk] Starting V1.5 inference: {task_id}")
+                        musetalk_main(args)
+                    finally:
+                        os.chdir(original_cwd)
+
+                    expected_output = os.path.join(self.output_dir, "v15", f"{task_id}.mp4")
+                    if os.path.exists(expected_output):
+                        return expected_output
+
+                    list_of_files = []
+                    for root, dirs, files in os.walk(self.output_dir):
+                        for file in files:
+                            if file.endswith(".mp4") and task_id in file:
+                                list_of_files.append(os.path.join(root, file))
+
+                    if not list_of_files:
+                        raise FileNotFoundError(f"Output video MuseTalk untuk {task_id} tidak ditemukan.")
+
+                    latest_file = max(list_of_files, key=os.path.getctime)
+                    if latest_file != expected_output:
+                        os.replace(latest_file, expected_output)
+
                     return expected_output
 
-                list_of_files = []
-                for root, dirs, files in os.walk(self.output_dir):
-                    for file in files:
-                        if file.endswith(".mp4") and task_id in file:
-                            list_of_files.append(os.path.join(root, file))
-
-                if not list_of_files:
-                    raise FileNotFoundError(f"Output video MuseTalk untuk {task_id} tidak ditemukan.")
-
-                latest_file = max(list_of_files, key=os.path.getctime)
-                if latest_file != expected_output:
-                    os.replace(latest_file, expected_output)
-
-                return expected_output
-
-            except torch.cuda.OutOfMemoryError as oom:
-                print(f"[MuseTalk OOM ERROR] Out of GPU memory: {oom}")
-                return None
-            except Exception as e:
-                print(f"[MuseTalk ERROR] {type(e).__name__}: {e}")
-                return None
-            finally:
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                if os.path.exists(yaml_path):
-                    try:
-                        os.remove(yaml_path)
-                    except Exception:
-                        pass
+                except torch.cuda.OutOfMemoryError as oom:
+                    print(f"[MuseTalk OOM ERROR] Out of GPU memory: {oom}")
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    return None
+                except Exception as e:
+                    print(f"[MuseTalk ERROR] {type(e).__name__}: {e}")
+                    return None
+                finally:
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    if os.path.exists(yaml_path):
+                        try:
+                            os.remove(yaml_path)
+                        except Exception:
+                            pass
+                    if 'norm_audio_path' in locals() and os.path.exists(norm_audio_path):
+                        try:
+                            os.remove(norm_audio_path)
+                        except Exception:
+                            pass
 
     async def run_pipeline(self, host_type, host_name, text_answer, task_id, audio_path=None, tone="Casual"):
         """Fungsi Pemicu Utama"""

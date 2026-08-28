@@ -47,6 +47,7 @@ export async function chatStreamRoutes(server: FastifyInstance) {
         text: lunaResponse.speech,
         avatarName,
         voice: voice || "id-ID-GadisNeural",
+        tone,
       });
       const audioBase64 = tts.audioBuffer
         ? tts.audioBuffer.toString("base64")

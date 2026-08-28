@@ -27,6 +27,11 @@ interface PendingVideo {
   audioBase64: string | undefined;
 }
 
+export interface PendingComment {
+  text: string;
+  createdAt: number;
+}
+
 interface OrchestratorState {
   config: HostConfig;
   abortController: AbortController; // stop signal untuk semua pipeline loop
@@ -36,7 +41,7 @@ interface OrchestratorState {
   pendingVideos: PendingVideo[]; // video yang sudah di-generate, menunggu go-live-confirm
   usedPromptIndices: Set<number>;
   isLive: boolean; // true setelah go-live-confirm dipanggil
-  commentQueue: Promise<void>; // promise chain khusus reply komentar audiens
+  pendingComments: PendingComment[]; // Leaky-Bucket Priority Queue dengan TTL
 }
 
 class LiveHostOrchestrator {
@@ -121,7 +126,7 @@ class LiveHostOrchestrator {
       pendingVideos: [],
       usedPromptIndices: new Set(),
       isLive: false,
-      commentQueue: Promise.resolve(),
+      pendingComments: [],
     };
     this.sessions.set(config.sessionId, state);
 
@@ -247,18 +252,50 @@ class LiveHostOrchestrator {
           continue;
         }
 
-        // Jika antrean di disk < 3 dan GPU standby: LANGSUNG buat 1 video bicara baru!
-        const { text, audioBase64 } =
-          await this.generateAndSynthesize(sessionId);
+        // Prioritas 1: Periksa apakah ada komentar penonton di pendingComments queue
+        let nextUtterance: {
+          text: string;
+          audioBase64: string | undefined;
+        } | null = null;
+        const now = Date.now();
+
+        while (state.pendingComments.length > 0) {
+          const nextComment = state.pendingComments.shift();
+          if (!nextComment) break;
+          // Validasi TTL (30 detik): jika komentar sudah lebih dari 30s, drop agar respon tidak basi
+          if (now - nextComment.createdAt > 30_000) {
+            console.log(
+              `[LiveHost] ⏱️ Komentar penonton kedaluwarsa (>30s) di-skip: "${nextComment.text.substring(0, 30)}..."`,
+            );
+            continue;
+          }
+          console.log(
+            `[LiveHost] ⚡ Memproses komentar prioritas penonton: "${nextComment.text.substring(0, 40)}..."`,
+          );
+          nextUtterance = await this.synthesizeComment(
+            sessionId,
+            nextComment.text,
+          );
+          break;
+        }
+
+        // Prioritas 2: Jika tidak ada komentar valid, generate topik promosi penjualan dinamis
+        if (!nextUtterance) {
+          nextUtterance = await this.generateAndSynthesize(sessionId);
+        }
 
         const s = this.sessions.get(sessionId);
         if (!s || s.abortController.signal.aborted) break;
-        if (!text) {
+        if (!nextUtterance.text) {
           await new Promise((r) => setTimeout(r, 2000));
           continue;
         }
 
-        await this.submitToGPU(sessionId, text, audioBase64);
+        await this.submitToGPU(
+          sessionId,
+          nextUtterance.text,
+          nextUtterance.audioBase64,
+        );
 
         // Beri jeda 4 detik untuk memberi GPU waktu menyelesaikan render
         await new Promise((r) => setTimeout(r, 4000));
@@ -330,38 +367,62 @@ class LiveHostOrchestrator {
   }
 
   /**
-   * Enqueue reply komentar audiens.
+   * Enqueue reply komentar audiens dengan Leaky-Bucket (Max capacity 2, TTL 30s).
    * Hanya berjalan saat isLive=true — tidak aktif saat fase idle.
    */
   public enqueue(sessionId: string, text: string) {
     const state = this.sessions.get(sessionId);
     if (!state || !state.isLive) return;
 
-    state.commentQueue = state.commentQueue
-      .then(async () => {
-        const s = this.sessions.get(sessionId);
-        if (!s || !s.isLive) return;
-        let audioBase64: string | undefined;
-        try {
-          const ttsResult = await synthesizeSpeech({
-            text,
-            voice: s.config.voice || "id-ID-GadisNeural",
-            avatarName: s.config.avatarName,
-            tone: s.config.tone,
-            podId: s.config.podId,
-          });
-          if (ttsResult.success && ttsResult.audioBuffer) {
-            audioBase64 = ttsResult.audioBuffer.toString("base64");
-          }
-        } catch {}
-        await this.submitToGPU(sessionId, text, audioBase64);
-      })
-      .catch((err) => console.error("[LiveHost] Comment queue error:", err));
+    const now = Date.now();
+    // 1. Purge expired comments (> 30s)
+    state.pendingComments = state.pendingComments.filter(
+      (c) => now - c.createdAt <= 30_000,
+    );
+
+    // 2. Leaky-bucket cap: Max 2 komentar menunggu agar respons selalu realtime
+    if (state.pendingComments.length >= 2) {
+      const dropped = state.pendingComments.shift();
+      console.log(
+        `[LiveHost] 💧 Leaky-bucket drop komentar terlama: "${dropped?.text.substring(0, 30)}..."`,
+      );
+    }
+
+    state.pendingComments.push({ text, createdAt: now });
+    console.log(
+      `[LiveHost] 💬 Komentar penonton masuk prioritas queue (${state.pendingComments.length} antrean): "${text.substring(0, 40)}..."`,
+    );
   }
 
   // ============================================================================
   // PRIVATE HELPERS
   // ============================================================================
+
+  /** Sintesis audio untuk komentar penonton */
+  private async synthesizeComment(
+    sessionId: string,
+    text: string,
+  ): Promise<{ text: string; audioBase64: string | undefined }> {
+    const state = this.sessions.get(sessionId);
+    if (!state) return { text: "", audioBase64: undefined };
+
+    let audioBase64: string | undefined;
+    try {
+      const ttsResult = await synthesizeSpeech({
+        text,
+        voice: state.config.voice || "id-ID-GadisNeural",
+        avatarName: state.config.avatarName,
+        tone: state.config.tone,
+        podId: state.config.podId,
+      });
+      if (ttsResult.success && ttsResult.audioBuffer) {
+        audioBase64 = ttsResult.audioBuffer.toString("base64");
+      }
+    } catch (ttsErr) {
+      console.warn(`[LiveHost] Comment TTS error (non-fatal):`, ttsErr);
+    }
+    return { text, audioBase64 };
+  }
 
   /** Generate utterance via LLM lalu synthesize via TTS */
   private async generateAndSynthesize(

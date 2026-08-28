@@ -6,6 +6,7 @@ import {
 } from "./runpod-manager.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
 import { liveHostOrchestrator } from "./live-host-orchestrator.js";
+import { triggerWorkerPlayback } from "./runpod-bridge.js";
 
 export type SessionState = "starting" | "pending" | "live" | "ended" | "error";
 
@@ -262,6 +263,19 @@ class LiveSessionManager {
 
     if (newState === "live" && previousState !== "live") {
       this.startDurationWatchdog(sessionId);
+      if (session.podId) {
+        triggerWorkerPlayback(session.podId).catch((err) =>
+          console.warn(
+            "[LiveSessionManager] triggerWorkerPlayback notice:",
+            err,
+          ),
+        );
+      }
+      liveHostOrchestrator
+        .startLivePipeline(sessionId)
+        .catch((err) =>
+          console.warn("[LiveSessionManager] startLivePipeline notice:", err),
+        );
     }
 
     if (newState !== "live") {

@@ -100,42 +100,28 @@ const downloadedTempFiles: string[] = [];
 async function downloadImageToTemp(
   imageUrl: string,
 ): Promise<string | undefined> {
-  return new Promise((resolve) => {
-    const protocol = imageUrl.startsWith("https") ? https : http;
-    const req = protocol.get(imageUrl, (res) => {
-      if (res.statusCode !== 200) {
-        console.error(
-          `[RTMP Streamer] Failed to download image: ${res.statusCode} ${imageUrl}`,
-        );
-        resolve(undefined);
-        return;
-      }
-      const ext = path.extname(new URL(imageUrl).pathname) || ".jpg";
-      const tmpPath = path.join(
-        process.cwd(),
-        `tmp-product-${Date.now()}${ext}`,
+  try {
+    const res = await fetch(imageUrl, {
+      redirect: "follow",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      console.error(
+        `[RTMP Streamer] Failed to download image: ${res.status} ${imageUrl}`,
       );
-      const fileStream = fs.createWriteStream(tmpPath);
-      res.pipe(fileStream);
-      fileStream.on("finish", () => {
-        fileStream.close();
-        downloadedTempFiles.push(tmpPath);
-        resolve(tmpPath);
-      });
-      fileStream.on("error", (err) => {
-        console.error("[RTMP Streamer] Error saving temp image:", err);
-        resolve(undefined);
-      });
-    });
-    req.on("error", (err) => {
-      console.error("[RTMP Streamer] Error downloading image:", err);
-      resolve(undefined);
-    });
-    req.setTimeout(15000, () => {
-      req.destroy();
-      resolve(undefined);
-    });
-  });
+      return undefined;
+    }
+    const arrayBuffer = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const ext = path.extname(new URL(imageUrl).pathname) || ".jpg";
+    const tmpPath = path.join(process.cwd(), `tmp-product-${Date.now()}${ext}`);
+    await fs.promises.writeFile(tmpPath, buffer);
+    downloadedTempFiles.push(tmpPath);
+    return tmpPath;
+  } catch (err) {
+    console.error("[RTMP Streamer] Error downloading product image:", err);
+    return undefined;
+  }
 }
 
 function cleanupTempFiles() {

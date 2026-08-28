@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -25,13 +26,14 @@ export function useLiveMetrics(isActive: boolean, pollIntervalMs = 4000) {
       if (!res.ok) return;
       const data = await res.json();
       if (data?.data) {
+        const m = data.data.metrics || data.data;
         setMetrics({
-          viewers: data.data.viewers ?? 0,
-          comments: data.data.comments ?? 0,
-          clicks: data.data.clicks ?? 0,
-          sales: data.data.sales ?? 0,
-          peakViewers: data.data.peakViewers ?? 0,
-          durationSeconds: data.data.durationSeconds ?? 0,
+          viewers: m.viewers ?? 0,
+          comments: m.comments ?? 0,
+          clicks: m.clicks ?? 0,
+          sales: m.sales ?? 0,
+          peakViewers: m.peakViewers ?? 0,
+          durationSeconds: m.durationSeconds ?? 0,
         });
       }
     } catch {

@@ -17,9 +17,14 @@ else
 fi
 
 if [ ! -f "$WORKER_DIR/.setup_complete" ]; then
-	echo "[ERROR] Setup belum selesai (file .setup_complete tidak ditemukan)."
-	echo "        Jalankan: cd /workspace/live-streaming-ai/deploy && bash setup-safe.sh"
-	exit 1
+	if [ -f "$WORKER_DIR/env/bin/python" ] && [ -d "$WORKER_DIR/MuseTalk/models" ]; then
+		echo "[INFO] Marker .setup_complete tidak ada, tetapi venv dan models terdeteksi. Melanjutkan..."
+		date -Iseconds > "$WORKER_DIR/.setup_complete" 2>/dev/null || true
+	else
+		echo "[ERROR] Setup belum selesai (file .setup_complete tidak ditemukan)."
+		echo "        Jalankan: cd /workspace/live-streaming-ai/deploy && bash setup-safe.sh"
+		exit 1
+	fi
 fi
 
 if [ ! -f "$WORKER_DIR/api_server.py" ]; then
@@ -124,5 +129,30 @@ echo "Broadcaster menunggu perintah backend melalui /stream/start-broadcast."
 
 echo "Sistem berhasil dijalankan di background! (api_server PID: $API_PID)"
 echo "Log API: $WORKER_DIR/api_server.log"
-# Menahan container agar tidak mati
-sleep infinity
+
+# Container Watchdog Supervisor: Pantau terus status api_server dan chatterbox
+echo "[WATCHDOG] Memulai container supervisor monitor..."
+while true; do
+	sleep 10
+	# 1. Cek api_server.py
+	if ! kill -0 "$API_PID" 2>/dev/null; then
+		echo "[WATCHDOG ALERT] api_server.py mati! Me-restart api_server..."
+		"$PYTHON_BIN" api_server.py >> "$WORKER_DIR/api_server.log" 2>&1 &
+		API_PID=$!
+		echo "[WATCHDOG] api_server di-restart (PID: $API_PID)"
+	fi
+
+	# 2. Cek chatterbox microservice jika venv tersedia
+	if [ -d "$WORKER_DIR/chatterbox_service/env-chatterbox" ]; then
+		if [ -n "${CHATTERBOX_PID:-}" ] && ! kill -0 "$CHATTERBOX_PID" 2>/dev/null; then
+			echo "[WATCHDOG ALERT] chatterbox_service mati! Me-restart chatterbox..."
+			(
+				source "$WORKER_DIR/chatterbox_service/env-chatterbox/bin/activate"
+				cd "$WORKER_DIR/chatterbox_service"
+				"$WORKER_DIR/chatterbox_service/env-chatterbox/bin/python" server.py >> "$WORKER_DIR/chatterbox_service.log" 2>&1
+			) &
+			CHATTERBOX_PID=$!
+			echo "[WATCHDOG] chatterbox_service di-restart (PID: $CHATTERBOX_PID)"
+		fi
+	fi
+done

@@ -10,39 +10,55 @@ class AIBroadcaster:
         self.output_folder = output_folder
         self.silence_threshold = 90
         self.last_new_video_time = time.time()
+        self.master_process = None
         
         print("[BROADCASTER] Menginisialisasi Koneksi ke Server RTMP...")
-        
-        master_command = [
-            "ffmpeg",
-            "-y",
-            "-f", "mpegts",
-            "-i", "pipe:0",
-            "-c:v", "libx264",          
-            "-preset", "ultrafast",     
-            "-b:v", "2500k",            
-            "-c:a", "aac",              
-            "-ar", "44100",             
-            "-f", "flv",                
-            self.rtmp_url
-        ]
+        self._ensure_master_process()
         
     def _ensure_master_process(self):
         if self.master_process is None or self.master_process.poll() is not None:
-            print("[BROADCASTER] Menginisialisasi ulang Master FFmpeg RTMP Connection...")
+            if self.master_process is not None:
+                print(f"[BROADCASTER] Master FFmpeg keluar (exit code: {self.master_process.poll()}). Menginisialisasi ulang...")
+                try:
+                    self.master_process.stdin.close()
+                except Exception:
+                    pass
+                try:
+                    self.master_process.terminate()
+                    self.master_process.wait(timeout=2)
+                except Exception:
+                    pass
+
+            print("[BROADCASTER] Membuka Master FFmpeg RTMP Ingest Connection...")
             master_command = [
                 "ffmpeg",
                 "-y",
+                "-fflags", "+genpts+discardcorrupt+igndts",
                 "-f", "mpegts",
                 "-i", "pipe:0",
                 "-c:v", "copy",
                 "-c:a", "aac",
                 "-b:a", "128k",
                 "-ar", "44100",
+                "-max_muxing_queue_size", "2048",
+                "-flvflags", "no_duration_filesize",
                 "-f", "flv",
                 self.rtmp_url
             ]
-            self.master_process = subprocess.Popen(master_command, stdin=subprocess.PIPE)
+            try:
+                log_dir = "/workspace/ai_live_worker/logs"
+                os.makedirs(log_dir, exist_ok=True)
+                self.log_file = open(os.path.join(log_dir, "master_ffmpeg.log"), "a", encoding="utf-8")
+                self.master_process = subprocess.Popen(
+                    master_command,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
+                    stderr=self.log_file
+                )
+                print(f"[BROADCASTER] Master FFmpeg aktif (PID: {self.master_process.pid})")
+            except Exception as e:
+                print(f"[BROADCASTER ERROR] Gagal memulai master FFmpeg: {e}")
+                self.master_process = None
 
     def _stream_file(self, video_path):
         if not video_path or not os.path.exists(video_path):
@@ -50,22 +66,37 @@ class AIBroadcaster:
             return False
         
         self._ensure_master_process()
+        if self.master_process is None or self.master_process.stdin is None:
+            print("[BROADCASTER ERROR] Master FFmpeg pipe tidak tersedia.")
+            return False
         
         worker_command = [
             "ffmpeg",
             "-re",
+            "-fflags", "+genpts+discardcorrupt",
+            "-avoid_negative_ts", "make_zero",
             "-i", video_path,
             "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
             "-c:v", "copy",
             "-c:a", "aac",
+            "-ar", "44100",
             "-shortest",
+            "-max_muxing_queue_size", "1024",
             "-f", "mpegts",
             "pipe:1"
         ]
         try:
-            worker_process = subprocess.Popen(worker_command, stdout=self.master_process.stdin, stderr=subprocess.DEVNULL)
-            worker_process.wait() 
-            return True
+            worker_process = subprocess.Popen(
+                worker_command,
+                stdout=self.master_process.stdin,
+                stderr=subprocess.DEVNULL
+            )
+            worker_process.wait()
+            return worker_process.returncode == 0
+        except (BrokenPipeError, IOError) as pipe_err:
+            print(f"[BROADCASTER WARNING] Broken pipe saat streaming {video_path}: {pipe_err}")
+            self._ensure_master_process()
+            return False
         except Exception as e:
             print(f"[ERROR] Gagal memutar {video_path}: {e}")
             return False
@@ -73,36 +104,66 @@ class AIBroadcaster:
     def start_loop(self):
         print(f"\n[BROADCASTER] Menyiarkan secara Live (Tekan Ctrl+C untuk berhenti)...\n")
         last_spoken_video = None
+        consecutive_idle_errors = 0
         
         while True:
-            playback_flag = os.path.join(self.output_folder, "playback_active.flag")
-            playback_active = os.path.exists(playback_flag)
+            try:
+                playback_flag = os.path.join(self.output_folder, "playback_active.flag")
+                playback_active = os.path.exists(playback_flag)
 
-            search_pattern = os.path.join(self.output_folder, "**", "*.mp4")
-            new_videos = sorted(
-                [path for path in glob.glob(search_pattern, recursive=True)
-                 if path != last_spoken_video and not os.path.basename(path).startswith("temp_")],
-                key=os.path.getctime,
-            )
+                search_pattern = os.path.join(self.output_folder, "**", "*.mp4")
+                idle_abs = os.path.abspath(self.idle_video) if self.idle_video else ""
+                new_videos = sorted(
+                    [path for path in glob.glob(search_pattern, recursive=True)
+                     if path != last_spoken_video 
+                     and os.path.abspath(path) != idle_abs
+                     and not os.path.basename(path).startswith("temp_")
+                     and not os.path.basename(path).endswith(".tmp")],
+                    key=os.path.getctime,
+                )
 
-            if playback_active and new_videos:
-                # === LIVE MODE: ada video AI yang selesai dirender → putar langsung ===
-                video_to_play = new_videos[0]
-                print(f"[>] MEMUTAR RESPON AI: {os.path.basename(video_to_play)}")
-                success = self._stream_file(video_to_play)
-                if success:
-                    try:
-                        if os.path.exists(video_to_play):
-                            os.remove(video_to_play)
-                            print(f"[CLEANUP] Video dihapus setelah tayang: {os.path.basename(video_to_play)}")
-                    except Exception as e:
-                        print(f"[CLEANUP ERROR] Gagal menghapus {video_to_play}: {e}")
-                    last_spoken_video = None
-                    self.last_new_video_time = time.time()
-            else:
-                # === PRE-LIVE ATAU SAFETY NET JIKA ANTREAN KOSONG SESAAAT ===
-                # Putar idle video secara terus-menerus tanpa jeda sleep agar stream RTMP tetap aktif
-                self._stream_file(self.idle_video)
+                if playback_active and new_videos:
+                    # === LIVE MODE: ada video AI yang selesai dirender -> putar langsung ===
+                    video_to_play = new_videos[0]
+                    # Pastikan file tidak sedang dalam proses penulisan (size > 0)
+                    if os.path.getsize(video_to_play) == 0:
+                        time.sleep(0.5)
+                        continue
+
+                    print(f"[>] MEMUTAR RESPON AI: {os.path.basename(video_to_play)}")
+                    success = self._stream_file(video_to_play)
+                    if success:
+                        try:
+                            if os.path.exists(video_to_play) and os.path.abspath(video_to_play) != idle_abs:
+                                os.remove(video_to_play)
+                                print(f"[CLEANUP] Video dihapus setelah tayang: {os.path.basename(video_to_play)}")
+                        except Exception as e:
+                            print(f"[CLEANUP ERROR] Gagal menghapus {video_to_play}: {e}")
+                        last_spoken_video = None
+                        self.last_new_video_time = time.time()
+                    else:
+                        print(f"[BROADCASTER WARNING] Pemutaran {video_to_play} gagal, mencoba lagi atau fallback.")
+                        time.sleep(0.5)
+                else:
+                    # === PRE-LIVE ATAU SAFETY NET JIKA ANTREAN KOSONG SESAAAT ===
+                    # Putar idle video secara terus-menerus tanpa jeda sleep agar stream RTMP tetap aktif
+                    if os.path.exists(self.idle_video):
+                        idle_success = self._stream_file(self.idle_video)
+                        if not idle_success:
+                            consecutive_idle_errors += 1
+                            if consecutive_idle_errors > 3:
+                                print("[BROADCASTER WARNING] Error memutar idle video berturut-turut, reset master process...")
+                                self._ensure_master_process()
+                                consecutive_idle_errors = 0
+                            time.sleep(1)
+                        else:
+                            consecutive_idle_errors = 0
+                    else:
+                        print(f"[BROADCASTER ERROR] Idle video tidak ditemukan di {self.idle_video}")
+                        time.sleep(2)
+            except Exception as loop_err:
+                print(f"[BROADCASTER UNHANDLED EXCEPTION] {loop_err}")
+                time.sleep(1)
 
 # --- KONFIGURASI DAN EKSEKUSI ---
 if __name__ == "__main__":
