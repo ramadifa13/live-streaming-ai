@@ -9,7 +9,6 @@ import {
 } from "../services/rtmp-streamer.js";
 import {
   getRunPodBroadcastStatus,
-  getRunPodQueueStatus,
   startRunPodBroadcast,
   stopRunPodBroadcast,
   triggerWorkerPlayback,
@@ -396,7 +395,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
   });
 
   // GET /api/live-stream/pipeline-status?sessionId=xxx
-  // Polling endpoint untuk frontend: cek apakah V1+V2 sudah siap sebelum user konfirmasi.
+  // Polling endpoint untuk frontend: cek apakah V1+V2 sudah dikirim ke GPU.
   server.get("/api/live-stream/pipeline-status", async (request) => {
     const { sessionId } = request.query as { sessionId?: string };
     if (!sessionId) {
@@ -411,18 +410,10 @@ export async function liveSessionRoutes(server: FastifyInstance) {
 
     const status = liveHostOrchestrator.getPipelineStatus(sessionId);
 
-    // Jika Backend bilang sudah ready (sudah kirim >=2 ke GPU),
-    // pastikan GPU juga sudah selesai merender jadi .mp4
-    if (status.ready) {
-      const managedSession = liveSessionManager.getSession(sessionId);
-      if (managedSession?.podId) {
-        const queueStatus = await getRunPodQueueStatus(managedSession.podId);
-        status.generationCount = queueStatus.ready_videos_count;
-        if (queueStatus.ready_videos_count < 2) {
-          status.ready = false;
-        }
-      }
-    }
+    // Bug 3 / File 4 fix: status.ready sudah akurat dari getPipelineStatus()
+    // (berbasis videosQueued >= 2, bukan file di disk).
+    // Double-check ke getRunPodQueueStatus DIHAPUS karena bisa return < 2
+    // saat broadcaster sedang hapus file (race condition) — menyebabkan ready = false palsu.
 
     return status;
   });

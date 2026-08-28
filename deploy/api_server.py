@@ -21,6 +21,10 @@ jobs: Dict[str, Dict[str, Any]] = {}
 MAX_JOBS_STORE = 200
 JOB_TTL_SECONDS = 3600  # 1 hour TTL
 
+# Monotonic counter: total video yang sudah selesai di-render (tidak pernah berkurang).
+# Dipakai oleh frontend/orchestrator untuk cek pipelineReady tanpa race condition delete.
+total_videos_rendered: int = 0
+
 def prune_old_jobs():
     """Prune expired jobs to prevent memory leaks during 24/7 streaming."""
     now = time.time()
@@ -154,6 +158,9 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
         rel_path = os.path.relpath(final_video_path, os.path.abspath(output_dir))
         video_url = f"/output/{rel_path}".replace("\\", "/")
 
+        global total_videos_rendered
+        total_videos_rendered += 1
+
         jobs[task_id] = {
             "status": "done",
             "video_url": video_url,
@@ -161,7 +168,7 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
             "lip_sync_active": True,
             "created_at": time.time(),
         }
-        print(f"[API SUCCESS] Video berhasil dibuat untuk {task_id}: {video_url}")
+        print(f"[API SUCCESS] Video berhasil dibuat untuk {task_id}: {video_url} (total_rendered={total_videos_rendered})")
     except asyncio.TimeoutError:
         print(f"[API TIMEOUT] Video generation timed out for {task_id}")
         jobs[task_id] = {
@@ -223,7 +230,11 @@ async def get_queue_status():
     is_broadcasting = broadcaster_process is not None and broadcaster_process.poll() is None
     return {
         "success": True,
-        "ready_videos_count": len(video_files),
+        # Monotonic counter — tidak pernah berkurang saat file dihapus broadcaster.
+        # Digunakan oleh orchestrator untuk cek pipelineReady (Bug 4 fix).
+        "ready_videos_count": total_videos_rendered,
+        # File .mp4 yang masih ada di disk dan belum diputar broadcaster.
+        "queued_videos_count": len(video_files),
         "ready_videos": video_files,
         "active_processing_count": len(active_processing),
         "broadcasting": is_broadcasting,
@@ -250,7 +261,7 @@ async def start_playback(req: PlaybackRequest):
 
 @app.post("/stream/start-broadcast")
 async def start_broadcast(req: BroadcastRequest):
-    global broadcaster_process
+    global broadcaster_process, total_videos_rendered
     final_rtmp_url = req.rtmp_url or req.rtmpUrl or ""
     final_stream_key = req.stream_key or req.streamKey or ""
     if not final_rtmp_url or not final_stream_key:
@@ -258,6 +269,9 @@ async def start_broadcast(req: BroadcastRequest):
 
     if broadcaster_process and broadcaster_process.poll() is None:
         return {"success": True, "status": "streaming", "message": "Broadcaster already running"}
+
+    # Reset counter saat siaran baru dimulai
+    total_videos_rendered = 0
 
     # Bersihkan sisa video lama dan flag lama sebelum mulai siaran baru
     flag_path = os.path.join(output_dir, "playback_active.flag")
@@ -292,7 +306,7 @@ async def start_broadcast(req: BroadcastRequest):
 
 @app.post("/stream/stop-broadcast")
 async def stop_broadcast():
-    global broadcaster_process
+    global broadcaster_process, total_videos_rendered
     if broadcaster_process and broadcaster_process.poll() is None:
         broadcaster_process.terminate()
         try:
@@ -300,7 +314,10 @@ async def stop_broadcast():
         except subprocess.TimeoutExpired:
             broadcaster_process.kill()
     broadcaster_process = None
-    
+
+    # Reset monotonic counter saat siaran selesai
+    total_videos_rendered = 0
+
     # Reset playback flag
     flag_path = os.path.join(output_dir, "playback_active.flag")
     if os.path.exists(flag_path):

@@ -70,28 +70,35 @@ class AIBroadcaster:
                  if path != last_spoken_video],
                 key=os.path.getctime,
             )
-            
-            # Jika playback sudah diaktifkan (lewat konfirmasi user) & ada video baru
+
             if playback_active and new_videos:
+                # === LIVE MODE: ada video AI → putar langsung ===
                 video_to_play = new_videos[0]
                 print(f"[>] MEMUTAR RESPON AI: {os.path.basename(video_to_play)}")
                 success = self._stream_file(video_to_play)
                 if success:
-                    # Hapus video yang baru saja selesai disiarkan agar disk tidak penuh
+                    # Hapus video yang sudah selesai disiarkan agar disk tidak penuh
                     try:
                         if os.path.exists(video_to_play):
                             os.remove(video_to_play)
-                            print(f"[CLEANUP] Video berhasil dihapus setelah tayang: {os.path.basename(video_to_play)}")
+                            print(f"[CLEANUP] Video dihapus setelah tayang: {os.path.basename(video_to_play)}")
                     except Exception as e:
                         print(f"[CLEANUP ERROR] Gagal menghapus {video_to_play}: {e}")
-                    
                     last_spoken_video = None
                     self.last_new_video_time = time.time()
+                # Langsung kembali ke atas loop — cek apakah video berikutnya sudah ada
+                # TIDAK ada sleep di sini agar transisi antar video semulus mungkin
+
+            elif playback_active and not new_videos:
+                # === LIVE MODE: belum ada video baru — busy-wait, JANGAN putar idle ===
+                # Bug 2 & 5 fix: idle TIDAK boleh diputar saat live, ini menyebabkan jeda.
+                print(f"[WAIT] playback_active=True tapi belum ada video AI — menunggu render GPU...")
+                time.sleep(0.2)
+
             else:
-                # Putar video idle saat idle, atau saat video masih di-generate (menunggu start-playback)
+                # === PRE-LIVE / IDLE MODE: putar idle video terus-menerus ===
                 self._stream_file(self.idle_video)
-            
-            time.sleep(0.5)
+                time.sleep(0.5)
 
 # --- KONFIGURASI DAN EKSEKUSI ---
 if __name__ == "__main__":

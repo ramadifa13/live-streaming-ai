@@ -240,8 +240,9 @@ class LiveHostOrchestrator {
   // ============================================================================
 
   /**
-   * Tunggu sampai V1+V2 selesai di-generate ke memory.
-   * Dipanggil dari go-live-confirm sebelum flush ke GPU.
+   * Tunggu sampai V1+V2 sudah dikirim ke GPU queue (videosQueued >= 2).
+   * Tidak perlu tunggu file .mp4 selesai di disk — GPU sudah mulai render begitu request diterima.
+   * Bug 3 fix: hapus polling ready_videos_count dari disk (race condition dengan broadcaster delete).
    * @returns true jika ready, false jika timeout
    */
   public async waitForPipelineReady(
@@ -253,16 +254,12 @@ class LiveHostOrchestrator {
       const state = this.sessions.get(sessionId);
       if (!state || state.abortController.signal.aborted) return false;
 
-      // Pastikan GPU sudah merender setidaknya 2 video
-      if (state.pipelineReady) {
-        try {
-          const queueStatus = await getRunPodQueueStatus(state.config.podId);
-          if (queueStatus.ready_videos_count >= 2) {
-            return true;
-          }
-        } catch (err) {
-          console.warn(`[LiveHost] waitForPipelineReady queueStatus error:`, err);
-        }
+      // Cukup pastikan >= 2 video sudah dikirim ke GPU queue
+      if (state.videosQueued >= 2) {
+        console.log(
+          `[LiveHost] ✅ waitForPipelineReady: videosQueued=${state.videosQueued} >= 2 — pipeline ready (session: ${sessionId})`,
+        );
+        return true;
       }
 
       await new Promise((r) => setTimeout(r, 500));
@@ -277,7 +274,9 @@ class LiveHostOrchestrator {
   public getPipelineStatus(sessionId: string) {
     const state = this.sessions.get(sessionId);
     return {
-      ready: state?.pipelineReady ?? false,
+      // Bug fix: gunakan videosQueued >= 2 sebagai kondisi ready, bukan pipelineReady boolean.
+      // pipelineReady di-set saat generationCount >= 2 tapi bisa lagging jika submitToGPU throw.
+      ready: (state?.videosQueued ?? 0) >= 2,
       generationCount: state?.generationCount ?? 0,
       videosQueued: state?.videosQueued ?? 0,
       pendingCount: state?.pendingVideos.length ?? 0,
