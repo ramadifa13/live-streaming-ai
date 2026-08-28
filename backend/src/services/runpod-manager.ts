@@ -357,28 +357,45 @@ export async function startPodAndWait(
 
   const workerUrl = getWorkerUrl(currentPodId);
   const healthStart = Date.now();
-  const healthTimeout = Math.min(timeoutMs, 180000);
+  const healthTimeout = 180000;
+  console.log(`[RunPodManager] [Pod ${currentPodId}] Menunggu AI Worker di ${workerUrl} siap...`);
+
   while (Date.now() - healthStart < healthTimeout) {
+    const elapsed = Math.round((Date.now() - healthStart) / 1000);
     try {
-      const res = await fetch(`${workerUrl}/`, {
+      const res = await fetch(`${workerUrl}/health`, {
         signal: AbortSignal.timeout(5000),
       });
-      if (res.ok) {
+      if (res.status === 200) {
+        const body = await res.json().catch(() => ({}));
         console.log(
-          `[RunPodManager] Worker is ready at ${workerUrl} (${Math.round((Date.now() - healthStart) / 1000)}s after pod RUNNING)`,
+          `[RunPodManager] [Pod ${currentPodId}] ✅ SUKSES: AI Worker AKTIF (200 OK) dalam ${elapsed}s! (warmed_up: ${body.warmed_up ?? true})`,
         );
         return currentPodId;
+      } else if (res.status === 502) {
+        console.log(
+          `[RunPodManager] [Pod ${currentPodId}] ⏳ Booting (${elapsed}s): Container sedang memuat PyTorch CUDA ke GPU RTX 4090...`,
+        );
+      } else if (res.status === 404) {
+        console.log(
+          `[RunPodManager] [Pod ${currentPodId}] ⏳ Routing (${elapsed}s): Menghubungkan RunPod Proxy Port 8000...`,
+        );
+      } else {
+        console.log(
+          `[RunPodManager] [Pod ${currentPodId}] ⏳ Status HTTP ${res.status} (${elapsed}s)...`,
+        );
       }
-    } catch {
-      // Worker not ready yet
+    } catch (fetchErr: any) {
+      console.log(
+        `[RunPodManager] [Pod ${currentPodId}] ⏳ Menunggu port 8000 terbuka (${elapsed}s): ${fetchErr.message || "Connecting..."}`,
+      );
     }
-    await new Promise((r) => setTimeout(r, 3000));
+    await new Promise((r) => setTimeout(r, 4000));
   }
 
-  console.warn(
-    `[RunPodManager] Worker at ${workerUrl} did not respond within ${healthTimeout}ms after pod RUNNING`,
+  throw new Error(
+    `[RunPodManager] [Pod ${currentPodId}] Timeout: AI Worker belum siap setelah ${Math.round(healthTimeout / 1000)}s.`,
   );
-  return currentPodId;
 }
 export async function stopPod(podId: string): Promise<boolean> {
   if (!podId) return true;

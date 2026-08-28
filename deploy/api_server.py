@@ -85,6 +85,23 @@ async def health():
         "active_jobs": len(jobs),
     }
 
+@app.get("/logs")
+async def get_logs():
+    logs_output = []
+    log_files = [
+        os.path.join(os.path.dirname(__file__), "api_server.log"),
+        os.path.join(output_dir, "broadcaster.log"),
+    ]
+    for log_f in log_files:
+        if os.path.exists(log_f):
+            try:
+                with open(log_f, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+                    logs_output.extend(lines[-30:])
+            except Exception:
+                pass
+    return {"status": "ok", "lines": logs_output[-50:]}
+
 async def process_video_task(req: GenerateVideoRequest, task_id: str):
     audio_path = None
     try:
