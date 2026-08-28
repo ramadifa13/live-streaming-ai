@@ -19,6 +19,10 @@ import contextlib
 
 import torch
 import torchaudio as ta
+import torch.utils._pytree
+if not hasattr(torch.utils._pytree, "register_pytree_node") and hasattr(torch.utils._pytree, "_register_pytree_node"):
+    torch.utils._pytree.register_pytree_node = torch.utils._pytree._register_pytree_node
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from huggingface_hub import hf_hub_download
