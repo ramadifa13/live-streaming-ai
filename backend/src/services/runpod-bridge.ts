@@ -176,7 +176,6 @@ export async function triggerWorkerPlayback(
 }
 
 /**
- * Menunggu secara bertahap hingga seluruh container AI worker di RunPod (Port 8000 & 8090) siap merespon.
  * Menunggu secara bertahap hingga container AI worker di RunPod (Port 8000) siap merespon.
  */
 export async function warmupWorker(
@@ -194,8 +193,6 @@ export async function warmupWorker(
         console.log(
           `[RunPodBridge] AI Worker online dan siap melayani render video! (${Math.round((Date.now() - start) / 1000)}s)`,
         );
-        // Beri jeda 2 detik agar microservice TTS 8090 stabil
-        await new Promise((r) => setTimeout(r, 2000));
         return;
       }
     } catch (err) {

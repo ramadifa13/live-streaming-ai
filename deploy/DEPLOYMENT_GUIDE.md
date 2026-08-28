@@ -16,7 +16,7 @@ flowchart TD
         BE[Node.js Fastify Server]
         DB[(PostgreSQL Database\nNeon / Supabase)]
         LLM[Groq Dynamic LLM Brain\nRealtime Sales Script & Chat Handler]
-        TTS[Edge Neural TTS + Prosody Enhancer\nDynamic Pitch, Pace & Breathing Pauses]
+        TTS[Piper Neural TTS + Prosody Engine\nFast Offline Indonesian Synthesis]
         Orchestrator[RunPod Lifecycle Manager\nGrace Period Cooldown]
     end
 

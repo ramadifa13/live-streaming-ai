@@ -151,7 +151,9 @@ class LiveHostOrchestrator {
 
     try {
       const { forwardToRunPodGPU } = await import("./runpod-bridge.js");
-      console.log(`[LiveHost] 🔥 Warmup worker model (pre-load unet ke VRAM) — session: ${sessionId}`);
+      console.log(
+        `[LiveHost] 🔥 Warmup worker model (pre-load unet ke VRAM) — session: ${sessionId}`,
+      );
       await forwardToRunPodGPU(state.config.podId, {
         avatarImagePath: "avatars/namira.png",
         text: "halo",
@@ -163,10 +165,12 @@ class LiveHostOrchestrator {
       console.log(`[LiveHost] ✅ Worker model warmup request terkirim.`);
     } catch (err) {
       // Non-fatal — warmup hanya optimasi
-      console.warn(`[LiveHost] Warmup model notice (non-fatal):`, (err as Error).message);
+      console.warn(
+        `[LiveHost] Warmup model notice (non-fatal):`,
+        (err as Error).message,
+      );
     }
   }
-
 
   /** Pre-live loop: generate V1 dan V2 ke GPU, lalu tunggu Go Live */
   private async runPreLivePipeline(sessionId: string): Promise<void> {
@@ -387,9 +391,7 @@ class LiveHostOrchestrator {
     // BUG FIX: dulu kondisi kedua selalu true sehingga ready=true langsung
     // setelah 2 video DIKIRIM ke GPU, padahal GPU butuh 70-155 detik untuk render.
     // Sekarang: wajib ada >= 1 video yang sudah benar-benar SELESAI dirender di worker.
-    const isReady =
-      (state?.videosQueued ?? 0) >= 2 &&
-      renderedCount >= 1; // Video harus sudah selesai dirender di GPU, bukan hanya dikirim
+    const isReady = (state?.videosQueued ?? 0) >= 2 && renderedCount >= 1; // Video harus sudah selesai dirender di GPU, bukan hanya dikirim
 
     return {
       ready: isReady,

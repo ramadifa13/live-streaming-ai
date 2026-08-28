@@ -172,7 +172,10 @@ if __name__ == "__main__":
     STREAM_KEY = os.environ.get("STREAM_KEY", "")
     if not RTMP_BASE_URL or not STREAM_KEY:
         raise RuntimeError("RTMP_URL dan STREAM_KEY wajib diisi melalui environment")
-    RTMP_URL = f"{RTMP_BASE_URL}/{STREAM_KEY}"
+    if RTMP_BASE_URL.endswith(f"/{STREAM_KEY}"):
+        RTMP_URL = RTMP_BASE_URL
+    else:
+        RTMP_URL = f"{RTMP_BASE_URL}/{STREAM_KEY}"
     
     # 2. Tentukan video Idle (Sesuai dengan host yang dipilih pelanggan)
     IDLE_VIDEO = os.environ.get(

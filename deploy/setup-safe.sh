@@ -178,7 +178,6 @@ echo ""
 echo "[4/10] Menghentikan API lama jika ada..."
 
 pkill -f "api_server.py" 2>/dev/null || true
-pkill -f "chatterbox_service/server.py" 2>/dev/null || true
 sleep 2
 
 echo "[OK] API lama dihentikan."
@@ -270,11 +269,6 @@ if [ -d "$SCRIPT_DIR/assets" ]; then
     cp -r "$SCRIPT_DIR/assets"/* "$WORKER_DIR/assets"/ 2>/dev/null || true
 fi
 
-if [ -d "$SCRIPT_DIR/chatterbox_service" ]; then
-    mkdir -p "$WORKER_DIR/chatterbox_service"
-    cp -r "$SCRIPT_DIR/chatterbox_service"/*.py "$WORKER_DIR/chatterbox_service"/ 2>/dev/null || true
-    cp "$SCRIPT_DIR/chatterbox_service"/requirements-chatterbox.txt "$WORKER_DIR/chatterbox_service"/ 2>/dev/null || true
-fi
 
 
 if [ -f "$SCRIPT_DIR/requirements-worker.txt" ]; then

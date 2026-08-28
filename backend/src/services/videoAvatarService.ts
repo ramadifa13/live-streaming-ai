@@ -224,12 +224,6 @@ async function runLivePortrait(
       audio_base64: audioBase64,
     };
 
-    updateJob(jobId, {
-      progress: 20,
-      stage:
-        "Synthesizing TTS audio (Chatterbox-TTS-Indonesian) & starting job...",
-    });
-
     const res = await fetch(`${workerUrl}/stream/generate-neural-video`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

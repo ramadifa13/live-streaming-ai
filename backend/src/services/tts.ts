@@ -1,9 +1,4 @@
-import fs from "fs";
-import path from "path";
-import { spawn } from "child_process";
-import { fileURLToPath } from "url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 
 export interface TTSVoice {
   id: string;
@@ -17,27 +12,27 @@ export interface TTSVoice {
 export const INDONESIAN_VOICES: TTSVoice[] = [
   {
     id: "id-ID-GadisNeural",
-    name: "Gadis (Wanita - Ramah & Warm)",
+    name: "Gadis (Wanita - Paling Natural, Hangat & Ceria)",
     gender: "female",
     locale: "id-ID",
     style: "Friendly",
-    avatarMatch: "Nana",
-  },
-  {
-    id: "id-ID-SitiNeural",
-    name: "Namira (Wanita - Energetik & Live Shopping)",
-    gender: "female",
-    locale: "id-ID",
-    style: "Energetic",
     avatarMatch: "Namira",
   },
   {
+    id: "id-ID-SitiNeural",
+    name: "Siti (Wanita - Energetik & Live Shopping)",
+    gender: "female",
+    locale: "id-ID",
+    style: "Energetic",
+    avatarMatch: "Siti",
+  },
+  {
     id: "id-ID-ArdiNeural",
-    name: "Ardi (Pria - Maskulin & Confident)",
+    name: "Ardi (Pria - Tegas, Percaya Diri & Alami)",
     gender: "male",
     locale: "id-ID",
     style: "Confident",
-    avatarMatch: "Budi",
+    avatarMatch: "Ardi",
   },
 ];
 
@@ -62,243 +57,222 @@ export interface SynthesizeResponse {
   audioBuffer?: Buffer;
 }
 
-/** Membersihkan teks dari emoji, simbol aneh, dan format mata uang agar dibacakan lancar oleh TTS */
+/**
+ * Filter anti-robot percakapan live streaming:
+ * - Menghilangkan simbol teknis/tag aksi.
+ * - Mengubah angka, persen, dan singkatan agar dieja secara manusiawi & natural.
+ * - Menambahkan koma/jeda mikro alami pada transisi kalimat host live.
+ */
 export function sanitizeForLiveTTS(text: string): string {
   if (!text) return "";
   return (
     text
-      // Hapus Action Tags seperti [IDLE], [EXCITED], [POINT_DOWN]
+      // 1. Hapus Action Tags seperti [IDLE], [EXCITED], [POINT_DOWN], [RAISE_HAND]
       .replace(/\[[A-Z_]+\]/gi, "")
-      // Hapus Emoji Unicode
+      // 2. Hapus Emoji Unicode
       .replace(
         /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu,
         "",
       )
-      // Konversi simbol mata uang dan angka
-      .replace(/Rp\s?(\d+(?:\.\d+)?(?:\,\d+)?)/gi, "$1 rupiah")
-      .replace(/\$(\d+(?:\.\d+)?)/g, "$1 dollar")
-      .replace(/\b(\d+)k\b/gi, "$1 ribu")
-      // Ganti karakter XML khusus
+      // 3. Format ejaan mata uang dan angka secara natural
+      .replace(/Rp\s?(\d+(?:\.\d+)?(?:\,\d+)?)/gi, "$1 rupiah ")
+      .replace(/\$(\d+(?:\.\d+)?)/g, "$1 dollar ")
+      .replace(/\b(\d+)k\b/gi, "$1 ribu ")
+      .replace(/(\d+)%/g, "$1 persen")
+      // 4. Singkatan umum agar tidak terbaca kaku
+      .replace(/\bBPOM\b/g, "B P O M")
+      .replace(/\bORI\b/gi, "original")
+      .replace(/\bCO\b/g, "check out")
+      .replace(/\bCOD\b/g, "C O D")
+      .replace(/\bFYP\b/g, "F Y P")
+      .replace(/\bDM\b/g, "D M")
+      // 5. Normalisasi karakter khusus
       .replace(/&/g, " dan ")
       .replace(/</g, "")
       .replace(/>/g, "")
       .replace(/['"]/g, "")
-      .replace(/[%]/g, " persen ")
-      // Rapikan spasi ganda dan tanda baca ganda
+      // 6. Sisipkan jeda mikro alami pada kata transisi khas live streaming
+      .replace(/\b(yuk|nah|khusus hari ini|mumpung lagi promo|jangan sampai kehabisan)\b/gi, ", $1")
+      // 7. Rapikan tanda baca dan spasi ganda
       .replace(/[!]{2,}/g, "!")
       .replace(/[?]{2,}/g, "?")
       .replace(/[.]{2,}/g, ".")
+      .replace(/,{2,}/g, ",")
       .replace(/\s+/g, " ")
       .trim()
   );
 }
 
-function getToneSpeedScale(tone?: string, baseSpeed = 1.0): number {
-  const t = (tone || "").toLowerCase();
-
-  // Energetic / Live Shopping Host: cepat (+12%) → length_scale lebih kecil = lebih cepat
-  if (t.includes("energet")) return Math.min(0.85, 1.0 / Math.max(baseSpeed, 1.12));
-
-  // FOMO / Flash Sale: sangat cepat (+16%)
-  if (t.includes("fomo") || t.includes("flash") || t.includes("promo"))
-    return Math.min(0.80, 1.0 / Math.max(baseSpeed, 1.18));
-
-  // Professional / Edukasi: tempo normal-sedang
-  if (t.includes("profesion") || t.includes("professional") || t.includes("edukatif"))
-    return 1.0;
-
-  // Default Friendly / Casual
-  return Math.min(0.90, 1.0 / Math.max(baseSpeed, 1.06));
-}
-
 /**
- * Resolve path ke Piper voice ONNX file.
- * Prioritas:
- *   1. PIPER_VOICE_MODEL env var
- *   2. ./piper_voices/<avatarName>/<gender>/<tone>.onnx  (custom voice)
- *   3. ./piper_voices/id_ID-google-medium.onnx           (default Indonesian female)
+ * Pengaturan prosodi akustik (Kecepatan, Nada, Volume) berdasarkan Tone / Persona:
+ * - Energetic   : Tempo cepat (+12%), nada ceria (+3Hz), volume mantap (+12%).
+ * - FOMO / Promo: Tempo mendesak (+16%), nada heboh (+4Hz), volume tinggi (+15%).
+ * - Professional: Tempo tenang artikulatif (+2%), nada hangat (+0Hz), volume jernih (+6%).
+ * - Casual      : Tempo ramah santai (+8%), nada hangat (+2Hz), volume (+8%).
  */
-function resolvePiperVoiceModel(voiceId: string, _avatarName?: string): string {
-  if (process.env.PIPER_VOICE_MODEL) return process.env.PIPER_VOICE_MODEL;
-
-  const voicesDir = path.join(__dirname, "piper_voices");
-
-  // Map voice ID ke file onnx (bisa dikembangkan dengan lebih banyak suara)
-  const voiceMap: Record<string, string> = {
-    "id-ID-GadisNeural": "id_ID-google-medium.onnx",
-    "id-ID-SitiNeural": "id_ID-google-medium.onnx",
-    "id-ID-ArdiNeural": "id_ID-google-medium.onnx",
-  };
-
-  const filename = voiceMap[voiceId] || "id_ID-google-medium.onnx";
-  return path.join(voicesDir, filename);
-}
-
-/** Synthesize teks ke WAV buffer menggunakan Piper-TTS via Python subprocess. */
-async function synthesizeWithPiper(
-  text: string,
-  voiceId: string,
-  avatarName?: string,
-  lengthScale = 0.9,
-): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const cleanText = sanitizeForLiveTTS(text);
-    if (!cleanText) {
-      reject(new Error("Teks kosong setelah sanitasi"));
-      return;
-    }
-
-    const scriptPath = path.join(__dirname, "piper_tts.py");
-    const modelPath = resolvePiperVoiceModel(voiceId, avatarName);
-
-    const python = process.env.PIPER_PYTHON || "python3";
-    const args = [
-      scriptPath,
-      "--model", modelPath,
-      "--length-scale", String(lengthScale),
-    ];
-
-    const proc = spawn(python, args, {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    const chunks: Buffer[] = [];
-    const errChunks: Buffer[] = [];
-
-    proc.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-    proc.stderr.on("data", (chunk: Buffer) => errChunks.push(chunk));
-
-    // Timeout 15 detik — Piper biasanya selesai dalam <2 detik untuk teks pendek
-    const timeoutId = setTimeout(() => {
-      proc.kill();
-      reject(new Error("Piper-TTS timeout (15s)"));
-    }, 15_000);
-
-    proc.on("close", (code) => {
-      clearTimeout(timeoutId);
-      if (code !== 0) {
-        const errMsg = Buffer.concat(errChunks).toString().trim();
-        reject(new Error(`Piper-TTS gagal (exit ${code}): ${errMsg}`));
-        return;
-      }
-      const audio = Buffer.concat(chunks);
-      if (audio.length === 0) {
-        reject(new Error("Piper-TTS menghasilkan output kosong"));
-        return;
-      }
-      console.log(`[TTS] ✅ Piper-TTS berhasil (${audio.length} bytes WAV, model: ${path.basename(modelPath)})`);
-      resolve(audio);
-    });
-
-    proc.on("error", (err) => {
-      clearTimeout(timeoutId);
-      reject(new Error(`Piper-TTS spawn error: ${err.message}. Pastikan python3 dan piper-tts terinstall.`));
-    });
-
-    // Tulis teks ke stdin subprocess
-    proc.stdin.write(cleanText, "utf8");
-    proc.stdin.end();
-  });
-}
-
-function getLocalVoiceRefFallback(
-  _avatarName: string,
+export function getProsodyOptions(
   tone?: string,
-): Buffer | null {
+  baseSpeed = 1.0,
+): { rate: string; pitch: string; volume: string } {
   const t = (tone || "").toLowerCase();
-  let toneFile = "namira_energetik.mp3";
-  if (t.includes("fomo")) toneFile = "namira_fomo.mp3";
-  else if (t.includes("profesion") || t.includes("professional"))
-    toneFile = "namira_professional.mp3";
 
-  const searchDirs = [
-    path.join(process.cwd(), "assets", "voice_refs"),
-    path.join(process.cwd(), "..", "deploy", "assets", "voice_refs"),
-    path.join(process.cwd(), "..", "frontend", "public", "voice-templates"),
-  ];
-
-  for (const dir of searchDirs) {
-    const filePath = path.join(dir, toneFile);
-    if (fs.existsSync(filePath)) {
-      try {
-        return fs.readFileSync(filePath);
-      } catch {}
-    }
+  if (t.includes("energet") || t.includes("semangat")) {
+    const calculatedRate = Math.round((baseSpeed * 1.12 - 1.0) * 100);
+    return {
+      rate: `${calculatedRate >= 0 ? "+" : ""}${calculatedRate}%`,
+      pitch: "+3Hz",
+      volume: "+12%",
+    };
   }
-  return null;
+
+  if (t.includes("fomo") || t.includes("flash") || t.includes("promo")) {
+    const calculatedRate = Math.round((baseSpeed * 1.16 - 1.0) * 100);
+    return {
+      rate: `${calculatedRate >= 0 ? "+" : ""}${calculatedRate}%`,
+      pitch: "+4Hz",
+      volume: "+15%",
+    };
+  }
+
+  if (
+    t.includes("profesion") ||
+    t.includes("professional") ||
+    t.includes("edukatif")
+  ) {
+    const calculatedRate = Math.round((baseSpeed * 1.02 - 1.0) * 100);
+    return {
+      rate: `${calculatedRate >= 0 ? "+" : ""}${calculatedRate}%`,
+      pitch: "+0Hz",
+      volume: "+6%",
+    };
+  }
+
+  // Casual / Friendly
+  const calculatedRate = Math.round((baseSpeed * 1.08 - 1.0) * 100);
+  return {
+    rate: `${calculatedRate >= 0 ? "+" : ""}${calculatedRate}%`,
+    pitch: "+2Hz",
+    volume: "+8%",
+  };
+}
+
+/** Synthesize speech menggunakan Microsoft Edge Neural TTS dengan prosodi natural */
+async function synthesizeWithEdgeTTS(
+  text: string,
+  voice: string,
+  tone?: string,
+  speed = 1.0,
+): Promise<Buffer> {
+  const cleanText = sanitizeForLiveTTS(text);
+  if (!cleanText) {
+    throw new Error("Teks kosong setelah sanitasi");
+  }
+
+  const prosody = getProsodyOptions(tone, speed);
+
+  const tts = new MsEdgeTTS();
+  await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+
+  const { audioStream } = tts.toStream(cleanText, {
+    rate: prosody.rate,
+    pitch: prosody.pitch,
+    volume: prosody.volume,
+  });
+
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+
+    const timeout = setTimeout(() => {
+      reject(new Error("Edge-TTS request timeout (10s)"));
+    }, 10_000);
+
+    audioStream.on("data", (chunk: Buffer) => chunks.push(chunk));
+    audioStream.on("end", () => {
+      clearTimeout(timeout);
+      const audioBuffer = Buffer.concat(chunks);
+      if (audioBuffer.length === 0) {
+        reject(new Error("Edge-TTS menghasilkan buffer kosong"));
+        return;
+      }
+      resolve(audioBuffer);
+    });
+    audioStream.on("error", (err: Error) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
 }
 
 export async function synthesizeSpeech(
   req: SynthesizeRequest,
 ): Promise<SynthesizeResponse> {
-  const {
-    text,
-    avatarName = "Namira",
-    speed = 1.0,
-    tone,
-  } = req;
+  const { text, avatarName = "Namira", speed = 1.0, tone } = req;
 
-  let matchedVoice =
-    INDONESIAN_VOICES.find(
-      (v) => v.avatarMatch.toLowerCase() === avatarName.toLowerCase(),
-    ) || INDONESIAN_VOICES[1];
-
-  if (req.voice) {
-    const customVoice = INDONESIAN_VOICES.find((v) => v.id === req.voice);
-    if (customVoice) matchedVoice = customVoice;
+  // Pilih suara Indonesia neural terbaik
+  let selectedVoice = "id-ID-GadisNeural"; // Default wanita paling natural & ceria
+  if (req.voice && INDONESIAN_VOICES.some((v) => v.id === req.voice)) {
+    selectedVoice = req.voice;
+  } else if (
+    avatarName.toLowerCase().includes("budi") ||
+    avatarName.toLowerCase().includes("ardi")
+  ) {
+    selectedVoice = "id-ID-ArdiNeural";
   }
 
-  const lengthScale = getToneSpeedScale(tone, speed);
   const wordCount = text.trim().split(/\s+/).length;
   const estimatedSeconds = Math.max(
     1.5,
-    Math.round((wordCount / (140 * (1 / lengthScale) / 60)) * 10) / 10,
+    Math.round(((wordCount / ((140 * speed) / 60)) * 10)) / 10,
   );
 
   let audioBuffer: Buffer | undefined;
-  let engineUsed = "Fallback Voice Template";
+  let engineUsed = "Microsoft Edge Neural TTS (Natural Live Prosody)";
 
-  // ─── Tier 1: Piper-TTS (local / offline) ──────────────────────────────────
   try {
-    audioBuffer = await synthesizeWithPiper(
-      text,
-      matchedVoice.id,
-      avatarName,
-      lengthScale,
-    );
-    engineUsed = "Piper TTS (id-ID offline)";
-  } catch (piperErr) {
+    audioBuffer = await synthesizeWithEdgeTTS(text, selectedVoice, tone, speed);
+  } catch (primaryErr) {
     console.warn(
-      `[TTS] ⚠️  Piper-TTS gagal (Tier 1), menggunakan persona fallback template...`,
-      (piperErr as Error).message,
+      `[TTS] ⚠️ Edge-TTS primer (${selectedVoice}) notice: ${(primaryErr as Error).message}. Mencoba fallback...`,
     );
 
-    // ─── Tier 2: Template audio lokal (static fallback) ───────────────────
-    const fallbackBuffer = getLocalVoiceRefFallback(avatarName, tone);
-    if (fallbackBuffer) {
-      audioBuffer = fallbackBuffer;
-      engineUsed = "Persona Template (Static Fallback)";
-      console.warn(
-        `[TTS] ⚠️  Menggunakan template suara statis — teks tidak akan sesuai audio!`,
-      );
-    } else {
+    // Fallback ke suara neural alternatif
+    try {
+      selectedVoice = "id-ID-SitiNeural";
+      audioBuffer = await synthesizeWithEdgeTTS(text, selectedVoice, tone, speed);
+    } catch (fallbackErr) {
       console.error(
-        `[TTS] ❌ Semua tier TTS gagal dan tidak ada template lokal. audioBuffer=undefined.`,
+        `[TTS] ❌ Semua tier Edge-TTS gagal:`,
+        (fallbackErr as Error).message,
       );
+      engineUsed = "Edge-TTS Error";
     }
   }
 
   return {
-    success: true,
-    voice: matchedVoice.id,
+    success: !!audioBuffer,
+    voice: selectedVoice,
     avatar: avatarName,
     text,
     durationEstimateSeconds: estimatedSeconds,
-    audioFormat: "audio/wav",
+    audioFormat: "audio/mpeg",
     engine: engineUsed,
     message: audioBuffer
       ? `TTS synthesis success (${engineUsed})`
-      : "TTS synthesis failed — semua tier gagal",
+      : "TTS synthesis failed — periksa koneksi internet ke Microsoft Neural TTS",
     audioBuffer,
   };
+}
+
+/** Pre-warmup connection saat backend pertama kali start */
+export async function warmUpTTS(): Promise<void> {
+  try {
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(
+      "id-ID-GadisNeural",
+      OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3,
+    );
+    console.log("[TTS] 🚀 Microsoft Edge Neural TTS engine pre-warmed & ready.");
+  } catch (e) {
+    console.warn("[TTS] Warmup notice:", (e as Error).message);
+  }
 }
