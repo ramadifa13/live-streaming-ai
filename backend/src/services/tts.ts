@@ -158,15 +158,19 @@ async function synthesizeWithEdgeTTS(
   voiceId: string,
   rateStr: string,
 ): Promise<Buffer> {
-  const sentences = splitIntoSentences(text);
-  if (sentences.length <= 1) {
-    return synthesizeSentence(text, voiceId, rateStr);
+  // Gunakan 1 single WebSocket connection untuk seluruh teks (menghindari koneksi konkuren yang di-drop server Edge)
+  try {
+    return await synthesizeSentence(text, voiceId, rateStr);
+  } catch (singleErr) {
+    const sentences = splitIntoSentences(text);
+    if (sentences.length <= 1) throw singleErr;
+    // Jika teks panjang gagal, sintesis secara sekuensial (bukan Promise.all bersamaan)
+    const parts: Buffer[] = [];
+    for (const sentence of sentences) {
+      parts.push(await synthesizeSentence(sentence, voiceId, rateStr));
+    }
+    return Buffer.concat(parts);
   }
-
-  const parts = await Promise.all(
-    sentences.map((sentence) => synthesizeSentence(sentence, voiceId, rateStr)),
-  );
-  return Buffer.concat(parts);
 }
 
 /**

@@ -300,21 +300,28 @@ def main(args):
 
             # Save prediction results
             temp_vid_path = f"{temp_dir}/temp_{input_basename}_{audio_basename}.mp4"
-            cmd_img2video = f"ffmpeg -y -v warning -r {fps} -f image2 -i {result_img_save_path}/%08d.png -vcodec libx264 -vf format=yuv420p -crf 18 {temp_vid_path}"
+            cmd_img2video = f"ffmpeg -y -v warning -r {fps} -f image2 -start_number 0 -i {result_img_save_path}/%08d.png -vcodec libx264 -vf format=yuv420p -crf 18 {temp_vid_path}"
             print("Video generation command:", cmd_img2video)
             os.system(cmd_img2video)   
             
-            cmd_combine_audio = f"ffmpeg -y -v warning -i {audio_path} -i {temp_vid_path} {output_vid_name}"
+            cmd_combine_audio = f"ffmpeg -y -v warning -i {audio_path} -i {temp_vid_path} -c:v copy -c:a aac -shortest {output_vid_name}"
             print("Audio combination command:", cmd_combine_audio) 
             os.system(cmd_combine_audio)
             
-            # Clean up temporary files
-            shutil.rmtree(result_img_save_path)
-            os.remove(temp_vid_path)
+            # Clean up temporary files safely
+            shutil.rmtree(result_img_save_path, ignore_errors=True)
+            if os.path.exists(temp_vid_path):
+                try:
+                    os.remove(temp_vid_path)
+                except Exception:
+                    pass
             
-            shutil.rmtree(save_dir_full)
-            if not args.saved_coord:
-                os.remove(crop_coord_save_path)
+            shutil.rmtree(save_dir_full, ignore_errors=True)
+            if not args.saved_coord and os.path.exists(crop_coord_save_path):
+                try:
+                    os.remove(crop_coord_save_path)
+                except Exception:
+                    pass
                     
             print(f"Results saved to {output_vid_name}")
         except Exception as e:

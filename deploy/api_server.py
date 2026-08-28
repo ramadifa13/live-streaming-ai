@@ -134,7 +134,7 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
         elif req.audio_url:
             audio_path = req.audio_url
 
-        # Apply timeout safety to avoid stuck tasks
+        # Apply timeout safety to avoid stuck tasks (5 minutes timeout for cold-start / warmup)
         final_video_path = await asyncio.wait_for(
             worker.run_pipeline(
                 host_type=host_type,
@@ -144,7 +144,7 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                 audio_path=audio_path,
                 tone=req.tone,
             ),
-            timeout=180.0,  # 3 minutes maximum timeout
+            timeout=300.0,
         )
 
         if not final_video_path or not os.path.exists(final_video_path):
@@ -173,7 +173,7 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
         print(f"[API TIMEOUT] Video generation timed out for {task_id}")
         jobs[task_id] = {
             "status": "error",
-            "error": "Render video timeout (180s limit exceeded)",
+            "error": "Render video timeout (300s limit exceeded)",
             "created_at": time.time(),
         }
     except Exception as e:
@@ -184,7 +184,8 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
             "created_at": time.time(),
         }
     finally:
-        if audio_path and os.path.exists(audio_path):
+        # Bersihkan audio temp file hanya jika sudah tidak digunakan
+        if audio_path and os.path.exists(audio_path) and task_id in jobs and jobs[task_id].get("status") == "done":
             try:
                 os.remove(audio_path)
             except Exception:
