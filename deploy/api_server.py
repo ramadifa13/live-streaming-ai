@@ -197,8 +197,6 @@ async def generate_neural_video(req: GenerateVideoRequest):
     return {"success": True, "job_id": task_id, "status": "processing"}
 
 class BroadcastRequest(BaseModel):
-    rtmp_url: str
-    stream_key: str
     rtmp_url: Optional[str] = None
     rtmpUrl: Optional[str] = None
     stream_key: Optional[str] = None
@@ -217,8 +215,6 @@ async def start_broadcast(req: BroadcastRequest):
         return {"success": True, "status": "streaming", "message": "Broadcaster already running"}
 
     env = os.environ.copy()
-    env["RTMP_URL"] = req.rtmp_url
-    env["STREAM_KEY"] = req.stream_key
     env["RTMP_URL"] = final_rtmp_url
     env["STREAM_KEY"] = final_stream_key
     env["IDLE_VIDEO"] = req.idle_video
