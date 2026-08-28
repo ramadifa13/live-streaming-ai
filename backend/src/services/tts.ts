@@ -15,7 +15,7 @@ export interface TTSVoice {
 export const INDONESIAN_VOICES: TTSVoice[] = [
   {
     id: "id-ID-GadisNeural",
-    name: "Gadis (Friendly & Warm)",
+    name: "Gadis (Wanita - Ramah & Warm)",
     gender: "female",
     locale: "id-ID",
     style: "Friendly",
@@ -23,7 +23,7 @@ export const INDONESIAN_VOICES: TTSVoice[] = [
   },
   {
     id: "id-ID-SitiNeural",
-    name: "Siti (Energetic & Lively)",
+    name: "Namira (Wanita - Energetik & Live Shopping)",
     gender: "female",
     locale: "id-ID",
     style: "Energetic",
@@ -31,7 +31,7 @@ export const INDONESIAN_VOICES: TTSVoice[] = [
   },
   {
     id: "id-ID-ArdiNeural",
-    name: "Ardi (Masculine & Confident)",
+    name: "Ardi (Pria - Maskulin & Confident)",
     gender: "male",
     locale: "id-ID",
     style: "Confident",
@@ -40,7 +40,7 @@ export const INDONESIAN_VOICES: TTSVoice[] = [
 ];
 
 const EDGE_VOICE_ALIASES: Record<string, string> = {
-  "id-ID-SitiNeural": "id-ID-GadisNeural",
+  "id-ID-SitiNeural": "id-ID-GadisNeural", // Di-modulasi pitch +6Hz dan rate +12% untuk karakter Siti/Namira yang lincah
 };
 
 function resolveEdgeVoice(voiceId: string): string {
