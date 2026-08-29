@@ -180,6 +180,7 @@ export default function Dashboard() {
     videosQueued: number;
     pendingCount: number;
     isLive?: boolean;
+    isBroadcasting?: boolean;
     stageIndex?: number;
     stageText?: string;
   } | null>(null);
@@ -3391,7 +3392,9 @@ export default function Dashboard() {
                     <div className="w-full py-3 px-4 rounded-lg bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
                       <span className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
                       <span className="text-xs text-slate-300 font-medium">
-                        Menunggu Render Video AI Selesai...
+                        {!pipelineStatus?.isBroadcasting
+                          ? "Menghubungkan ke RTMP Server..."
+                          : `Menunggu Render Video AI (${pipelineStatus?.generationCount || 0}/2)...`}
                       </span>
                     </div>
                   )}
@@ -6098,8 +6101,9 @@ export default function Dashboard() {
                     <div className="w-full py-3 px-4 rounded-lg bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
                       <span className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
                       <span className="text-xs text-slate-300 font-medium">
-                        Menunggu Render Video AI Selesai (
-                        {pipelineStatus?.generationCount || 0}/2)...
+                        {!pipelineStatus?.isBroadcasting
+                          ? "Menghubungkan ke RTMP Server..."
+                          : `Menunggu Render Video AI (${pipelineStatus?.generationCount || 0}/2 Selesai)...`}
                       </span>
                     </div>
                   )}

@@ -348,20 +348,15 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     try {
-      // Tunggu sampai V1+V2 selesai di-generate ke memory (max 3 menit)
-      console.log(
-        `[GoLiveConfirm] Session ${sessionId}: Menunggu V1+V2 siap...`,
-      );
-      const isReady = await liveHostOrchestrator.waitForPipelineReady(
-        sessionId,
-        180_000,
-      );
-
-      if (!isReady) {
-        // Pipeline timeout — tetap lanjut, kirim apapun yang sudah di-generate
-        console.warn(
-          `[GoLiveConfirm] Pipeline timeout — melanjutkan dengan video yang tersedia...`,
-        );
+      // Pastikan status pipeline sudah siap (RTMP terhubung dan 2 video selesai di-render)
+      const pipelineStatus =
+        await liveHostOrchestrator.getPipelineStatus(sessionId);
+      if (!pipelineStatus.ready) {
+        reply.code(400);
+        return {
+          success: false,
+          error: `Belum siap untuk Go Live: Pastikan RTMP sudah terhubung dan 2 video pembuka selesai dirender (Status saat ini: ${pipelineStatus.generationCount}/2 video selesai, RTMP: ${pipelineStatus.isBroadcasting ? "Terhubung" : "Belum Terhubung"}).`,
+        };
       }
 
       // Sinyal ke worker: stop idle loop, mulai putar dari queue
@@ -381,7 +376,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         message: "AI Host aktif! V1+V2 sudah diputar, pipeline terus berjalan.",
         sessionId,
         startedAt: new Date().toISOString(),
-        pipelineStatus: liveHostOrchestrator.getPipelineStatus(sessionId),
+        pipelineStatus: await liveHostOrchestrator.getPipelineStatus(sessionId),
       };
     } catch (error) {
       liveHostOrchestrator.stop(sessionId);
@@ -395,7 +390,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
   });
 
   // GET /api/live-stream/pipeline-status?sessionId=xxx
-  // Polling endpoint untuk frontend: cek apakah V1+V2 sudah dikirim ke GPU.
+  // Polling endpoint untuk frontend: cek apakah RTMP aktif dan 2 video sudah selesai dirender di GPU.
   server.get("/api/live-stream/pipeline-status", async (request) => {
     const { sessionId } = request.query as { sessionId?: string };
     if (!sessionId) {
@@ -405,16 +400,11 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         videosQueued: 0,
         pendingCount: 0,
         isLive: false,
+        isBroadcasting: false,
       };
     }
 
-    const status = liveHostOrchestrator.getPipelineStatus(sessionId);
-
-    // Bug 3 / File 4 fix: status.ready sudah akurat dari getPipelineStatus()
-    // (berbasis videosQueued >= 2, bukan file di disk).
-    // Double-check ke getRunPodQueueStatus DIHAPUS karena bisa return < 2
-    // saat broadcaster sedang hapus file (race condition) — menyebabkan ready = false palsu.
-
+    const status = await liveHostOrchestrator.getPipelineStatus(sessionId);
     return status;
   });
 

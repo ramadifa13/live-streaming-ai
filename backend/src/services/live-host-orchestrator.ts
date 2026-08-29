@@ -352,7 +352,7 @@ class LiveHostOrchestrator {
   // ============================================================================
 
   /**
-   * Tunggu sampai minimal 1 video sudah selesai dirender di GPU atau V1+V2 dikirim.
+   * Tunggu sampai minimal 2 video sudah selesai dirender di GPU dan RTMP aktif.
    */
   public async waitForPipelineReady(
     sessionId: string,
@@ -363,14 +363,15 @@ class LiveHostOrchestrator {
       const state = this.sessions.get(sessionId);
       if (!state || state.abortController.signal.aborted) return false;
 
-      if (state.videosQueued >= 2) {
+      const status = await this.getPipelineStatus(sessionId);
+      if (status.ready) {
         console.log(
-          `[LiveHost] ✅ waitForPipelineReady: videosQueued=${state.videosQueued} >= 2 — pipeline ready (session: ${sessionId})`,
+          `[LiveHost] ✅ waitForPipelineReady: RTMP connected & ${status.generationCount}/2 videos ready (session: ${sessionId})`,
         );
         return true;
       }
 
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 1000));
     }
     console.warn(
       `[LiveHost] waitForPipelineReady timeout (${Math.round(timeoutMs / 1000)}s) — session ${sessionId}`,
@@ -382,33 +383,35 @@ class LiveHostOrchestrator {
   public async getPipelineStatus(sessionId: string) {
     const state = this.sessions.get(sessionId);
     let renderedCount = 0;
+    let isBroadcasting = false;
+
     if (state?.config.podId) {
       try {
         const queueStatus = await getRunPodQueueStatus(state.config.podId);
         renderedCount = queueStatus.ready_videos_count || 0;
+        isBroadcasting = queueStatus.broadcasting ?? false;
       } catch {}
     } else {
       renderedCount = state?.videosQueued ?? 0;
+      isBroadcasting = true;
     }
 
-    const isReady = (state?.videosQueued ?? 0) >= 2 && renderedCount >= 1;
+    // Syarat Ready: RTMP terhubung DAN minimal 2 video pembuka selesai dirender
+    const isReady = renderedCount >= 2 && isBroadcasting;
 
     let stageIndex = 0;
     let stageText = "Mengalokasikan Cloud GPU NVIDIA RTX 4090...";
 
     if (state) {
-      if (renderedCount >= 1 || state.videosQueued >= 1) {
+      if (!isBroadcasting) {
+        stageIndex = 3;
+        stageText = "Menghubungkan ke Server RTMP Siaran...";
+      } else if (renderedCount < 2) {
         stageIndex = 4;
         stageText = `Generate AI Host (Video ${Math.min(renderedCount, 2)}/2 Selesai)...`;
-      } else if (state.pendingVideos.length > 0) {
-        stageIndex = 3;
-        stageText = "Koneksi Stream RTMP & Handshake Siaran...";
-      } else if (state.generationCount > 0) {
-        stageIndex = 2;
-        stageText = "Menyiapkan Voice Persona & Skrip AI Selling...";
       } else {
-        stageIndex = 1;
-        stageText = "Inisialisasi Neural Lipsync (MuseTalk & DWPose)...";
+        stageIndex = 5;
+        stageText = "Video AI & RTMP Siap! Silakan konfirmasi Go Live.";
       }
     }
 
@@ -418,6 +421,7 @@ class LiveHostOrchestrator {
       videosQueued: state?.videosQueued ?? 0,
       pendingCount: state?.pendingVideos.length ?? 0,
       isLive: state?.isLive ?? false,
+      isBroadcasting,
       stageIndex,
       stageText,
     };
