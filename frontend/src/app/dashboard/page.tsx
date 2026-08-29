@@ -5905,160 +5905,167 @@ export default function Dashboard() {
         {/* FULL PAGE BLUR LOADING OVERLAY (AI SERVER INITIALIZATION)     */}
         {/* ============================================================ */}
         {isConnectingLive && (
-          <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/80 backdrop-blur-xl p-4 animate-in fade-in duration-300">
-            <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-indigo-500/30 bg-[#0a0f1d]/95 p-8 text-center shadow-2xl shadow-indigo-500/20">
+          <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/85 backdrop-blur-xl p-3 sm:p-6 animate-in fade-in duration-300">
+            <div className="relative w-full max-w-lg max-h-[92vh] flex flex-col rounded-2xl sm:rounded-3xl border border-indigo-500/30 bg-[#0a0f1d] text-center shadow-2xl shadow-indigo-500/20 overflow-hidden">
               {/* Decorative radial glows */}
-              <div className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-80 h-80 bg-gradient-to-br from-blue-600/30 via-indigo-600/20 to-purple-600/30 blur-3xl rounded-full" />
-              <div className="pointer-events-none absolute -bottom-24 left-1/2 -translate-x-1/2 w-80 h-80 bg-gradient-to-tr from-emerald-600/20 to-blue-600/20 blur-3xl rounded-full" />
+              <div className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-80 h-80 bg-gradient-to-br from-blue-600/25 via-indigo-600/15 to-purple-600/25 blur-3xl rounded-full" />
+              <div className="pointer-events-none absolute -bottom-24 left-1/2 -translate-x-1/2 w-80 h-80 bg-gradient-to-tr from-emerald-600/15 to-blue-600/15 blur-3xl rounded-full" />
 
-              {/* Animated AI Glowing Pulse Sphere */}
-              <div className="relative mx-auto mb-6 flex h-24 w-24 items-center justify-center">
-                <div className="absolute inset-0 rounded-full border-4 border-indigo-500/20 animate-ping opacity-75" />
-                <div className="absolute inset-0 rounded-full border-4 border-t-indigo-500 border-r-purple-500 border-b-transparent border-l-transparent animate-spin" />
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 shadow-xl shadow-indigo-500/40 animate-pulse">
-                  <span className="text-3xl">✨</span>
+              {/* Fixed Header */}
+              <div className="relative pt-6 pb-2 px-6 shrink-0">
+                {/* Animated AI Glowing Pulse Sphere */}
+                <div className="relative mx-auto mb-3 flex h-14 w-14 items-center justify-center">
+                  <div className="absolute inset-0 rounded-full border-2 border-indigo-500/20 animate-ping opacity-75" />
+                  <div className="absolute inset-0 rounded-full border-2 border-t-indigo-500 border-r-purple-500 border-b-transparent border-l-transparent animate-spin" />
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 shadow-lg shadow-indigo-500/40 animate-pulse">
+                    <span className="text-xl">✨</span>
+                  </div>
                 </div>
-              </div>
 
-              {/* Header Title */}
-              <h3 className="text-xl font-extrabold text-white tracking-wide mb-1">
-                Menyiapkan Sesi Live Streaming AI
-              </h3>
-              <p className="text-xs text-slate-400 mb-6">
-                Host AI{" "}
-                <span className="text-indigo-300 font-semibold">
-                  {selectedAvatar.name}
-                </span>{" "}
-                sedang dipersiapkan untuk siaran live di{" "}
-                <span className="text-indigo-300 font-semibold">
-                  {selectedPlatform}
-                </span>
-                .
-              </p>
+                {/* Header Title */}
+                <h3 className="text-lg sm:text-xl font-extrabold text-white tracking-wide mb-1">
+                  Menyiapkan Sesi Live Streaming AI
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Host AI{" "}
+                  <span className="text-indigo-300 font-semibold">
+                    {selectedAvatar.name}
+                  </span>{" "}
+                  sedang dipersiapkan untuk siaran live di{" "}
+                  <span className="text-indigo-300 font-semibold">
+                    {selectedPlatform}
+                  </span>
+                  .
+                </p>
 
-              {/* Active Stage Badge */}
-              <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-4 py-1.5 text-xs font-semibold text-indigo-300 mb-6">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
-                </span>
-                <span>{connectingStageText}</span>
-              </div>
-
-              {/* Stepper Progress Visualizer */}
-              <div className="mb-6 space-y-2.5 rounded-2xl bg-slate-900/90 border border-slate-800/80 p-4 text-left text-xs">
-                <div
-                  className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 0 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                >
-                  <span
-                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex > 0 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-indigo-600 text-white animate-pulse"}`}
-                  >
-                    {connectingStageIndex > 0 ? "✓" : "1"}
+                {/* Active Stage Badge */}
+                <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-3.5 py-1 text-[11px] font-semibold text-indigo-300">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
                   </span>
-                  <span className="truncate">
-                    Alokasi Cloud GPU Dedicated (NVIDIA RTX 4090)
-                  </span>
-                </div>
-                <div
-                  className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 1 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                >
-                  <span
-                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex > 1 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 1 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
-                  >
-                    {connectingStageIndex > 1 ? "✓" : "2"}
-                  </span>
-                  <span className="truncate">
-                    Inisialisasi Neural Lipsync (MuseTalk & DWPose)
-                  </span>
-                </div>
-                <div
-                  className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 2 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                >
-                  <span
-                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex > 2 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 2 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
-                  >
-                    {connectingStageIndex > 2 ? "✓" : "3"}
-                  </span>
-                  <span className="truncate">
-                    Menyiapkan Voice Persona & Skrip AI Selling
-                  </span>
-                </div>
-                <div
-                  className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 3 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                >
-                  <span
-                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${connectingStageIndex > 3 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 3 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
-                  >
-                    {connectingStageIndex > 3 ? "✓" : "4"}
-                  </span>
-                  <span className="truncate">
-                    Koneksi Stream RTMP & Handshake Siaran
-                  </span>
-                </div>
-                <div
-                  className={`flex items-center gap-3 transition-colors ${connectingStageIndex >= 4 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                >
-                  <span
-                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold shrink-0 ${pipelineStatus?.ready ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex >= 4 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
-                  >
-                    {pipelineStatus?.ready ? "✓" : "5"}
-                  </span>
-                  <span className="truncate">
-                    Generate AI Host (Video{" "}
-                    {Math.min(pipelineStatus?.generationCount || 0, 2)}/2
-                    Selesai)
+                  <span className="truncate max-w-[280px]">
+                    {connectingStageText}
                   </span>
                 </div>
               </div>
 
-              {/* Note for RTMP & GO Button */}
-              {isWaitingForGoLive && (
-                <div className="mb-6 p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-left animate-in fade-in slide-in-from-bottom-2">
-                  <p className="text-yellow-400 font-bold text-xs mb-1">
-                    ⚠️ Konfirmasi Siaran
-                  </p>
-                  <p className="text-slate-300 text-xs mb-3">
-                    Video AI telah siap. Jika menggunakan RTMP (seperti
-                    Instagram),{" "}
-                    <strong>
-                      mulai siaran di platform tersebut terlebih dahulu
-                    </strong>
-                    . Jika sudah, klik tombol <strong>GO</strong> di bawah ini
-                    agar AI Live Control muncul. AI akan terus men-generate
-                    video di background hingga durasi selesai (Max Queue 5).
-                  </p>
+              {/* Scrollable Content Body */}
+              <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-3 space-y-3.5 text-left text-xs custom-scrollbar">
+                {/* Stepper Progress Visualizer */}
+                <div className="space-y-2 rounded-xl bg-slate-900/90 border border-slate-800/80 p-3.5">
+                  <div
+                    className={`flex items-center gap-2.5 transition-colors ${connectingStageIndex >= 0 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                  >
+                    <span
+                      className={`flex h-4.5 w-4.5 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 0 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-indigo-600 text-white animate-pulse"}`}
+                    >
+                      {connectingStageIndex > 0 ? "✓" : "1"}
+                    </span>
+                    <span className="truncate">
+                      Alokasi Cloud GPU Dedicated (NVIDIA RTX 4090)
+                    </span>
+                  </div>
+                  <div
+                    className={`flex items-center gap-2.5 transition-colors ${connectingStageIndex >= 1 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                  >
+                    <span
+                      className={`flex h-4.5 w-4.5 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 1 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 1 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                    >
+                      {connectingStageIndex > 1 ? "✓" : "2"}
+                    </span>
+                    <span className="truncate">
+                      Inisialisasi Neural Lipsync (MuseTalk & DWPose)
+                    </span>
+                  </div>
+                  <div
+                    className={`flex items-center gap-2.5 transition-colors ${connectingStageIndex >= 2 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                  >
+                    <span
+                      className={`flex h-4.5 w-4.5 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 2 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 2 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                    >
+                      {connectingStageIndex > 2 ? "✓" : "3"}
+                    </span>
+                    <span className="truncate">
+                      Menyiapkan Voice Persona & Skrip AI Selling
+                    </span>
+                  </div>
+                  <div
+                    className={`flex items-center gap-2.5 transition-colors ${connectingStageIndex >= 3 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                  >
+                    <span
+                      className={`flex h-4.5 w-4.5 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 3 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 3 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                    >
+                      {connectingStageIndex > 3 ? "✓" : "4"}
+                    </span>
+                    <span className="truncate">
+                      Koneksi Stream RTMP & Handshake Siaran
+                    </span>
+                  </div>
+                  <div
+                    className={`flex items-center gap-2.5 transition-colors ${connectingStageIndex >= 4 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                  >
+                    <span
+                      className={`flex h-4.5 w-4.5 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${pipelineStatus?.ready ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex >= 4 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                    >
+                      {pipelineStatus?.ready ? "✓" : "5"}
+                    </span>
+                    <span className="truncate">
+                      Generate AI Host (Video{" "}
+                      {Math.min(pipelineStatus?.generationCount || 0, 2)}/2
+                      Selesai)
+                    </span>
+                  </div>
+                </div>
 
-                  <div className="mb-4 text-left p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-sm">
-                    <p className="font-semibold text-white mb-1">
-                      ⚠️ Wajib Lakukan Sebelum Klik GO:
-                    </p>
-                    <ol className="list-decimal pl-4 space-y-1 text-slate-300">
-                      <li>
-                        Pastikan Anda sudah menyalin <strong>Stream Key</strong>{" "}
-                        ke platform.
-                      </li>
-                      <li>
-                        Tekan tombol <strong>Mulai Siaran / Go Live</strong> di
-                        aplikasi {selectedPlatform} Anda.
-                      </li>
-                    </ol>
-                    <label className="mt-3 flex items-start gap-2 cursor-pointer p-2 hover:bg-white/5 rounded-md transition">
+                {/* Note for RTMP & Checklist */}
+                {isWaitingForGoLive && (
+                  <div className="p-3.5 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-left animate-in fade-in slide-in-from-bottom-2 space-y-2.5">
+                    <div>
+                      <p className="text-yellow-400 font-bold text-xs mb-0.5">
+                        ⚠️ Konfirmasi Siaran di {selectedPlatform}
+                      </p>
+                      <p className="text-slate-300 text-[11px] leading-relaxed">
+                        Mulai siaran di aplikasi platform Anda terlebih dahulu,
+                        lalu centang konfirmasi dan tekan tombol{" "}
+                        <strong>GO</strong> di bawah.
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-[11px]">
+                      <ol className="list-decimal pl-4 space-y-0.5 text-slate-300">
+                        <li>
+                          Salin <strong>Stream Key</strong> ke platform.
+                        </li>
+                        <li>
+                          Klik <strong>Mulai Siaran / Go Live</strong> di{" "}
+                          {selectedPlatform}.
+                        </li>
+                      </ol>
+                    </div>
+
+                    <label className="flex items-start gap-2 cursor-pointer p-1.5 hover:bg-white/5 rounded-md transition">
                       <input
                         type="checkbox"
                         checked={hasConfirmedBroadcast}
                         onChange={(e) =>
                           setHasConfirmedBroadcast(e.target.checked)
                         }
-                        className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-emerald-500 focus:ring-emerald-500"
+                        className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-emerald-500 focus:ring-emerald-500 shrink-0"
                       />
-                      <span className="text-white text-sm">
+                      <span className="text-white text-xs leading-tight">
                         Saya sudah memulai siaran di {selectedPlatform} dan
                         stream siap tayang
                       </span>
                     </label>
                   </div>
+                )}
+              </div>
 
-                  {pipelineStatus?.ready ? (
+              {/* Sticky Bottom Actions Footer (ALWAYS VISIBLE WITHIN SCREEN) */}
+              <div className="p-4 sm:p-5 bg-[#080c18] border-t border-slate-800/90 shrink-0 space-y-2">
+                {isWaitingForGoLive ? (
+                  pipelineStatus?.ready ? (
                     <button
                       type="button"
                       disabled={!hasConfirmedBroadcast}
@@ -6091,55 +6098,63 @@ export default function Dashboard() {
                           showToast("❌ Error koneksi saat konfirmasi.");
                         }
                       }}
-                      className="w-full flex items-center justify-center py-3 rounded-lg font-bold text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 hover:shadow-emerald-500/25"
+                      className="w-full flex items-center justify-center py-2.5 sm:py-3 rounded-xl font-bold text-sm text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 hover:shadow-emerald-500/25 active:scale-95"
                     >
                       {!hasConfirmedBroadcast
                         ? "Centang konfirmasi di atas"
                         : "GO! Mulai Live Control"}
                     </button>
                   ) : (
-                    <div className="w-full py-3 px-4 rounded-lg bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
-                      <span className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                      <span className="text-xs text-slate-300 font-medium">
+                    <div className="w-full py-2.5 px-4 rounded-xl bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
+                      <span className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                      <span className="text-xs text-slate-300 font-medium truncate">
                         {!pipelineStatus?.isBroadcasting
                           ? "Menghubungkan ke RTMP Server..."
                           : `Menunggu Render Video AI (${pipelineStatus?.generationCount || 0}/2 Selesai)...`}
                       </span>
                     </div>
-                  )}
-                </div>
-              )}
+                  )
+                ) : (
+                  <div className="w-full py-2.5 px-4 rounded-xl bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
+                    <span className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                    <span className="text-xs text-slate-300 font-medium truncate">
+                      {connectingStageText}
+                    </span>
+                  </div>
+                )}
 
-              {/* Cancel Button */}
-              <button
-                type="button"
-                onClick={() => {
-                  if (connectingAbortRef.current) {
-                    connectingAbortRef.current.abort();
-                  }
-                  setIsConnectingLive(false);
-                  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "";
-                  fetch(`${backendUrl}/api/live-session/stop`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({}),
-                  }).catch(() => {});
-                  showToast("⚠️ Proses inisialisasi live dibatalkan.");
-                }}
-                className="w-full rounded-xl border border-slate-700/80 bg-slate-800/80 px-4 py-2.5 text-xs font-semibold text-slate-300 hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-300 transition active:scale-95 flex items-center justify-center gap-2"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
+                {/* Cancel Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (connectingAbortRef.current) {
+                      connectingAbortRef.current.abort();
+                    }
+                    setIsConnectingLive(false);
+                    const backendUrl =
+                      process.env.NEXT_PUBLIC_BACKEND_URL || "";
+                    fetch(`${backendUrl}/api/live-session/stop`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({}),
+                    }).catch(() => {});
+                    showToast("⚠️ Proses inisialisasi live dibatalkan.");
+                  }}
+                  className="w-full rounded-xl border border-slate-700/80 bg-slate-800/60 px-4 py-2 text-xs font-semibold text-slate-300 hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-300 transition active:scale-95 flex items-center justify-center gap-1.5"
                 >
-                  <path d="M18 6L6 18M6 6l12 12" />
-                </svg>
-                <span>Batalkan Inisialisasi</span>
-              </button>
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                  <span>Batalkan Inisialisasi</span>
+                </button>
+              </div>
             </div>
           </div>
         )}

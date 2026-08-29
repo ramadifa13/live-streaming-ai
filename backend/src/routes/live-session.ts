@@ -50,17 +50,13 @@ const liveStopSchema = z.object({
 const broadcastSchema = z.object({
   rtmpUrl: z
     .string()
-    .url()
     .min(5, "RTMP URL tidak boleh kosong")
     .refine(
-      (value) => /^rtmps?:\/\//i.test(value),
       (value) => /^rtmps?:\/\/.+/i.test(value.trim()),
       "RTMP URL harus diawali rtmp:// atau rtmps://",
     ),
   streamKey: z
     .string()
-    .min(1)
-    .refine((value) => !/[\r\n/]/.test(value), "Stream key tidak valid"),
     .min(1, "Stream key tidak boleh kosong")
     .refine((value) => !/[\r\n]/.test(value), "Stream key tidak valid"),
   sessionId: z.string().optional(),
