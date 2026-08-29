@@ -3,12 +3,117 @@ import { z } from "zod";
 
 const apiKey = process.env.GROQ_API_KEY || "";
 
-export function getGroqClient(): Groq {
+const DEFAULT_OLLAMA_HOST =
+  process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
+const PREFERRED_OLLAMA_MODELS = [
+  "qwen2.5:7b",
+  "llama3.2:1b",
+  "qwen2.5:3b",
+  "llama3.1:8b",
+  "mistral:7b",
+];
+
+let activeOllamaModel: string | null = null;
+let lastOllamaCheck = 0;
+let isOllamaOnline = false;
+
+export async function checkOllamaHealth(
+  host = DEFAULT_OLLAMA_HOST,
+): Promise<{ online: boolean; model: string | null }> {
+  const now = Date.now();
+  if (isOllamaOnline && activeOllamaModel && now - lastOllamaCheck < 20_000) {
+    return { online: true, model: activeOllamaModel };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    const res = await fetch(`${host}/api/tags`, { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      isOllamaOnline = false;
+      return { online: false, model: null };
+    }
+
+    const data = (await res.json()) as { models?: Array<{ name: string }> };
+    const available = (data.models || []).map((m) => m.name);
+
+    if (available.length === 0) {
+      isOllamaOnline = false;
+      return { online: false, model: null };
+    }
+
+    let selectedModel = available[0]!;
+    for (const pref of PREFERRED_OLLAMA_MODELS) {
+      const found = available.find(
+        (m) => m === pref || m.startsWith(`${pref}:`) || m.includes(pref),
+      );
+      if (found) {
+        selectedModel = found;
+        break;
+      }
+    }
+
+    if (
+      process.env.OLLAMA_MODEL &&
+      available.includes(process.env.OLLAMA_MODEL)
+    ) {
+      selectedModel = process.env.OLLAMA_MODEL;
+    }
+
+    activeOllamaModel = selectedModel;
+    isOllamaOnline = true;
+    lastOllamaCheck = now;
+    return { online: true, model: selectedModel };
+  } catch {
+    isOllamaOnline = false;
+    return { online: false, model: null };
+  }
+}
+
+export async function callOllamaChat(
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+  options: { temperature?: number; format?: "json" } = {},
+  host = DEFAULT_OLLAMA_HOST,
+): Promise<string> {
+  const health = await checkOllamaHealth(host);
+  if (!health.online || !health.model) {
+    throw new Error("Ollama server is not running or no models found");
+  }
+
+  const payload: Record<string, any> = {
+    model: health.model,
+    messages,
+    stream: false,
+    options: {
+      temperature: options.temperature ?? 0.7,
+    },
+  };
+
+  if (options.format === "json") {
+    payload.format = "json";
+  }
+
+  const res = await fetch(`${host}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Ollama chat error (${res.status}): ${errText}`);
+  }
+
+  const json = (await res.json()) as { message?: { content?: string } };
+  return (json.message?.content || "").trim();
+}
+
+export function getGroqClient(): Groq | null {
   const key = process.env.GROQ_API_KEY || apiKey;
   if (!key) {
-    throw new Error(
-      "GROQ_API_KEY is missing. Please set it in .env for Groq LLM.",
-    );
+    return null;
   }
   return new Groq({ apiKey: key });
 }
@@ -168,7 +273,7 @@ const EXCLUDE_KEYWORDS = [
 export async function getAvailableGroqModels(): Promise<GroqModelItem[]> {
   const key = process.env.GROQ_API_KEY || apiKey;
   if (!key) {
-    throw new Error("GROQ_API_KEY is missing. Please set it in .env");
+    return [];
   }
 
   try {
@@ -316,6 +421,30 @@ Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.product
 
   const userMsg = `Pertanyaan Penonton: "${userQuestion}"`;
 
+  // 1. Try Ollama (Local 100% Free LLM - Qwen 2.5 / Llama 3) first
+  try {
+    const ollama = await checkOllamaHealth();
+    if (ollama.online && ollama.model) {
+      const text = await callOllamaChat([
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMsg },
+      ]);
+      if (text.trim()) {
+        return {
+          replyText: text.trim(),
+          engineUsed: `Ollama (${ollama.model}) [100% Free]`,
+          intent: "dynamic_llm",
+          action: "reply",
+        };
+      }
+    }
+  } catch (ollamaErr) {
+    console.warn(
+      `[Brain] Ollama bypass notice, falling back to Groq Cloud:`,
+      (ollamaErr as Error).message,
+    );
+  }
+
   const candidateModels = await getRandomCandidateModels();
 
   for (const model of candidateModels) {
@@ -431,6 +560,47 @@ Kembalikan HANYA JSON valid:
   "cta": "..."
 }`;
 
+  // 1. Try Ollama (Local 100% Free LLM - Qwen 2.5 / Llama 3) first
+  try {
+    const ollama = await checkOllamaHealth();
+    if (ollama.online && ollama.model) {
+      const text = await callOllamaChat(
+        [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: `Buat naskah live sales pitch untuk ${input.productName} dalam format JSON`,
+          },
+        ],
+        { format: "json" },
+      );
+      const parsed = cleanAndExtractJson(text);
+      if (parsed?.hook && parsed?.showcase && parsed?.cta) {
+        const cleanHook = String(parsed.hook).trim();
+        const cleanShowcase = String(parsed.showcase).trim();
+        const cleanCta = String(parsed.cta).trim();
+
+        return {
+          productName: input.productName,
+          price,
+          stock,
+          category,
+          avatarName: hostName,
+          tone,
+          hook: cleanHook,
+          showcase: cleanShowcase,
+          cta: cleanCta,
+          fullScript: `${cleanHook}\n\n${cleanShowcase}\n\n${cleanCta}`,
+        };
+      }
+    }
+  } catch (ollamaErr) {
+    console.warn(
+      `[Brain] Ollama pitch bypass notice, falling back to Groq Cloud:`,
+      (ollamaErr as Error).message,
+    );
+  }
+
   const candidateModels = await getRandomCandidateModels();
   for (const model of candidateModels) {
     try {
@@ -536,6 +706,20 @@ Deskripsi: ${params.productDescription || "Produk berkualitas"}
 
 Berikan hanya naskahnya langsung tanpa intro/outro tambahan, dalam bahasa Indonesia yang memikat.`;
 
+  // 1. Try Ollama (Local 100% Free LLM - Qwen 2.5 / Llama 3) first
+  try {
+    const ollama = await checkOllamaHealth();
+    if (ollama.online && ollama.model) {
+      const text = await callOllamaChat([{ role: "user", content: prompt }]);
+      if (text.trim()) return text.trim();
+    }
+  } catch (ollamaErr) {
+    console.warn(
+      `[Brain] Ollama video script bypass notice, falling back to Groq Cloud:`,
+      (ollamaErr as Error).message,
+    );
+  }
+
   const candidateModels = await getRandomCandidateModels();
   for (const model of candidateModels) {
     try {
@@ -613,6 +797,30 @@ Kembalikan HANYA JSON valid:
   "emotion": "happy" | "neutral" | "surprised" | "thinking",
   "target_product_id": "${product ? product.id : null}"
 }`;
+
+  // 1. Try Ollama (Local 100% Free LLM - Qwen 2.5 / Llama 3) first
+  try {
+    const ollama = await checkOllamaHealth();
+    if (ollama.online && ollama.model) {
+      const text = await callOllamaChat(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `Komentar Penonton: "${userComment}"` },
+        ],
+        { format: "json" },
+      );
+      const parsed = cleanAndExtractJson(text);
+      const validated = LunaStructuredOutputSchema.safeParse(parsed);
+      if (validated.success) {
+        return validated.data;
+      }
+    }
+  } catch (ollamaErr) {
+    console.warn(
+      `[Brain] Ollama comment reply bypass notice, falling back to Groq Cloud:`,
+      (ollamaErr as Error).message,
+    );
+  }
 
   const candidateModels = await getRandomCandidateModels();
   for (const model of candidateModels) {
@@ -698,6 +906,29 @@ Nama: ${input.name}
 Kategori: ${input.category || "General"}
 Deskripsi dari penjual: ${input.description || "Tidak tersedia"}
 Gambar produk: ${input.image || "Tidak tersedia"}`;
+
+  // 1. Try Ollama (Local 100% Free LLM - Qwen 2.5 / Llama 3) first
+  try {
+    const ollama = await checkOllamaHealth();
+    if (ollama.online && ollama.model) {
+      const text = await callOllamaChat(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        { format: "json" },
+      );
+      const parsed = cleanAndExtractJson(text) as ProductKnowledge;
+      if (parsed && parsed.description && parsed.copywriting) {
+        return parsed;
+      }
+    }
+  } catch (ollamaErr) {
+    console.warn(
+      `[Brain] Ollama RAG bypass notice, falling back to Groq Cloud:`,
+      (ollamaErr as Error).message,
+    );
+  }
 
   const candidateModels = await getRandomCandidateModels();
   for (const model of candidateModels) {
