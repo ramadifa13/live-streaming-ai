@@ -37,6 +37,8 @@ export interface RunPodQueueStatus {
   ready_videos?: string[];
   active_processing_count?: number;
   broadcasting?: boolean;
+  rtmp_connected?: boolean;
+  warmed_up?: boolean;
 }
 
 import { getWorkerUrl } from "./runpod-manager.js";
@@ -99,6 +101,12 @@ export async function startRunPodBroadcast(
   params: {
     rtmpUrl: string;
     streamKey: string;
+    productName?: string;
+    productPrice?: string;
+    productImageUrl?: string;
+    platform?: string;
+    stockCount?: number;
+    ctaLabel?: string;
   },
 ): Promise<RunPodBroadcastResult> {
   return workerRequestWithRetry(podId, "/stream/start-broadcast", {
@@ -108,6 +116,12 @@ export async function startRunPodBroadcast(
       stream_key: params.streamKey,
       rtmpUrl: params.rtmpUrl,
       streamKey: params.streamKey,
+      product_name: params.productName,
+      product_price: params.productPrice,
+      product_image_url: params.productImageUrl,
+      platform: params.platform,
+      stock_count: params.stockCount,
+      cta_label: params.ctaLabel,
     }),
   });
 }

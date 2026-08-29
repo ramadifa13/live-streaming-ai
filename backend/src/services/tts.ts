@@ -1,4 +1,5 @@
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
+import { spawn } from "child_process";
 
 export interface TTSVoice {
   id: string;
@@ -71,7 +72,6 @@ export function sanitizeForLiveTTS(text: string): string {
   if (!text) return "";
   return (
     text
-      // 1. Hapus Action Tags seperti [IDLE], [EXCITED], [POINT_DOWN], [RAISE_HAND]
       .replace(/\[[A-Z_]+\]/gi, "")
       // 2. Hapus Emoji Unicode
       .replace(
@@ -96,7 +96,10 @@ export function sanitizeForLiveTTS(text: string): string {
       .replace(/>/g, "")
       .replace(/['"]/g, "")
       // 6. Sisipkan jeda mikro alami pada kata transisi khas live streaming
-      .replace(/\b(yuk|nah|khusus hari ini|mumpung lagi promo|jangan sampai kehabisan)\b/gi, ", $1")
+      .replace(
+        /\b(yuk|nah|khusus hari ini|mumpung lagi promo|jangan sampai kehabisan)\b/gi,
+        ", $1",
+      )
       // 7. Rapikan tanda baca dan spasi ganda
       .replace(/[!]{2,}/g, "!")
       .replace(/[?]{2,}/g, "?")
@@ -120,17 +123,9 @@ export function getProsodyOptions(
 ): { rate: string; pitch: string; volume: string } {
   const t = (tone || "").toLowerCase();
 
-  if (t.includes("energet") || t.includes("semangat")) {
-    const calculatedRate = Math.round((baseSpeed * 1.12 - 1.0) * 100);
-    return {
-      rate: `${calculatedRate >= 0 ? "+" : ""}${calculatedRate}%`,
-      pitch: "+3Hz",
-      volume: "+12%",
-    };
-  }
-
+  // FOMO / Flash Sale: Cepat & mendesak, pitch naik
   if (t.includes("fomo") || t.includes("flash") || t.includes("promo")) {
-    const calculatedRate = Math.round((baseSpeed * 1.16 - 1.0) * 100);
+    const calculatedRate = Math.round((Math.max(baseSpeed, 1.15) - 1.0) * 100);
     return {
       rate: `${calculatedRate >= 0 ? "+" : ""}${calculatedRate}%`,
       pitch: "+4Hz",
@@ -138,12 +133,13 @@ export function getProsodyOptions(
     };
   }
 
+  // Professional / Edukasi: Nada tenang, stabil, tempo sedang
   if (
     t.includes("profesion") ||
     t.includes("professional") ||
     t.includes("edukatif")
   ) {
-    const calculatedRate = Math.round((baseSpeed * 1.02 - 1.0) * 100);
+    const calculatedRate = Math.round((baseSpeed - 1.0) * 100);
     return {
       rate: `${calculatedRate >= 0 ? "+" : ""}${calculatedRate}%`,
       pitch: "+0Hz",
@@ -157,6 +153,85 @@ export function getProsodyOptions(
     pitch: "+2Hz",
     volume: "+8%",
   };
+}
+
+import { tmpdir } from "os";
+import path from "path";
+import { randomBytes } from "crypto";
+import fs from "fs";
+
+async function convertMp3ToWav(mp3Buffer: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    // PENTING: Kita tidak boleh menggunakan "pipe:1" untuk output WAV.
+    // FFmpeg tidak bisa melakukan "seek" pada stream pipe untuk menulis ukuran (size)
+    // dari file WAV di RIFF header-nya. Akibatnya header WAV akan rusak (0xFFFFFFFF)
+    // dan membuat worker AI menjadi lag/putus-putus saat membaca audionya.
+    // Solusi: Tulis ke temp file terlebih dahulu, lalu baca kembali.
+    const tempFile = path.join(
+      tmpdir(),
+      `tts_${randomBytes(4).toString("hex")}.wav`,
+    );
+
+    const proc = spawn("ffmpeg", [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "mp3",
+      "-i",
+      "pipe:0",
+
+      // NORMALISASI AUDIO SAMA PERSIS DENGAN namira_idle.mp4
+      "-ar",
+      "48000",
+      "-ac",
+      "2",
+
+      // PCM 16-bit WAV
+      "-c:a",
+      "pcm_s16le",
+
+      "-f",
+      "wav",
+      tempFile,
+    ]);
+
+    const errors: Buffer[] = [];
+
+    proc.stderr.on("data", (chunk: Buffer) => {
+      errors.push(chunk);
+    });
+
+    proc.on("error", reject);
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(
+          new Error(
+            `FFmpeg error (${code}): ${Buffer.concat(errors).toString()}`,
+          ),
+        );
+        return;
+      }
+
+      try {
+        const output = fs.readFileSync(tempFile);
+        fs.unlinkSync(tempFile);
+
+        if (output.length < 44) {
+          reject(new Error("Invalid WAV output"));
+          return;
+        }
+
+        resolve(output);
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    proc.stdin.write(mp3Buffer);
+    proc.stdin.end();
+  });
 }
 
 /** Synthesize speech menggunakan Microsoft Edge Neural TTS dengan buffer error recovery */
@@ -181,17 +256,12 @@ async function synthesizeWithEdgeTTS(
     volume: prosody.volume,
   });
 
-  return new Promise((resolve, reject) => {
+  const mp3Buffer = await new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
 
     const timeout = setTimeout(() => {
-      const buffer = Buffer.concat(chunks);
-      if (buffer.length > 4096) {
-        resolve(buffer);
-      } else {
-        reject(new Error("Edge-TTS request timeout (10s)"));
-      }
-    }, 10_000);
+      reject(new Error("Edge-TTS request timeout (60s)"));
+    }, 60_000);
 
     audioStream.on("data", (chunk: Buffer) => chunks.push(chunk));
     audioStream.on("end", () => {
@@ -206,14 +276,11 @@ async function synthesizeWithEdgeTTS(
 
     audioStream.on("error", (err: Error) => {
       clearTimeout(timeout);
-      const audioBuffer = Buffer.concat(chunks);
-      if (audioBuffer.length > 4096) {
-        resolve(audioBuffer);
-        return;
-      }
       reject(err);
     });
   });
+
+  return await convertMp3ToWav(mp3Buffer);
 }
 
 /** Fallback Tier 2 (Fail-Safe 100% Gratis): Google Indonesia Speech API */
@@ -254,10 +321,14 @@ async function synthesizeWithGoogleTTS(text: string): Promise<Buffer> {
     audioBuffers.push(Buffer.from(arrayBuffer));
   }
 
-  return Buffer.concat(audioBuffers);
+  const mp3Buffer = Buffer.concat(audioBuffers);
+  return await convertMp3ToWav(mp3Buffer);
 }
 
-export function resolveEdgeVoiceId(voice?: string, avatarName?: string): string {
+export function resolveEdgeVoiceId(
+  voice?: string,
+  avatarName?: string,
+): string {
   if (voice && INDONESIAN_VOICES.some((v) => v.id === voice)) {
     return voice;
   }
@@ -302,7 +373,12 @@ export async function synthesizeSpeech(
         selectedVoice === "id-ID-GadisNeural"
           ? "id-ID-SitiNeural"
           : "id-ID-GadisNeural";
-      audioBuffer = await synthesizeWithEdgeTTS(text, fallbackVoice, tone, speed);
+      audioBuffer = await synthesizeWithEdgeTTS(
+        text,
+        fallbackVoice,
+        tone,
+        speed,
+      );
     } catch (tier2Err) {
       console.warn(
         `[TTS] ⚠️ Edge-TTS Tier 2 notice: ${(tier2Err as Error).message}. Menggunakan Fail-Safe Google Indonesia TTS...`,
@@ -331,7 +407,7 @@ export async function synthesizeSpeech(
     avatar: avatarName,
     text,
     durationEstimateSeconds: estimatedSeconds,
-    audioFormat: "audio/mpeg",
+    audioFormat: "audio/wav",
     engine: engineUsed,
     message: audioBuffer
       ? `TTS synthesis success (${engineUsed})`

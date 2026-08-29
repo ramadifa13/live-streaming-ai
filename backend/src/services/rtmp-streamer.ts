@@ -336,8 +336,6 @@ export async function startInstagramBroadcast(
   let thumbFilter = "";
   let inputsBeforeAudio = [
     "-re",
-    "-fflags",
-    "+genpts", // Generate PTS konsisten saat video di-loop → mencegah timestamp gap
     ...(isVideo ? ["-stream_loop", "-1"] : ["-loop", "1"]),
     "-i",
     mediaToUse,

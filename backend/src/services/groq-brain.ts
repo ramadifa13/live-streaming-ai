@@ -1,11 +1,13 @@
-import Groq from "groq-sdk";
+import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 
-const apiKey = process.env.GROQ_API_KEY || "";
+const apiKey = process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY || "";
 
-export function getGroqClient(): Groq {
-  const key = process.env.GROQ_API_KEY || apiKey;
-  return new Groq({ apiKey: key || "dummy_key" });
+export function getGroqClient() {
+  if (!apiKey) {
+    console.error("[Groq/Gemini Brain] API Key tidak ditemukan di .env!");
+  }
+  return new GoogleGenAI({ apiKey });
 }
 
 // ==============================================================================
@@ -109,14 +111,7 @@ export const LunaStructuredOutputSchema = z.object({
 });
 export type LunaStructuredOutput = z.infer<typeof LunaStructuredOutputSchema>;
 
-// Models prioritized by speed & response quality on Groq Cloud LPU
-const CANDIDATE_GROQ_MODELS = [
-  ...(process.env.GROQ_MODEL ? [process.env.GROQ_MODEL.trim()] : []),
-  "llama-3.3-70b-versatile",
-  "llama-3.1-8b-instant",
-  "mixtral-8x7b-32768",
-  "gemma2-9b-it",
-];
+const CANDIDATE_GROQ_MODELS = ["gemini-3.1-flash-lite"];
 
 function cleanOutputText(text: string): string {
   if (!text) return "";
@@ -197,17 +192,16 @@ Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.product
     const client = getGroqClient();
     for (const model of CANDIDATE_GROQ_MODELS) {
       try {
-        const response = await client.chat.completions.create({
+        const response = await client.models.generateContent({
           model: model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userMsg },
-          ],
-          temperature: 0.7,
-          max_tokens: 1000,
+          contents: `${systemPrompt}\n\n${userMsg}`,
+          config: {
+            temperature: 0.7,
+            maxOutputTokens: 1000,
+          },
         });
 
-        const rawText = response.choices[0]?.message?.content || "";
+        const rawText = response.text || "";
         const text = cleanOutputText(rawText);
         if (text) {
           return {
@@ -294,19 +288,15 @@ Kembalikan HANYA JSON valid:
     const client = getGroqClient();
     for (const model of CANDIDATE_GROQ_MODELS) {
       try {
-        const response = await client.chat.completions.create({
+        const response = await client.models.generateContent({
           model: model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            {
-              role: "user",
-              content: `Buat naskah live sales pitch untuk ${input.productName} dalam format JSON`,
-            },
-          ],
-          response_format: { type: "json_object" },
-          temperature: 0.7,
+          contents: `${systemPrompt}\n\nBuat naskah live sales pitch untuk ${input.productName} dalam format JSON`,
+          config: {
+            responseMimeType: "application/json",
+            temperature: 0.7,
+          },
         });
-        const raw = response.choices[0]?.message?.content || "";
+        const raw = response.text || "";
         const parsed = cleanAndExtractJson(raw);
         if (parsed?.hook && parsed?.showcase && parsed?.cta) {
           return {
@@ -374,12 +364,14 @@ Berikan hanya naskahnya langsung tanpa intro/outro tambahan dalam bahasa Indones
     const client = getGroqClient();
     for (const model of CANDIDATE_GROQ_MODELS) {
       try {
-        const response = await client.chat.completions.create({
+        const response = await client.models.generateContent({
           model: model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.7,
+          contents: prompt,
+          config: {
+            temperature: 0.7,
+          },
         });
-        const text = (response.choices[0]?.message?.content || "").trim();
+        const text = (response.text || "").trim();
         if (text) return text;
       } catch {}
     }
@@ -419,16 +411,15 @@ Format JSON: {"speech": "...", "action": "HOLD_PRODUCT"|"POINT_CART"|"LAUGH"|"NO
     const client = getGroqClient();
     for (const model of CANDIDATE_GROQ_MODELS) {
       try {
-        const response = await client.chat.completions.create({
+        const response = await client.models.generateContent({
           model: model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: `Komentar Penonton: "${userComment}"` },
-          ],
-          response_format: { type: "json_object" },
-          temperature: 0.7,
+          contents: `${systemPrompt}\n\nKomentar Penonton: "${userComment}"`,
+          config: {
+            responseMimeType: "application/json",
+            temperature: 0.7,
+          },
         });
-        const raw = response.choices[0]?.message?.content || "";
+        const raw = response.text || "";
         const parsed = cleanAndExtractJson(raw);
         const validated = LunaStructuredOutputSchema.safeParse(parsed);
         if (validated.success) return validated.data;
@@ -465,16 +456,15 @@ Buat knowledge base dan copywriting produk dalam format JSON valid:
     const client = getGroqClient();
     for (const model of CANDIDATE_GROQ_MODELS) {
       try {
-        const response = await client.chat.completions.create({
+        const response = await client.models.generateContent({
           model: model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          response_format: { type: "json_object" },
-          temperature: 0.7,
+          contents: `${systemPrompt}\n\n${userPrompt}`,
+          config: {
+            responseMimeType: "application/json",
+            temperature: 0.7,
+          },
         });
-        const raw = response.choices[0]?.message?.content || "";
+        const raw = response.text || "";
         const parsed = cleanAndExtractJson(raw) as ProductKnowledge;
         if (parsed?.description && parsed?.copywriting) return parsed;
       } catch {}

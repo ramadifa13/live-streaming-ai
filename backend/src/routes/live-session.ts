@@ -235,6 +235,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       sessionId,
       productName,
       productPrice,
+      productImageUrl,
       platform,
       stockCount,
       ctaLabel,
@@ -259,6 +260,12 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     const result = await startRunPodBroadcast(managedSession?.podId, {
       rtmpUrl,
       streamKey,
+      productName,
+      productPrice,
+      productImageUrl,
+      platform,
+      stockCount,
+      ctaLabel,
     });
 
     if (!result.success) {
