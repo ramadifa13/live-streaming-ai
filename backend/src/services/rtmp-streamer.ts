@@ -327,14 +327,14 @@ export async function startInstagramBroadcast(
     mediaToUse,
   ];
 
-  // 1. Top Center Banner Overlay (Universal Safe Area: y=85px)
+  // 1. Top Center Banner Overlay (Lebih Besar & Dinaikkan ke atas agar aman dari kepala avatar)
   if (bannerImagePath) {
     inputsBeforeAudio.push("-loop", "1", "-i", bannerImagePath);
     const bannerInputPad = nextInputIdx++;
     filterStages.push(
-      `[v${padIdx}]drawbox=x=106:y=85:w=508:h=120:color=0x000000@0.35:t=fill[v${padIdx + 1}]`,
-      `[${bannerInputPad}:v]scale=500:115:force_original_aspect_ratio=decrease[banner]`,
-      `[v${padIdx + 1}][banner]overlay=x=(W-w)/2:y=85[v${padIdx + 2}]`,
+      `[v${padIdx}]drawbox=x=46:y=42:w=628:h=153:color=0x000000@0.35:t=fill[v${padIdx + 1}]`,
+      `[${bannerInputPad}:v]scale=620:145:force_original_aspect_ratio=decrease[banner]`,
+      `[v${padIdx + 1}][banner]overlay=x=(W-w)/2:y=42[v${padIdx + 2}]`,
     );
     padIdx += 2;
   }

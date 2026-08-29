@@ -2573,14 +2573,14 @@ export default function Dashboard() {
                         className="w-full h-full object-cover"
                       />
 
-                      {/* 1. Paling Atas Tengah: Gambar Banner Promosi (Universal Safe Zone) */}
+                      {/* 1. Paling Atas Tengah: Gambar Banner Promosi (Lebih Besar & Naik ke Atas) */}
                       {activeFeaturedProduct?.bannerImage && (
-                        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[90%] max-w-[205px] flex justify-center animate-in fade-in slide-in-from-top-2 duration-300">
+                        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[94%] max-w-[226px] flex justify-center animate-in fade-in slide-in-from-top-2 duration-300">
                           <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/40 bg-black/60 backdrop-blur-md p-0.5 w-full">
                             <img
                               src={activeFeaturedProduct.bannerImage}
                               alt="Banner Promosi"
-                              className="w-full h-auto max-h-12 object-cover rounded-xl shadow-sm"
+                              className="w-full h-auto max-h-16 object-cover rounded-xl shadow-sm"
                             />
                           </div>
                         </div>

@@ -113,30 +113,29 @@ class AIBroadcaster:
             self.overlay_png_path = None
             return
 
-        # A. Top Banner (Centered, Rounded, Soft Shadow - OPTIONAL)
-        # Posisi y=85px agar berada persis di bawah bar Profile & Viewer Header TikTok/Instagram/Shopee
+        # A. Top Banner (Lebih Besar & Dinaikkan ke atas agar tidak menutupi kepala avatar - OPTIONAL)
         if has_banner:
             try:
                 banner = Image.open(self.local_banner_img).convert("RGBA")
-                banner.thumbnail((500, 115), Image.Resampling.LANCZOS)
+                banner.thumbnail((620, 145), Image.Resampling.LANCZOS)
                 bw, bh = banner.size
                 bx = (canvas_w - bw) // 2
-                by = 85
+                by = 42
 
                 # Soft drop shadow behind banner
                 shadow_banner = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
                 sb_draw = ImageDraw.Draw(shadow_banner)
-                sb_draw.rounded_rectangle((bx, by + 4, bx + bw, by + bh + 4), radius=18, fill=(0, 0, 0, 90))
+                sb_draw.rounded_rectangle((bx, by + 4, bx + bw, by + bh + 4), radius=20, fill=(0, 0, 0, 90))
                 shadow_banner = shadow_banner.filter(ImageFilter.GaussianBlur(radius=8))
                 overlay = Image.alpha_composite(overlay, shadow_banner)
 
                 # Rounded mask for banner
                 b_mask = Image.new("L", (bw, bh), 0)
                 b_draw = ImageDraw.Draw(b_mask)
-                b_draw.rounded_rectangle((0, 0, bw, bh), radius=18, fill=255)
+                b_draw.rounded_rectangle((0, 0, bw, bh), radius=20, fill=255)
 
                 overlay.paste(banner, (bx, by), b_mask)
-                print(f"[BROADCASTER] Banner berhasil ditempelkan di posisi ({bx}, {by}) ukuran {bw}x{bh}")
+                print(f"[BROADCASTER] Banner diperbesar & ditempelkan di posisi ({bx}, {by}) ukuran {bw}x{bh}")
             except Exception as e:
                 print(f"[PIL ERROR] Gagal merender banner: {e}")
 
@@ -145,7 +144,7 @@ class AIBroadcaster:
         if has_product:
             card_w, card_h = 630, 138
             card_x = (canvas_w - card_w) // 2
-            card_y = canvas_h - card_h - 220
+            card_y = canvas_h - card_h - 150
             radius = 24
 
             # 1. Soft Gaussian Drop Shadow for Card
