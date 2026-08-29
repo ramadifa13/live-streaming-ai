@@ -115,13 +115,20 @@ try {
       .then((m) => m.checkOllamaHealth())
       .then((health) => {
         if (health.online) {
-          console.log(`[Ollama-Brain] 🧠 Local Ollama AI Brain connected & ready (Model: ${health.model}) - 100% Free`);
+          console.log(
+            `[Ollama-Brain] 🧠 Local Ollama AI Brain connected & ready (Model: ${health.model}) - 100% Free`,
+          );
         } else {
-          console.warn("[Ollama-Brain] ⚠️ Ollama tidak terdeteksi di localhost:11434. Pastikan aplikasi Ollama aktif.");
+          console.warn(
+            "[Ollama-Brain] ⚠️ Ollama tidak terdeteksi di localhost:11434. Pastikan aplikasi Ollama aktif.",
+          );
         }
       })
       .catch((err) =>
-        console.warn("[Ollama-Brain] Ollama warmup notice:", err?.message || err),
+        console.warn(
+          "[Ollama-Brain] Ollama warmup notice:",
+          err?.message || err,
+        ),
       );
   }, 2000);
 } catch (error) {

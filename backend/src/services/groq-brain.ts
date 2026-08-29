@@ -139,7 +139,10 @@ function cleanAndExtractJson(text: string): any {
   }
 }
 
-export async function checkOllamaHealth(): Promise<{ online: boolean; model: string | null }> {
+export async function checkOllamaHealth(): Promise<{
+  online: boolean;
+  model: string | null;
+}> {
   return { online: true, model: "Groq Cloud (0% CPU Load)" };
 }
 
@@ -215,7 +218,9 @@ Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.product
           };
         }
       } catch (err: any) {
-        console.warn(`[Groq-Brain] Model ${model} notice: ${err?.message || err}`);
+        console.warn(
+          `[Groq-Brain] Model ${model} notice: ${err?.message || err}`,
+        );
       }
     }
   } catch (err: any) {
@@ -228,7 +233,8 @@ Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.product
     `[POINT_DOWN] Buat kakak yang cari produk berkualitas, ${productName} ini solusinya! ${productBenefits ? productBenefits : "Kualitas terjamin dan original"}. Harganya hemat cuma ${productPrice}, stoknya tinggal ${productStock} pcs lagi nih kak!`,
     `[RAISE_HAND] Yang baru gabung jangan lupa tap-tap layarnya ya kak! Produk ${productName} lagi best seller banget hari ini. Yuk checkout sekarang sebelum promonya habis!`,
   ];
-  const randomPitch = pitchTemplates[Math.floor(Math.random() * pitchTemplates.length)]!;
+  const randomPitch =
+    pitchTemplates[Math.floor(Math.random() * pitchTemplates.length)]!;
 
   return {
     replyText: randomPitch,
@@ -292,7 +298,10 @@ Kembalikan HANYA JSON valid:
           model: model,
           messages: [
             { role: "system", content: systemPrompt },
-            { role: "user", content: `Buat naskah live sales pitch untuk ${input.productName} dalam format JSON` },
+            {
+              role: "user",
+              content: `Buat naskah live sales pitch untuk ${input.productName} dalam format JSON`,
+            },
           ],
           response_format: { type: "json_object" },
           temperature: 0.7,
@@ -314,7 +323,9 @@ Kembalikan HANYA JSON valid:
           };
         }
       } catch (err: any) {
-        console.warn(`[Groq-Brain] generateLiveSalesPitch notice: ${err?.message || err}`);
+        console.warn(
+          `[Groq-Brain] generateLiveSalesPitch notice: ${err?.message || err}`,
+        );
       }
     }
   } catch (err: any) {
@@ -385,7 +396,13 @@ export const generateVideoSalesScriptGemini = generateVideoSalesScript;
  */
 export async function generateLunaResponse(
   userComment: string,
-  product?: { id: string; name: string; price: number | string; stock: number; description?: string } | null,
+  product?: {
+    id: string;
+    name: string;
+    price: number | string;
+    stock: number;
+    description?: string;
+  } | null,
   avatarName: string = "Namira",
   tone: string = "Persuasif",
 ): Promise<LunaStructuredOutput> {
@@ -465,7 +482,9 @@ Buat knowledge base dan copywriting produk dalam format JSON valid:
   } catch {}
 
   return {
-    description: input.description || `Produk ${input.name} berkualitas premium untuk kebutuhan Anda.`,
+    description:
+      input.description ||
+      `Produk ${input.name} berkualitas premium untuk kebutuhan Anda.`,
     benefits: `Kualitas terbaik, tahan lama, dan terbukti bermanfaat.`,
     usage: `Gunakan sesuai petunjuk kemasan secara rutin untuk hasil optimal.`,
     faq: `Produk dijamin 100% original dan aman digunakan.`,
