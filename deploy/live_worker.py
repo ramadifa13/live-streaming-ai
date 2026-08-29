@@ -173,27 +173,34 @@ class AILiveWorker:
             target_dir,
             self.assets_3d,
             self.assets_2d,
+            os.path.join(self.base_dir, "assets", "3d"),
+            os.path.join(self.base_dir, "assets", "2d"),
             os.path.join(self.base_dir, "assets"),
-            os.path.join(self.base_dir, "assets", "avatars"),
+            "/workspace/ai_live_worker/assets/3d",
+            "/workspace/ai_live_worker/assets/2d",
+            "/workspace/live-streaming-ai/deploy/assets/3d",
+            "/workspace/live-streaming-ai/deploy/assets/2d",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "3d"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "2d"),
         ]
 
-        # 1. Cek nama persis
+        clean_name = host_name.lower().replace(".png", "").replace(".jpg", "").replace(".mp4", "").strip()
+
+        # 1. Cek nama persis (namira.mp4, namira_idle.mp4)
         for d in candidate_dirs:
             if os.path.exists(d):
-                p = os.path.join(d, f"{host_name}.mp4")
-                if os.path.exists(p):
-                    return p
-                for f in os.listdir(d):
-                    if f.lower() == f"{host_name.lower()}.mp4":
-                        return os.path.join(d, f)
+                for target_file in [f"{clean_name}.mp4", f"{clean_name}_idle.mp4", "namira.mp4", "namira_idle.mp4"]:
+                    p = os.path.join(d, target_file)
+                    if os.path.exists(p):
+                        return p
 
         # 2. Cek variasi nama / substring
         for d in candidate_dirs:
             if os.path.exists(d):
                 for f in os.listdir(d):
-                    if f.endswith(".mp4") and (
-                        host_name.lower() in f.lower()
-                        or f.lower().replace(".mp4", "") in host_name.lower()
+                    if f.endswith(".mp4") and not f.startswith("temp_") and (
+                        clean_name in f.lower()
+                        or f.lower().replace(".mp4", "") in clean_name
                     ):
                         return os.path.join(d, f)
 
@@ -202,7 +209,7 @@ class AILiveWorker:
         if env_idle and os.path.exists(env_idle):
             return env_idle
 
-        # 4. Fallback sembarang file mp4 pertama
+        # 4. Fallback sembarang file mp4 pertama di semua candidate directories
         for d in candidate_dirs:
             if os.path.exists(d):
                 mp4s = [
@@ -365,10 +372,12 @@ class AILiveWorker:
                 print(f"[MuseTalk OOM ERROR] Out of GPU memory: {oom}")
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                return None
+                raise RuntimeError(f"GPU OOM: {oom}")
             except Exception as e:
+                import traceback
                 print(f"[MuseTalk ERROR] {type(e).__name__}: {e}")
-                return None
+                traceback.print_exc()
+                raise RuntimeError(f"{type(e).__name__}: {str(e)}")
             finally:
                 if os.path.exists(yaml_path):
                     try:
