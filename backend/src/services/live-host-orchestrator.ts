@@ -115,7 +115,7 @@ class LiveHostOrchestrator {
    * Return immediately — pipeline jalan non-blocking di background.
    */
   public startPipelineBackground(config: HostConfig): void {
-    this.stopAll(); // Hentikan semua sesi lama agar tidak berjalan bersamaan
+    this.stop(config.sessionId); // Hentikan sesi lama dengan ID yang sama jika ada
 
     const state: OrchestratorState = {
       config,
@@ -154,8 +154,11 @@ class LiveHostOrchestrator {
       console.log(
         `[LiveHost] 🔥 Warmup worker model (pre-load unet ke VRAM) — session: ${sessionId}`,
       );
+      const avatarFileName = state.config.avatarName
+        ? `${state.config.avatarName.toLowerCase().trim()}.png`
+        : "namira.png";
       await forwardToRunPodGPU(state.config.podId, {
-        avatarImagePath: "avatars/namira.png",
+        avatarImagePath: `avatars/${avatarFileName}`,
         text: "halo",
         voice: state.config.voice || "id-ID-GadisNeural",
         tone: state.config.tone,
@@ -537,8 +540,12 @@ class LiveHostOrchestrator {
     const state = this.sessions.get(sessionId);
     if (!state) return;
 
+    const avatarFileName = state.config.avatarName
+      ? `${state.config.avatarName.toLowerCase().trim()}.png`
+      : "namira.png";
+
     await forwardToRunPodGPU(state.config.podId, {
-      avatarImagePath: "avatars/namira.png",
+      avatarImagePath: `avatars/${avatarFileName}`,
       text,
       voice: state.config.voice || "id-ID-GadisNeural",
       tone: state.config.tone,

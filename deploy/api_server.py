@@ -112,10 +112,14 @@ app = FastAPI(title="LiveStreamer AI Worker", lifespan=lifespan)
 
 class GenerateVideoRequest(BaseModel):
     text: str
-    avatar_name: str = "namira"
+    avatar_name: Optional[str] = None
     avatarName: Optional[str] = None
     avatar_image_path: Optional[str] = None
     avatarImagePath: Optional[str] = None
+    host_name: Optional[str] = None
+    hostName: Optional[str] = None
+    host_type: Optional[str] = None
+    hostType: Optional[str] = None
     voice: Optional[str] = None
     speed: float = 1.0
     tone: str = "Persuasif"
@@ -161,8 +165,14 @@ async def get_logs():
 async def process_video_task(req: GenerateVideoRequest, task_id: str):
     audio_path = None
     try:
-        host_type = "3d"
-        host_name = "namira"
+        # Resolve host_name & host_type dynamically with safe fallbacks
+        raw_name = req.host_name or req.hostName or req.avatar_name or req.avatarName or ""
+        if not raw_name and (req.avatar_image_path or req.avatarImagePath):
+            img_p = req.avatar_image_path or req.avatarImagePath or ""
+            raw_name = os.path.splitext(os.path.basename(img_p))[0]
+        
+        host_name = raw_name.strip().lower() if raw_name else "namira"
+        host_type = (req.host_type or req.hostType or "3d").strip().lower()
 
         audio_b64 = req.audio_base64 or req.audioBase64
         if audio_b64:

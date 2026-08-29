@@ -34,6 +34,8 @@ class AIBroadcaster:
                 "ffmpeg",
                 "-y",
                 "-fflags", "+genpts+discardcorrupt+igndts",
+                "-vsync", "cfr",
+                "-r", "25",
                 "-f", "mpegts",
                 "-i", "pipe:0",
                 "-c:v", "copy",
@@ -76,12 +78,11 @@ class AIBroadcaster:
             "-fflags", "+genpts+discardcorrupt",
             "-avoid_negative_ts", "make_zero",
             "-i", video_path,
-            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
             "-c:v", "copy",
             "-c:a", "aac",
+            "-b:a", "128k",
             "-ar", "44100",
-            "-shortest",
-            "-max_muxing_queue_size", "1024",
+            "-max_muxing_queue_size", "2048",
             "-f", "mpegts",
             "pipe:1"
         ]
@@ -125,9 +126,14 @@ class AIBroadcaster:
                 if playback_active and new_videos:
                     # === LIVE MODE: ada video AI yang selesai dirender -> putar langsung ===
                     video_to_play = new_videos[0]
-                    # Pastikan file tidak sedang dalam proses penulisan (size > 0)
-                    if os.path.getsize(video_to_play) == 0:
-                        time.sleep(0.5)
+                    # Pastikan file selesai ditulis (size > 1KB dan file stabil)
+                    try:
+                        fsize = os.path.getsize(video_to_play)
+                        if fsize < 1024:
+                            time.sleep(0.3)
+                            continue
+                    except Exception:
+                        time.sleep(0.3)
                         continue
 
                     print(f"[>] MEMUTAR RESPON AI: {os.path.basename(video_to_play)}")
