@@ -55,7 +55,7 @@ if importlib.util.find_spec(module) is None:
 PY
 }
 
-for dep in fastapi uvicorn pydantic cv2 librosa soundfile einops timm yaml PIL omegaconf diffusers transformers accelerate; do
+for dep in fastapi uvicorn pydantic cv2 librosa soundfile einops timm yaml PIL omegaconf diffusers transformers accelerate mmpose mmengine mmcv; do
 	pkg="$dep"
 	if [ "$dep" = "cv2" ]; then pkg="opencv-python-headless"; fi
 	if [ "$dep" = "yaml" ]; then pkg="PyYAML"; fi
