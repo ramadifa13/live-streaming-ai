@@ -448,17 +448,13 @@ cd "$WORKER_DIR"
 
 echo "Installing mmcv==2.1.0..."
 "$PYTHON_BIN" -m mim install "mmcv==2.1.0"
-echo "Installing mmcv==2.1.0 (Pre-compiled CUDA 11.8 Binary Wheel)..."
-"$PIP_BIN" install "mmcv==2.1.0" -f https://download.openmmlab.com/mmcv/dist/cu118/torch2.1/index.html --no-cache-dir || "$PYTHON_BIN" -m mim install "mmcv==2.1.0"
 
 echo "Installing mmdet..."
 "$PYTHON_BIN" -m mim install "mmdet>=3.1.0"
-"$PIP_BIN" install "mmdet>=3.1.0" --no-cache-dir || "$PYTHON_BIN" -m mim install "mmdet>=3.1.0"
 
 echo "Installing chumpy & mmpose..."
 "$PIP_BIN" install --no-cache-dir --no-build-isolation "chumpy" || true
 "$PYTHON_BIN" -m mim install "mmpose>=1.1.0" --no-build-isolation || "$PIP_BIN" install --no-cache-dir "mmpose>=1.1.0" --no-build-isolation
-"$PIP_BIN" install "mmpose>=1.1.0" --no-cache-dir || "$PYTHON_BIN" -m mim install "mmpose>=1.1.0" --no-build-isolation
 
 "$PIP_BIN" install \
     --no-cache-dir \
