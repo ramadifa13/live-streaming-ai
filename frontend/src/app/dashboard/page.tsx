@@ -194,6 +194,12 @@ export default function Dashboard() {
     if (pipelineStatus?.stageText) {
       setConnectingStageText(pipelineStatus.stageText);
     }
+    if (pipelineStatus?.stageIndex !== undefined) {
+      setConnectingStageIndex(pipelineStatus.stageIndex);
+    }
+    if (pipelineStatus?.ready) {
+      setIsWaitingForGoLive(true);
+    }
   }, [isConnectingLive, pipelineStatus]);
 
   const handleCancelInitialization = () => {
