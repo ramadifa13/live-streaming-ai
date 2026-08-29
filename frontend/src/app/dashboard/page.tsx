@@ -2575,11 +2575,11 @@ export default function Dashboard() {
                         </div>
                       )}
 
-                      {/* 2. Bottom Center: Modern Floating Product Card (Super Sleek & Elegan) */}
+                      {/* 2. Bottom Center: Modern Floating Product Card (Super Sleek, Foto + Nama + Harga + Coret) */}
                       {activeFeaturedProduct?.name &&
                         activeFeaturedProduct.name !== "Memuat Produk..." && (
                           <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-20 pointer-events-none w-[92%] max-w-[218px] flex justify-center animate-in fade-in slide-in-from-bottom-2 duration-300">
-                            <div className="w-full rounded-2xl bg-white/98 p-2.5 shadow-[0_10px_30px_rgba(0,0,0,0.35)] border border-slate-100/90 flex items-center gap-2 text-slate-900 backdrop-blur-md ring-1 ring-black/5">
+                            <div className="w-full rounded-2xl bg-white/98 p-2.5 shadow-[0_10px_30px_rgba(0,0,0,0.35)] border border-slate-100/90 flex items-center gap-2.5 text-slate-900 backdrop-blur-md ring-1 ring-black/5">
                               {/* Foto Produk Thumbnail */}
                               <div className="relative h-11 w-11 shrink-0 rounded-xl overflow-hidden bg-slate-100 border border-slate-200/80 shadow-xs">
                                 <img
@@ -2601,18 +2601,43 @@ export default function Dashboard() {
                                 />
                               </div>
 
-                              
+                              {/* Info Produk: Nama + Harga + Harga Dicoret Auto */}
                               <div className="flex-1 min-w-0">
-                                
                                 <p className="text-[10px] font-bold text-slate-900 truncate leading-tight">
                                   {activeFeaturedProduct.name}
                                 </p>
-                                <p className="text-[12px] font-black text-green-600 font-mono leading-none mt-0.5">
-                                  {typeof activeFeaturedProduct.price ===
-                                  "number"
-                                    ? `Rp${activeFeaturedProduct.price.toLocaleString("id-ID")}`
-                                    : activeFeaturedProduct.price}
-                                </p>
+                                <div className="flex items-baseline gap-1.5 mt-0.5">
+                                  <span className="text-[11.5px] font-black text-rose-600 font-mono leading-none">
+                                    {typeof activeFeaturedProduct.price ===
+                                    "number"
+                                      ? `Rp${activeFeaturedProduct.price.toLocaleString("id-ID")}`
+                                      : activeFeaturedProduct.price}
+                                  </span>
+                                  {(() => {
+                                    const rawPrice =
+                                      typeof activeFeaturedProduct.price ===
+                                      "number"
+                                        ? activeFeaturedProduct.price
+                                        : parseInt(
+                                            String(
+                                              activeFeaturedProduct.price || "",
+                                            ).replace(/[^0-9]/g, ""),
+                                            10,
+                                          ) || 0;
+                                    if (rawPrice > 0) {
+                                      const autoOriginal =
+                                        Math.ceil((rawPrice * 1.35) / 5000) *
+                                        5000;
+                                      return (
+                                        <span className="text-[8.5px] text-slate-400 font-mono line-through leading-none">
+                                          Rp
+                                          {autoOriginal.toLocaleString("id-ID")}
+                                        </span>
+                                      );
+                                    }
+                                    return null;
+                                  })()}
+                                </div>
                               </div>
                             </div>
                           </div>

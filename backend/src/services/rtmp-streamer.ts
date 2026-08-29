@@ -281,7 +281,7 @@ export async function startInstagramBroadcast(
       ? "C\\\\:/Windows/Fonts/arialbd.ttf"
       : "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 
-  // ── Text values ───────────────────────────────────────────────────────────
+  // ── Text values & Auto Strikethrough Price ────────────────────────────────
   const safeName = escapeDrawtext((productName || "").substring(0, 24));
   const rawPrice =
     typeof productPrice === "string"
@@ -289,6 +289,15 @@ export async function startInstagramBroadcast(
       : Number(productPrice) || 0;
   const priceText = rawPrice ? `Rp${rawPrice.toLocaleString("id-ID")}` : "";
   const safePriceText = escapeDrawtext(priceText);
+
+  // Auto Strikethrough Price: ~35% higher rounded to nearest thousand
+  const autoOriginalPrice =
+    rawPrice > 0 ? Math.ceil((rawPrice * 1.35) / 5000) * 5000 : 0;
+  const strikeText =
+    autoOriginalPrice > 0
+      ? `Rp${autoOriginalPrice.toLocaleString("id-ID")}`
+      : "";
+  const safeStrikeText = escapeDrawtext(strikeText);
 
   // ── Canvas dimensions (9:16 portrait) ───────────────────────────────────
   const W = 720;
@@ -302,7 +311,7 @@ export async function startInstagramBroadcast(
   const thumbSize = 104;
   const thumbX = cardX + 16;
   const thumbY = cardY + 16;
-  const textX = thumbX + thumbSize + 16;
+  const textX = thumbX + thumbSize + 18;
   const btnW = 106;
   const btnH = 52;
   const btnX = cardX + cardW - btnW - 18;
@@ -343,15 +352,7 @@ export async function startInstagramBroadcast(
   );
   padIdx += 4;
 
-  // 3. Mini Badge "FLASH SALE" Tag
-  filterStages.push(
-    `[v${padIdx}]drawbox=x=${textX}:y=${cardY + 14}:w=116:h=22:color=0xFFE4E6@1:t=fill[v${padIdx + 1}]`,
-    `[v${padIdx + 1}]drawbox=x=${textX + 6}:y=${cardY + 21}:w=7:h=7:color=0xF43F5E@1:t=fill[v${padIdx + 2}]`,
-    `[v${padIdx + 2}]drawtext=text='FLASH SALE':fontfile=${fontFileBold}:fontcolor=0xE11D48:fontsize=12:x=${textX + 18}:y=${cardY + 17}[v${padIdx + 3}]`,
-  );
-  padIdx += 3;
-
-  // 4. Product Thumbnail
+  // 3. Product Thumbnail
   if (productImagePath) {
     inputsBeforeAudio.push("-loop", "1", "-i", productImagePath);
     const thumbInputPad = nextInputIdx++;
@@ -363,19 +364,28 @@ export async function startInstagramBroadcast(
     padIdx += 2;
   }
 
-  // 5. Product Name & Price
+  // 4. Product Name & Price
   if (safeName) {
     filterStages.push(
-      `[v${padIdx}]drawtext=text='${safeName}':fontfile=${fontFileBold}:fontcolor=0x0F172A:fontsize=20:x=${textX}:y=${cardY + 46}[v${padIdx + 1}]`,
+      `[v${padIdx}]drawtext=text='${safeName}':fontfile=${fontFileBold}:fontcolor=0x0F172A:fontsize=22:x=${textX}:y=${cardY + 34}[v${padIdx + 1}]`,
     );
     padIdx += 1;
   }
 
   if (safePriceText) {
     filterStages.push(
-      `[v${padIdx}]drawtext=text='${safePriceText}':fontfile=${fontFileBold}:fontcolor=0xE11D48:fontsize=26:x=${textX}:y=${cardY + 78}[v${padIdx + 1}]`,
+      `[v${padIdx}]drawtext=text='${safePriceText}':fontfile=${fontFileBold}:fontcolor=0xE11D48:fontsize=28:x=${textX}:y=${cardY + 76}[v${padIdx + 1}]`,
     );
     padIdx += 1;
+  }
+
+  // 5. Strikethrough Original Price
+  if (safeStrikeText) {
+    filterStages.push(
+      `[v${padIdx}]drawtext=text='${safeStrikeText}':fontfile=${fontFile}:fontcolor=0x94A3B8:fontsize=18:x=${textX + 200}:y=${cardY + 84}[v${padIdx + 1}]`,
+      `[v${padIdx + 1}]drawbox=x=${textX + 198}:y=${cardY + 93}:w=110:h=2:color=0x94A3B8@1:t=fill[v${padIdx + 2}]`,
+    );
+    padIdx += 2;
   }
 
   // ── Assemble filter_complex string ───────────────────────────────────────

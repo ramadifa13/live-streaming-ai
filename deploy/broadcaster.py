@@ -3,6 +3,9 @@ import os
 import glob
 import time
 import urllib.request
+import math
+import re
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 class AIBroadcaster:
     def __init__(self, rtmp_url, idle_video_path, output_folder,
@@ -20,6 +23,7 @@ class AIBroadcaster:
 
         self.local_product_img = None
         self.local_banner_img = None
+        self.overlay_png_path = None
         self._prepare_overlay_assets()
         
         print("[BROADCASTER] Menginisialisasi Koneksi ke Server RTMP...")
@@ -76,6 +80,170 @@ class AIBroadcaster:
             elif os.path.exists(self.banner_image_url):
                 self.local_banner_img = self.banner_image_url
 
+        # 3. Generate PIL Ultra-Modern Overlay PNG
+        self._render_pil_overlay(tmp_dir)
+
+    def _render_pil_overlay(self, tmp_dir):
+        """Generate true-rounded, anti-aliased, soft-shadow overlay with Python Pillow (PIL)."""
+        canvas_w, canvas_h = 720, 1280
+        overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+
+        has_overlay = bool(self.local_banner_img or self.product_name or self.local_product_img or self.product_price)
+        if not has_overlay:
+            self.overlay_png_path = None
+            return
+
+        # A. Top Banner (Centered, Rounded, Soft Shadow)
+        if self.local_banner_img and os.path.exists(self.local_banner_img):
+            try:
+                banner = Image.open(self.local_banner_img).convert("RGBA")
+                banner.thumbnail((520, 130), Image.Resampling.LANCZOS)
+                bw, bh = banner.size
+                bx = (canvas_w - bw) // 2
+                by = 24
+
+                # Soft drop shadow behind banner
+                shadow_banner = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+                sb_draw = ImageDraw.Draw(shadow_banner)
+                sb_draw.rounded_rectangle((bx, by + 4, bx + bw, by + bh + 4), radius=18, fill=(0, 0, 0, 85))
+                shadow_banner = shadow_banner.filter(ImageFilter.GaussianBlur(radius=8))
+                overlay = Image.alpha_composite(overlay, shadow_banner)
+
+                # Rounded mask for banner
+                b_mask = Image.new("L", (bw, bh), 0)
+                b_draw = ImageDraw.Draw(b_mask)
+                b_draw.rounded_rectangle((0, 0, bw, bh), radius=18, fill=255)
+
+                overlay.paste(banner, (bx, by), b_mask)
+            except Exception as e:
+                print(f"[PIL] Error rendering banner: {e}")
+
+        # B. Bottom Modern Floating Card (Foto + Nama + Harga + Harga Dicoret Auto)
+        if self.product_name or self.product_price or self.local_product_img:
+            card_w, card_h = 640, 140
+            card_x = (canvas_w - card_w) // 2
+            card_y = canvas_h - card_h - 32
+            radius = 24
+
+            # 1. Soft Gaussian Drop Shadow for Card
+            shadow_card = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+            sc_draw = ImageDraw.Draw(shadow_card)
+            sc_draw.rounded_rectangle(
+                (card_x, card_y + 8, card_x + card_w, card_y + card_h + 8),
+                radius=radius,
+                fill=(0, 0, 0, 85)
+            )
+            shadow_card = shadow_card.filter(ImageFilter.GaussianBlur(radius=14))
+            overlay = Image.alpha_composite(overlay, shadow_card)
+
+            # 2. Pure White Card Body (Rounded 24px)
+            card_img = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
+            card_draw = ImageDraw.Draw(card_img)
+            card_draw.rounded_rectangle(
+                (0, 0, card_w, card_h),
+                radius=radius,
+                fill=(255, 255, 255, 250),
+                outline=(226, 232, 240, 255),
+                width=2
+            )
+            overlay.paste(card_img, (card_x, card_y), card_img)
+            draw = ImageDraw.Draw(overlay)
+
+            # 3. Product Thumbnail (Rounded 16px)
+            thumb_size = 106
+            thumb_x = card_x + 18
+            thumb_y = card_y + 17
+
+            if self.local_product_img and os.path.exists(self.local_product_img):
+                try:
+                    p_img = Image.open(self.local_product_img).convert("RGBA")
+                    p_img = p_img.resize((thumb_size, thumb_size), Image.Resampling.LANCZOS)
+
+                    p_mask = Image.new("L", (thumb_size, thumb_size), 0)
+                    pm_draw = ImageDraw.Draw(p_mask)
+                    pm_draw.rounded_rectangle((0, 0, thumb_size, thumb_size), radius=16, fill=255)
+
+                    overlay.paste(p_img, (thumb_x, thumb_y), p_mask)
+                    draw.rounded_rectangle(
+                        (thumb_x, thumb_y, thumb_x + thumb_size, thumb_y + thumb_size),
+                        radius=16,
+                        outline=(226, 232, 240, 255),
+                        width=2
+                    )
+                except Exception as e:
+                    print(f"[PIL] Error rendering thumbnail: {e}")
+
+            # 4. Typography & Pricing
+            text_x = thumb_x + thumb_size + 20
+
+            font_name = None
+            font_price = None
+            font_strike = None
+
+            for font_path in [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                "C:/Windows/Fonts/arialbd.ttf",
+                "C:/Windows/Fonts/arial.ttf"
+            ]:
+                if os.path.exists(font_path):
+                    try:
+                        font_name = ImageFont.truetype(font_path, 25)
+                        font_price = ImageFont.truetype(font_path, 34)
+                        font_strike = ImageFont.truetype(font_path, 21)
+                        break
+                    except Exception:
+                        pass
+
+            if not font_name:
+                font_name = ImageFont.load_default()
+                font_price = ImageFont.load_default()
+                font_strike = ImageFont.load_default()
+
+            # Product Name (Dark Slate Bold)
+            if self.product_name:
+                clean_name = self.product_name[:26]
+                draw.text((text_x, card_y + 26), clean_name, font=font_name, fill=(15, 23, 42, 255))
+
+            # Prices Calculation (Discounted Price + Auto System Strikethrough Price)
+            raw_price = 0
+            if self.product_price:
+                digits = re.sub(r"[^0-9]", "", str(self.product_price))
+                if digits:
+                    raw_price = int(digits)
+
+            if raw_price > 0:
+                current_price_str = f"Rp{raw_price:,}".replace(",", ".")
+                # Auto Strikethrough Original Price: ~35% higher rounded to nearest thousand
+                auto_orig_price = int(math.ceil((raw_price * 1.35) / 5000.0) * 5000)
+                strikethrough_str = f"Rp{auto_orig_price:,}".replace(",", ".")
+
+                # Draw Current Price (Rose Bold)
+                draw.text((text_x, card_y + 70), current_price_str, font=font_price, fill=(225, 29, 72, 255))
+
+                # Measure width to place strikethrough price right next to it
+                bbox = font_price.getbbox(current_price_str)
+                price_w = bbox[2] - bbox[0] if bbox else 150
+
+                strike_x = text_x + price_w + 16
+                strike_y = card_y + 80
+
+                # Draw Original Strikethrough Text (Muted Slate Gray)
+                draw.text((strike_x, strike_y), strikethrough_str, font=font_strike, fill=(148, 163, 184, 255))
+
+                # Draw Strikethrough Line
+                s_bbox = font_strike.getbbox(strikethrough_str)
+                strike_w = s_bbox[2] - s_bbox[0] if s_bbox else 80
+                line_y = strike_y + 11
+                draw.line((strike_x - 2, line_y, strike_x + strike_w + 2, line_y), fill=(148, 163, 184, 255), width=2)
+            elif self.product_price:
+                draw.text((text_x, card_y + 70), str(self.product_price), font=font_price, fill=(225, 29, 72, 255))
+
+        out_path = os.path.join(tmp_dir, "live_overlay.png")
+        overlay.save(out_path, "PNG")
+        self.overlay_png_path = out_path
+        print(f"[BROADCASTER] PIL Live Overlay berhasil dirender: {out_path}")
+
     def _ensure_master_process(self):
         status_file = os.path.join(self.output_folder, "rtmp_status.txt")
         if self.master_process is None or self.master_process.poll() is not None:
@@ -130,8 +298,7 @@ class AIBroadcaster:
                 self.master_process = None
 
     def _build_worker_command(self, video_path):
-        has_overlay = bool(self.local_banner_img or self.product_name or self.local_product_img or self.product_price)
-        if not has_overlay:
+        if not self.overlay_png_path or not os.path.exists(self.overlay_png_path):
             return [
                 "ffmpeg",
                 "-re",
@@ -145,98 +312,15 @@ class AIBroadcaster:
                 "pipe:1"
             ]
 
-        # Composite video overlay: Banner top-center & Floating Modern Card bottom-center
-        inputs = ["ffmpeg", "-re", "-i", video_path]
-        next_input_idx = 1
-
-        filter_stages = [
-            "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280[v0]"
-        ]
-        pad_idx = 0
-
-        # 1. Banner Image (Top Center)
-        if self.local_banner_img and os.path.exists(self.local_banner_img):
-            inputs.extend(["-loop", "1", "-i", self.local_banner_img])
-            b_pad = next_input_idx
-            next_input_idx += 1
-            # Shadow behind banner
-            filter_stages.append(f"[v{pad_idx}]drawbox=x=106:y=24:w=508:h=136:color=0x000000@0.35:t=fill[v{pad_idx+1}]")
-            pad_idx += 1
-            filter_stages.append(f"[{b_pad}:v]scale=500:130:force_original_aspect_ratio=decrease[banner]")
-            filter_stages.append(f"[v{pad_idx}][banner]overlay=x=(720-w)/2:y=24[v{pad_idx+1}]")
-            pad_idx += 1
-
-        # 2. Bottom Modern Floating White Card (Pill style)
-        card_w, card_h = 630, 136
-        card_x = (720 - card_w) // 2
-        card_y = 1280 - card_h - 28
-        thumb_size = 104
-        thumb_x = card_x + 16
-        thumb_y = card_y + 16
-        text_x = thumb_x + thumb_size + 16
-        btn_w, btn_h = 106, 52
-        btn_x = card_x + card_w - btn_w - 18
-        btn_y = card_y + (card_h - btn_h) // 2
-
-        # Card shadow, pure white body, top highlight line, subtle border
-        filter_stages.extend([
-            f"[v{pad_idx}]drawbox=x={card_x+4}:y={card_y+6}:w={card_w}:h={card_h}:color=0x000000@0.32:t=fill[v{pad_idx+1}]",
-            f"[v{pad_idx+1}]drawbox=x={card_x}:y={card_y}:w={card_w}:h={card_h}:color=0xFFFFFF@0.98:t=fill[v{pad_idx+2}]",
-            f"[v{pad_idx+2}]drawbox=x={card_x}:y={card_y}:w={card_w}:h=2:color=0xFFFFFF@0.7:t=fill[v{pad_idx+3}]",
-            f"[v{pad_idx+3}]drawbox=x={card_x}:y={card_y}:w={card_w}:h={card_h}:color=0xE2E8F0@1:t=1[v{pad_idx+4}]",
-        ])
-        pad_idx += 4
-
-        # 3. Mini Badge "FLASH SALE" inside card
-        filter_stages.extend([
-            f"[v{pad_idx}]drawbox=x={text_x}:y={card_y+14}:w=116:h=22:color=0xFFE4E6@1:t=fill[v{pad_idx+1}]",
-            f"[v{pad_idx+1}]drawbox=x={text_x+6}:y={card_y+21}:w=7:h=7:color=0xF43F5E@1:t=fill[v{pad_idx+2}]",
-        ])
-        pad_idx += 2
-
-        # 4. Product Thumbnail
-        if self.local_product_img and os.path.exists(self.local_product_img):
-            inputs.extend(["-loop", "1", "-i", self.local_product_img])
-            p_pad = next_input_idx
-            next_input_idx += 1
-            filter_stages.append(f"[v{pad_idx}]drawbox=x={thumb_x-1}:y={thumb_y-1}:w={thumb_size+2}:h={thumb_size+2}:color=0xE2E8F0@1:t=fill[v{pad_idx+1}]")
-            pad_idx += 1
-            filter_stages.append(f"[{p_pad}:v]scale={thumb_size}:{thumb_size}[thumb]")
-            filter_stages.append(f"[v{pad_idx}][thumb]overlay=x={thumb_x}:y={thumb_y}[v{pad_idx+1}]")
-            pad_idx += 1
-
-        # 5. Text: Badge Text, Product Name, and Price
-        safe_name = self.product_name.replace(":", "\\:").replace("'", "\\'")[:24] if self.product_name else ""
-        safe_price = self.product_price.replace(":", "\\:").replace("'", "\\'") if self.product_price else ""
-        if safe_price and not safe_price.startswith("Rp") and safe_price.isdigit():
-            safe_price = f"Rp{int(safe_price):,}".replace(",", ".")
-
-        font_opt = ""
-        for possible_font in [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "C\\\\:/Windows/Fonts/arialbd.ttf"
-        ]:
-            if os.path.exists(possible_font.replace("\\\\:", ":")):
-                font_opt = f":fontfile={possible_font}"
-                break
-
-
-        # Name
-        if safe_name:
-            filter_stages.append(f"[v{pad_idx}]drawtext=text='{safe_name}'{font_opt}:fontsize=20:fontcolor=0x0F172A:x={text_x}:y={card_y+46}[v{pad_idx+1}]")
-            pad_idx += 1
-
-        # Price
-        if safe_price:
-            filter_stages.append(f"[v{pad_idx}]drawtext=text='{safe_price}'{font_opt}:fontsize=26:fontcolor=0xE11D48:x={text_x}:y={card_y+78}[v{pad_idx+1}]")
-            pad_idx += 1
-
-
-        filter_chain = ";".join(filter_stages)
-        return inputs + [
-            "-filter_complex", filter_chain,
-            "-map", f"[v{pad_idx}]",
+        # Overlay PIL PNG directly onto video with zero FFmpeg filter latency
+        return [
+            "ffmpeg",
+            "-re",
+            "-i", video_path,
+            "-loop", "1",
+            "-i", self.overlay_png_path,
+            "-filter_complex", "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280[base];[base][1:v]overlay=0:0:shortest=1[v]",
+            "-map", "[v]",
             "-map", "0:a?",
             "-c:v", "libx264",
             "-preset", "ultrafast",
