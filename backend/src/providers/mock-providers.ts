@@ -117,9 +117,7 @@ export class MockAvatarProvider implements AvatarProvider {
     ];
   }
 
-  async getAvatar(
-    id: string,
-  ): Promise<{
+  async getAvatar(id: string): Promise<{
     id: string;
     name: string;
     style: string;
@@ -149,9 +147,7 @@ export class MockGPUProvider implements GPUProvider {
     { jobName: string; gpuType: string; costPerMinute: number }
   >();
 
-  async acquire(
-    jobName: string,
-  ): Promise<{
+  async acquire(jobName: string): Promise<{
     jobName: string;
     status: "allocated" | "queued";
     gpuType: string;

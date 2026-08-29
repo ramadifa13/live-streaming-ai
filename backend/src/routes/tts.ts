@@ -30,7 +30,7 @@ export async function ttsRoutes(server: FastifyInstance) {
 
     const result = await synthesizeSpeech(parsed.data);
 
-    if (result.audioBuffer) {
+    if (result.success && result.audioBuffer && result.audioBuffer.length > 0) {
       const isWav =
         result.audioBuffer.length >= 4 &&
         result.audioBuffer.toString("ascii", 0, 4) === "RIFF";
@@ -43,9 +43,11 @@ export async function ttsRoutes(server: FastifyInstance) {
       return reply.send(result.audioBuffer);
     }
 
+    reply.code(502);
     return {
-      success: true,
-      data: result,
+      success: false,
+      error: result.message || "TTS synthesis failed",
+      engine: result.engine,
     };
   });
 }

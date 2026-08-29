@@ -398,6 +398,16 @@ export default function Dashboard() {
       });
 
       if (res.ok) {
+        const contentType = res.headers.get("content-type") || "";
+        if (contentType.includes("json")) {
+          const json = await res.json();
+          setIsPlayingAudio(false);
+          setIsAvatarSpeaking(false);
+          setIsSynthesizingAudio(false);
+          showToast(`⚠️ TTS: ${json.error || "Gagal memproses suara"}`);
+          return;
+        }
+
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
@@ -416,10 +426,15 @@ export default function Dashboard() {
         };
         await audio.play().catch(() => {});
       } else {
+        const errJson = await res.json().catch(() => null);
         setIsPlayingAudio(false);
         setIsAvatarSpeaking(false);
         setIsSynthesizingAudio(false);
-        showToast("⚠️ Gagal memproses audio dari backend.");
+        showToast(
+          errJson?.error
+            ? `⚠️ TTS: ${errJson.error}`
+            : "⚠️ Gagal memproses audio dari backend.",
+        );
       }
     } catch (err) {
       console.warn("[speakText] Audio playback notice:", err);

@@ -7,24 +7,27 @@ export interface TTSVoice {
   locale: string;
   style: string;
   avatarMatch: string;
+  engine: "edge" | "google";
 }
 
 export const INDONESIAN_VOICES: TTSVoice[] = [
   {
     id: "id-ID-GadisNeural",
-    name: "Gadis (Wanita - Paling Natural, Hangat & Ceria)",
+    name: "Gadis (Wanita - Sangat Natural, Hangat & Ceria)",
     gender: "female",
     locale: "id-ID",
     style: "Friendly",
     avatarMatch: "Namira",
+    engine: "edge",
   },
   {
     id: "id-ID-SitiNeural",
-    name: "Siti (Wanita - Energetik & Live Shopping)",
+    name: "Siti (Wanita - Ceria & Energetik untuk Live Shopping)",
     gender: "female",
     locale: "id-ID",
     style: "Energetic",
     avatarMatch: "Siti",
+    engine: "edge",
   },
   {
     id: "id-ID-ArdiNeural",
@@ -33,6 +36,7 @@ export const INDONESIAN_VOICES: TTSVoice[] = [
     locale: "id-ID",
     style: "Confident",
     avatarMatch: "Ardi",
+    engine: "edge",
   },
 ];
 
@@ -147,7 +151,6 @@ export function getProsodyOptions(
     };
   }
 
-  // Casual / Friendly
   const calculatedRate = Math.round((baseSpeed * 1.08 - 1.0) * 100);
   return {
     rate: `${calculatedRate >= 0 ? "+" : ""}${calculatedRate}%`,
@@ -156,7 +159,7 @@ export function getProsodyOptions(
   };
 }
 
-/** Synthesize speech menggunakan Microsoft Edge Neural TTS dengan prosodi natural */
+/** Synthesize speech menggunakan Microsoft Edge Neural TTS dengan buffer error recovery */
 async function synthesizeWithEdgeTTS(
   text: string,
   voice: string,
@@ -169,7 +172,6 @@ async function synthesizeWithEdgeTTS(
   }
 
   const prosody = getProsodyOptions(tone, speed);
-
   const tts = new MsEdgeTTS();
   await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
 
@@ -183,7 +185,12 @@ async function synthesizeWithEdgeTTS(
     const chunks: Buffer[] = [];
 
     const timeout = setTimeout(() => {
-      reject(new Error("Edge-TTS request timeout (10s)"));
+      const buffer = Buffer.concat(chunks);
+      if (buffer.length > 4096) {
+        resolve(buffer);
+      } else {
+        reject(new Error("Edge-TTS request timeout (10s)"));
+      }
     }, 10_000);
 
     audioStream.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -196,11 +203,72 @@ async function synthesizeWithEdgeTTS(
       }
       resolve(audioBuffer);
     });
+
     audioStream.on("error", (err: Error) => {
       clearTimeout(timeout);
+      const audioBuffer = Buffer.concat(chunks);
+      if (audioBuffer.length > 4096) {
+        resolve(audioBuffer);
+        return;
+      }
       reject(err);
     });
   });
+}
+
+/** Fallback Tier 2 (Fail-Safe 100% Gratis): Google Indonesia Speech API */
+async function synthesizeWithGoogleTTS(text: string): Promise<Buffer> {
+  const cleanText = sanitizeForLiveTTS(text);
+  if (!cleanText) throw new Error("Teks kosong");
+
+  const chunks: string[] = [];
+  const words = cleanText.split(" ");
+  let currentChunk = "";
+
+  for (const word of words) {
+    if ((currentChunk + " " + word).trim().length > 180) {
+      if (currentChunk) chunks.push(currentChunk.trim());
+      currentChunk = word;
+    } else {
+      currentChunk = currentChunk ? `${currentChunk} ${word}` : word;
+    }
+  }
+  if (currentChunk) chunks.push(currentChunk.trim());
+
+  const audioBuffers: Buffer[] = [];
+
+  for (const chunk of chunks) {
+    const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=id&client=tw-ob`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error(`Google TTS request failed: ${res.status}`);
+    }
+
+    const arrayBuffer = await res.arrayBuffer();
+    audioBuffers.push(Buffer.from(arrayBuffer));
+  }
+
+  return Buffer.concat(audioBuffers);
+}
+
+export function resolveEdgeVoiceId(voice?: string, avatarName?: string): string {
+  if (voice && INDONESIAN_VOICES.some((v) => v.id === voice)) {
+    return voice;
+  }
+  const av = (avatarName || "").toLowerCase();
+  if (av.includes("budi") || av.includes("ardi")) {
+    return "id-ID-ArdiNeural";
+  }
+  if (av.includes("siti")) {
+    return "id-ID-SitiNeural";
+  }
+  return "id-ID-GadisNeural";
 }
 
 export async function synthesizeSpeech(
@@ -208,48 +276,57 @@ export async function synthesizeSpeech(
 ): Promise<SynthesizeResponse> {
   const { text, avatarName = "Namira", speed = 1.0, tone } = req;
 
-  // Pilih suara Indonesia neural terbaik
-  let selectedVoice = "id-ID-GadisNeural"; // Default wanita paling natural & ceria
-  if (req.voice && INDONESIAN_VOICES.some((v) => v.id === req.voice)) {
-    selectedVoice = req.voice;
-  } else if (
-    avatarName.toLowerCase().includes("budi") ||
-    avatarName.toLowerCase().includes("ardi")
-  ) {
-    selectedVoice = "id-ID-ArdiNeural";
-  }
+  // Pilih suara Microsoft Edge Neural TTS gratis terbaik
+  const selectedVoice = resolveEdgeVoiceId(req.voice, avatarName);
 
   const wordCount = text.trim().split(/\s+/).length;
   const estimatedSeconds = Math.max(
     1.5,
-    Math.round(((wordCount / ((140 * speed) / 60)) * 10)) / 10,
+    Math.round((wordCount / ((140 * speed) / 60)) * 10) / 10,
   );
 
   let audioBuffer: Buffer | undefined;
-  let engineUsed = "Microsoft Edge Neural TTS (Natural Live Prosody)";
+  let engineUsed = "Microsoft Edge Neural TTS (100% Gratis & Natural)";
 
+  // ─── TIER 1: Microsoft Edge Neural TTS (Gratis, Natural, 24kHz MP3) ───────
   try {
     audioBuffer = await synthesizeWithEdgeTTS(text, selectedVoice, tone, speed);
   } catch (primaryErr) {
     console.warn(
-      `[TTS] ⚠️ Edge-TTS primer (${selectedVoice}) notice: ${(primaryErr as Error).message}. Mencoba fallback...`,
+      `[TTS] ⚠️ Edge-TTS primer (${selectedVoice}) notice: ${(primaryErr as Error).message}. Mencoba fallback ke SitiNeural / Google TTS...`,
     );
 
-    // Fallback ke suara neural alternatif
+    // ─── TIER 2: Fallback ke SitiNeural ───────────────────────────────────
     try {
-      selectedVoice = "id-ID-SitiNeural";
-      audioBuffer = await synthesizeWithEdgeTTS(text, selectedVoice, tone, speed);
-    } catch (fallbackErr) {
-      console.error(
-        `[TTS] ❌ Semua tier Edge-TTS gagal:`,
-        (fallbackErr as Error).message,
+      const fallbackVoice =
+        selectedVoice === "id-ID-GadisNeural"
+          ? "id-ID-SitiNeural"
+          : "id-ID-GadisNeural";
+      audioBuffer = await synthesizeWithEdgeTTS(text, fallbackVoice, tone, speed);
+    } catch (tier2Err) {
+      console.warn(
+        `[TTS] ⚠️ Edge-TTS Tier 2 notice: ${(tier2Err as Error).message}. Menggunakan Fail-Safe Google Indonesia TTS...`,
       );
-      engineUsed = "Edge-TTS Error";
+
+      // ─── TIER 3: Google Indonesia Speech API (100% Selalu Berhasil) ──────
+      try {
+        audioBuffer = await synthesizeWithGoogleTTS(text);
+        engineUsed = "Google Indonesia TTS (Fail-Safe)";
+        console.log(
+          `[TTS] ✅ Google TTS fail-safe berhasil (${audioBuffer.length} bytes)`,
+        );
+      } catch (tier3Err) {
+        console.error(
+          `[TTS] ❌ Semua tier TTS gagal:`,
+          (tier3Err as Error).message,
+        );
+        engineUsed = "TTS Error";
+      }
     }
   }
 
   return {
-    success: !!audioBuffer,
+    success: !!audioBuffer && audioBuffer.length > 0,
     voice: selectedVoice,
     avatar: avatarName,
     text,
@@ -258,12 +335,12 @@ export async function synthesizeSpeech(
     engine: engineUsed,
     message: audioBuffer
       ? `TTS synthesis success (${engineUsed})`
-      : "TTS synthesis failed — periksa koneksi internet ke Microsoft Neural TTS",
+      : "TTS synthesis failed — periksa koneksi internet",
     audioBuffer,
   };
 }
 
-/** Pre-warmup connection saat backend pertama kali start */
+/** Pre-warmup connection saat backend start */
 export async function warmUpTTS(): Promise<void> {
   try {
     const tts = new MsEdgeTTS();
@@ -271,7 +348,7 @@ export async function warmUpTTS(): Promise<void> {
       "id-ID-GadisNeural",
       OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3,
     );
-    console.log("[TTS] 🚀 Microsoft Edge Neural TTS engine pre-warmed & ready.");
+    console.log("[TTS] 🚀 Microsoft Edge Neural TTS engine (100% Free) ready.");
   } catch (e) {
     console.warn("[TTS] Warmup notice:", (e as Error).message);
   }

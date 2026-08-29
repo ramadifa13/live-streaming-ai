@@ -107,7 +107,7 @@ flowchart TD
 3. Buka terminal Pod dan jalankan instalasi:
    ```bash
    cd /workspace
-   git clone <URL_REPOSITORY_ANDA> live-streaming-ai
+   git clone https://github.com/ramadifa13/live-streaming-ai.git live-streaming-ai
    cd /workspace/live-streaming-ai/deploy
    bash setup-safe.sh
    ```

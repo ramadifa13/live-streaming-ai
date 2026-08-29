@@ -62,27 +62,7 @@ export const products: Product[] = [
 ];
 
 export const avatars = [
-  {
-    id: "host_2d_statis_nana",
-    name: "Nana",
-    style: "Friendly",
-    language: "Indonesia",
-    voice: "Wanita Natural",
-  },
-  {
-    id: "host_3d_dinamis_namira",
-    name: "Namira",
-    style: "Energetic",
-    language: "Indonesia",
-    voice: "Energetic Promo",
-  },
-  {
-    id: "cinta",
-    name: "Cinta",
-    style: "Professional",
-    language: "Indonesia",
-    voice: "Soft Professional",
-  },
+
 ];
 
 export const pricing = {

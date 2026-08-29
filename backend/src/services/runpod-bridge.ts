@@ -223,6 +223,25 @@ export async function forwardToRunPodGPU(
       }
     }
 
+    let audioBase64 = params.audioBase64;
+    if (!audioBase64 && !params.audioUrl && params.text) {
+      try {
+        const { synthesizeSpeech } = await import("./tts.js");
+        const ttsRes = await synthesizeSpeech({
+          text: params.text,
+          voice: params.voice,
+          avatarName,
+          tone: params.tone,
+          speed: params.speed,
+        });
+        if (ttsRes.success && ttsRes.audioBuffer) {
+          audioBase64 = ttsRes.audioBuffer.toString("base64");
+        }
+      } catch (ttsErr) {
+        console.warn("[RunPodBridge] TTS synthesis notice:", ttsErr);
+      }
+    }
+
     // 1. Kirim task ke worker API (non-blocking)
     const data = await workerRequestWithRetry(
       podId,
@@ -234,12 +253,12 @@ export async function forwardToRunPodGPU(
           avatar_name: avatarName,
           avatar_image_path: params.avatarImagePath || "avatars/namira.png",
           text: params.text,
-          voice: params.voice || "id-ID-GadisNeural",
+          voice: params.voice || "EXAVITQu4vr4xnSDxMaL",
           speed: params.speed || 1.0,
           tone: params.tone || "Casual",
           rtmp_url: params.rtmpUrl || "",
           stream_key: params.streamKey || "",
-          audio_base64: params.audioBase64 || "",
+          audio_base64: audioBase64 || "",
           audio_url: params.audioUrl || "",
           wait: false, // Gunakan polling agar tidak terkena HTTP timeout
           idle_video_loop: true, // Worker memutar idle video saat antrian kosong → tidak ada freeze
