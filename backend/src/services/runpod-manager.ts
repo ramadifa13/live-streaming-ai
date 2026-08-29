@@ -277,21 +277,135 @@ export async function createPod(): Promise<string> {
 /**
  * Resumes the pod and waits (polls) until it is RUNNING and ready to accept requests.
  */
+/**
+ * Resumes a stopped pod via RunPod GraphQL mutation
+ */
+export async function resumePod(podId: string): Promise<boolean> {
+  if (!podId) return false;
+  const mutation = `
+    mutation podResume($input: PodResumeInput!) {
+      podResume(input: $input) {
+        id
+        desiredStatus
+      }
+    }
+  `;
+  try {
+    const data = await runpodGraphQL(mutation, {
+      input: { podId, gpuCount: 1 },
+    });
+    console.log(
+      `[RunPodManager] Permintaan RESUME dikirim untuk Pod ${podId} (Status: ${data?.podResume?.desiredStatus || "SENT"})`,
+    );
+    return true;
+  } catch (err: any) {
+    console.warn(
+      `[RunPodManager] Gagal resume Pod ${podId}:`,
+      err?.message || err,
+    );
+    return false;
+  }
+}
+
+/**
+ * Helper: Polling health check endpoint /health hingga AI Worker siap (200 OK)
+ */
+async function waitForWorkerHealth(
+  currentPodId: string,
+  healthTimeout = 180000,
+): Promise<string> {
+  const workerUrl = getWorkerUrl(currentPodId);
+  const healthStart = Date.now();
+  console.log(
+    `[RunPodManager] [Pod ${currentPodId}] Menunggu AI Worker di ${workerUrl} siap...`,
+  );
+
+  while (Date.now() - healthStart < healthTimeout) {
+    const elapsed = Math.round((Date.now() - healthStart) / 1000);
+    try {
+      const res = await fetch(`${workerUrl}/health`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.status === 200) {
+        const body = (await res.json().catch(() => ({}))) as any;
+        console.log(
+          `[RunPodManager] [Pod ${currentPodId}] ✅ SUKSES: AI Worker AKTIF (200 OK) dalam ${elapsed}s! (warmed_up: ${body.warmed_up ?? true})`,
+        );
+        return currentPodId;
+      } else if (res.status === 502) {
+        console.log(
+          `[RunPodManager] [Pod ${currentPodId}] ⏳ Booting (${elapsed}s): Container sedang memuat PyTorch CUDA ke GPU...`,
+        );
+      } else if (res.status === 404) {
+        console.log(
+          `[RunPodManager] [Pod ${currentPodId}] ⏳ Routing (${elapsed}s): Menghubungkan RunPod Proxy Port 8000...`,
+        );
+      } else {
+        console.log(
+          `[RunPodManager] [Pod ${currentPodId}] ⏳ Status HTTP ${res.status} (${elapsed}s)...`,
+        );
+      }
+    } catch (fetchErr: any) {
+      console.log(
+        `[RunPodManager] [Pod ${currentPodId}] ⏳ Menunggu port 8000 terbuka (${elapsed}s): ${fetchErr.message || "Connecting..."}`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 4000));
+  }
+
+  throw new Error(
+    `[RunPodManager] [Pod ${currentPodId}] Timeout: AI Worker belum siap setelah ${Math.round(healthTimeout / 1000)}s.`,
+  );
+}
+
+/**
+ * Resumes / Creates the pod and waits (polls) until it is RUNNING and ready to accept requests.
+ */
 export async function startPodAndWait(
   timeoutMs = 120000,
 ): Promise<string | null> {
-  // If static RUNPOD_POD_ID is configured in .env, use it directly without creating new pod!
+  updateGpuActivity();
+
+  // ── Skenario 1: DEMO PHASE — Jika ada RUNPOD_POD_ID di .env ────────────────
   if (process.env.RUNPOD_POD_ID) {
     const staticPodId = process.env.RUNPOD_POD_ID.trim();
     if (staticPodId.length > 0) {
       console.log(
-        `[RunPodManager] Menggunakan Pod statis yang sudah aktif: ${staticPodId}`,
+        `[RunPodManager] 🔍 [Demo Phase] Memeriksa status Pod statis di .env (${staticPodId})...`,
       );
-      updateGpuActivity();
-      return staticPodId;
+
+      let status = await getPodStatus(staticPodId).catch(() => null);
+
+      if (!status || status.desiredStatus !== "RUNNING") {
+        console.log(
+          `[RunPodManager] ⚠️ Pod statis ${staticPodId} dalam kondisi mati/berhenti (${status?.desiredStatus || "UNKNOWN"}). Menghidupkan pod otomatis...`,
+        );
+        await resumePod(staticPodId);
+
+        // Tunggu status desiredStatus menjadi RUNNING
+        const resumeStart = Date.now();
+        while (Date.now() - resumeStart < timeoutMs) {
+          status = await getPodStatus(staticPodId).catch(() => null);
+          if (status && status.desiredStatus === "RUNNING") {
+            console.log(
+              `[RunPodManager] ✅ Pod statis ${staticPodId} kini RUNNING (dalam ${Math.round((Date.now() - resumeStart) / 1000)}s)!`,
+            );
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      } else {
+        console.log(
+          `[RunPodManager] ✅ Pod statis ${staticPodId} sudah dalam kondisi RUNNING.`,
+        );
+      }
+
+      // Tunggu hingga AI Worker (port 8000) aktif dan merespon 200 OK
+      return await waitForWorkerHealth(staticPodId);
     }
   }
 
+  // ── Skenario 2: PRODUCTION PHASE — Buat Pod Baru On-Demand Otomatis ────────
   if (!process.env.RUNPOD_NETWORK_VOLUME_ID && !process.env.RUNPOD_POD_ID) {
     console.log(
       "[RunPodManager] No RUNPOD_NETWORK_VOLUME_ID or RUNPOD_POD_ID. Skipping start.",
@@ -311,8 +425,6 @@ export async function startPodAndWait(
     );
     return null;
   }
-
-  updateGpuActivity();
 
   let currentPodId: string | null = null;
   let retries = 3;
@@ -341,15 +453,13 @@ export async function startPodAndWait(
             console.warn(
               "[RunPodManager] Semua GPU penuh. Beralih ke fallback (tanpa GPU).",
             );
-            return null; // Bypass proses tunggu agar backend tidak crash
+            return null;
           }
-          // Jika tidak boleh fallback, hentikan dengan melempar pesan error untuk Frontend
           throw new Error(
             "Semua GPU di server sedang penuh. Silakan coba beberapa saat lagi.",
           );
         }
       } else {
-        // Lemparkan error jika disebabkan oleh hal lain (misal: koneksi terputus/API key salah)
         throw err;
       }
     }
@@ -370,8 +480,6 @@ export async function startPodAndWait(
       );
       break;
     }
-
-    // Wait 3 seconds before polling again
     await new Promise((r) => setTimeout(r, 3000));
   }
 
@@ -381,49 +489,7 @@ export async function startPodAndWait(
     );
   }
 
-  const workerUrl = getWorkerUrl(currentPodId);
-  const healthStart = Date.now();
-  const healthTimeout = 180000;
-  console.log(
-    `[RunPodManager] [Pod ${currentPodId}] Menunggu AI Worker di ${workerUrl} siap...`,
-  );
-
-  while (Date.now() - healthStart < healthTimeout) {
-    const elapsed = Math.round((Date.now() - healthStart) / 1000);
-    try {
-      const res = await fetch(`${workerUrl}/health`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      if (res.status === 200) {
-        const body = await res.json().catch(() => ({}));
-        console.log(
-          `[RunPodManager] [Pod ${currentPodId}] ✅ SUKSES: AI Worker AKTIF (200 OK) dalam ${elapsed}s! (warmed_up: ${body.warmed_up ?? true})`,
-        );
-        return currentPodId;
-      } else if (res.status === 502) {
-        console.log(
-          `[RunPodManager] [Pod ${currentPodId}] ⏳ Booting (${elapsed}s): Container sedang memuat PyTorch CUDA ke GPU RTX 4090...`,
-        );
-      } else if (res.status === 404) {
-        console.log(
-          `[RunPodManager] [Pod ${currentPodId}] ⏳ Routing (${elapsed}s): Menghubungkan RunPod Proxy Port 8000...`,
-        );
-      } else {
-        console.log(
-          `[RunPodManager] [Pod ${currentPodId}] ⏳ Status HTTP ${res.status} (${elapsed}s)...`,
-        );
-      }
-    } catch (fetchErr: any) {
-      console.log(
-        `[RunPodManager] [Pod ${currentPodId}] ⏳ Menunggu port 8000 terbuka (${elapsed}s): ${fetchErr.message || "Connecting..."}`,
-      );
-    }
-    await new Promise((r) => setTimeout(r, 4000));
-  }
-
-  throw new Error(
-    `[RunPodManager] [Pod ${currentPodId}] Timeout: AI Worker belum siap setelah ${Math.round(healthTimeout / 1000)}s.`,
-  );
+  return await waitForWorkerHealth(currentPodId);
 }
 export async function stopPod(podId: string): Promise<boolean> {
   if (!podId) return true;
