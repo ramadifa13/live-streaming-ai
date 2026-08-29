@@ -19,7 +19,67 @@ from musetalk.utils.blending import get_image_prepare_material, get_image_blendi
 from musetalk.utils.face_parsing import FaceParsing
 from musetalk.utils.audio_processor import AudioProcessor
 from musetalk.utils.utils import get_file_type, get_video_fps, datagen, load_all_model
-from musetalk.utils.preprocessing import get_landmark_and_bbox, read_imgs, coord_placeholder
+from musetalk.utils.preprocessing import coord_placeholder
+
+def _extract_landmarks_from_frames(frames, bbox_shift=0):
+    """
+    Ekstraksi landmark dan bounding box langsung dari list frame array numpy (RAM).
+    Tidak menggunakan penulisan/pembacaan file PNG ke disk sehingga bebas error imread.
+    """
+    try:
+        from musetalk.utils.preprocessing import model as dwpose_model, fa as face_align_model
+        from mmpose.apis import inference_topdown
+        from mmpose.structures import merge_data_samples
+
+        coords_list = []
+        for frame in frames:
+            try:
+                results = inference_topdown(dwpose_model, frame)
+                results = merge_data_samples(results)
+                keypoints = results.pred_instances.keypoints
+                face_land_mark = keypoints[0][23:91].astype(np.int32)
+
+                bbox = face_align_model.get_detections_for_batch(np.asarray([frame]))
+                f = bbox[0] if bbox else None
+                if f is None:
+                    coords_list.append(coord_placeholder)
+                    continue
+
+                half_face_coord = face_land_mark[29].copy()
+                if bbox_shift != 0:
+                    half_face_coord[1] = bbox_shift + half_face_coord[1]
+
+                half_face_dist = np.max(face_land_mark[:, 1]) - half_face_coord[1]
+                upper_bond = max(0, half_face_coord[1] - half_face_dist)
+
+                f_landmark = (
+                    int(np.min(face_land_mark[:, 0])),
+                    int(upper_bond),
+                    int(np.max(face_land_mark[:, 0])),
+                    int(np.max(face_land_mark[:, 1])),
+                )
+                x1, y1, x2, y2 = f_landmark
+                if y2 - y1 <= 0 or x2 - x1 <= 0 or x1 < 0:
+                    coords_list.append(tuple(map(int, f)))
+                else:
+                    coords_list.append(f_landmark)
+            except Exception:
+                try:
+                    bbox = face_align_model.get_detections_for_batch(np.asarray([frame]))
+                    if bbox and bbox[0] is not None:
+                        coords_list.append(tuple(map(int, bbox[0])))
+                    else:
+                        coords_list.append(coord_placeholder)
+                except Exception:
+                    coords_list.append(coord_placeholder)
+        return coords_list
+    except Exception as e:
+        print(f"[Landmarks] Fallback center bbox: {e}")
+        h, w = frames[0].shape[:2]
+        cx, cy = w // 2, h // 2
+        fw, fh = int(w * 0.45), int(h * 0.55)
+        fallback_bbox = (max(0, cx - fw // 2), max(0, cy - fh // 2), min(w, cx + fw // 2), min(h, cy + fh // 2))
+        return [fallback_bbox] * len(frames)
 
 # Enable cuDNN benchmark for faster convolutions on fixed-size tensors
 if torch.cuda.is_available():
@@ -145,7 +205,7 @@ def _get_avatar_materials(video_path, bbox_shift, extra_margin, version, parsing
             with open(pkl_path, 'rb') as f:
                 coord_list = pickle.load(f)
         else:
-            coord_list, _ = get_landmark_and_bbox(frame_list, bbox_shift)
+            coord_list = _extract_landmarks_from_frames(frame_list, bbox_shift)
             try:
                 with open(pkl_path, 'wb') as f:
                     pickle.dump(coord_list, f)
