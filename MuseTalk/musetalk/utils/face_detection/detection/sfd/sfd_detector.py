@@ -11,9 +11,6 @@ from .detect import *
 models_urls = {
     's3fd_github': 'https://github.com/1adrianb/face-alignment/releases/download/v1.0.1/s3fd-619a316812.pth',
     's3fd_hf': 'https://huggingface.co/radames/MuseTalk/resolve/main/models/face-alignment/s3fd-619a316812.pth',
-    's3fd_hf': 'https://huggingface.co/camenduru/facexlib/resolve/main/s3fd-619a316812.pth',
-    's3fd_wav2lip': 'https://huggingface.co/gmk123/wav2lip/resolve/main/s3fd-619a316812.pth',
-    's3fd_radames': 'https://huggingface.co/radames/MuseTalk/resolve/main/models/face-alignment/s3fd-619a316812.pth',
     's3fd': 'https://www.adrianbulat.com/downloads/python-fan/s3fd-619a316812.pth',
 }
 
