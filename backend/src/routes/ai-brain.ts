@@ -5,7 +5,7 @@ import {
   generateDynamicSalesResponseGroq,
   generateVideoSalesScriptGroq,
   generateLiveSalesPitchFromAIGroq,
-  getAvailableGroqModels,
+  checkOllamaHealth,
 } from "../services/groq-brain.js";
 
 const salesResponseSchema = z.object({
@@ -28,21 +28,22 @@ const videoScriptSchema = z.object({
 });
 
 export async function aiBrainRoutes(server: FastifyInstance) {
-  // GET /api/ai/models (Get all available Groq models dynamically)
+  // GET /api/ai/models (Get local Ollama status & models)
   server.get("/api/ai/models", async (_request, reply) => {
     try {
-      const models = await getAvailableGroqModels();
+      const health = await checkOllamaHealth();
       return {
         success: true,
-        data: models,
-        total: models.length,
+        provider: "ollama",
+        online: health.online,
+        activeModel: health.model,
       };
     } catch (err: any) {
       server.log.error(err);
       reply.code(500);
       return {
         success: false,
-        error: err.message || "Failed to fetch available Groq models",
+        error: err.message || "Failed to check Ollama status",
       };
     }
   });

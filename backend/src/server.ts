@@ -109,28 +109,21 @@ try {
   // Piper-TTS dipakai offline — tidak perlu warmup network seperti Edge-TTS.
   // Model akan di-load otomatis pada request TTS pertama.
 
-  // Warm up Groq AI Brain in background
+  // Warm up Ollama AI Brain in background
   setTimeout(() => {
-    if (!process.env.GROQ_API_KEY && !process.env.GEMINI_API_KEY) {
-      console.warn("[Groq-Brain] GROQ_API_KEY is not set in environment.");
-      return;
-    }
     import("./services/groq-brain.js")
-      .then((m) =>
-        m.generateDynamicSalesResponseGroq({
-          userQuestion: "Halo!",
-          avatarName: "Namira",
-          productName: "Produk Demo",
-          productPrice: "Rp99.000",
-        }),
-      )
-      .then(() =>
-        console.log("[Groq-Brain] Groq Dynamic LLM Brain ready & connected"),
-      )
+      .then((m) => m.checkOllamaHealth())
+      .then((health) => {
+        if (health.online) {
+          console.log(`[Ollama-Brain] 🧠 Local Ollama AI Brain connected & ready (Model: ${health.model}) - 100% Free`);
+        } else {
+          console.warn("[Ollama-Brain] ⚠️ Ollama tidak terdeteksi di localhost:11434. Pastikan aplikasi Ollama aktif.");
+        }
+      })
       .catch((err) =>
-        console.warn("[Groq-Brain] Groq warmup notice:", err?.message || err),
+        console.warn("[Ollama-Brain] Ollama warmup notice:", err?.message || err),
       );
-  }, 3000);
+  }, 2000);
 } catch (error) {
   server.log.error(error);
   process.exit(1);
