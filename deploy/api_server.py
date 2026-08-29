@@ -435,6 +435,29 @@ async def stop_broadcast():
 
     return {"success": True, "status": "stopped"}
 
+class UpdateProductRequest(BaseModel):
+    product_name: Optional[str] = None
+    productName: Optional[str] = None
+    product_price: Optional[str] = None
+    productPrice: Optional[str] = None
+    product_image_url: Optional[str] = None
+    productImageUrl: Optional[str] = None
+    banner_image_url: Optional[str] = None
+    bannerImageUrl: Optional[str] = None
+
+@app.post("/stream/update-product")
+async def update_stream_product(req: UpdateProductRequest):
+    update_file = os.path.join(output_dir, "update_overlay.json")
+    payload = {
+        "product_name": req.product_name or req.productName or "",
+        "product_price": req.product_price or req.productPrice or "",
+        "product_image_url": req.product_image_url or req.productImageUrl or "",
+        "banner_image_url": req.banner_image_url or req.bannerImageUrl or "",
+    }
+    with open(update_file, "w") as f:
+        json.dump(payload, f)
+    return {"success": True, "message": "Product overlay update queued for hot-swap"}
+
 @app.get("/stream/broadcast-status")
 async def broadcast_status():
     running = broadcaster_process is not None and broadcaster_process.poll() is None

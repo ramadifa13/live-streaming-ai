@@ -15,6 +15,7 @@ export function getGroqClient() {
 // ==============================================================================
 export interface SalesBrainInput {
   userQuestion: string;
+  authorName?: string;
   avatarName?: string;
   tone?: string;
   productName?: string;
@@ -25,6 +26,14 @@ export interface SalesBrainInput {
   productUsage?: string;
   productFaq?: string;
   productStock?: number;
+  allProducts?: Array<{
+    id: string;
+    name: string;
+    price: string | number;
+    category?: string;
+    benefits?: string;
+    description?: string;
+  }>;
 }
 
 export interface SalesBrainOutput {
@@ -55,6 +64,13 @@ export interface LiveSalesPitchInput {
   productStock?: number;
   avatarName?: string;
   tone?: string;
+  allProducts?: Array<{
+    id: string;
+    name: string;
+    price: string | number;
+    category?: string;
+    benefits?: string;
+  }>;
 }
 
 export interface LiveSalesPitchOutput {
@@ -134,12 +150,13 @@ function cleanAndExtractJson(text: string): any {
   }
 }
 
-export async function checkOllamaHealth(): Promise<{
+export async function checkGroqHealth(): Promise<{
   online: boolean;
-  model: string | null;
+  model: string;
 }> {
   return { online: true, model: "Groq Cloud (0% CPU Load)" };
 }
+export const checkOllamaHealth = checkGroqHealth;
 
 // ==============================================================================
 // 2. CORE GROQ LLM FUNCTIONS (ANTI-CRASH & ZERO-CPU)
@@ -154,6 +171,7 @@ export async function generateDynamicSalesResponse(
 ): Promise<SalesBrainOutput> {
   const {
     userQuestion,
+    authorName,
     avatarName = "Namira",
     tone = "Persuasif",
     productName = "Produk",
@@ -163,32 +181,65 @@ export async function generateDynamicSalesResponse(
     productUsage = "Mudah digunakan",
     productFaq = "Terjamin kualitasnya",
     productStock = 50,
+    allProducts = [],
   } = input;
 
-  const systemPrompt = `Kamu adalah ${avatarName}, seorang AI Host & Live Streamer profesional yang sedang siaran langsung jualan di TikTok / Shopee / Instagram Live.
-Gaya bicara kamu: ${tone}, sangat luwes, ramah, ceria, menggunakan Bahasa Indonesia santai khas live streaming ("aku", "kakak", "nih", "banget", "ya kak", "hehe", "yuk"). TIDAK BOLEH kaku atau seperti robot.
+  const catalogContext =
+    allProducts.length > 1
+      ? `\n--- SELURUH KATALOG PRODUK DI SESI LIVE INI (CROSS-SELLING) ---\n` +
+        allProducts
+          .map(
+            (p, idx) =>
+              `${idx + 1}. ${p.name} (Harga: ${typeof p.price === "number" ? `Rp${p.price.toLocaleString("id-ID")}` : p.price}) - ${p.benefits || p.category || ""}`,
+          )
+          .join("\n")
+      : "";
 
-Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.productCategory || "General"}, Harga spesial live: ${productPrice}, Sisa Stok: ${productStock} pcs).
+  const systemPrompt = `Kamu adalah ${avatarName}, seorang Top Live Host & Streamer profesional di Indonesia yang sedang siaran langsung jualan di TikTok / Shopee / Instagram Live.
+Gaya bicara kamu: ${tone}, sangat luwes, natural, cerdas, dan ekspresif. Menggunakan Bahasa Indonesia santai khas live streamer ("aku", "kamu", "nih", "banget", "ya", "yuk", "cus", "lho", "dong", "sih", "kan", "deh").
 
---- RAG KNOWLEDGE BASE PRODUK ---
+PRODUK UTAMA YANG SEDANG DISOROT: ${productName} (Kategori: ${input.productCategory || "General"}, Harga promo live: ${productPrice}, Sisa Stok: ${productStock} pcs).
+
+--- RAG KNOWLEDGE BASE PRODUK UTAMA ---
 1. Deskripsi: ${productDescription}
 2. Manfaat & Keunggulan: ${productBenefits}
 3. Petunjuk Pemakaian: ${productUsage}
 4. FAQ & Info Keamanan (BPOM/Halal): ${productFaq}
+${catalogContext}
 
---- TUGAS UTAMA (CONVERSATIONAL SELLING) ---
-1. Jawab pertanyaan penonton secara spontan, cerdas, ramah, dan manusiawi.
-2. SETELAH menjawab pertanyaan utama, selipkan jembatan obrolan yang halus (smooth pivot) untuk mengajak penonton melirik produk ${productName} atau mengingatkan promo ${productPrice} di keranjang kuning.
-3. Panjang jawaban sekitar 3 - 4 kalimat mengalir (durasi bicara 15 - 22 detik, sekitar 40 - 60 kata).
-4. (SANGAT PENTING): SELALU sisipkan satu Tanda Aksi (Action Tag) di AWAL jawabanmu:
-   - [IDLE] = Obrolan santai biasa.
-   - [RAISE_HAND] = Saat menyapa, memanggil, atau melambaikan tangan.
-   - [POINT_DOWN] = Saat menyuruh penonton melihat produk di keranjang kuning.
-   - [EXCITED] = Saat membicarakan diskon besar atau sangat antusias.
-   - [NOD] = Saat mengangguk setuju atau mengiyakan pertanyaan.
-   - [SMILE] = Saat tersenyum ramah atau berterima kasih.`;
+--- BANK PENANGANAN KERAGUAN PEMBELI (SMART OBJECTION HANDLING) ---
+- Keaslian: "Semua produk 100% original bergaransi resmi, ada barcode segel pabrik ya."
+- Keamanan Kulit/Kesehatan: "Formulanya sudah teruji klinis dan BPOM/Halal, aman digunakan harian."
+- Pengiriman/COD: "Packing gratis bubble wrap tebal plus kardus, dan bisa bayar di tempat (COD) ke seluruh Indonesia."
+- Garansi/Promo: "Harga promo dan kupon gratis ongkir ini cuma berlaku selama sesi live ya."
 
-  const userMsg = `Pertanyaan Penonton: "${userQuestion}"`;
+--- ATURAN GAYA BICARA NATURAL & CERDAS (SANGAT PENTING) ---
+1. DILARANG KERAS mengulang-ulang kata pembuka robotik seperti "Halo kak", "Halo kakak", "Halo semuanya", atau "Selamat datang di live". Kalimat harus mengalir spontan layaknya manusia asli di depan kamera.
+2. Gunakan variasi pembuka obrolan dan partikel alami khas streamer ("nih", "kan", "lho", "deh", "yuk"):
+   - "Nah, kalian perhatiin deh tekstur dan formulanya..."
+   - "Buat kamu yang dari kemarin cari solusi buat..."
+   - "Jujur ya, ini pribadi salah satu favorit aku..."
+   - "Banyak banget yang nanya ke aku soal..."
+   - "Kabar baiknya, khusus di sesi live hari ini..."
+   - "Bisa banget ya, karena formulanya udah teruji..."
+   - "Langsung cus tap keranjang kuning sekarang..."
+3. KETIKA MENJAWAB KOMENTAR / PERTANYAAN PENONTON:
+   - Buat seolah-olah kamu sedang melirik dan membaca komentar di layar ponsel live streaming.
+   - Jika nama penonton diketahui (${authorName ? `Nama: "Kak ${authorName}"` : "nama umum"}), SEBUT namanya secara hangat (contoh: "Ada pertanyaan dari Kak ${authorName || "Audience"} nih: '...'... ").
+   - SELALU sertakan tanda jeda titik tiga (...) agar ada jeda nafas natural sebelum memberikan jawaban solutif.
+4. KEMAMPUAN CROSS-SELLING & MEMBANDINGKAN PRODUK:
+   - Jika penonton bertanya tentang produk lain di katalog atau bingung memilih: jelaskan perbedaannya dengan cerdas menggunakan data katalog di atas dan rekomendasikan combo bundle jika cocok!
+5. Setelah menjawab inti pertanyaan, selipkan transisi halus (*conversational pivot*) untuk mengajak penonton mengamankan promo ${productPrice} di keranjang kuning.
+6. Panjang jawaban sekitar 2 - 4 kalimat mengalir (durasi bicara 12 - 20 detik, sekitar 30 - 50 kata).
+7. WAJIB SELALU sisipkan SATU Action Tag di AWAL jawabanmu:
+   - [IDLE] = Obrolan santai atau penjelasan detail.
+   - [RAISE_HAND] = Saat menyapa atau melambaikan tangan dengan antusias.
+   - [POINT_DOWN] = Saat mengajak penonton melihat keranjang kuning atau promo.
+   - [EXCITED] = Saat membahas diskon besar, promo terbatas, atau merespon kabar gembira.
+   - [NOD] = Saat mengiyakan pertanyaan atau setuju.
+   - [SMILE] = Saat tersenyum ramah atau membagikan tips.`;
+
+  const userMsg = `Pertanyaan / Arahan Topik Live: "${userQuestion}"`;
 
   try {
     const client = getGroqClient();
@@ -223,12 +274,12 @@ Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.product
     console.warn(`[Groq-Brain] Groq client error: ${err?.message || err}`);
   }
 
-  // Graceful Anti-Crash Fallback (Live stream never breaks)
+  // Graceful Natural Offline Fallback Templates
   const pitchTemplates = [
-    `[EXCITED] Halo semuanya! Selamat datang di live streaming bareng ${avatarName}! Hari ini produk ${productName} lagi ada diskon khusus cuma ${productPrice}! Jangan sampai kehabisan ya, langsung tap keranjang kuning sekarang!`,
-    `[POINT_DOWN] Buat kakak yang cari produk berkualitas, ${productName} ini solusinya! ${productBenefits ? productBenefits : "Kualitas terjamin dan original"}. Harganya hemat cuma ${productPrice}, stoknya tinggal ${productStock} pcs lagi nih kak!`,
-    `[RAISE_HAND] Yang baru gabung jangan lupa tap-tap layarnya ya kak! Produk ${productName} lagi best seller banget hari ini. Yuk checkout sekarang sebelum promonya habis!`,
-    `[SMILE] Terima kasih buat kakak-kakak yang sudah join dan bantu tap-tap layar! Yuk buruan dicek keranjang kuningnya, lagi ada flash sale nih untuk produk ${productName}!`,
+    `[POINT_DOWN] Nah, buat kalian yang lagi butuh ${productName}, produk ini kualitasnya beneran premium dan original. Khusus di live sekarang harganya cuma ${productPrice}, jangan sampai kehabisan ya!`,
+    `[EXCITED] Jujur ini salah satu best seller kita yang paling cepat ludes! ${productBenefits ? productBenefits : "Manfaatnya kerasa banget"}. Mumpung lagi ada promo live ${productPrice}, yuk langsung amankan di keranjang kuning!`,
+    `[SMILE] Perhatiin deh detail dan keunggulannya, bener-bener dirancang buat kamu yang mau hasil terbaik. Stok promo tinggal ${productStock} pcs aja, langsung checkout sekarang ya!`,
+    `[NOD] Bener banget, banyak yang udah repeat order karena kualitasnya se-worth it itu. Langsung tap keranjang kuning sekarang sebelum kupon promonya habis ya!`,
   ];
   const randomPitch =
     pitchTemplates[Math.floor(Math.random() * pitchTemplates.length)]!;
@@ -258,7 +309,7 @@ export async function generateLiveSalesPitchFromAI(
   const stock = input.productStock ?? 50;
 
   const systemPrompt = `Kamu adalah ${hostName}, seorang Top Live Host & Streamer profesional di Indonesia.
-Buat naskah live sales pitch terstruktur dalam Bahasa Indonesia yang sangat natural, santai, ramah, dan memikat penonton ("aku", "kakak", "yuk", "nih", "ya kak").
+Buat naskah live sales pitch terstruktur dalam Bahasa Indonesia yang sangat natural, santai, meyakinkan, dan tidak kaku ("aku", "kamu", "nih", "yuk", "cus").
 
 DATA PRODUK:
 - Nama Produk: ${input.productName}
@@ -270,15 +321,15 @@ DATA PRODUK:
 - Petunjuk Pemakaian: ${input.productUsage || "Mudah digunakan"}
 - FAQ / Izin: ${input.productFaq || "Terjamin original dan aman"}
 
-GAYA BICARA: ${tone} (bahasa live streaming santai, tidak kaku, tidak seperti membaca brosur).
+GAYA BICARA: ${tone} (bahasa live streaming natural & ekspresif, BUKAN seperti membaca brosur atau robot).
 
-ATURAN WAJIB:
-- Gunakan HANYA informasi nyata dari data produk di atas.
-- Naskah harus dibagi menjadi 3 bagian dalam format JSON:
-  1. "hook": Sapaan pembuka yang heboh & mengaitkan rasa penasaran penonton (1-2 kalimat).
-  2. "showcase": Bedah manfaat utama, keunggulan, dan solusi produk (2-3 kalimat).
-  3. "cta": Ajakan beli/checkout mendesak dengan menyebut harga promo ${price} dan sisa stok di keranjang kuning (1-2 kalimat).
-  - WAJIB menyisipkan Action Tag di AWAL setiap teks bagian (hook, showcase, cta): [IDLE], [RAISE_HAND], [POINT_DOWN], [EXCITED], [NOD], atau [SMILE].
+ATURAN WAJIB (SANGAT PENTING):
+1. DILARANG KERAS mengulang-ulang "Halo kak", "Halo kakak", atau salam kaku di awal kalimat.
+2. Naskah harus dibagi menjadi 3 bagian dalam format JSON:
+   1. "hook": Kalimat pembuka penasaran/solutif yang langsung menarik perhatian tanpa kata 'halo' (1-2 kalimat). Contoh: "Kalian yang punya masalah kulit kusam wajib merapat deh sekarang..."
+   2. "showcase": Bedah manfaat utama, keunggulan, dan sensasi penggunaan produk secara ekspresif (2-3 kalimat).
+   3. "cta": Ajakan checkout mendesak dengan menyebut harga promo ${price} dan sisa stok ${stock} pcs di keranjang kuning (1-2 kalimat).
+   - WAJIB menyisipkan Action Tag di AWAL setiap teks bagian (hook, showcase, cta): [IDLE], [RAISE_HAND], [POINT_DOWN], [EXCITED], [NOD], atau [SMILE].
 
 Kembalikan HANYA JSON valid:
 {
@@ -325,10 +376,10 @@ Kembalikan HANYA JSON valid:
     console.warn(`[Groq-Brain] Pitch error: ${err?.message || err}`);
   }
 
-  // Graceful Fallback template
-  const fallbackHook = `[EXCITED] Halo kakak-kakak yang baru gabung, selamat datang di live streaming bareng ${hostName}!`;
-  const fallbackShowcase = `[IDLE] Buat yang cari ${input.productName}, produk ini kualitasnya terjamin dan banyak banget manfaatnya.`;
-  const fallbackCta = `[POINT_DOWN] Mumpung lagi live, harganya promo cuma ${price} dan stoknya tinggal ${stock} pcs aja nih kak. Yuk langsung tap keranjang kuning sekarang juga!`;
+  // Graceful Natural Fallback template
+  const fallbackHook = `[EXCITED] Nah, buat kalian yang dari kemarin nyari solusi terbaik, kenalin nih ${input.productName}!`;
+  const fallbackShowcase = `[IDLE] Produk ini bener-bener diformulasikan khusus dengan bahan pilihan dan kualitas premium.`;
+  const fallbackCta = `[POINT_DOWN] Khusus di sesi live sekarang harganya diskon jadi cuma ${price} dan stoknya tinggal ${stock} pcs lagi. Yuk langsung amankan di keranjang kuning sekarang!`;
 
   return {
     productName: input.productName,

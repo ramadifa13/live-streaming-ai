@@ -10,6 +10,7 @@ import {
 import {
   getRunPodBroadcastStatus,
   startRunPodBroadcast,
+  updateRunPodBroadcastProduct,
   stopRunPodBroadcast,
   triggerWorkerPlayback,
   warmupWorker,
@@ -483,6 +484,27 @@ export async function liveSessionRoutes(server: FastifyInstance) {
           where: { id: latestSession.id },
           data: { productId: parsed.data.productId },
         });
+        liveHostOrchestrator.switchProduct(
+          latestSession.id,
+          parsed.data.productId,
+        );
+
+        // Hot-Swap video overlay card & banner on Pod without stopping RTMP stream
+        const switchedProd = await prisma.product.findUnique({
+          where: { id: parsed.data.productId },
+        });
+        if (switchedProd) {
+          const managedSession = liveSessionManager.getSession(
+            latestSession.id,
+          );
+          const podId = managedSession?.podId;
+          updateRunPodBroadcastProduct(podId, {
+            productName: switchedProd.name,
+            productPrice: String(switchedProd.price),
+            productImageUrl: switchedProd.image || undefined,
+            bannerImageUrl: switchedProd.bannerImage || undefined,
+          }).catch(() => {});
+        }
       }
     } catch {}
 

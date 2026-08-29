@@ -388,6 +388,22 @@ class AIBroadcaster:
 
         while True:
             try:
+                # 0. Hot-Swap Video Overlay check (Update card & banner in-place during live broadcast)
+                update_file = os.path.join(self.output_folder, "update_overlay.json")
+                if os.path.exists(update_file):
+                    try:
+                        with open(update_file, "r") as f:
+                            data = json.load(f)
+                        self.product_name = data.get("product_name", self.product_name)
+                        self.product_price = data.get("product_price", self.product_price)
+                        self.product_image_url = data.get("product_image_url", self.product_image_url)
+                        self.banner_image_url = data.get("banner_image_url", self.banner_image_url)
+                        self._prepare_overlay_assets()
+                        print(f"[BROADCASTER] 🔄 Live Video Overlay diperbarui secara Hot-Swap: {self.product_name} ({self.product_price})")
+                        os.remove(update_file)
+                    except Exception as e:
+                        print(f"[BROADCASTER ERROR] Gagal update live overlay: {e}")
+
                 playback_flag = os.path.join(self.output_folder, "playback_active.flag")
                 playback_active = os.path.exists(playback_flag)
 

@@ -34,7 +34,11 @@ export interface PollerSessionConfig {
 }
 
 type LiveDetectedCallback = (sessionId?: string) => Promise<void> | void;
-type SpeechCallback = (text: string, sessionId?: string) => void;
+type SpeechCallback = (
+  text: string,
+  sessionId?: string,
+  authorName?: string,
+) => void;
 
 interface SessionState {
   config: PollerSessionConfig;
@@ -381,9 +385,12 @@ class LivePlatformConnector {
 
         aiResponseText = response.replyText;
         state.metrics.aiReplies += 1;
-        this.globalSpeechCallback?.(response.replyText, sessionId);
+        this.globalSpeechCallback?.(text, sessionId, sender);
       } catch (err) {
-        console.warn(`[LivePlatformConnector] Failed to generate AI reply for comment:`, err);
+        console.warn(
+          `[LivePlatformConnector] Failed to generate AI reply for comment:`,
+          err,
+        );
       }
     }
 

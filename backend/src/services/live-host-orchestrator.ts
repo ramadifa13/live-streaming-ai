@@ -29,6 +29,7 @@ interface PendingVideo {
 
 export interface PendingComment {
   text: string;
+  authorName?: string;
   createdAt: number;
 }
 
@@ -48,34 +49,36 @@ class LiveHostOrchestrator {
   private sessions = new Map<string, OrchestratorState>();
 
   private prompts = [
-    "Buat pembukaan singkat yang menyambut penonton baru dan memperkenalkan produk.",
-    "Jelaskan satu manfaat utama produk dan cara pakainya dengan bahasa live yang natural.",
-    "Buat demo penggunaan atau tips praktis yang relevan dengan produk.",
-    "Buat pengingat promo dan ajakan checkout yang informatif, tanpa klaim di luar knowledge base.",
-    "Buat rangkuman singkat alasan produk ini cocok untuk target audiensnya.",
-    "Jawab pertanyaan umum penonton tentang produk dengan bahasa santai dan mengajak checkout.",
-    "Buat interaksi kecil seperti 'siapa yang lagi nonton dari mana?' yang mengalir ke promosi produk.",
-    "Jelaskan perbedaan produk ini dengan produk lain di pasaran secara honest.",
-    "Buat testimoni ringan atau cerita penggunaan yang relate dengan audiens.",
-    "Jawab keraguan umum (harusnya gak perlu ragu, harga spesial, stok terbatas) dengan convincing.",
-    "Buat pengingat social proof: bintang 5, ulasan bagus, atau ribuan yang sudah beli.",
-    "Jelaskan komposisi atau bahan yang aman dan cocok untuk kebutuhan spesifik penonton.",
-    "Buat ice breaking seru seperti 'raise your hand kalau lagi ngeliat keranjang kuning' dan langsung ke value proposition.",
-    "Jelaskan kapan waktu terbaik pakai produk ini (pagi, malam, sebelum kerja, dll) dengan alasan natural.",
-    "Buat perbandingan singkat: kalau beli di sini dapat apa aja selain produknya (gratis ongkir, gift, dll).",
-    "Jawab pertanyaan 'kak ini ori nggak?' atau 'ada BPOM nggak?' dengan jawaban yang tenang dan meyakinkan.",
-    "Buat FOMO halus: 'Mumpung lagi live, vouchernya masih bisa diklaim ya kak'.",
-    "Jelaskan packaging atau cara pengemasan produk yang aman dan rapi.",
-    "Sebutkan garansi atau layanan purna jual yang bikin pembeli tenang.",
-    "Buat kalimat penutup sementara yang menahan penonton agar tidak skip live.",
+    "Mulai dengan hook penasaran atau masalah sehari-hari yang sering dialami penonton, lalu jelaskan bagaimana produk ini jadi solusi nyatanya (DILARANG mengawali dengan salam 'halo kak').",
+    "Bedah satu keunggulan utama produk dan sensasi saat pertama kali pakai dengan bahasa ekspresif dan santai.",
+    "Berikan tips dan trik praktis cara pakai produk langkah demi langkah agar penonton mendapat hasil paling maksimal.",
+    "Ingatkan sisa stok promo yang semakin menipis dan alasan kenapa wajib amankan kupon diskon di keranjang kuning sekarang juga.",
+    "Ucapkan terima kasih spontan dan hangat kepada pembeli yang baru saja checkout (sebut nama pembeli dan kota di Indonesia secara acak, contoh: 'Kak Dinda dari Surabaya'), lalu ingatkan penonton lain untuk amankan pesanan sekarang.",
+    "Ceritakan ulasan positif dan alasan kenapa produk ini viral serta jadi favorit ribuan pembeli.",
+    "Bahas keraguan umum yang sering bikin orang ragu beli (misal: kecocokan, rasa, atau kemudahan pakai) dengan penjelasan yang sangat meyakinkan.",
+    "Ajak penonton yang sedang mantengin live untuk segera tap etalase mumpung harga promo sesi ini masih berlaku.",
+    "Berikan pengumuman urgensi flash sale: ingatkan sisa kupon diskon dan promo live tinggal sedikit sebelum harga kembali normal.",
+    "Bandingkan value produk ini: harga sangat terjangkau dibanding segudang manfaat dan kualitas yang didapat.",
+    "Jelaskan keamanan formulasi dan kualitas bahan produk yang sudah teruji, higienis, dan aman digunakan.",
+    "Berikan rekomendasi spesifik mengenai siapa saja yang wajib punya produk ini dan kenapa tidak boleh dilewatkan.",
+    "Bahas detail kemasan yang rapi, praktis dibawa bepergian, dan pengiriman yang aman sampai ke rumah pembeli.",
+    "Buat analogi atau cerita relate tentang bagaimana produk ini bikin rutinitas harian jadi jauh lebih mudah dan menyenangkan.",
+    "Spill keuntungan belanja langsung saat sesi live (harga khusus live, voucher gratis ongkir) dibanding checkout di luar jam live.",
+    "Tegaskan keaslian 100% produk original dan jaminan kepuasan pelanggan dengan nada bicara yang ramah dan percaya diri.",
+    "Berikan panduan waktu atau momen paling tepat untuk menggunakan produk ini agar manfaatnya terasa maksimal.",
+    "Tekankan kembali bahwa promo harga spesial ini terbatas selama sesi live berlangsung dan ajak penonton langsung amankan pesanan.",
+    "Rangkum 3 alasan utama kenapa penonton harus mencoba produk ini hari ini juga.",
+    "Ceritakan feedback nyata dari pelanggan yang sudah repeat order dan merasa puas dengan hasilnya.",
+    "Ingatkan penonton untuk tidak menunda checkout karena harga bisa kembali normal sewaktu-waktu.",
+    "Berikan kalimat penutup sesi bahasan produk ini dengan antusias dan ajakan checkout terakhir sebelum kita bahas etalase berikutnya.",
   ];
 
   constructor() {
     livePlatformConnector.setSpeechCallback(
-      (text: string, sessionId?: string) => {
+      (text: string, sessionId?: string, authorName?: string) => {
         if (sessionId) {
-          // Komentar audiens → sisipkan reply ke GPU queue sebagai prioritas
-          this.enqueue(sessionId, text);
+          // Komentar audiens → sisipkan reply ke GPU queue sebagai prioritas beserta nama penonton
+          this.enqueue(sessionId, text, authorName);
         }
       },
     );
@@ -102,6 +105,17 @@ class LiveHostOrchestrator {
       );
     }
     this.sessions.clear();
+  }
+
+  public switchProduct(sessionId: string, productId: string) {
+    const state = this.sessions.get(sessionId);
+    if (state) {
+      state.config.productId = productId;
+      state.usedPromptIndices.clear();
+      console.log(
+        `[LiveHost] 🔄 Produk aktif untuk session ${sessionId} beralih ke: ${productId}`,
+      );
+    }
   }
 
   // ============================================================================
@@ -336,11 +350,12 @@ class LiveHostOrchestrator {
             continue;
           }
           console.log(
-            `[LiveHost] ⚡ Memproses komentar prioritas penonton: "${nextComment.text.substring(0, 40)}..."`,
+            `[LiveHost] ⚡ Memproses komentar prioritas dari ${nextComment.authorName || "Penonton"}: "${nextComment.text.substring(0, 40)}..."`,
           );
           nextUtterance = await this.synthesizeComment(
             sessionId,
             nextComment.text,
+            nextComment.authorName,
           );
           break;
         }
@@ -475,7 +490,7 @@ class LiveHostOrchestrator {
    * Enqueue reply komentar audiens dengan Leaky-Bucket (Max capacity 2, TTL 30s).
    * Hanya berjalan saat isLive=true — tidak aktif saat fase idle.
    */
-  public enqueue(sessionId: string, text: string) {
+  public enqueue(sessionId: string, text: string, authorName?: string) {
     const state = this.sessions.get(sessionId);
     if (!state || !state.isLive) return;
 
@@ -485,31 +500,93 @@ class LiveHostOrchestrator {
       (c) => now - c.createdAt <= 30_000,
     );
 
-    // 2. Leaky-bucket cap: Max 2 komentar menunggu agar respons selalu realtime
-    if (state.pendingComments.length >= 2) {
-      const dropped = state.pendingComments.shift();
+    // 2. High-Intent Buying Detection (Prioritaskan pertanyaan yang berpotensi closing penjualan)
+    const isHighIntent =
+      /\b(beli|order|checkout|co|harga|ongkir|cod|bayar|kirim|stok|promo|diskon|paket|bundle|asli|ori|bpom|halal|rekomendasi|warna|ukuran|size|ready)\b/i.test(
+        text,
+      );
+
+    const newCommentItem: PendingComment = { text, authorName, createdAt: now };
+
+    // Jika komentar berpotensi closing tinggi, letakkan di depan antrean
+    if (isHighIntent && state.pendingComments.length > 0) {
+      state.pendingComments.unshift(newCommentItem);
       console.log(
-        `[LiveHost] 💧 Leaky-bucket drop komentar terlama: "${dropped?.text.substring(0, 30)}..."`,
+        `[LiveHost] 🎯 HIGH-INTENT Komentar dari ${authorName || "Penonton"} diprioritaskan: "${text.substring(0, 40)}..."`,
+      );
+    } else {
+      state.pendingComments.push(newCommentItem);
+      console.log(
+        `[LiveHost] 💬 Komentar penonton dari ${authorName || "Audience"} masuk antrean: "${text.substring(0, 40)}..."`,
       );
     }
 
-    state.pendingComments.push({ text, createdAt: now });
-    console.log(
-      `[LiveHost] 💬 Komentar penonton masuk prioritas queue (${state.pendingComments.length} antrean): "${text.substring(0, 40)}..."`,
-    );
+    // 3. Leaky-bucket cap: Max 2 komentar menunggu agar respons selalu realtime
+    if (state.pendingComments.length > 2) {
+      const dropped = state.pendingComments.pop();
+      console.log(
+        `[LiveHost] 💧 Leaky-bucket drop komentar terendah: "${dropped?.text.substring(0, 30)}..."`,
+      );
+    }
   }
 
   // ============================================================================
   // PRIVATE HELPERS
   // ============================================================================
 
-  /** Sintesis audio untuk komentar penonton */
+  /** Sintesis audio untuk komentar penonton dengan penyebutan nama, gaya baca, jeda, & cross-selling */
   private async synthesizeComment(
     sessionId: string,
-    text: string,
+    commentText: string,
+    authorName?: string,
   ): Promise<{ text: string; audioBase64: string | undefined }> {
     const state = this.sessions.get(sessionId);
     if (!state) return { text: "", audioBase64: undefined };
+
+    let product = null;
+    let allProducts: any[] = [];
+    try {
+      if (state.config.productId) {
+        product = await prisma.product.findUnique({
+          where: { id: state.config.productId },
+        });
+      }
+      allProducts = await prisma.product.findMany({
+        take: 8,
+        select: {
+          id: true,
+          name: true,
+          price: true,
+          category: true,
+          benefits: true,
+          description: true,
+        },
+      });
+    } catch {}
+
+    // Generate respon AI cerdas yang membaca komentar penonton dengan jeda nafas (...)
+    const result = await generateDynamicSalesResponse({
+      userQuestion: `Komentar dari penonton ${authorName ? `(bernama "${authorName}")` : ""}: "${commentText}". Respon seolah-olah kamu sedang membaca komentar ini di layar live dengan jeda singkat (...), sebut namanya jika ada, lalu langsung jawab secara ramah, solutif, dan ajak amankan produk di keranjang kuning.`,
+      authorName,
+      avatarName: state.config.avatarName,
+      tone: state.config.tone,
+      productName: product?.name || "Produk Pilihan",
+      productPrice: product
+        ? `Rp${product.price.toLocaleString("id-ID")}`
+        : "Harga Spesial",
+      productDescription: product?.description || "",
+      productCategory: product?.category || "General",
+      productBenefits: product?.benefits || "",
+      productUsage: product?.usage || "",
+      productFaq: product?.faq || "",
+      productStock: product?.stock ?? 50,
+      allProducts,
+    });
+
+    let text = (result?.replyText || "").trim();
+    if (!text || text.length < 5) {
+      text = `[NOD] Ada pertanyaan ${authorName ? `dari Kak ${authorName}` : "di chat"} nih: "${commentText}"... Nah buat yang nanya, produk ini kualitasnya original dan terjamin ya! Yuk langsung amankan di keranjang kuning sekarang!`;
+    }
 
     let audioBase64: string | undefined;
     try {
@@ -540,6 +617,20 @@ class LiveHostOrchestrator {
     });
     if (!product) return { text: "", audioBase64: undefined };
 
+    let allProducts: any[] = [];
+    try {
+      allProducts = await prisma.product.findMany({
+        take: 8,
+        select: {
+          id: true,
+          name: true,
+          price: true,
+          category: true,
+          benefits: true,
+        },
+      });
+    } catch {}
+
     const promptIndex = this.getNextPromptIndex(sessionId);
     const result = await generateDynamicSalesResponse({
       userQuestion: `${this.prompts[promptIndex]} Gunakan copywriting produk ini sebagai acuan: ${product.copywriting || "Tidak tersedia"}`,
@@ -553,6 +644,7 @@ class LiveHostOrchestrator {
       productUsage: product.usage || "",
       productFaq: product.faq || "",
       productStock: product.stock,
+      allProducts,
     });
 
     let text = (result?.replyText || "").trim();

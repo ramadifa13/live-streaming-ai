@@ -228,6 +228,51 @@ export default function Dashboard() {
     }
   }, [isConnectingLive, pipelineStatus]);
 
+  // 10-Minute Auto-Rotate Product Timer (Looping 1 -> 2 -> 3 -> 1 ...)
+  useEffect(() => {
+    if (!isLiveActive || products.length <= 1 || !automations.autoPin) return;
+
+    const autoRotateInterval = setInterval(
+      () => {
+        setActiveFeaturedProduct((current) => {
+          const nextIdx =
+            (products.findIndex((p) => p.id === current.id) + 1) %
+            products.length;
+          const nextProd = products[nextIdx];
+
+          // Announce switch in chat simulation
+          const switchMsg: ChatMessage = {
+            id: String(Date.now()),
+            sender: `AI Host (${selectedAvatar.name})`,
+            isAi: true,
+            avatarColor: "bg-[#4148e2]",
+            text: `Sekarang kita beralih ke ${nextProd.name} ya kakak! Harganya spesial cuma ${nextProd.price}! Yuk langsung diamankan di keranjang kuning ya! ✨`,
+            time: new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          };
+          setChatMessages((prev) => [...prev, switchMsg]);
+
+          // Sync with backend API
+          fetch("/api/live-session/switch-product", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              productId: nextProd.id || "1",
+              productName: nextProd.name,
+            }),
+          }).catch(() => {});
+
+          return nextProd;
+        });
+      },
+      10 * 60 * 1000,
+    ); // Tepat 10 Menit Sekali (600.000 ms)
+
+    return () => clearInterval(autoRotateInterval);
+  }, [isLiveActive, products, automations.autoPin, selectedAvatar.name]);
+
   const handleCancelInitialization = () => {
     if (connectingAbortRef.current) {
       connectingAbortRef.current.abort();
@@ -2575,7 +2620,7 @@ export default function Dashboard() {
 
                       {/* 1. Paling Atas Tengah: Gambar Banner Promosi (Lebih Besar & Naik ke Atas) */}
                       {activeFeaturedProduct?.bannerImage && (
-                        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[94%] max-w-[226px] flex justify-center animate-in fade-in slide-in-from-top-2 duration-300">
+                        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[50%] max-w-[226px] flex justify-center animate-in fade-in slide-in-from-top-2 duration-300">
                           <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/40 bg-black/60 backdrop-blur-md p-0.5 w-full">
                             <img
                               src={activeFeaturedProduct.bannerImage}
@@ -2589,7 +2634,7 @@ export default function Dashboard() {
                       {/* 2. Bottom Floating Product Card (Universal Safe Area di atas chat/gift/keranjang) */}
                       {activeFeaturedProduct?.name &&
                         activeFeaturedProduct.name !== "Memuat Produk..." && (
-                          <div className="absolute bottom-[18%] left-1/2 -translate-x-1/2 z-20 pointer-events-none w-[92%] max-w-[218px] flex justify-center animate-in fade-in slide-in-from-bottom-2 duration-300">
+                          <div className="absolute bottom-[5%] left-1/2 -translate-x-1/2 z-20 pointer-events-none w-[92%] max-w-[218px] flex justify-center animate-in fade-in slide-in-from-bottom-2 duration-300">
                             <div className="w-full rounded-2xl bg-white/98 p-2.5 shadow-[0_10px_30px_rgba(0,0,0,0.35)] border border-slate-100/90 flex items-center gap-2.5 text-slate-900 backdrop-blur-md ring-1 ring-black/5">
                               {/* Foto Produk Thumbnail */}
                               <div className="relative h-11 w-11 shrink-0 rounded-xl overflow-hidden bg-slate-100 border border-slate-200/80 shadow-xs">
@@ -3762,7 +3807,7 @@ export default function Dashboard() {
                           sender: `AI Host (${selectedAvatar.name})`,
                           isAi: true,
                           avatarColor: "bg-[#4148e2]",
-                          text: `Sekarang kita sematkan dan sorot ${nextProd.name} ya kakak! Harganya spesial ${nextProd.price}! Yuk dicek keranjangnya! ✨`,
+                          text: `Sekarang kita sematkan dan sorot ${nextProd.name} ya kakak! Harganya spesial cuma ${nextProd.price}! Yuk dicek keranjangnya! ✨`,
                           time: new Date().toLocaleTimeString([], {
                             hour: "2-digit",
                             minute: "2-digit",
@@ -3782,9 +3827,19 @@ export default function Dashboard() {
                           });
                         } catch {}
                       }}
-                      className="mt-2 w-full rounded-lg bg-[#4148e2] py-1 text-[8.5px] font-bold text-white hover:bg-blue-600 transition active:scale-95"
+                      className="mt-2 w-full rounded-lg bg-[#4148e2] py-1.5 text-[9px] font-bold text-white hover:bg-blue-600 transition active:scale-95 flex items-center justify-center gap-1 shadow-sm"
                     >
-                      Pin &amp; Sorot Produk Berikutnya
+                      <span>🔄 Pin &amp; Sorot Produk Berikutnya</span>
+                      <span className="opacity-80 font-mono">
+                        (
+                        {Math.max(
+                          1,
+                          products.findIndex(
+                            (p) => p.id === activeFeaturedProduct.id,
+                          ) + 1,
+                        )}
+                        /{products.length})
+                      </span>
                     </button>
                   </div>
 

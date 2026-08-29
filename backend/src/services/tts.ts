@@ -100,10 +100,10 @@ export function sanitizeForLiveTTS(text: string): string {
         /\b(yuk|nah|khusus hari ini|mumpung lagi promo|jangan sampai kehabisan)\b/gi,
         ", $1",
       )
-      // 7. Rapikan tanda baca dan spasi ganda
+      // 7. Rapikan tanda baca (pertahankan elipsis ... untuk jeda nafas membaca komentar)
       .replace(/[!]{2,}/g, "!")
       .replace(/[?]{2,}/g, "?")
-      .replace(/[.]{2,}/g, ".")
+      .replace(/[.]{4,}/g, "...")
       .replace(/,{2,}/g, ",")
       .replace(/\s+/g, " ")
       .trim()

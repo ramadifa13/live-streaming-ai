@@ -129,6 +129,30 @@ export async function startRunPodBroadcast(
   });
 }
 
+export async function updateRunPodBroadcastProduct(
+  podId: string | null | undefined,
+  params: {
+    productName?: string;
+    productPrice?: string;
+    productImageUrl?: string;
+    bannerImageUrl?: string;
+  },
+): Promise<RunPodBroadcastResult> {
+  return workerRequestWithRetry(podId, "/stream/update-product", {
+    method: "POST",
+    body: JSON.stringify({
+      product_name: params.productName,
+      product_price: params.productPrice,
+      product_image_url: params.productImageUrl,
+      banner_image_url: params.bannerImageUrl,
+    }),
+  }).catch(() => ({
+    success: false,
+    status: "error",
+    message: "Failed to update overlay",
+  }));
+}
+
 export async function stopRunPodBroadcast(
   podId: string | null | undefined,
 ): Promise<RunPodBroadcastResult> {
