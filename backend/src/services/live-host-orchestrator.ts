@@ -325,10 +325,10 @@ class LiveHostOrchestrator {
           continue;
         }
 
-        // Jika antrean video bicara di disk sudah ada >= 3 video ATAU GPU sedang merender:
-        // Tunggu 3 detik lalu cek kembali agar GPU tidak overload
-        if (queuedOnDisk >= 3 || isWorkerBusy) {
-          await new Promise((r) => setTimeout(r, 3000));
+        // Buffer queue: Jaga agar buffer selalu terisi 3-4 video bicara siap putar di disk.
+        // Proaktif men-submit ke worker agar rendering selalu 1-2 langkah di depan durasi bicara.
+        if (queuedOnDisk >= 4) {
+          await new Promise((r) => setTimeout(r, 1500));
           continue;
         }
 
