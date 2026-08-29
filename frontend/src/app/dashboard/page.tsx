@@ -171,53 +171,6 @@ export default function Dashboard() {
     "Mengalokasikan Cloud GPU RTX 4090...",
   );
   const connectingAbortRef = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    if (!isConnectingLive) {
-      setConnectingStageIndex(0);
-      setConnectingStageText("Mengalokasikan Cloud GPU RTX 4090...");
-      return;
-    }
-    const stages = [
-      {
-        delay: 0,
-        text: "Mengalokasikan Cloud GPU NVIDIA RTX 4090...",
-        index: 0,
-      },
-      {
-        delay: 6000,
-        text: "Menyiapkan Container & Storage Network...",
-        index: 0,
-      },
-      {
-        delay: 12000,
-        text: "Memuat Bobot Model AI (MuseTalk & DWPose)...",
-        index: 1,
-      },
-      {
-        delay: 22000,
-        text: "Inisialisasi Voice Persona & Skrip AI Selling...",
-        index: 2,
-      },
-      {
-        delay: 32000,
-        text: "Menghubungkan Stream RTMP & Handshake Siaran...",
-        index: 3,
-      },
-      {
-        delay: 42000,
-        text: "Generate AI Host...",
-        index: 4,
-      },
-    ];
-    const timers = stages.slice(1).map((stage) =>
-      setTimeout(() => {
-        setConnectingStageIndex(stage.index);
-        setConnectingStageText(stage.text);
-      }, stage.delay),
-    );
-    return () => timers.forEach(clearTimeout);
-  }, [isConnectingLive]);
   const [currentLiveSessionId, setCurrentLiveSessionId] = useState<
     string | null
   >(null);
@@ -226,7 +179,24 @@ export default function Dashboard() {
     generationCount: number;
     videosQueued: number;
     pendingCount: number;
+    isLive?: boolean;
+    stageIndex?: number;
+    stageText?: string;
   } | null>(null);
+
+  useEffect(() => {
+    if (!isConnectingLive) {
+      setConnectingStageIndex(0);
+      setConnectingStageText("Mengalokasikan Cloud GPU RTX 4090...");
+      return;
+    }
+    if (pipelineStatus?.stageText) {
+      setConnectingStageText(pipelineStatus.stageText);
+    }
+    if (typeof pipelineStatus?.stageIndex === "number") {
+      setConnectingStageIndex(pipelineStatus.stageIndex);
+    }
+  }, [isConnectingLive, pipelineStatus]);
   const [liveSessionPhase, setLiveSessionPhase] = useState<
     "idle" | "pending" | "live" | "ended"
   >("idle");

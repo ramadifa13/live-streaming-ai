@@ -388,10 +388,26 @@ class LiveHostOrchestrator {
       renderedCount = state?.videosQueued ?? 0;
     }
 
-    // BUG FIX: dulu kondisi kedua selalu true sehingga ready=true langsung
-    // setelah 2 video DIKIRIM ke GPU, padahal GPU butuh 70-155 detik untuk render.
-    // Sekarang: wajib ada >= 1 video yang sudah benar-benar SELESAI dirender di worker.
-    const isReady = (state?.videosQueued ?? 0) >= 2 && renderedCount >= 1; // Video harus sudah selesai dirender di GPU, bukan hanya dikirim
+    const isReady = (state?.videosQueued ?? 0) >= 2 && renderedCount >= 1;
+
+    let stageIndex = 0;
+    let stageText = "Mengalokasikan Cloud GPU NVIDIA RTX 4090...";
+
+    if (state) {
+      if (renderedCount >= 1 || state.videosQueued >= 1) {
+        stageIndex = 4;
+        stageText = `Generate AI Host (Video ${Math.min(renderedCount, 2)}/2 Selesai)...`;
+      } else if (state.pendingVideos.length > 0) {
+        stageIndex = 3;
+        stageText = "Koneksi Stream RTMP & Handshake Siaran...";
+      } else if (state.generationCount > 0) {
+        stageIndex = 2;
+        stageText = "Menyiapkan Voice Persona & Skrip AI Selling...";
+      } else {
+        stageIndex = 1;
+        stageText = "Inisialisasi Neural Lipsync (MuseTalk & DWPose)...";
+      }
+    }
 
     return {
       ready: isReady,
@@ -399,6 +415,8 @@ class LiveHostOrchestrator {
       videosQueued: state?.videosQueued ?? 0,
       pendingCount: state?.pendingVideos.length ?? 0,
       isLive: state?.isLive ?? false,
+      stageIndex,
+      stageText,
     };
   }
 
