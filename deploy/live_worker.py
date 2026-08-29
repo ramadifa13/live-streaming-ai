@@ -227,6 +227,9 @@ class AILiveWorker:
             try:
                 import yaml
 
+                if not audio_path or not os.path.exists(audio_path):
+                    raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
                 # Fast check: if audio is already 16kHz WAV, use directly without ffmpeg re-encode
                 target_audio = audio_path
                 try:
@@ -436,16 +439,6 @@ class AILiveWorker:
             idle_video, audio_file, task_id
         )
         lipsync_elapsed = round((time.time() - lipsync_start) * 1000)
-
-        if (
-            audio_file
-            and os.path.exists(audio_file)
-            and audio_file.startswith(self.temp_dir)
-        ):
-            try:
-                os.remove(audio_file)
-            except Exception:
-                pass
 
         total_elapsed = round((time.time() - pipeline_start) * 1000)
         if final_video:

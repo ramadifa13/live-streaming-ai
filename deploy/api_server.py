@@ -169,8 +169,7 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
             try:
                 raw_audio = base64.b64decode(audio_b64)
                 suffix = ".wav" if len(raw_audio) >= 4 and raw_audio[:4] == b"RIFF" else ".mp3"
-                fd, audio_path = tempfile.mkstemp(suffix=suffix, dir=worker.temp_dir)
-                os.close(fd)
+                audio_path = os.path.join(worker.temp_dir, f"audio_{task_id}{suffix}")
                 with open(audio_path, "wb") as audio_file:
                     audio_file.write(raw_audio)
             except Exception as audio_err:
