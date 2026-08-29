@@ -303,19 +303,15 @@ export async function startInstagramBroadcast(
   const W = 720;
   const H = 1280;
 
-  // Ultra-Modern Floating Pill Card at bottom center
+  // Ultra-Modern Floating Pill Card (Universal Safe Area 220px di atas komentar)
   const cardW = 630;
   const cardH = 136;
   const cardX = Math.round((W - cardW) / 2);
-  const cardY = H - cardH - 28;
+  const cardY = H - cardH - 220;
   const thumbSize = 104;
   const thumbX = cardX + 16;
   const thumbY = cardY + 16;
   const textX = thumbX + thumbSize + 18;
-  const btnW = 106;
-  const btnH = 52;
-  const btnX = cardX + cardW - btnW - 18;
-  const btnY = cardY + Math.round((cardH - btnH) / 2);
 
   // ── Build filter_complex ─────────────────────────────────────────────────
   const videoScaleFilter = `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}[v0]`;
@@ -331,14 +327,14 @@ export async function startInstagramBroadcast(
     mediaToUse,
   ];
 
-  // 1. Top Center Banner Overlay (if present)
+  // 1. Top Center Banner Overlay (Universal Safe Area: y=85px)
   if (bannerImagePath) {
     inputsBeforeAudio.push("-loop", "1", "-i", bannerImagePath);
     const bannerInputPad = nextInputIdx++;
     filterStages.push(
-      `[v${padIdx}]drawbox=x=106:y=24:w=508:h=136:color=0x000000@0.35:t=fill[v${padIdx + 1}]`,
-      `[${bannerInputPad}:v]scale=500:130:force_original_aspect_ratio=decrease[banner]`,
-      `[v${padIdx + 1}][banner]overlay=x=(W-w)/2:y=24[v${padIdx + 2}]`,
+      `[v${padIdx}]drawbox=x=106:y=85:w=508:h=120:color=0x000000@0.35:t=fill[v${padIdx + 1}]`,
+      `[${bannerInputPad}:v]scale=500:115:force_original_aspect_ratio=decrease[banner]`,
+      `[v${padIdx + 1}][banner]overlay=x=(W-w)/2:y=85[v${padIdx + 2}]`,
     );
     padIdx += 2;
   }

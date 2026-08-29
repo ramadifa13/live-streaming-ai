@@ -34,51 +34,69 @@ class AIBroadcaster:
         tmp_dir = os.path.join(self.output_folder, "tmp_assets")
         os.makedirs(tmp_dir, exist_ok=True)
 
-        # 1. Product Image: support base64, remote URL, local path
-        if self.product_image_url:
-            if self.product_image_url.startswith("data:image/"):
+        # 1. Product Image (Optional): support base64, remote URL, local path
+        if self.product_image_url and self.product_image_url.strip():
+            p_url = self.product_image_url.strip()
+            if p_url.startswith("data:image/"):
                 try:
                     import base64
-                    _, encoded = self.product_image_url.split(",", 1)
+                    _, encoded = p_url.split(",", 1)
                     img_data = base64.b64decode(encoded)
                     local_p = os.path.join(tmp_dir, "product_thumb.png")
                     with open(local_p, "wb") as f:
                         f.write(img_data)
                     self.local_product_img = local_p
+                    print(f"[BROADCASTER] Foto Produk decoded dari base64: {local_p}")
                 except Exception as e:
-                    print(f"[BROADCASTER] Gagal decode base64 product image: {e}")
-            elif self.product_image_url.startswith("http://") or self.product_image_url.startswith("https://"):
+                    print(f"[BROADCASTER ERROR] Gagal decode base64 product image: {e}")
+            elif p_url.startswith("http://") or p_url.startswith("https://"):
                 try:
-                    local_p = os.path.join(tmp_dir, "product_thumb.jpg")
-                    urllib.request.urlretrieve(self.product_image_url, local_p)
+                    ext = os.path.splitext(p_url.split("?")[0])[1] or ".png"
+                    local_p = os.path.join(tmp_dir, f"product_thumb{ext}")
+                    req = urllib.request.Request(
+                        p_url,
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                    )
+                    with urllib.request.urlopen(req, timeout=15) as response, open(local_p, "wb") as out_file:
+                        out_file.write(response.read())
                     self.local_product_img = local_p
+                    print(f"[BROADCASTER] Foto Produk berhasil didownload: {local_p}")
                 except Exception as e:
-                    print(f"[BROADCASTER] Gagal download product image: {e}")
-            elif os.path.exists(self.product_image_url):
-                self.local_product_img = self.product_image_url
+                    print(f"[BROADCASTER ERROR] Gagal download product image dari {p_url}: {e}")
+            elif os.path.exists(p_url):
+                self.local_product_img = p_url
 
-        # 2. Banner Image: support base64, remote URL, local path
-        if self.banner_image_url:
-            if self.banner_image_url.startswith("data:image/"):
+        # 2. Banner Image (Optional): support base64, remote URL, local path
+        if self.banner_image_url and self.banner_image_url.strip():
+            b_url = self.banner_image_url.strip()
+            if b_url.startswith("data:image/"):
                 try:
                     import base64
-                    _, encoded = self.banner_image_url.split(",", 1)
+                    _, encoded = b_url.split(",", 1)
                     img_data = base64.b64decode(encoded)
                     local_b = os.path.join(tmp_dir, "banner_promo.png")
                     with open(local_b, "wb") as f:
                         f.write(img_data)
                     self.local_banner_img = local_b
+                    print(f"[BROADCASTER] Banner Promo decoded dari base64: {local_b}")
                 except Exception as e:
-                    print(f"[BROADCASTER] Gagal decode base64 banner image: {e}")
-            elif self.banner_image_url.startswith("http://") or self.banner_image_url.startswith("https://"):
+                    print(f"[BROADCASTER ERROR] Gagal decode base64 banner image: {e}")
+            elif b_url.startswith("http://") or b_url.startswith("https://"):
                 try:
-                    local_b = os.path.join(tmp_dir, "banner_promo.jpg")
-                    urllib.request.urlretrieve(self.banner_image_url, local_b)
+                    ext = os.path.splitext(b_url.split("?")[0])[1] or ".png"
+                    local_b = os.path.join(tmp_dir, f"banner_promo{ext}")
+                    req = urllib.request.Request(
+                        b_url,
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                    )
+                    with urllib.request.urlopen(req, timeout=15) as response, open(local_b, "wb") as out_file:
+                        out_file.write(response.read())
                     self.local_banner_img = local_b
+                    print(f"[BROADCASTER] Banner Promo berhasil didownload: {local_b}")
                 except Exception as e:
-                    print(f"[BROADCASTER] Gagal download banner image: {e}")
-            elif os.path.exists(self.banner_image_url):
-                self.local_banner_img = self.banner_image_url
+                    print(f"[BROADCASTER ERROR] Gagal download banner image dari {b_url}: {e}")
+            elif os.path.exists(b_url):
+                self.local_banner_img = b_url
 
         # 3. Generate PIL Ultra-Modern Overlay PNG
         self._render_pil_overlay(tmp_dir)
@@ -88,24 +106,27 @@ class AIBroadcaster:
         canvas_w, canvas_h = 720, 1280
         overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
 
-        has_overlay = bool(self.local_banner_img or self.product_name or self.local_product_img or self.product_price)
-        if not has_overlay:
+        has_banner = bool(self.local_banner_img and os.path.exists(self.local_banner_img))
+        has_product = bool(self.product_name or self.product_price or (self.local_product_img and os.path.exists(self.local_product_img)))
+
+        if not has_banner and not has_product:
             self.overlay_png_path = None
             return
 
-        # A. Top Banner (Centered, Rounded, Soft Shadow)
-        if self.local_banner_img and os.path.exists(self.local_banner_img):
+        # A. Top Banner (Centered, Rounded, Soft Shadow - OPTIONAL)
+        # Posisi y=85px agar berada persis di bawah bar Profile & Viewer Header TikTok/Instagram/Shopee
+        if has_banner:
             try:
                 banner = Image.open(self.local_banner_img).convert("RGBA")
-                banner.thumbnail((520, 130), Image.Resampling.LANCZOS)
+                banner.thumbnail((500, 115), Image.Resampling.LANCZOS)
                 bw, bh = banner.size
                 bx = (canvas_w - bw) // 2
-                by = 24
+                by = 85
 
                 # Soft drop shadow behind banner
                 shadow_banner = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
                 sb_draw = ImageDraw.Draw(shadow_banner)
-                sb_draw.rounded_rectangle((bx, by + 4, bx + bw, by + bh + 4), radius=18, fill=(0, 0, 0, 85))
+                sb_draw.rounded_rectangle((bx, by + 4, bx + bw, by + bh + 4), radius=18, fill=(0, 0, 0, 90))
                 shadow_banner = shadow_banner.filter(ImageFilter.GaussianBlur(radius=8))
                 overlay = Image.alpha_composite(overlay, shadow_banner)
 
@@ -115,14 +136,16 @@ class AIBroadcaster:
                 b_draw.rounded_rectangle((0, 0, bw, bh), radius=18, fill=255)
 
                 overlay.paste(banner, (bx, by), b_mask)
+                print(f"[BROADCASTER] Banner berhasil ditempelkan di posisi ({bx}, {by}) ukuran {bw}x{bh}")
             except Exception as e:
-                print(f"[PIL] Error rendering banner: {e}")
+                print(f"[PIL ERROR] Gagal merender banner: {e}")
 
-        # B. Bottom Modern Floating Card (Foto + Nama + Harga + Harga Dicoret Auto)
-        if self.product_name or self.product_price or self.local_product_img:
-            card_w, card_h = 640, 140
+        # B. Bottom Modern Floating Card (Foto + Nama + Harga + Harga Dicoret Auto - OPTIONAL)
+        # Posisi diangkat 220px dari bawah (y=920px) agar 100% aman dari kolom chat, gift, like, & keranjang belanja
+        if has_product:
+            card_w, card_h = 630, 138
             card_x = (canvas_w - card_w) // 2
-            card_y = canvas_h - card_h - 32
+            card_y = canvas_h - card_h - 220
             radius = 24
 
             # 1. Soft Gaussian Drop Shadow for Card

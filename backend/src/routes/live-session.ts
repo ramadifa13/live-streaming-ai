@@ -65,6 +65,7 @@ const broadcastSchema = z.object({
   productName: z.string().optional(),
   productPrice: z.string().optional(),
   productImageUrl: z.string().optional(),
+  bannerImageUrl: z.string().optional(),
   // Preview-sync fields — used to replicate Step 4 overlay in FFmpeg
   platform: z.string().optional(),
   stockCount: z.number().optional(),
@@ -236,6 +237,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       productName,
       productPrice,
       productImageUrl,
+      bannerImageUrl,
       platform,
       stockCount,
       ctaLabel,
@@ -263,6 +265,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       productName,
       productPrice,
       productImageUrl,
+      bannerImageUrl,
       platform,
       stockCount,
       ctaLabel,

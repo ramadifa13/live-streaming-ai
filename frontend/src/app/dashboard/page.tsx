@@ -107,6 +107,17 @@ export default function Dashboard() {
     },
   );
 
+  const getAutoOriginalPrice = (price?: number | string) => {
+    if (!price) return null;
+    const rawPrice =
+      typeof price === "number"
+        ? price
+        : parseInt(String(price).replace(/\D/g, ""), 10) || 0;
+    if (rawPrice <= 0) return null;
+    const autoOriginal = Math.ceil((rawPrice * 1.35) / 5000) * 5000;
+    return `Rp${autoOriginal.toLocaleString("id-ID")}`;
+  };
+
   useEffect(() => {
     const fetchBackendProducts = async () => {
       try {
@@ -2562,23 +2573,23 @@ export default function Dashboard() {
                         className="w-full h-full object-cover"
                       />
 
-                      {/* 1. Paling Atas Tengah: Gambar Banner Promosi (Lebar Pas, Modern & Kompak) */}
+                      {/* 1. Paling Atas Tengah: Gambar Banner Promosi (Universal Safe Zone) */}
                       {activeFeaturedProduct?.bannerImage && (
-                        <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[90%] max-w-[210px] flex justify-center animate-in fade-in slide-in-from-top-2 duration-300">
+                        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[90%] max-w-[205px] flex justify-center animate-in fade-in slide-in-from-top-2 duration-300">
                           <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/40 bg-black/60 backdrop-blur-md p-0.5 w-full">
                             <img
                               src={activeFeaturedProduct.bannerImage}
                               alt="Banner Promosi"
-                              className="w-full h-auto max-h-14 object-cover rounded-xl shadow-sm"
+                              className="w-full h-auto max-h-12 object-cover rounded-xl shadow-sm"
                             />
                           </div>
                         </div>
                       )}
 
-                      {/* 2. Bottom Center: Modern Floating Product Card (Super Sleek, Foto + Nama + Harga + Coret) */}
+                      {/* 2. Bottom Floating Product Card (Universal Safe Area di atas chat/gift/keranjang) */}
                       {activeFeaturedProduct?.name &&
                         activeFeaturedProduct.name !== "Memuat Produk..." && (
-                          <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-20 pointer-events-none w-[92%] max-w-[218px] flex justify-center animate-in fade-in slide-in-from-bottom-2 duration-300">
+                          <div className="absolute bottom-[18%] left-1/2 -translate-x-1/2 z-20 pointer-events-none w-[92%] max-w-[218px] flex justify-center animate-in fade-in slide-in-from-bottom-2 duration-300">
                             <div className="w-full rounded-2xl bg-white/98 p-2.5 shadow-[0_10px_30px_rgba(0,0,0,0.35)] border border-slate-100/90 flex items-center gap-2.5 text-slate-900 backdrop-blur-md ring-1 ring-black/5">
                               {/* Foto Produk Thumbnail */}
                               <div className="relative h-11 w-11 shrink-0 rounded-xl overflow-hidden bg-slate-100 border border-slate-200/80 shadow-xs">
@@ -2613,30 +2624,15 @@ export default function Dashboard() {
                                       ? `Rp${activeFeaturedProduct.price.toLocaleString("id-ID")}`
                                       : activeFeaturedProduct.price}
                                   </span>
-                                  {(() => {
-                                    const rawPrice =
-                                      typeof activeFeaturedProduct.price ===
-                                      "number"
-                                        ? activeFeaturedProduct.price
-                                        : parseInt(
-                                            String(
-                                              activeFeaturedProduct.price || "",
-                                            ).replace(/[^0-9]/g, ""),
-                                            10,
-                                          ) || 0;
-                                    if (rawPrice > 0) {
-                                      const autoOriginal =
-                                        Math.ceil((rawPrice * 1.35) / 5000) *
-                                        5000;
-                                      return (
-                                        <span className="text-[8.5px] text-slate-400 font-mono line-through leading-none">
-                                          Rp
-                                          {autoOriginal.toLocaleString("id-ID")}
-                                        </span>
-                                      );
-                                    }
-                                    return null;
-                                  })()}
+                                  {getAutoOriginalPrice(
+                                    activeFeaturedProduct.price,
+                                  ) && (
+                                    <span className="text-[8.5px] text-slate-400 font-mono line-through leading-none">
+                                      {getAutoOriginalPrice(
+                                        activeFeaturedProduct.price,
+                                      )}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </div>
