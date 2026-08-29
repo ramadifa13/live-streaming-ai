@@ -58,9 +58,16 @@ async function workerRequest(
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
     signal,
   });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok)
-    throw new Error(data.error || `Worker request failed: ${response.status}`);
+  const data = (await response.json().catch(() => ({}))) as any;
+  if (!response.ok) {
+    const errorDetail =
+      data.detail || data.error || data.message || `HTTP ${response.status}`;
+    const errStr =
+      typeof errorDetail === "object"
+        ? JSON.stringify(errorDetail)
+        : String(errorDetail);
+    throw new Error(`Worker request failed (${response.status}): ${errStr}`);
+  }
   return data;
 }
 

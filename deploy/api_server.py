@@ -313,11 +313,13 @@ async def get_queue_status():
     }
 
 class BroadcastRequest(BaseModel):
+    model_config = {"extra": "ignore"}
     rtmp_url: Optional[str] = None
     rtmpUrl: Optional[str] = None
     stream_key: Optional[str] = None
     streamKey: Optional[str] = None
-    idle_video: str = "/workspace/ai_live_worker/assets/3d/namira_idle.mp4"
+    idle_video: Optional[str] = None
+    idleVideo: Optional[str] = None
     product_name: Optional[str] = None
     productName: Optional[str] = None
     product_price: Optional[str] = None
@@ -327,12 +329,15 @@ class BroadcastRequest(BaseModel):
     banner_image_url: Optional[str] = None
     bannerImageUrl: Optional[str] = None
     platform: Optional[str] = None
+    stock_count: Optional[Any] = None
+    cta_label: Optional[str] = None
 
 class PlaybackRequest(BaseModel):
     action: str
 
 @app.post("/stream/start-playback")
 async def start_playback(req: PlaybackRequest):
+    os.makedirs(output_dir, exist_ok=True)
     flag_path = os.path.join(output_dir, "playback_active.flag")
     if req.action == "start_playback":
         with open(flag_path, "w") as f:
@@ -343,63 +348,89 @@ async def start_playback(req: PlaybackRequest):
 @app.post("/stream/start-broadcast")
 async def start_broadcast(req: BroadcastRequest):
     global broadcaster_process, total_videos_rendered, current_broadcast_env
-    final_rtmp_url = req.rtmp_url or req.rtmpUrl or ""
-    final_stream_key = req.stream_key or req.streamKey or ""
-    if not final_rtmp_url or not final_stream_key:
-        raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
+    try:
+        final_rtmp_url = req.rtmp_url or req.rtmpUrl or ""
+        final_stream_key = req.stream_key or req.streamKey or ""
+        if not final_rtmp_url or not final_stream_key:
+            raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
 
-    # Hentikan broadcaster lama jika ada agar tidak bentrok RTMP URL
-    if broadcaster_process and broadcaster_process.poll() is None:
-        try:
-            broadcaster_process.terminate()
-            broadcaster_process.wait(timeout=2)
-        except Exception:
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Resolusi path idle video
+        resolved_idle = req.idle_video or req.idleVideo or ""
+        if not resolved_idle or not os.path.exists(resolved_idle):
+            for candidate in [
+                "/workspace/ai_live_worker/assets/3d/namira_idle.mp4",
+                "/workspace/ai_live_worker/assets/3d/namira.mp4",
+                "/workspace/live-streaming-ai/deploy/assets/3d/namira_idle.mp4",
+                "/workspace/live-streaming-ai/deploy/assets/3d/namira.mp4",
+                os.path.join(os.path.dirname(__file__), "assets/3d/namira_idle.mp4"),
+                os.path.join(os.path.dirname(__file__), "assets/3d/namira.mp4"),
+            ]:
+                if os.path.exists(candidate):
+                    resolved_idle = candidate
+                    break
+
+        # Hentikan broadcaster lama jika ada agar tidak bentrok RTMP URL
+        if broadcaster_process and broadcaster_process.poll() is None:
             try:
-                broadcaster_process.kill()
+                broadcaster_process.terminate()
+                broadcaster_process.wait(timeout=2)
+            except Exception:
+                try:
+                    broadcaster_process.kill()
+                except Exception:
+                    pass
+
+        # Reset counter saat siaran baru dimulai
+        total_videos_rendered = 0
+
+        # Bersihkan sisa video lama dan flag lama sebelum mulai siaran baru
+        flag_path = os.path.join(output_dir, "playback_active.flag")
+        if os.path.exists(flag_path):
+            try:
+                os.remove(flag_path)
             except Exception:
                 pass
+        import glob
+        idle_abs = os.path.abspath(resolved_idle) if resolved_idle else ""
+        for f in glob.glob(os.path.join(output_dir, "**", "*.mp4"), recursive=True):
+            if os.path.abspath(f) != idle_abs:
+                try:
+                    os.remove(f)
+                except Exception:
+                    pass
 
-    # Reset counter saat siaran baru dimulai
-    total_videos_rendered = 0
+        env = os.environ.copy()
+        env["RTMP_URL"] = final_rtmp_url
+        env["STREAM_KEY"] = final_stream_key
+        env["IDLE_VIDEO"] = resolved_idle
+        env["OUTPUT_FOLDER"] = output_dir
+        env["WORKER_REQUIRE_AUDIO"] = "1"
+        env["PRODUCT_NAME"] = req.product_name or req.productName or ""
+        env["PRODUCT_PRICE"] = req.product_price or req.productPrice or ""
+        env["PRODUCT_IMAGE_URL"] = req.product_image_url or req.productImageUrl or ""
+        env["BANNER_IMAGE_URL"] = req.banner_image_url or req.bannerImageUrl or ""
+        env["PLATFORM"] = req.platform or ""
+        current_broadcast_env = env
 
-    # Bersihkan sisa video lama dan flag lama sebelum mulai siaran baru
-    flag_path = os.path.join(output_dir, "playback_active.flag")
-    if os.path.exists(flag_path):
-        try:
-            os.remove(flag_path)
-        except Exception:
-            pass
-    import glob
-    idle_abs = os.path.abspath(req.idle_video) if req.idle_video else ""
-    for f in glob.glob(os.path.join(output_dir, "**", "*.mp4"), recursive=True):
-        if os.path.abspath(f) != idle_abs:
-            try:
-                os.remove(f)
-            except Exception:
-                pass
+        log_path = os.path.join(output_dir, "broadcaster.log")
+        broadcaster_script = os.path.join(os.path.dirname(__file__), "broadcaster.py")
+        if not os.path.exists(broadcaster_script):
+            broadcaster_script = "/workspace/ai_live_worker/broadcaster.py"
 
-    env = os.environ.copy()
-    env["RTMP_URL"] = final_rtmp_url
-    env["STREAM_KEY"] = final_stream_key
-    env["IDLE_VIDEO"] = req.idle_video
-    env["OUTPUT_FOLDER"] = output_dir
-    env["WORKER_REQUIRE_AUDIO"] = "1"
-    env["PRODUCT_NAME"] = req.product_name or req.productName or ""
-    env["PRODUCT_PRICE"] = req.product_price or req.productPrice or ""
-    env["PRODUCT_IMAGE_URL"] = req.product_image_url or req.productImageUrl or ""
-    env["BANNER_IMAGE_URL"] = req.banner_image_url or req.bannerImageUrl or ""
-    env["PLATFORM"] = req.platform or ""
-    current_broadcast_env = env
-
-    log_path = os.path.join(output_dir, "broadcaster.log")
-    broadcaster_process = subprocess.Popen(
-        ["python", os.path.join(os.path.dirname(__file__), "broadcaster.py")],
-        cwd=os.path.dirname(__file__),
-        env=env,
-        stdout=open(log_path, "a"),
-        stderr=subprocess.STDOUT,
-    )
-    return {"success": True, "status": "starting", "pid": broadcaster_process.pid}
+        broadcaster_process = subprocess.Popen(
+            ["python", broadcaster_script],
+            cwd=os.path.dirname(broadcaster_script),
+            env=env,
+            stdout=open(log_path, "a"),
+            stderr=subprocess.STDOUT,
+        )
+        return {"success": True, "status": "starting", "pid": broadcaster_process.pid}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Gagal memulai broadcast di pod: {str(e)}")
 
 @app.post("/stream/stop-broadcast")
 async def stop_broadcast():

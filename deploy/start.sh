@@ -80,11 +80,6 @@ if [ -d "/workspace/live-streaming-ai/deploy" ]; then
 	mkdir -p "$WORKER_DIR/assets/2d" "$WORKER_DIR/assets/3d"
 	if [ -d "/workspace/live-streaming-ai/deploy/assets" ]; then
 		cp -rn /workspace/live-streaming-ai/deploy/assets/* "$WORKER_DIR/assets/" 2>/dev/null || true
-		cp -rf /workspace/live-streaming-ai/deploy/assets/* "$WORKER_DIR/assets/" 2>/dev/null || true
-	fi
-	if [ -d "/workspace/live-streaming-ai/deploy/live_videos" ]; then
-		mkdir -p "$WORKER_DIR/live_videos"
-		cp -rf /workspace/live-streaming-ai/deploy/live_videos/* "$WORKER_DIR/live_videos/" 2>/dev/null || true
 	fi
 fi
 
