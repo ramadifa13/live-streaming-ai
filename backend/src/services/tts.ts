@@ -181,13 +181,10 @@ async function convertMp3ToWav(mp3Buffer: Buffer): Promise<Buffer> {
       "-i",
       "pipe:0",
 
-      // NORMALISASI AUDIO SAMA PERSIS DENGAN namira_idle.mp4
       // NORMALISASI AUDIO LANGSUNG 16kHz MONO (Format Asli MuseTalk & Whisper)
       "-ar",
-      "48000",
       "16000",
       "-ac",
-      "2",
       "1",
 
       // PCM 16-bit WAV

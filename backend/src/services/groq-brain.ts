@@ -250,7 +250,6 @@ ${catalogContext}
           contents: `${systemPrompt}\n\n${userMsg}`,
           config: {
             temperature: 0.7,
-            maxOutputTokens: 1000,
             maxOutputTokens: 300,
           },
         });

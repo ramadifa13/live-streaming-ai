@@ -438,10 +438,7 @@ class AIBroadcaster:
                     # Jika AI video siap dan kita sedang putar idle, hentikan idle sekarang juga!
                     if current_worker and is_playing_idle:
                         print("[BROADCASTER] 🚀 Menginterupsi idle video untuk merespon AI seketika...")
-                        current_worker.terminate()
                         try:
-                            current_worker.wait(timeout=1)
-                        except subprocess.TimeoutExpired:
                             current_worker.kill()
                         except Exception:
                             pass
@@ -496,7 +493,6 @@ class AIBroadcaster:
                         except Exception:
                             pass
 
-                time.sleep(0.1) # Cegah 100% CPU usage di loop
                 time.sleep(0.05) # Loop responsif & hemat CPU (50ms)
 
             except Exception as loop_err:
