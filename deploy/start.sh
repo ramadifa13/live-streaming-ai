@@ -55,10 +55,14 @@ if importlib.util.find_spec(module) is None:
 PY
 }
 
-for dep in fastapi uvicorn pydantic; do
+for dep in fastapi uvicorn pydantic cv2 librosa soundfile einops timm yaml PIL; do
+	pkg="$dep"
+	if [ "$dep" = "cv2" ]; then pkg="opencv-python-headless"; fi
+	if [ "$dep" = "yaml" ]; then pkg="PyYAML"; fi
+	if [ "$dep" = "PIL" ]; then pkg="Pillow"; fi
 	if ! check_python_import "$dep"; then
-		echo "[INFO] Dependency $dep belum terpasang. Menginstall otomatis..."
-		"$PYTHON_BIN" -m pip install --no-cache-dir "$dep" || pip install --no-cache-dir "$dep"
+		echo "[INFO] Dependency $pkg belum terpasang. Menginstall otomatis..."
+		"$PYTHON_BIN" -m pip install --no-cache-dir "$pkg" || pip install --no-cache-dir "$pkg"
 	fi
 done
 
