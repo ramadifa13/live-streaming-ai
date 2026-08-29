@@ -401,17 +401,31 @@ async def start_broadcast(req: BroadcastRequest):
                 except Exception:
                     pass
 
+        config_path = os.path.join(output_dir, "broadcast_config.json")
+        config_data = {
+            "rtmp_url": final_rtmp_url,
+            "stream_key": final_stream_key,
+            "idle_video": resolved_idle,
+            "output_folder": output_dir,
+            "product_name": req.product_name or req.productName or "",
+            "product_price": req.product_price or req.productPrice or "",
+            "product_image_url": req.product_image_url or req.productImageUrl or "",
+            "banner_image_url": req.banner_image_url or req.bannerImageUrl or "",
+            "platform": req.platform or "",
+        }
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config_data, f)
+
+        # Minimal environment variables to prevent Linux [Errno 7] Argument list too long
         env = os.environ.copy()
+        env.pop("PRODUCT_IMAGE_URL", None)
+        env.pop("BANNER_IMAGE_URL", None)
         env["RTMP_URL"] = final_rtmp_url
         env["STREAM_KEY"] = final_stream_key
         env["IDLE_VIDEO"] = resolved_idle
         env["OUTPUT_FOLDER"] = output_dir
+        env["CONFIG_PATH"] = config_path
         env["WORKER_REQUIRE_AUDIO"] = "1"
-        env["PRODUCT_NAME"] = req.product_name or req.productName or ""
-        env["PRODUCT_PRICE"] = req.product_price or req.productPrice or ""
-        env["PRODUCT_IMAGE_URL"] = req.product_image_url or req.productImageUrl or ""
-        env["BANNER_IMAGE_URL"] = req.banner_image_url or req.bannerImageUrl or ""
-        env["PLATFORM"] = req.platform or ""
         current_broadcast_env = env
 
         log_path = os.path.join(output_dir, "broadcaster.log")

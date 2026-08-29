@@ -499,7 +499,8 @@ class AIBroadcaster:
 
 # --- KONFIGURASI DAN EKSEKUSI ---
 if __name__ == "__main__":
-    
+    import json
+
     RTMP_BASE_URL = os.environ.get("RTMP_URL", "").rstrip("/")
     STREAM_KEY = os.environ.get("STREAM_KEY", "")
     if not RTMP_BASE_URL or not STREAM_KEY:
@@ -509,17 +510,31 @@ if __name__ == "__main__":
     else:
         RTMP_URL = f"{RTMP_BASE_URL}/{STREAM_KEY}"
     
-    # 2. Tentukan video Idle (Sesuai dengan host yang dipilih pelanggan)
+    OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "/workspace/ai_live_worker/output")
     IDLE_VIDEO = os.environ.get(
         "IDLE_VIDEO",
         "/workspace/ai_live_worker/assets/3d/namira_idle.mp4",
     )
     
-    OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "/workspace/ai_live_worker/output")
     PRODUCT_NAME = os.environ.get("PRODUCT_NAME", "")
     PRODUCT_PRICE = os.environ.get("PRODUCT_PRICE", "")
     PRODUCT_IMAGE_URL = os.environ.get("PRODUCT_IMAGE_URL", "")
     BANNER_IMAGE_URL = os.environ.get("BANNER_IMAGE_URL", "")
+
+    # Load configuration JSON file (mencegah Linux Errno 7: Argument list too long akibat base64 image yang besar)
+    config_file = os.environ.get("CONFIG_PATH") or os.path.join(OUTPUT_FOLDER, "broadcast_config.json")
+    if os.path.exists(config_file):
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            PRODUCT_NAME = cfg.get("product_name", PRODUCT_NAME)
+            PRODUCT_PRICE = cfg.get("product_price", PRODUCT_PRICE)
+            PRODUCT_IMAGE_URL = cfg.get("product_image_url", PRODUCT_IMAGE_URL)
+            BANNER_IMAGE_URL = cfg.get("banner_image_url", BANNER_IMAGE_URL)
+            IDLE_VIDEO = cfg.get("idle_video", IDLE_VIDEO)
+            print(f"[BROADCASTER] Konfigurasi siaran dimuat dari {config_file}")
+        except Exception as e:
+            print(f"[BROADCASTER ERROR] Gagal membaca {config_file}: {e}")
     
     try:
         broadcaster = AIBroadcaster(
