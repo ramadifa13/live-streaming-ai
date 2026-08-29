@@ -55,7 +55,7 @@ if importlib.util.find_spec(module) is None:
 PY
 }
 
-for dep in fastapi uvicorn pydantic cv2 librosa soundfile einops timm yaml PIL; do
+for dep in fastapi uvicorn pydantic cv2 librosa soundfile einops timm yaml PIL omegaconf diffusers transformers accelerate; do
 	pkg="$dep"
 	if [ "$dep" = "cv2" ]; then pkg="opencv-python-headless"; fi
 	if [ "$dep" = "yaml" ]; then pkg="PyYAML"; fi
@@ -65,6 +65,10 @@ for dep in fastapi uvicorn pydantic cv2 librosa soundfile einops timm yaml PIL; 
 		"$PYTHON_BIN" -m pip install --no-cache-dir "$pkg" || pip install --no-cache-dir "$pkg"
 	fi
 done
+
+if [ -f "/workspace/live-streaming-ai/deploy/requirements-worker.txt" ]; then
+	"$PYTHON_BIN" -m pip install -r /workspace/live-streaming-ai/deploy/requirements-worker.txt || true
+fi
 
 echo "Menyiapkan symlink MuseTalk (./musetalk, ./models)..."
 ln -sfn "$WORKER_DIR/MuseTalk/musetalk" "$WORKER_DIR/musetalk"
