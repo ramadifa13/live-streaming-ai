@@ -194,10 +194,35 @@ export default function Dashboard() {
     if (pipelineStatus?.stageText) {
       setConnectingStageText(pipelineStatus.stageText);
     }
-    if (typeof pipelineStatus?.stageIndex === "number") {
-      setConnectingStageIndex(pipelineStatus.stageIndex);
-    }
   }, [isConnectingLive, pipelineStatus]);
+
+  const handleCancelInitialization = () => {
+    if (connectingAbortRef.current) {
+      connectingAbortRef.current.abort();
+      connectingAbortRef.current = null;
+    }
+    const sid = currentLiveSessionId;
+    setIsConnectingLive(false);
+    setIsWaitingForGoLive(false);
+    setCurrentLiveSessionId(null);
+    setPipelineStatus(null);
+    setHasConfirmedBroadcast(false);
+
+    if (sid) {
+      fetch("/api/live-stream/stop-broadcast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: sid }),
+      }).catch(() => {});
+      fetch("/api/live-session/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: sid }),
+      }).catch(() => {});
+    }
+    showToast("⚠️ Inisialisasi siaran berhasil dibatalkan.");
+  };
+
   const [liveSessionPhase, setLiveSessionPhase] = useState<
     "idle" | "pending" | "live" | "ended"
   >("idle");
@@ -3147,6 +3172,7 @@ export default function Dashboard() {
                           );
 
                           if (!sessionRes.ok) {
+                            if (controller.signal.aborted) return;
                             const sessionError = await sessionRes
                               .json()
                               .catch(() => ({}));
@@ -3154,7 +3180,9 @@ export default function Dashboard() {
                               sessionError.error || "Gagal membuat sesi live",
                             );
                           }
+                          if (controller.signal.aborted) return;
                           const sessionJson = await sessionRes.json();
+                          if (controller.signal.aborted) return;
 
                           // 2. Trigger real FFmpeg RTMP broadcast transmission & verify handshake
                           const bcastRes = await fetch(
@@ -3184,7 +3212,9 @@ export default function Dashboard() {
                             },
                           );
 
+                          if (controller.signal.aborted) return;
                           const bcastJson = await bcastRes.json();
+                          if (controller.signal.aborted) return;
 
                           if (bcastRes.ok && bcastJson.success) {
                             if (bcastJson.waitingForGoLive) {
@@ -3208,23 +3238,36 @@ export default function Dashboard() {
                               );
                             }
                           } else {
+                            if (controller.signal.aborted) return;
                             await fetch("/api/live-session/stop", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({}),
+                              body: JSON.stringify({
+                                sessionId: sessionJson.data?.id,
+                              }),
                             }).catch(() => {});
                             setIsConnectingLive(false);
+                            setIsWaitingForGoLive(false);
+                            setCurrentLiveSessionId(null);
                             showToast(
                               `❌ Gagal terhubung ke ${selectedPlatform}: ${bcastJson.error || "Server RTMP menolak koneksi. Periksa Stream Key Anda."}`,
                             );
                           }
-                        } catch {
+                        } catch (err: any) {
+                          if (
+                            connectingAbortRef.current?.signal.aborted ||
+                            err?.name === "AbortError"
+                          ) {
+                            return;
+                          }
                           await fetch("/api/live-session/stop", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({}),
                           }).catch(() => {});
                           setIsConnectingLive(false);
+                          setIsWaitingForGoLive(false);
+                          setCurrentLiveSessionId(null);
                           showToast(
                             `❌ Error koneksi: Pastikan server backend online dan Stream Key valid.`,
                           );
@@ -3400,18 +3443,7 @@ export default function Dashboard() {
                   )}
                   <button
                     type="button"
-                    onClick={async () => {
-                      await fetch("/api/live-stream/stop-broadcast", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          sessionId: currentLiveSessionId,
-                        }),
-                      }).catch(() => {});
-                      setIsWaitingForGoLive(false);
-                      setCurrentLiveSessionId(null);
-                      showToast("Siaran dibatalkan.");
-                    }}
+                    onClick={handleCancelInitialization}
                     className="mt-3 w-full py-2 text-xs font-semibold text-slate-400 hover:text-white transition"
                   >
                     Batal
@@ -5905,167 +5937,130 @@ export default function Dashboard() {
         {/* FULL PAGE BLUR LOADING OVERLAY (AI SERVER INITIALIZATION)     */}
         {/* ============================================================ */}
         {isConnectingLive && (
-          <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/85 backdrop-blur-xl p-3 sm:p-6 animate-in fade-in duration-300">
-            <div className="relative w-full max-w-lg max-h-[92vh] flex flex-col rounded-2xl sm:rounded-3xl border border-indigo-500/30 bg-[#0a0f1d] text-center shadow-2xl shadow-indigo-500/20 overflow-hidden">
+          <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/85 backdrop-blur-xl p-4 animate-in fade-in duration-200">
+            <div className="relative w-full max-w-md rounded-3xl border border-indigo-500/30 bg-[#0a0f1d] p-5 sm:p-6 text-center shadow-2xl shadow-indigo-500/25 overflow-hidden">
               {/* Decorative radial glows */}
-              <div className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-80 h-80 bg-gradient-to-br from-blue-600/25 via-indigo-600/15 to-purple-600/25 blur-3xl rounded-full" />
-              <div className="pointer-events-none absolute -bottom-24 left-1/2 -translate-x-1/2 w-80 h-80 bg-gradient-to-tr from-emerald-600/15 to-blue-600/15 blur-3xl rounded-full" />
+              <div className="pointer-events-none absolute -top-20 left-1/2 -translate-x-1/2 w-64 h-64 bg-gradient-to-br from-blue-600/25 via-indigo-600/15 to-purple-600/25 blur-3xl rounded-full" />
+              <div className="pointer-events-none absolute -bottom-20 left-1/2 -translate-x-1/2 w-64 h-64 bg-gradient-to-tr from-emerald-600/15 to-blue-600/15 blur-3xl rounded-full" />
 
-              {/* Fixed Header */}
-              <div className="relative pt-6 pb-2 px-6 shrink-0">
-                {/* Animated AI Glowing Pulse Sphere */}
-                <div className="relative mx-auto mb-3 flex h-14 w-14 items-center justify-center">
-                  <div className="absolute inset-0 rounded-full border-2 border-indigo-500/20 animate-ping opacity-75" />
-                  <div className="absolute inset-0 rounded-full border-2 border-t-indigo-500 border-r-purple-500 border-b-transparent border-l-transparent animate-spin" />
-                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 shadow-lg shadow-indigo-500/40 animate-pulse">
-                    <span className="text-xl">✨</span>
-                  </div>
+              {/* Animated AI Pulse Icon */}
+              <div className="relative mx-auto mb-3 flex h-12 w-12 items-center justify-center">
+                <div className="absolute inset-0 rounded-full border border-indigo-500/30 animate-ping opacity-60" />
+                <div className="absolute inset-0 rounded-full border-2 border-t-indigo-500 border-r-purple-500 border-b-transparent border-l-transparent animate-spin" />
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 shadow-md shadow-indigo-500/40 animate-pulse">
+                  <span className="text-base">✨</span>
                 </div>
+              </div>
 
-                {/* Header Title */}
-                <h3 className="text-lg sm:text-xl font-extrabold text-white tracking-wide mb-1">
-                  Menyiapkan Sesi Live Streaming AI
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Host AI{" "}
-                  <span className="text-indigo-300 font-semibold">
-                    {selectedAvatar.name}
-                  </span>{" "}
-                  sedang dipersiapkan untuk siaran live di{" "}
-                  <span className="text-indigo-300 font-semibold">
-                    {selectedPlatform}
-                  </span>
-                  .
-                </p>
+              {/* Header Title */}
+              <h3 className="text-base sm:text-lg font-extrabold text-white tracking-wide mb-0.5">
+                Menyiapkan Sesi Live AI
+              </h3>
+              <p className="text-[11px] text-slate-400 mb-3">
+                Host AI{" "}
+                <span className="text-indigo-300 font-semibold">
+                  {selectedAvatar.name}
+                </span>{" "}
+                di{" "}
+                <span className="text-indigo-300 font-semibold">
+                  {selectedPlatform}
+                </span>
+              </p>
 
-                {/* Active Stage Badge */}
-                <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-3.5 py-1 text-[11px] font-semibold text-indigo-300">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+              {/* Active Stage Badge */}
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-3 py-1 text-[11px] font-semibold text-indigo-300 mb-3.5">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                </span>
+                <span className="truncate max-w-[260px]">
+                  {connectingStageText}
+                </span>
+              </div>
+
+              {/* Stepper Progress Visualizer */}
+              <div className="space-y-1.5 rounded-xl bg-slate-900/90 border border-slate-800/80 p-3 text-left text-[11px] mb-3.5">
+                <div
+                  className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 0 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                >
+                  <span
+                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 0 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-indigo-600 text-white animate-pulse"}`}
+                  >
+                    {connectingStageIndex > 0 ? "✓" : "1"}
                   </span>
-                  <span className="truncate max-w-[280px]">
-                    {connectingStageText}
+                  <span className="truncate">Alokasi Cloud GPU (RTX 4090)</span>
+                </div>
+                <div
+                  className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 1 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                >
+                  <span
+                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 1 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 1 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                  >
+                    {connectingStageIndex > 1 ? "✓" : "2"}
+                  </span>
+                  <span className="truncate">
+                    Neural Lipsync (MuseTalk & DWPose)
+                  </span>
+                </div>
+                <div
+                  className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 2 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                >
+                  <span
+                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 2 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 2 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                  >
+                    {connectingStageIndex > 2 ? "✓" : "3"}
+                  </span>
+                  <span className="truncate">
+                    Voice Persona & Skrip Selling
+                  </span>
+                </div>
+                <div
+                  className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 3 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                >
+                  <span
+                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 3 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 3 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                  >
+                    {connectingStageIndex > 3 ? "✓" : "4"}
+                  </span>
+                  <span className="truncate">
+                    Koneksi Stream RTMP Handshake
+                  </span>
+                </div>
+                <div
+                  className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 4 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                >
+                  <span
+                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${pipelineStatus?.ready ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex >= 4 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                  >
+                    {pipelineStatus?.ready ? "✓" : "5"}
+                  </span>
+                  <span className="truncate">
+                    Generate AI Video (
+                    {Math.min(pipelineStatus?.generationCount || 0, 2)}/2
+                    Selesai)
                   </span>
                 </div>
               </div>
 
-              {/* Scrollable Content Body */}
-              <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-3 space-y-3.5 text-left text-xs custom-scrollbar">
-                {/* Stepper Progress Visualizer */}
-                <div className="space-y-2 rounded-xl bg-slate-900/90 border border-slate-800/80 p-3.5">
-                  <div
-                    className={`flex items-center gap-2.5 transition-colors ${connectingStageIndex >= 0 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                  >
-                    <span
-                      className={`flex h-4.5 w-4.5 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 0 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-indigo-600 text-white animate-pulse"}`}
-                    >
-                      {connectingStageIndex > 0 ? "✓" : "1"}
+              {/* RTMP Ready & Action Area */}
+              {isWaitingForGoLive ? (
+                <div className="space-y-2.5">
+                  <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/15 transition text-left">
+                    <input
+                      type="checkbox"
+                      checked={hasConfirmedBroadcast}
+                      onChange={(e) =>
+                        setHasConfirmedBroadcast(e.target.checked)
+                      }
+                      className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-emerald-500 focus:ring-emerald-500 shrink-0 cursor-pointer"
+                    />
+                    <span className="text-white text-xs leading-snug">
+                      Saya sudah klik <strong>Mulai Siaran / Go Live</strong> di{" "}
+                      {selectedPlatform}
                     </span>
-                    <span className="truncate">
-                      Alokasi Cloud GPU Dedicated (NVIDIA RTX 4090)
-                    </span>
-                  </div>
-                  <div
-                    className={`flex items-center gap-2.5 transition-colors ${connectingStageIndex >= 1 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                  >
-                    <span
-                      className={`flex h-4.5 w-4.5 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 1 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 1 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
-                    >
-                      {connectingStageIndex > 1 ? "✓" : "2"}
-                    </span>
-                    <span className="truncate">
-                      Inisialisasi Neural Lipsync (MuseTalk & DWPose)
-                    </span>
-                  </div>
-                  <div
-                    className={`flex items-center gap-2.5 transition-colors ${connectingStageIndex >= 2 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                  >
-                    <span
-                      className={`flex h-4.5 w-4.5 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 2 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 2 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
-                    >
-                      {connectingStageIndex > 2 ? "✓" : "3"}
-                    </span>
-                    <span className="truncate">
-                      Menyiapkan Voice Persona & Skrip AI Selling
-                    </span>
-                  </div>
-                  <div
-                    className={`flex items-center gap-2.5 transition-colors ${connectingStageIndex >= 3 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                  >
-                    <span
-                      className={`flex h-4.5 w-4.5 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 3 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 3 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
-                    >
-                      {connectingStageIndex > 3 ? "✓" : "4"}
-                    </span>
-                    <span className="truncate">
-                      Koneksi Stream RTMP & Handshake Siaran
-                    </span>
-                  </div>
-                  <div
-                    className={`flex items-center gap-2.5 transition-colors ${connectingStageIndex >= 4 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                  >
-                    <span
-                      className={`flex h-4.5 w-4.5 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${pipelineStatus?.ready ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex >= 4 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
-                    >
-                      {pipelineStatus?.ready ? "✓" : "5"}
-                    </span>
-                    <span className="truncate">
-                      Generate AI Host (Video{" "}
-                      {Math.min(pipelineStatus?.generationCount || 0, 2)}/2
-                      Selesai)
-                    </span>
-                  </div>
-                </div>
+                  </label>
 
-                {/* Note for RTMP & Checklist */}
-                {isWaitingForGoLive && (
-                  <div className="p-3.5 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-left animate-in fade-in slide-in-from-bottom-2 space-y-2.5">
-                    <div>
-                      <p className="text-yellow-400 font-bold text-xs mb-0.5">
-                        ⚠️ Konfirmasi Siaran di {selectedPlatform}
-                      </p>
-                      <p className="text-slate-300 text-[11px] leading-relaxed">
-                        Mulai siaran di aplikasi platform Anda terlebih dahulu,
-                        lalu centang konfirmasi dan tekan tombol{" "}
-                        <strong>GO</strong> di bawah.
-                      </p>
-                    </div>
-
-                    <div className="p-2.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-[11px]">
-                      <ol className="list-decimal pl-4 space-y-0.5 text-slate-300">
-                        <li>
-                          Salin <strong>Stream Key</strong> ke platform.
-                        </li>
-                        <li>
-                          Klik <strong>Mulai Siaran / Go Live</strong> di{" "}
-                          {selectedPlatform}.
-                        </li>
-                      </ol>
-                    </div>
-
-                    <label className="flex items-start gap-2 cursor-pointer p-1.5 hover:bg-white/5 rounded-md transition">
-                      <input
-                        type="checkbox"
-                        checked={hasConfirmedBroadcast}
-                        onChange={(e) =>
-                          setHasConfirmedBroadcast(e.target.checked)
-                        }
-                        className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-emerald-500 focus:ring-emerald-500 shrink-0"
-                      />
-                      <span className="text-white text-xs leading-tight">
-                        Saya sudah memulai siaran di {selectedPlatform} dan
-                        stream siap tayang
-                      </span>
-                    </label>
-                  </div>
-                )}
-              </div>
-
-              {/* Sticky Bottom Actions Footer (ALWAYS VISIBLE WITHIN SCREEN) */}
-              <div className="p-4 sm:p-5 bg-[#080c18] border-t border-slate-800/90 shrink-0 space-y-2">
-                {isWaitingForGoLive ? (
-                  pipelineStatus?.ready ? (
+                  {pipelineStatus?.ready ? (
                     <button
                       type="button"
                       disabled={!hasConfirmedBroadcast}
@@ -6098,63 +6093,31 @@ export default function Dashboard() {
                           showToast("❌ Error koneksi saat konfirmasi.");
                         }
                       }}
-                      className="w-full flex items-center justify-center py-2.5 sm:py-3 rounded-xl font-bold text-sm text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 hover:shadow-emerald-500/25 active:scale-95"
+                      className="w-full flex items-center justify-center py-2.5 rounded-xl font-bold text-sm text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 hover:shadow-emerald-500/25 active:scale-95"
                     >
                       {!hasConfirmedBroadcast
                         ? "Centang konfirmasi di atas"
                         : "GO! Mulai Live Control"}
                     </button>
                   ) : (
-                    <div className="w-full py-2.5 px-4 rounded-xl bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
-                      <span className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                    <div className="w-full py-2.5 px-3 rounded-xl bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
+                      <span className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
                       <span className="text-xs text-slate-300 font-medium truncate">
                         {!pipelineStatus?.isBroadcasting
                           ? "Menghubungkan ke RTMP Server..."
-                          : `Menunggu Render Video AI (${pipelineStatus?.generationCount || 0}/2 Selesai)...`}
+                          : `Menunggu Render Video AI (${pipelineStatus?.generationCount || 0}/2)...`}
                       </span>
                     </div>
-                  )
-                ) : (
-                  <div className="w-full py-2.5 px-4 rounded-xl bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
-                    <span className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
-                    <span className="text-xs text-slate-300 font-medium truncate">
-                      {connectingStageText}
-                    </span>
-                  </div>
-                )}
-
-                {/* Cancel Button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (connectingAbortRef.current) {
-                      connectingAbortRef.current.abort();
-                    }
-                    setIsConnectingLive(false);
-                    const backendUrl =
-                      process.env.NEXT_PUBLIC_BACKEND_URL || "";
-                    fetch(`${backendUrl}/api/live-session/stop`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({}),
-                    }).catch(() => {});
-                    showToast("⚠️ Proses inisialisasi live dibatalkan.");
-                  }}
-                  className="w-full rounded-xl border border-slate-700/80 bg-slate-800/60 px-4 py-2 text-xs font-semibold text-slate-300 hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-300 transition active:scale-95 flex items-center justify-center gap-1.5"
-                >
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                  >
-                    <path d="M18 6L6 18M6 6l12 12" />
-                  </svg>
-                  <span>Batalkan Inisialisasi</span>
-                </button>
-              </div>
+                  )}
+                </div>
+              ) : (
+                <div className="w-full py-2.5 px-3 rounded-xl bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
+                  <span className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                  <span className="text-xs text-slate-300 font-medium truncate">
+                    {connectingStageText}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         )}
