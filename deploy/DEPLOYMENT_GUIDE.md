@@ -197,12 +197,12 @@ Cukup ikuti langkah cepat di bawah ini langsung dari terminal RunPod:
 ### A. Perintah Cepat Update & Restart (1-Liner)
 
 ```bash
-cd /workspace/live-streaming-ai && \
-git pull origin main && \
-cp -r deploy/* /workspace/ai_live_worker/ 2>/dev/null || true && \
-cd /workspace/ai_live_worker && \
-pkill -f "api_server.py" 2>/dev/null || true && \
-pkill -f "broadcaster.py" 2>/dev/null || true && \
+cd /workspace/live-streaming-ai && 
+git pull origin main && 
+cp -r deploy/* /workspace/ai_live_worker/ 2>/dev/null || true && 
+cd /workspace/ai_live_worker && 
+pkill -f "api_server.py" 2>/dev/null || true && 
+pkill -f "broadcaster.py" 2>/dev/null || true && 
 bash start.sh
 ```
 

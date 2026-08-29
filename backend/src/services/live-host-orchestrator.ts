@@ -269,6 +269,13 @@ class LiveHostOrchestrator {
     const state = this.sessions.get(sessionId);
     if (!state) throw new Error(`Session ${sessionId} tidak ditemukan.`);
 
+    if (state.isLive) {
+      console.log(
+        `[LiveHost] ℹ️ Sesi ${sessionId} sudah dalam mode live, startLivePipeline diabaikan (mencegah loop ganda).`,
+      );
+      return;
+    }
+
     state.isLive = true; // sinyal ke pre-live loop untuk berhenti
 
     const pendingCount = state.pendingVideos.length;

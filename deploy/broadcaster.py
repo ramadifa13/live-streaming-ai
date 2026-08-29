@@ -443,6 +443,8 @@ class AIBroadcaster:
                             current_worker.wait(timeout=1)
                         except subprocess.TimeoutExpired:
                             current_worker.kill()
+                        except Exception:
+                            pass
                         current_worker = None
 
                 # Cek apakah video saat ini sudah selesai
@@ -495,6 +497,7 @@ class AIBroadcaster:
                             pass
 
                 time.sleep(0.1) # Cegah 100% CPU usage di loop
+                time.sleep(0.05) # Loop responsif & hemat CPU (50ms)
 
             except Exception as loop_err:
                 print(f"[BROADCASTER UNHANDLED EXCEPTION] {loop_err}")
