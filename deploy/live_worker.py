@@ -318,8 +318,6 @@ class AILiveWorker:
                         inference_config=yaml_path,
                         bbox_shift=0,
                         result_dir=self.output_dir,
-                        # RENDER KE TEMP_DIR UNTUK MENGHINDARI RACE CONDITION DENGAN BROADCASTER
-                        result_dir=self.temp_dir,
                         extra_margin=10,
                         fps=25,
                         audio_padding_length_left=2,
@@ -341,15 +339,12 @@ class AILiveWorker:
 
                 expected_output = os.path.join(
                     self.output_dir, "v15", f"{task_id}.mp4"
-                    self.output_dir, f"{task_id}.mp4"
                 )
                 if os.path.exists(expected_output):
                     return expected_output
 
                 list_of_files = []
                 for root, dirs, files in os.walk(self.output_dir):
-                # CARI FILE DI TEMP_DIR KARENA KITA MENGUBAH RESULT_DIR
-                for root, dirs, files in os.walk(self.temp_dir):
                     for file in files:
                         if file.endswith(".mp4") and task_id in file:
                             list_of_files.append(os.path.join(root, file))
@@ -357,15 +352,11 @@ class AILiveWorker:
                 if not list_of_files:
                     raise FileNotFoundError(
                         f"Output video MuseTalk untuk {task_id} tidak ditemukan."
-                        f"Output video MuseTalk untuk {task_id} tidak ditemukan di temp_dir."
                     )
 
                 latest_file = max(list_of_files, key=os.path.getctime)
                 if latest_file != expected_output:
                     os.replace(latest_file, expected_output)
-                
-                # PINDAHKAN FILE SECARA ATOMIK KE OUTPUT_DIR AGAR BROADCASTER HANYA MELIHAT FILE YANG SUDAH 100% SELESAI
-                os.replace(latest_file, expected_output)
 
                 return expected_output
 
