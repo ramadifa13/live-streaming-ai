@@ -14,6 +14,7 @@ let activeStreamConfig: {
   productName?: string;
   productPrice?: string;
   productImageUrl?: string;
+  bannerImageUrl?: string;
   platform?: string;
   stockCount?: number;
   ctaLabel?: string;
@@ -101,6 +102,15 @@ async function downloadImageToTemp(
   imageUrl: string,
 ): Promise<string | undefined> {
   try {
+    if (imageUrl.startsWith("data:image/")) {
+      const ext = imageUrl.startsWith("data:image/png") ? ".png" : ".jpg";
+      const base64Data = imageUrl.replace(/^data:image\/\w+;base64,/, "");
+      const buffer = Buffer.from(base64Data, "base64");
+      const tmpPath = path.join(process.cwd(), `tmp-img-${Date.now()}${ext}`);
+      await fs.promises.writeFile(tmpPath, buffer);
+      downloadedTempFiles.push(tmpPath);
+      return tmpPath;
+    }
     const res = await fetch(imageUrl, {
       redirect: "follow",
       signal: AbortSignal.timeout(15_000),
@@ -114,12 +124,12 @@ async function downloadImageToTemp(
     const arrayBuffer = await res.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     const ext = path.extname(new URL(imageUrl).pathname) || ".jpg";
-    const tmpPath = path.join(process.cwd(), `tmp-product-${Date.now()}${ext}`);
+    const tmpPath = path.join(process.cwd(), `tmp-img-${Date.now()}${ext}`);
     await fs.promises.writeFile(tmpPath, buffer);
     downloadedTempFiles.push(tmpPath);
     return tmpPath;
   } catch (err) {
-    console.error("[RTMP Streamer] Error downloading product image:", err);
+    console.error("[RTMP Streamer] Error downloading image:", err);
     return undefined;
   }
 }
@@ -141,6 +151,7 @@ export async function startInstagramBroadcast(
   productName?: string,
   productPrice?: string,
   productImageUrl?: string,
+  bannerImageUrl?: string,
   platform?: string,
   stockCount?: number,
   ctaLabel?: string,
@@ -154,6 +165,7 @@ export async function startInstagramBroadcast(
     productName,
     productPrice,
     productImageUrl,
+    bannerImageUrl,
     platform,
     stockCount,
     ctaLabel,
@@ -218,11 +230,13 @@ export async function startInstagramBroadcast(
   const isVideo = /\.(mp4|mov|webm|mkv)$/i.test(mediaToUse);
 
   // Resolve product image — supports remote URLs by downloading to temp file
+  // Resolve product image and banner image — supports remote URLs and base64
   let productImagePath: string | undefined;
   if (productImageUrl) {
     if (
       !productImageUrl.startsWith("http://") &&
-      !productImageUrl.startsWith("https://")
+      !productImageUrl.startsWith("https://") &&
+      !productImageUrl.startsWith("data:image/")
     ) {
       const resolved = resolvePublicAsset(productImageUrl);
       if (resolved && fs.existsSync(resolved)) {
@@ -232,6 +246,25 @@ export async function startInstagramBroadcast(
       const downloaded = await downloadImageToTemp(productImageUrl);
       if (downloaded) {
         productImagePath = downloaded;
+      }
+    }
+  }
+
+  let bannerImagePath: string | undefined;
+  if (bannerImageUrl) {
+    if (
+      !bannerImageUrl.startsWith("http://") &&
+      !bannerImageUrl.startsWith("https://") &&
+      !bannerImageUrl.startsWith("data:image/")
+    ) {
+      const resolved = resolvePublicAsset(bannerImageUrl);
+      if (resolved && fs.existsSync(resolved)) {
+        bannerImagePath = resolved;
+      }
+    } else {
+      const downloaded = await downloadImageToTemp(bannerImageUrl);
+      if (downloaded) {
+        bannerImagePath = downloaded;
       }
     }
   }
@@ -249,233 +282,108 @@ export async function startInstagramBroadcast(
       : "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 
   // ── Text values ───────────────────────────────────────────────────────────
-  const safeName = escapeDrawtext((productName || "").substring(0, 22));
+  const safeName = escapeDrawtext((productName || "").substring(0, 24));
   const rawPrice =
     typeof productPrice === "string"
       ? parseInt(productPrice.replace(/[^0-9]/g, ""), 10) || 0
       : Number(productPrice) || 0;
   const priceText = rawPrice ? `Rp${rawPrice.toLocaleString("id-ID")}` : "";
   const safePriceText = escapeDrawtext(priceText);
-  const safeStockText = escapeDrawtext(`Sisa\\: ${stockCount ?? 0} pcs`);
-  const safeCTA = escapeDrawtext(ctaLabel || "Beli");
-
-  const { badge, badgeColor, ctaColor } = getPlatformStyle(platform || "");
-  const safeBadge = escapeDrawtext(badge);
 
   // ── Canvas dimensions (9:16 portrait) ───────────────────────────────────
   const W = 720;
   const H = 1280;
 
-  // Bottom panel geometry — modern card-style overlay with balanced margins
-  const panelH = 186;
-  const panelY = H - panelH - 6;
-  const sideMargin = 18;
-  const innerGap = 12;
-  const cornerRadius = 12;
-
-  // Product thumbnail with subtle border
-  const thumbSize = 68;
-  const thumbX = sideMargin + 4;
-  const thumbY = panelY + 14;
-
-  // Text x-position after thumbnail
-  const textX = thumbX + thumbSize + innerGap;
-
-  // Row positions inside the panel
-  const badgeY = panelY + 12;
-  const nameY = panelY + 44;
-  const priceY = panelY + 72;
-
-  // CTA button with balanced margins
-  const ctaBtnW = 154;
-  const ctaBtnH = 50;
-  const ctaBtnX = W - ctaBtnW - sideMargin;
-  const ctaBtnY = panelY + 34;
-
-  // LIVE badge removed from RTMP overlay
+  // Ultra-Modern Floating Pill Card at bottom center
+  const cardW = 630;
+  const cardH = 136;
+  const cardX = Math.round((W - cardW) / 2);
+  const cardY = H - cardH - 28;
+  const thumbSize = 104;
+  const thumbX = cardX + 16;
+  const thumbY = cardY + 16;
+  const textX = thumbX + thumbSize + 16;
+  const btnW = 106;
+  const btnH = 52;
+  const btnX = cardX + cardW - btnW - 18;
+  const btnY = cardY + Math.round((cardH - btnH) / 2);
 
   // ── Build filter_complex ─────────────────────────────────────────────────
-  //
-  // Strategy:
-  //   1. Scale / crop avatar video to 720x1280
-  //   2. Draw a bottom dark panel via drawbox (replaces CSS gradient)
-  //   3. If product image is local: overlay thumbnail
-  //   4. Draw all text overlays (platform badge, stock, name, price, CTA)
-  //   5. Live status is shown in the frontend, not burned into the RTMP stream
-  //
-  // We build the chain as an array and join with `;` for filter_complex,
-  // using named pads ([vN]) so each filter stage is legible.
-
   const videoScaleFilter = `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}[v0]`;
 
-  // Modern card-style bottom panel with rounded corners, subtle border and shadow
-  const panelFilter = [
-    // Shadow below panel
-    `[v0]drawbox=x=0:y=${panelY + 4}:w=${W}:h=${panelH}:color=0x000000@0.35:t=fill[v1]`,
-    // Main panel body with side margins
-    `[v1]drawbox=x=${sideMargin}:y=${panelY}:w=${W - sideMargin * 2}:h=${panelH}:color=0x0B0D1A@0.96:t=fill[v2]`,
-    // Top highlight line
-    `[v2]drawbox=x=${sideMargin}:y=${panelY}:w=${W - sideMargin * 2}:h=2:color=0xFFFFFF@0.15:t=fill[v3]`,
-    // Rounded corners - top-left
-    `[v3]drawbox=x=${sideMargin}:y=${panelY}:w=${cornerRadius}:h=${cornerRadius}:color=0x0B0D1A@0.96:t=fill[v4]`,
-    // Rounded corners - top-right
-    `[v4]drawbox=x=${W - sideMargin - cornerRadius}:y=${panelY}:w=${cornerRadius}:h=${cornerRadius}:color=0x0B0D1A@0.96:t=fill[v5]`,
-    // Rounded corners - bottom-left
-    `[v5]drawbox=x=${sideMargin}:y=${panelY + panelH - cornerRadius}:w=${cornerRadius}:h=${cornerRadius}:color=0x0B0D1A@0.96:t=fill[v6]`,
-    // Rounded corners - bottom-right
-    `[v6]drawbox=x=${W - sideMargin - cornerRadius}:y=${panelY + panelH - cornerRadius}:w=${cornerRadius}:h=${cornerRadius}:color=0x0B0D1A@0.96:t=fill[v7]`,
-    // Subtle border around panel
-    `[v7]drawbox=x=${sideMargin}:y=${panelY}:w=${W - sideMargin * 2}:h=${panelH}:color=0xFFFFFF@0.08:t=fill[v8]`,
-  ].join(";");
+  let padIdx = 0;
+  const filterStages: string[] = [videoScaleFilter];
 
-  // Next pad index after panel
-  let padIdx = 8;
-
-  // Insert product thumbnail if we have a local file
-  // (input [1:v] will be the thumbnail; we add it after the base video)
-  let thumbFilter = "";
-  let inputsBeforeAudio = [
+  let nextInputIdx = 1;
+  const inputsBeforeAudio = [
     "-re",
     ...(isVideo ? ["-stream_loop", "-1"] : ["-loop", "1"]),
     "-i",
     mediaToUse,
   ];
 
-  if (productImagePath) {
-    inputsBeforeAudio = [
-      ...inputsBeforeAudio,
-      "-loop",
-      "1",
-      "-i",
-      productImagePath,
-    ];
-    // Shadow + thumbnail overlay combined so they execute sequentially
-    thumbFilter = `[v${padIdx}]drawbox=x=${thumbX + 3}:y=${thumbY + 3}:w=${thumbSize}:h=${thumbSize}:color=0x000000@0.5:t=fill[v${padIdx + 1}];[1:v]scale=${thumbSize}:${thumbSize}[thumb];[v${padIdx + 1}][thumb]overlay=x=${thumbX}:y=${thumbY}[v${padIdx + 2}]`;
+  // 1. Top Center Banner Overlay (if present)
+  if (bannerImagePath) {
+    inputsBeforeAudio.push("-loop", "1", "-i", bannerImagePath);
+    const bannerInputPad = nextInputIdx++;
+    filterStages.push(
+      `[v${padIdx}]drawbox=x=106:y=24:w=508:h=136:color=0x000000@0.35:t=fill[v${padIdx + 1}]`,
+      `[${bannerInputPad}:v]scale=500:130:force_original_aspect_ratio=decrease[banner]`,
+      `[v${padIdx + 1}][banner]overlay=x=(W-w)/2:y=24[v${padIdx + 2}]`,
+    );
     padIdx += 2;
   }
 
-  // Build drawtext chain for text overlays
-  // Each drawtext filter takes [vN] in and produces [vN+1]
-  const textFilters: string[] = [];
-  const addText = (opts: {
-    text: string;
-    x: number;
-    y: number;
-    size: number;
-    color: string;
-    bold?: boolean;
-    box?: boolean;
-    boxColor?: string;
-    boxBorder?: number;
-  }) => {
-    const fontPath = opts.bold ? fontFileBold : fontFile;
-    const boxPart = opts.box
-      ? `:box=1:boxcolor=${opts.boxColor || "0x000000@0.6"}:boxborderw=${opts.boxBorder ?? 6}`
-      : "";
-    const filter = `[v${padIdx}]drawtext=text='${opts.text}':fontfile=${fontPath}:fontcolor=${opts.color}:fontsize=${opts.size}:x=${opts.x}:y=${opts.y}${boxPart}[v${padIdx + 1}]`;
-    textFilters.push(filter);
-    padIdx += 1;
-  };
+  // 2. Bottom Ultra-Modern Floating White Card (Shadow + Body + Top Highlight + Border)
+  filterStages.push(
+    `[v${padIdx}]drawbox=x=${cardX + 4}:y=${cardY + 6}:w=${cardW}:h=${cardH}:color=0x000000@0.32:t=fill[v${padIdx + 1}]`,
+    `[v${padIdx + 1}]drawbox=x=${cardX}:y=${cardY}:w=${cardW}:h=${cardH}:color=0xFFFFFF@0.98:t=fill[v${padIdx + 2}]`,
+    `[v${padIdx + 2}]drawbox=x=${cardX}:y=${cardY}:w=${cardW}:h=2:color=0xFFFFFF@0.7:t=fill[v${padIdx + 3}]`,
+    `[v${padIdx + 3}]drawbox=x=${cardX}:y=${cardY}:w=${cardW}:h=${cardH}:color=0xE2E8F0@1:t=1[v${padIdx + 4}]`,
+  );
+  padIdx += 4;
 
-  // ── Platform badge (top-left of panel) ──────────────────────────────────
-  if (safeBadge) {
-    addText({
-      text: safeBadge,
-      x: thumbX,
-      y: badgeY,
-      size: 13,
-      color: "white",
-      bold: true,
-      box: true,
-      boxColor: `${badgeColor}@0.9`,
-      boxBorder: 7,
-    });
+  // 3. Mini Badge "FLASH SALE" Tag
+  filterStages.push(
+    `[v${padIdx}]drawbox=x=${textX}:y=${cardY + 14}:w=116:h=22:color=0xFFE4E6@1:t=fill[v${padIdx + 1}]`,
+    `[v${padIdx + 1}]drawbox=x=${textX + 6}:y=${cardY + 21}:w=7:h=7:color=0xF43F5E@1:t=fill[v${padIdx + 2}]`,
+    `[v${padIdx + 2}]drawtext=text='FLASH SALE':fontfile=${fontFileBold}:fontcolor=0xE11D48:fontsize=12:x=${textX + 18}:y=${cardY + 17}[v${padIdx + 3}]`,
+  );
+  padIdx += 3;
+
+  // 4. Product Thumbnail
+  if (productImagePath) {
+    inputsBeforeAudio.push("-loop", "1", "-i", productImagePath);
+    const thumbInputPad = nextInputIdx++;
+    filterStages.push(
+      `[v${padIdx}]drawbox=x=${thumbX - 1}:y=${thumbY - 1}:w=${thumbSize + 2}:h=${thumbSize + 2}:color=0xE2E8F0@1:t=fill[v${padIdx + 1}]`,
+      `[${thumbInputPad}:v]scale=${thumbSize}:${thumbSize}[thumb]`,
+      `[v${padIdx + 1}][thumb]overlay=x=${thumbX}:y=${thumbY}[v${padIdx + 2}]`,
+    );
+    padIdx += 2;
   }
 
-  // ── Stock text (top-right of panel) ─────────────────────────────────────
-  addText({
-    text: safeStockText,
-    x: W - sideMargin - 105,
-    y: badgeY + 1,
-    size: 12,
-    color: "0xE2E8F0",
-  });
-
-  // ── Product name with subtle shadow for readability ──────────────────────
+  // 5. Product Name & Price
   if (safeName) {
-    addText({
-      text: safeName,
-      x: textX + 1,
-      y: nameY + 1,
-      size: 16,
-      color: "0x000000@0.5",
-      bold: true,
-    });
-    addText({
-      text: safeName,
-      x: textX,
-      y: nameY,
-      size: 16,
-      color: "white",
-      bold: true,
-    });
-  }
-
-  // ── Price ────────────────────────────────────────────────────────────────
-  if (safePriceText) {
-    addText({
-      text: safePriceText,
-      x: textX,
-      y: priceY,
-      size: 18,
-      color: "0x34D399",
-      bold: true,
-    });
-  }
-
-  // ── CTA button with gradient-like shadow and modern styling ──────────────
-  const addBox = (
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    color: string,
-  ) => {
-    const filter = `[v${padIdx}]drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color}:t=fill[v${padIdx + 1}]`;
-    textFilters.push(filter);
+    filterStages.push(
+      `[v${padIdx}]drawtext=text='${safeName}':fontfile=${fontFileBold}:fontcolor=0x0F172A:fontsize=20:x=${textX}:y=${cardY + 46}[v${padIdx + 1}]`,
+    );
     padIdx += 1;
-  };
+  }
 
-  // Shadow beneath CTA
-  addBox(ctaBtnX + 2, ctaBtnY + 2, ctaBtnW, ctaBtnH, "0x000000@0.4");
-  // Main CTA button
-  addBox(ctaBtnX, ctaBtnY, ctaBtnW, ctaBtnH, `${ctaColor}@0.95`);
-  // Top highlight for 3D effect
-  addBox(ctaBtnX, ctaBtnY, ctaBtnW, 3, "0xFFFFFF@0.2");
-  addText({
-    text: safeCTA,
-    x: ctaBtnX + 18,
-    y: ctaBtnY + 16,
-    size: 16,
-    color: "white",
-    bold: true,
-  });
-
-  // ── LIVE badge removed from RTMP overlay ──────────────────────────────────
-  // Live status is already shown in the frontend preview and control center.
+  if (safePriceText) {
+    filterStages.push(
+      `[v${padIdx}]drawtext=text='${safePriceText}':fontfile=${fontFileBold}:fontcolor=0xE11D48:fontsize=26:x=${textX}:y=${cardY + 78}[v${padIdx + 1}]`,
+    );
+    padIdx += 1;
+  }
 
   // ── Assemble filter_complex string ───────────────────────────────────────
-  const filterChain = [
-    videoScaleFilter,
-    panelFilter,
-    ...(thumbFilter ? [thumbFilter] : []),
-    ...textFilters,
-  ].join(";");
-
-  // Final output pad is [vN] where N = padIdx (last text filter already bumped it)
+  const filterChain = filterStages.join(";");
   const finalPad = `[v${padIdx}]`;
 
   // ── Build FFmpeg args ─────────────────────────────────────────────────────
+  const anullsrcInputIdx = nextInputIdx;
   const ffmpegArgs = [
     ...inputsBeforeAudio,
     // Silent audio source
@@ -489,7 +397,7 @@ export async function startInstagramBroadcast(
     "-map",
     finalPad,
     "-map",
-    `${productImagePath ? "2" : "1"}:a`, // audio from anullsrc
+    `${anullsrcInputIdx}:a`, // audio from anullsrc
 
     // Video encoding — dioptimasi untuk live streaming real-time
     "-c:v",
@@ -718,6 +626,7 @@ export async function resumeBroadcast() {
     config.productName,
     config.productPrice,
     config.productImageUrl,
+    config.bannerImageUrl,
     config.platform,
     config.stockCount,
     config.ctaLabel,

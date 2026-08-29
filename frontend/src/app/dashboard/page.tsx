@@ -2562,49 +2562,52 @@ export default function Dashboard() {
                         className="w-full h-full object-cover"
                       />
 
-                      {/* 1. Paling Atas Tengah: Gambar Banner Promosi (Lebar Pas & Kompak) */}
+                      {/* 1. Paling Atas Tengah: Gambar Banner Promosi (Lebar Pas, Modern & Kompak) */}
                       {activeFeaturedProduct?.bannerImage && (
-                        <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[88%] max-w-42 flex justify-center">
-                          <div className="rounded-xl overflow-hidden shadow-2xl border border-white/25 bg-black/60 backdrop-blur-xs p-0.5 w-full">
+                        <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[90%] max-w-[210px] flex justify-center animate-in fade-in slide-in-from-top-2 duration-300">
+                          <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/40 bg-black/60 backdrop-blur-md p-0.5 w-full">
                             <img
                               src={activeFeaturedProduct.bannerImage}
                               alt="Banner Promosi"
-                              className="w-full h-auto max-h-14 object-cover rounded-lg shadow-sm"
+                              className="w-full h-auto max-h-14 object-cover rounded-xl shadow-sm"
                             />
                           </div>
                         </div>
                       )}
 
-                      {/* 3. Bottom Center: Floating Card Background Putih (Kompak & Elegan) */}
+                      {/* 2. Bottom Center: Modern Floating Product Card (Super Sleek & Elegan) */}
                       {activeFeaturedProduct?.name &&
                         activeFeaturedProduct.name !== "Memuat Produk..." && (
-                          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none w-[88%] max-w-[190px] flex justify-center">
-                            <div className="w-full rounded-xl bg-white p-2 shadow-2xl border border-slate-200/90 flex items-center gap-2 text-slate-900 backdrop-blur-md">
-                              {/* 1. Gambar Produk */}
-                              <img
-                                src={
-                                  activeFeaturedProduct.image?.startsWith(
-                                    "http",
-                                  ) ||
-                                  activeFeaturedProduct.image?.startsWith(
-                                    "/",
-                                  ) ||
-                                  activeFeaturedProduct.image?.startsWith(
-                                    "data:",
-                                  )
-                                    ? activeFeaturedProduct.image
-                                    : "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80"
-                                }
-                                alt={activeFeaturedProduct.name}
-                                className="h-10 w-10 shrink-0 rounded-lg object-cover border border-slate-200 shadow-xs"
-                              />
+                          <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-20 pointer-events-none w-[92%] max-w-[218px] flex justify-center animate-in fade-in slide-in-from-bottom-2 duration-300">
+                            <div className="w-full rounded-2xl bg-white/98 p-2.5 shadow-[0_10px_30px_rgba(0,0,0,0.35)] border border-slate-100/90 flex items-center gap-2 text-slate-900 backdrop-blur-md ring-1 ring-black/5">
+                              {/* Foto Produk Thumbnail */}
+                              <div className="relative h-11 w-11 shrink-0 rounded-xl overflow-hidden bg-slate-100 border border-slate-200/80 shadow-xs">
+                                <img
+                                  src={
+                                    activeFeaturedProduct.image?.startsWith(
+                                      "http",
+                                    ) ||
+                                    activeFeaturedProduct.image?.startsWith(
+                                      "/",
+                                    ) ||
+                                    activeFeaturedProduct.image?.startsWith(
+                                      "data:",
+                                    )
+                                      ? activeFeaturedProduct.image
+                                      : "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80"
+                                  }
+                                  alt={activeFeaturedProduct.name}
+                                  className="h-full w-full object-cover"
+                                />
+                              </div>
 
-                              {/* 2. Nama & 3. Harga Produk */}
+                              
                               <div className="flex-1 min-w-0">
-                                <p className="text-[10.5px] font-bold text-slate-900 truncate leading-tight">
+                                
+                                <p className="text-[10px] font-bold text-slate-900 truncate leading-tight">
                                   {activeFeaturedProduct.name}
                                 </p>
-                                <p className="text-[11px] font-black text-rose-600 font-mono mt-0.5 leading-none">
+                                <p className="text-[12px] font-black text-green-600 font-mono leading-none mt-0.5">
                                   {typeof activeFeaturedProduct.price ===
                                   "number"
                                     ? `Rp${activeFeaturedProduct.price.toLocaleString("id-ID")}`
@@ -2617,7 +2620,6 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  {/* 3. Kolom Kanan: Ringkasan Siaran & Proyeksi Ringkas */}
                   <div className="md:col-span-4 flex flex-col justify-between rounded-xl border border-[#232c42] bg-[#111827]/80 p-3.5">
                     <div>
                       <p className="text-xs font-bold text-white mb-2.5 flex items-center justify-between border-b border-[#232c42] pb-2">

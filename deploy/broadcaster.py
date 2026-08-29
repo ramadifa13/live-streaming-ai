@@ -30,8 +30,20 @@ class AIBroadcaster:
         tmp_dir = os.path.join(self.output_folder, "tmp_assets")
         os.makedirs(tmp_dir, exist_ok=True)
 
+        # 1. Product Image: support base64, remote URL, local path
         if self.product_image_url:
-            if self.product_image_url.startswith("http://") or self.product_image_url.startswith("https://"):
+            if self.product_image_url.startswith("data:image/"):
+                try:
+                    import base64
+                    _, encoded = self.product_image_url.split(",", 1)
+                    img_data = base64.b64decode(encoded)
+                    local_p = os.path.join(tmp_dir, "product_thumb.png")
+                    with open(local_p, "wb") as f:
+                        f.write(img_data)
+                    self.local_product_img = local_p
+                except Exception as e:
+                    print(f"[BROADCASTER] Gagal decode base64 product image: {e}")
+            elif self.product_image_url.startswith("http://") or self.product_image_url.startswith("https://"):
                 try:
                     local_p = os.path.join(tmp_dir, "product_thumb.jpg")
                     urllib.request.urlretrieve(self.product_image_url, local_p)
@@ -41,8 +53,20 @@ class AIBroadcaster:
             elif os.path.exists(self.product_image_url):
                 self.local_product_img = self.product_image_url
 
+        # 2. Banner Image: support base64, remote URL, local path
         if self.banner_image_url:
-            if self.banner_image_url.startswith("http://") or self.banner_image_url.startswith("https://"):
+            if self.banner_image_url.startswith("data:image/"):
+                try:
+                    import base64
+                    _, encoded = self.banner_image_url.split(",", 1)
+                    img_data = base64.b64decode(encoded)
+                    local_b = os.path.join(tmp_dir, "banner_promo.png")
+                    with open(local_b, "wb") as f:
+                        f.write(img_data)
+                    self.local_banner_img = local_b
+                except Exception as e:
+                    print(f"[BROADCASTER] Gagal decode base64 banner image: {e}")
+            elif self.banner_image_url.startswith("http://") or self.banner_image_url.startswith("https://"):
                 try:
                     local_b = os.path.join(tmp_dir, "banner_promo.jpg")
                     urllib.request.urlretrieve(self.banner_image_url, local_b)
@@ -121,7 +145,7 @@ class AIBroadcaster:
                 "pipe:1"
             ]
 
-        # Composite video overlay: Banner top-center & Floating White Card bottom-center
+        # Composite video overlay: Banner top-center & Floating Modern Card bottom-center
         inputs = ["ffmpeg", "-re", "-i", video_path]
         next_input_idx = 1
 
@@ -135,39 +159,54 @@ class AIBroadcaster:
             inputs.extend(["-loop", "1", "-i", self.local_banner_img])
             b_pad = next_input_idx
             next_input_idx += 1
+            # Shadow behind banner
+            filter_stages.append(f"[v{pad_idx}]drawbox=x=106:y=24:w=508:h=136:color=0x000000@0.35:t=fill[v{pad_idx+1}]")
+            pad_idx += 1
             filter_stages.append(f"[{b_pad}:v]scale=500:130:force_original_aspect_ratio=decrease[banner]")
             filter_stages.append(f"[v{pad_idx}][banner]overlay=x=(720-w)/2:y=24[v{pad_idx+1}]")
             pad_idx += 1
 
-        # 2. Bottom Floating White Card
-        card_w, card_h = 580, 128
+        # 2. Bottom Modern Floating White Card (Pill style)
+        card_w, card_h = 630, 136
         card_x = (720 - card_w) // 2
-        card_y = 1280 - card_h - 35
-        thumb_size = 96
+        card_y = 1280 - card_h - 28
+        thumb_size = 104
         thumb_x = card_x + 16
         thumb_y = card_y + 16
-        text_x = thumb_x + thumb_size + 18
-        name_y = card_y + 28
-        price_y = card_y + 68
+        text_x = thumb_x + thumb_size + 16
+        btn_w, btn_h = 106, 52
+        btn_x = card_x + card_w - btn_w - 18
+        btn_y = card_y + (card_h - btn_h) // 2
 
+        # Card shadow, pure white body, top highlight line, subtle border
         filter_stages.extend([
-            f"[v{pad_idx}]drawbox=x={card_x+3}:y={card_y+5}:w={card_w}:h={card_h}:color=0x000000@0.28:t=fill[v{pad_idx+1}]",
-            f"[v{pad_idx+1}]drawbox=x={card_x}:y={card_y}:w={card_w}:h={card_h}:color=0xFFFFFF@0.97:t=fill[v{pad_idx+2}]",
-            f"[v{pad_idx+2}]drawbox=x={card_x}:y={card_y}:w={card_w}:h={card_h}:color=0xE2E8F0@1:t=fill[v{pad_idx+3}]",
+            f"[v{pad_idx}]drawbox=x={card_x+4}:y={card_y+6}:w={card_w}:h={card_h}:color=0x000000@0.32:t=fill[v{pad_idx+1}]",
+            f"[v{pad_idx+1}]drawbox=x={card_x}:y={card_y}:w={card_w}:h={card_h}:color=0xFFFFFF@0.98:t=fill[v{pad_idx+2}]",
+            f"[v{pad_idx+2}]drawbox=x={card_x}:y={card_y}:w={card_w}:h=2:color=0xFFFFFF@0.7:t=fill[v{pad_idx+3}]",
+            f"[v{pad_idx+3}]drawbox=x={card_x}:y={card_y}:w={card_w}:h={card_h}:color=0xE2E8F0@1:t=1[v{pad_idx+4}]",
         ])
-        pad_idx += 3
+        pad_idx += 4
 
-        # 3. Product Thumbnail
+        # 3. Mini Badge "FLASH SALE" inside card
+        filter_stages.extend([
+            f"[v{pad_idx}]drawbox=x={text_x}:y={card_y+14}:w=116:h=22:color=0xFFE4E6@1:t=fill[v{pad_idx+1}]",
+            f"[v{pad_idx+1}]drawbox=x={text_x+6}:y={card_y+21}:w=7:h=7:color=0xF43F5E@1:t=fill[v{pad_idx+2}]",
+        ])
+        pad_idx += 2
+
+        # 4. Product Thumbnail
         if self.local_product_img and os.path.exists(self.local_product_img):
             inputs.extend(["-loop", "1", "-i", self.local_product_img])
             p_pad = next_input_idx
             next_input_idx += 1
+            filter_stages.append(f"[v{pad_idx}]drawbox=x={thumb_x-1}:y={thumb_y-1}:w={thumb_size+2}:h={thumb_size+2}:color=0xE2E8F0@1:t=fill[v{pad_idx+1}]")
+            pad_idx += 1
             filter_stages.append(f"[{p_pad}:v]scale={thumb_size}:{thumb_size}[thumb]")
             filter_stages.append(f"[v{pad_idx}][thumb]overlay=x={thumb_x}:y={thumb_y}[v{pad_idx+1}]")
             pad_idx += 1
 
-        # 4. Text: Name & Price
-        safe_name = self.product_name.replace(":", "\\:").replace("'", "\\'")[:26] if self.product_name else ""
+        # 5. Text: Badge Text, Product Name, and Price
+        safe_name = self.product_name.replace(":", "\\:").replace("'", "\\'")[:24] if self.product_name else ""
         safe_price = self.product_price.replace(":", "\\:").replace("'", "\\'") if self.product_price else ""
         if safe_price and not safe_price.startswith("Rp") and safe_price.isdigit():
             safe_price = f"Rp{int(safe_price):,}".replace(",", ".")
@@ -182,13 +221,17 @@ class AIBroadcaster:
                 font_opt = f":fontfile={possible_font}"
                 break
 
+
+        # Name
         if safe_name:
-            filter_stages.append(f"[v{pad_idx}]drawtext=text='{safe_name}'{font_opt}:fontsize=24:fontcolor=0x0F172A:x={text_x}:y={name_y}[v{pad_idx+1}]")
+            filter_stages.append(f"[v{pad_idx}]drawtext=text='{safe_name}'{font_opt}:fontsize=20:fontcolor=0x0F172A:x={text_x}:y={card_y+46}[v{pad_idx+1}]")
             pad_idx += 1
 
+        # Price
         if safe_price:
-            filter_stages.append(f"[v{pad_idx}]drawtext=text='{safe_price}'{font_opt}:fontsize=28:fontcolor=0xE11D48:x={text_x}:y={price_y}[v{pad_idx+1}]")
+            filter_stages.append(f"[v{pad_idx}]drawtext=text='{safe_price}'{font_opt}:fontsize=26:fontcolor=0xE11D48:x={text_x}:y={card_y+78}[v{pad_idx+1}]")
             pad_idx += 1
+
 
         filter_chain = ";".join(filter_stages)
         return inputs + [
