@@ -21,5 +21,3 @@ moviepy
 imageio[ffmpeg]
 openmim
 mmengine
-mmcv>=2.0.1
-mmpose>=1.1.0

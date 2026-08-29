@@ -235,15 +235,8 @@ class LiveHostOrchestrator {
         await this.submitToGPU(sessionId, text, audioBase64);
 
         console.log(
-          `[LiveHost] 📝 Video #${s.generationCount} selesai di-generate dan dikirim ke GPU (Pre-Live)`,
+          `[LiveHost] 📝 Video #${s.generationCount} selesai di-generate dan dikirim ke antrean GPU (Pre-Live)`,
         );
-
-        if (s.videosQueued >= 2 && !s.pipelineReady) {
-          s.pipelineReady = true;
-          console.log(
-            `[LiveHost] ✅ Backend telah mengirim V1+V2 ke GPU. Siap untuk Go Live.`,
-          );
-        }
 
         // Beri jeda 2 detik antar submission
         await new Promise((r) => setTimeout(r, 2000));
@@ -447,23 +440,22 @@ class LiveHostOrchestrator {
       isWarmedUp = queueStatus.warmed_up ?? false;
     } catch {}
 
-    if (renderedCount === 0 && state?.videosQueued) {
-      renderedCount = state.videosQueued;
-    }
     if (renderedCount > 0) {
       isWarmedUp = true;
     }
 
-    // Syarat Ready: RTMP terhubung (atau broadcasting aktif) DAN minimal 2 video pembuka selesai dirender
-    const isReady =
-      (renderedCount >= 2 && (isRtmpConnected || isBroadcasting)) ||
-      Boolean(state?.pipelineReady);
+    // Syarat Ready: RTMP terhubung (atau broadcasting aktif) DAN minimal 2 video pembuka selesai dirender di disk GPU
+    const isReady = renderedCount >= 2 && (isRtmpConnected || isBroadcasting);
+
+    if (isReady && state) {
+      state.pipelineReady = true;
+    }
 
     let stageIndex = 0;
     let stageText = "Mengalokasikan Cloud GPU NVIDIA RTX 4090...";
 
     if (state) {
-      if (!isWarmedUp && renderedCount === 0) {
+      if (!isWarmedUp && renderedCount === 0 && state.videosQueued === 0) {
         stageIndex = 1;
         stageText = "Memuat Neural Lipsync (MuseTalk)...";
       } else if (state.videosQueued === 0 && renderedCount === 0) {
@@ -477,7 +469,7 @@ class LiveHostOrchestrator {
         stageText = `Generate AI Host (Video ${Math.min(renderedCount, 2)}/2 Selesai)...`;
       } else {
         stageIndex = 5;
-        stageText = "Video AI & RTMP Siap! Silakan konfirmasi Go Live.";
+        stageText = "Video AI 2/2 & RTMP Siap! Silakan konfirmasi Go Live.";
       }
     }
 

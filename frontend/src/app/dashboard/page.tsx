@@ -225,6 +225,8 @@ export default function Dashboard() {
     }
     if (pipelineStatus?.ready) {
       setIsWaitingForGoLive(true);
+    } else {
+      setIsWaitingForGoLive(false);
     }
   }, [isConnectingLive, pipelineStatus]);
 
@@ -3386,9 +3388,8 @@ export default function Dashboard() {
 
                           if (bcastRes.ok && bcastJson.success) {
                             if (bcastJson.waitingForGoLive) {
-                              // We DO NOT close the loading modal (isConnectingLive stays true)
-                              // Set this to true to trigger polling and keep internal state correct
-                              setIsWaitingForGoLive(true);
+                              // Modal tetap loading (isConnectingLive = true), polling pipeline-status akan memantau render V1+V2
+                              setIsWaitingForGoLive(false);
                               setCurrentLiveSessionId(sessionJson.data?.id);
                               showToast(
                                 bcastJson.message ||
@@ -6400,9 +6401,26 @@ export default function Dashboard() {
                 </div>
 
                 {/* RTMP Ready & Action Area */}
-                {isWaitingForGoLive ? (
+                {pipelineStatus?.ready ? (
                   <div className="space-y-2.5">
-                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/15 transition text-left">
+                    {/* Note Instruksi yang Muncul Setelah Step 5 Checklist */}
+                    <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-300 flex items-start gap-2.5">
+                      <span className="text-emerald-400 font-bold text-sm leading-none mt-0.5">
+                        ✓
+                      </span>
+                      <div>
+                        <p className="font-bold text-white text-xs">
+                          Video AI (2/2) Selesai & RTMP Terhubung!
+                        </p>
+                        <p className="text-[11px] text-emerald-200/90 mt-0.5 leading-relaxed">
+                          Buka aplikasi <strong>{selectedPlatform}</strong>,
+                          klik <strong>Mulai Siaran / Go Live</strong>, lalu
+                          centang konfirmasi di bawah ini untuk memulai siaran.
+                        </p>
+                      </div>
+                    </div>
+
+                    <label className="flex items-center gap-2 cursor-pointer p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/15 transition text-left">
                       <input
                         type="checkbox"
                         checked={hasConfirmedBroadcast}
@@ -6417,63 +6435,55 @@ export default function Dashboard() {
                       </span>
                     </label>
 
-                    {pipelineStatus?.ready ? (
-                      <button
-                        type="button"
-                        disabled={!hasConfirmedBroadcast}
-                        onClick={async () => {
-                          if (!currentLiveSessionId) return;
-                          try {
-                            const res = await fetch(
-                              "/api/live-stream/go-live-confirm",
-                              {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({
-                                  sessionId: currentLiveSessionId,
-                                }),
-                              },
-                            );
-                            const json = await res.json();
-                            if (res.ok && json.success) {
-                              setIsConnectingLive(false);
-                              setIsWaitingForGoLive(false);
-                              setIsLiveActive(true);
-                              setIsLivePaused(false);
-                              setLiveSessionPhase("live");
-                              setLiveSeconds(0);
-                              showToast(
-                                "🔥 AI Host aktif! Siaran live dimulai.",
-                              );
-                            } else {
-                              showToast(`❌ Gagal konfirmasi: ${json.error}`);
-                            }
-                          } catch {
-                            showToast("❌ Error koneksi saat konfirmasi.");
+                    <button
+                      type="button"
+                      disabled={!hasConfirmedBroadcast || isConnectingLive}
+                      onClick={async () => {
+                        if (!currentLiveSessionId) return;
+                        setIsConnectingLive(true);
+                        try {
+                          const res = await fetch(
+                            "/api/live-stream/go-live-confirm",
+                            {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                sessionId: currentLiveSessionId,
+                              }),
+                            },
+                          );
+                          const json = await res.json();
+                          if (res.ok && json.success) {
+                            setIsConnectingLive(false);
+                            setIsWaitingForGoLive(false);
+                            setIsLiveActive(true);
+                            setIsLivePaused(false);
+                            setLiveSessionPhase("live");
+                            setLiveSeconds(0);
+                            showToast("🔥 AI Host aktif! Siaran live dimulai.");
+                          } else {
+                            showToast(`❌ Gagal konfirmasi: ${json.error}`);
                           }
-                        }}
-                        className="w-full flex items-center justify-center py-2.5 rounded-xl font-bold text-sm text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 hover:shadow-emerald-500/25 active:scale-95"
-                      >
-                        {!hasConfirmedBroadcast
-                          ? "Centang konfirmasi di atas"
-                          : "GO! Mulai Live Control"}
-                      </button>
-                    ) : (
-                      <div className="w-full py-2.5 px-3 rounded-xl bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
-                        <span className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
-                        <span className="text-xs text-slate-300 font-medium truncate">
-                          {!pipelineStatus?.isBroadcasting
-                            ? "Menghubungkan ke RTMP Server..."
-                            : `Menunggu Render Video AI (${pipelineStatus?.generationCount || 0}/2)...`}
-                        </span>
-                      </div>
-                    )}
+                        } catch {
+                          showToast("❌ Error koneksi saat konfirmasi.");
+                        } finally {
+                          setIsConnectingLive(false);
+                        }
+                      }}
+                      className="w-full flex items-center justify-center py-2.5 rounded-xl font-bold text-sm text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 hover:shadow-emerald-500/25 active:scale-95"
+                    >
+                      {!hasConfirmedBroadcast
+                        ? "Centang konfirmasi di atas"
+                        : "GO! Mulai Live Control"}
+                    </button>
                   </div>
                 ) : (
                   <div className="w-full py-2.5 px-3 rounded-xl bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
                     <span className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
                     <span className="text-xs text-slate-300 font-medium truncate">
-                      {connectingStageText}
+                      {!pipelineStatus?.isBroadcasting
+                        ? "Menghubungkan ke RTMP Server..."
+                        : `Menunggu Render Video AI (${Math.min(pipelineStatus?.generationCount || 0, 2)}/2 Selesai)...`}
                     </span>
                   </div>
                 )}

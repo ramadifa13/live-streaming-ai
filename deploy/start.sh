@@ -44,32 +44,6 @@ export COQUI_TOS_AGREED=1
 export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:7b}"
 export OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0:11434}"
 
-check_python_import() {
-	"$PYTHON_BIN" - "$1" <<'PY'
-import importlib.util
-import sys
-
-module = sys.argv[1]
-if importlib.util.find_spec(module) is None:
-    raise SystemExit(1)
-PY
-}
-
-for dep in fastapi uvicorn pydantic cv2 librosa soundfile einops timm yaml PIL omegaconf diffusers transformers accelerate mmpose mmengine mmcv; do
-	pkg="$dep"
-	if [ "$dep" = "cv2" ]; then pkg="opencv-python-headless"; fi
-	if [ "$dep" = "yaml" ]; then pkg="PyYAML"; fi
-	if [ "$dep" = "PIL" ]; then pkg="Pillow"; fi
-	if ! check_python_import "$dep"; then
-		echo "[INFO] Dependency $pkg belum terpasang. Menginstall otomatis..."
-		"$PYTHON_BIN" -m pip install --no-cache-dir "$pkg" || pip install --no-cache-dir "$pkg"
-	fi
-done
-
-if [ -f "/workspace/live-streaming-ai/deploy/requirements-worker.txt" ]; then
-	"$PYTHON_BIN" -m pip install -r /workspace/live-streaming-ai/deploy/requirements-worker.txt || true
-fi
-
 echo "Menyiapkan symlink MuseTalk (./musetalk, ./models)..."
 ln -sfn "$WORKER_DIR/MuseTalk/musetalk" "$WORKER_DIR/musetalk"
 ln -sfn "$WORKER_DIR/MuseTalk/models" "$WORKER_DIR/models"
@@ -89,12 +63,6 @@ if [ -d "/workspace/live-streaming-ai/deploy" ]; then
 	if [ -d "/workspace/live-streaming-ai/deploy/assets" ]; then
 		cp -rn /workspace/live-streaming-ai/deploy/assets/* "$WORKER_DIR/assets/" 2>/dev/null || true
 	fi
-fi
-
-echo "Memeriksa ketersediaan FFmpeg dan pustaka sistem..."
-if ! command -v ffmpeg >/dev/null 2>&1; then
-	echo "Menginstall FFmpeg dan dependensi grafis sistem..."
-	apt-get update -qq && apt-get install -y ffmpeg libgl1 libglib2.0-0 || true
 fi
 
 # Ollama di RunPod bersifat opsional karena LLM diproses terpusat di Backend
