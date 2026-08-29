@@ -188,6 +188,21 @@ class LiveHostOrchestrator {
         continue;
       }
 
+      let isWorkerOffline = false;
+      if (state.config.podId || process.env.RUNPOD_POD_ID) {
+        try {
+          const queueStatus = await getRunPodQueueStatus(
+            state.config.podId || process.env.RUNPOD_POD_ID,
+          );
+          if (!queueStatus.success) isWorkerOffline = true;
+        } catch {}
+      }
+
+      if (isWorkerOffline) {
+        await new Promise((r) => setTimeout(r, 5000));
+        continue;
+      }
+
       try {
         const { text, audioBase64 } =
           await this.generateAndSynthesize(sessionId);
@@ -272,15 +287,28 @@ class LiveHostOrchestrator {
         let queuedOnDisk = 0;
         let isWorkerBusy = false;
 
-        if (state.config.podId) {
+        let isWorkerOffline = false;
+
+        if (state.config.podId || process.env.RUNPOD_POD_ID) {
           try {
-            const queueStatus = await getRunPodQueueStatus(state.config.podId);
+            const queueStatus = await getRunPodQueueStatus(
+              state.config.podId || process.env.RUNPOD_POD_ID,
+            );
+            if (!queueStatus.success) {
+              isWorkerOffline = true;
+            }
             queuedOnDisk =
               queueStatus.queued_videos_count !== undefined
                 ? queueStatus.queued_videos_count
                 : queueStatus.ready_videos_count || 0;
             isWorkerBusy = (queueStatus.active_processing_count ?? 0) > 0;
           } catch {}
+        }
+
+        // Jika worker offline, tunggu agar tidak spam LLM dan TTS
+        if (isWorkerOffline) {
+          await new Promise((r) => setTimeout(r, 5000));
+          continue;
         }
 
         // Jika antrean video bicara di disk sudah ada >= 3 video ATAU GPU sedang merender:
