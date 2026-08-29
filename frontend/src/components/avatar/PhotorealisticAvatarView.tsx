@@ -96,7 +96,7 @@ export default function PhotorealisticAvatarView({
   }, [videoGenerationState, videoUrl]);
 
   // Map avatar name to local video file
-  const localAvatarVideo = "/avatars/namira.mp4";
+  const localAvatarVideo = "/avatars/namira_idle.mp4";
 
   const activeStageIdx = getActiveStageIndex(renderProgress);
 
@@ -137,9 +137,13 @@ export default function PhotorealisticAvatarView({
           <div className="absolute inset-0 bg-gradient-to-r from-black/25 via-transparent to-black/25 pointer-events-none" />
 
           {/* Radial glow behind avatar */}
-          <div className="absolute inset-0 pointer-events-none" style={{
-            background: "radial-gradient(circle at center, rgba(124,58,237,0.08) 0%, transparent 70%)"
-          }} />
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              background:
+                "radial-gradient(circle at center, rgba(124,58,237,0.08) 0%, transparent 70%)",
+            }}
+          />
 
           {/* Active Speaking Live Waveform Overlay */}
           {isSpeaking && (

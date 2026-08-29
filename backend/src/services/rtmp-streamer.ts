@@ -175,7 +175,7 @@ export async function startInstagramBroadcast(
     const relativePath = assetPath.replace(/^[/\\]+/, "");
     return path.resolve(publicRoot, relativePath);
   };
-  const defaultVideo = path.resolve(publicRoot, "avatars/namira.mp4");
+  const defaultVideo = path.resolve(publicRoot, "avatars/namira_idle.mp4");
   const mediaToUse =
     resolvePublicAsset(avatarVideoPath) ||
     resolvePublicAsset(avatarImagePath) ||
@@ -336,7 +336,8 @@ export async function startInstagramBroadcast(
   let thumbFilter = "";
   let inputsBeforeAudio = [
     "-re",
-    "-fflags", "+genpts",   // Generate PTS konsisten saat video di-loop → mencegah timestamp gap
+    "-fflags",
+    "+genpts", // Generate PTS konsisten saat video di-loop → mencegah timestamp gap
     ...(isVideo ? ["-stream_loop", "-1"] : ["-loop", "1"]),
     "-i",
     mediaToUse,

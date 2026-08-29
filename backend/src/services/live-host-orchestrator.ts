@@ -384,28 +384,40 @@ class LiveHostOrchestrator {
     const state = this.sessions.get(sessionId);
     let renderedCount = 0;
     let isBroadcasting = false;
+    let isRtmpConnected = false;
+    let isWarmedUp = false;
 
     if (state?.config.podId) {
       try {
         const queueStatus = await getRunPodQueueStatus(state.config.podId);
         renderedCount = queueStatus.ready_videos_count || 0;
         isBroadcasting = queueStatus.broadcasting ?? false;
+        isRtmpConnected = queueStatus.rtmp_connected ?? false;
+        isWarmedUp = queueStatus.warmed_up ?? false;
       } catch {}
     } else {
       renderedCount = state?.videosQueued ?? 0;
       isBroadcasting = true;
+      isRtmpConnected = true;
+      isWarmedUp = true;
     }
 
     // Syarat Ready: RTMP terhubung DAN minimal 2 video pembuka selesai dirender
-    const isReady = renderedCount >= 2 && isBroadcasting;
+    const isReady = renderedCount >= 2 && isRtmpConnected;
 
     let stageIndex = 0;
     let stageText = "Mengalokasikan Cloud GPU NVIDIA RTX 4090...";
 
     if (state) {
-      if (!isBroadcasting) {
+      if (!isWarmedUp) {
+        stageIndex = 1;
+        stageText = "Memuat Neural Lipsync (MuseTalk)...";
+      } else if (state.videosQueued === 0) {
+        stageIndex = 2;
+        stageText = "Generate Voice Persona & Skrip Selling...";
+      } else if (!isRtmpConnected) {
         stageIndex = 3;
-        stageText = "Menghubungkan ke Server RTMP Siaran...";
+        stageText = "Koneksi Stream RTMP Handshake (Menunggu Server)...";
       } else if (renderedCount < 2) {
         stageIndex = 4;
         stageText = `Generate AI Host (Video ${Math.min(renderedCount, 2)}/2 Selesai)...`;

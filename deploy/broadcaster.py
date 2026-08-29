@@ -13,10 +13,18 @@ class AIBroadcaster:
         self.master_process = None
         
         print("[BROADCASTER] Menginisialisasi Koneksi ke Server RTMP...")
+        self.master_process_start_time = 0
         self._ensure_master_process()
         
     def _ensure_master_process(self):
+        status_file = os.path.join(self.output_folder, "rtmp_status.txt")
         if self.master_process is None or self.master_process.poll() is not None:
+            try:
+                with open(status_file, "w") as f:
+                    f.write("disconnected")
+            except Exception:
+                pass
+
             if self.master_process is not None:
                 print(f"[BROADCASTER] Master FFmpeg keluar (exit code: {self.master_process.poll()}). Menginisialisasi ulang...")
                 try:
@@ -56,6 +64,7 @@ class AIBroadcaster:
                     stdout=subprocess.DEVNULL,
                     stderr=self.log_file
                 )
+                self.master_process_start_time = time.time()
                 print(f"[BROADCASTER] Master FFmpeg aktif (PID: {self.master_process.pid})")
             except Exception as e:
                 print(f"[BROADCASTER ERROR] Gagal memulai master FFmpeg: {e}")
@@ -183,6 +192,15 @@ class AIBroadcaster:
                         else:
                             time.sleep(2)
 
+                # UPDATE STATUS RTMP
+                if self.master_process and self.master_process.poll() is None:
+                    if time.time() - self.master_process_start_time > 3:
+                        try:
+                            with open(os.path.join(self.output_folder, "rtmp_status.txt"), "w") as f:
+                                f.write("connected")
+                        except Exception:
+                            pass
+
                 time.sleep(0.1) # Cegah 100% CPU usage di loop
 
             except Exception as loop_err:
@@ -204,7 +222,7 @@ if __name__ == "__main__":
     # 2. Tentukan video Idle (Sesuai dengan host yang dipilih pelanggan)
     IDLE_VIDEO = os.environ.get(
         "IDLE_VIDEO",
-        "/workspace/ai_live_worker/assets/3d/namira.mp4",
+        "/workspace/ai_live_worker/assets/3d/namira_idle.mp4",
     )
     
     OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "/workspace/ai_live_worker/output")

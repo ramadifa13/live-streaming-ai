@@ -1421,7 +1421,7 @@ export default function Dashboard() {
                 <div className="flex flex-col lg:flex-row gap-3">
                   {/* Product Cards Container */}
                   <div className="flex-1 min-w-0">
-                    <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1.5">
+                    <div className="space-y-2.5 max-h-[290px] overflow-y-auto pr-1.5 custom-scrollbar">
                       {filteredProducts.map((p) => {
                         const isSelected =
                           activeFeaturedProduct.id === p.id ||
@@ -1443,134 +1443,136 @@ export default function Dashboard() {
                                 `🎯 Produk live dialihkan ke: ${p.name}`,
                               );
                             }}
-                            className={`group relative rounded-xl border p-2.5 cursor-pointer transition-all duration-200 ${
+                            className={`group relative rounded-2xl border p-3 cursor-pointer transition-all duration-200 ${
                               isSelected
-                                ? "border-blue-500/80 bg-gradient-to-r from-blue-950/40 via-[#0d172e] to-[#0c1221] ring-1 ring-blue-500/30 shadow-md shadow-blue-950/40"
-                                : "border-[#232c42]/60 bg-[#111827]/70 hover:border-slate-700 hover:bg-[#162038]/50"
+                                ? "border-blue-500/80 bg-gradient-to-r from-blue-950/50 via-[#0d172e] to-[#0a101f] shadow-lg shadow-blue-950/40 ring-1 ring-blue-500/40"
+                                : "border-[#1e293b]/90 bg-[#0e1628]/80 hover:border-slate-600 hover:bg-[#131d35] shadow-sm"
                             }`}
                           >
-                            <div className="flex items-center gap-3">
-                              {/* Product Image Thumbnail */}
-                              <div className="h-12 w-12 rounded-xl overflow-hidden flex-shrink-0 bg-[#162038] border border-white/10 shadow-md relative">
+                            <div className="flex items-center gap-3.5">
+                              {/* Product Thumbnail */}
+                              <div className="relative h-14 w-14 rounded-xl overflow-hidden shrink-0 bg-[#162038] border border-white/10 shadow-inner">
                                 {p.image?.startsWith("http") ||
                                 p.image?.startsWith("/") ||
                                 p.image?.startsWith("data:") ? (
                                   <img
                                     src={p.image}
                                     alt={p.name}
-                                    className="h-full w-full object-cover group-hover:scale-105 transition duration-300"
+                                    className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300"
                                   />
                                 ) : (
                                   <div
-                                    className={`h-full w-full ${p.image || "bg-[#e5cbbb]"}`}
-                                  />
+                                    className={`h-full w-full flex items-center justify-center text-lg ${p.image || "bg-gradient-to-br from-slate-800 to-slate-900"}`}
+                                  >
+                                    🛍️
+                                  </div>
                                 )}
                                 {isSelected && (
-                                  <div className="absolute top-1 right-1 h-2 w-2 rounded-full bg-blue-400 ring-2 ring-blue-900" />
+                                  <div className="absolute inset-0 bg-blue-500/15 ring-2 ring-inset ring-blue-500/50 rounded-xl flex items-start justify-end p-1">
+                                    <span className="flex h-2.5 w-2.5 rounded-full bg-blue-400 shadow-sm shadow-blue-400/80 animate-pulse" />
+                                  </div>
                                 )}
                               </div>
 
                               {/* Details Column */}
                               <div className="flex-1 min-w-0">
+                                {/* Row 1: Name & Price */}
                                 <div className="flex items-center justify-between gap-2">
-                                  <p
-                                    className={`text-xs font-bold truncate ${isSelected ? "text-blue-200 font-extrabold" : "text-slate-100 group-hover:text-white"}`}
+                                  <h4
+                                    className={`text-[13px] font-bold truncate leading-snug ${
+                                      isSelected
+                                        ? "text-blue-200"
+                                        : "text-slate-100 group-hover:text-white"
+                                    }`}
                                   >
                                     {p.name}
-                                  </p>
-                                  <span className="text-xs font-black text-emerald-400 shrink-0 font-mono">
-                                    {p.price}
+                                  </h4>
+                                  <span className="text-xs sm:text-[13px] font-black text-emerald-400 shrink-0 font-mono tracking-tight">
+                                    {typeof p.price === "number"
+                                      ? `Rp${p.price.toLocaleString("id-ID")}`
+                                      : p.price}
                                   </span>
                                 </div>
 
-                                <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                                  <span className="text-[9px] font-medium text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded border border-white/5">
+                                {/* Row 2: Category, Stock, RAG Badges */}
+                                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                                  <span className="text-[9.5px] font-medium text-slate-300 bg-slate-800/90 px-2 py-0.5 rounded-full border border-slate-700/60">
                                     {p.tag || "General"}
                                   </span>
-                                  {p.sku && (
-                                    <span className="text-[8.5px] font-mono text-slate-400 bg-[#0c1221] px-1.5 py-0.5 rounded border border-slate-800">
-                                      {p.sku}
-                                    </span>
-                                  )}
-                                  {hasRag ? (
-                                    <span className="text-[8.5px] font-semibold text-emerald-300 bg-emerald-500/15 px-2 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1">
-                                      <span className="h-1 w-1 rounded-full bg-emerald-400 animate-pulse" />
-                                      🧠 RAG Ready
-                                    </span>
-                                  ) : (
-                                    <span className="text-[8.5px] text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
-                                      📝 Info Standar
-                                    </span>
-                                  )}
-                                </div>
 
-                                {p.description && (
-                                  <p className="text-[10px] text-slate-400 truncate mt-1 line-clamp-1">
-                                    {p.benefits || p.description}
-                                  </p>
-                                )}
-                              </div>
-
-                              {/* Stock & Action Buttons */}
-                              <div className="flex flex-col items-end justify-between self-stretch shrink-0 pl-1">
-                                <div>
                                   {stockNumber > 20 ? (
-                                    <span className="text-[9.5px] font-bold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                                    <span className="text-[9.5px] font-semibold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-500/20">
                                       ● {stockNumber} pcs
                                     </span>
                                   ) : stockNumber > 0 ? (
-                                    <span className="text-[9.5px] font-bold text-amber-300 bg-amber-950/40 px-2 py-0.5 rounded-md border border-amber-500/20">
+                                    <span className="text-[9.5px] font-semibold text-amber-300 bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-500/20">
                                       ⚠️ {stockNumber} pcs
                                     </span>
                                   ) : (
-                                    <span className="text-[9.5px] font-bold text-rose-400 bg-rose-950/40 px-2 py-0.5 rounded-md border border-rose-500/20">
+                                    <span className="text-[9.5px] font-semibold text-rose-400 bg-rose-950/40 px-2 py-0.5 rounded-full border border-rose-500/20">
                                       ✕ Habis
                                     </span>
                                   )}
-                                </div>
 
-                                <div className="flex items-center gap-1 mt-1">
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setSelectedProductForEdit(p);
-                                      setEditModalTab("BASIC");
-                                      setShowEditProductModal(true);
-                                    }}
-                                    className="p-1 text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 rounded-md transition"
-                                    title="Edit Produk & RAG Knowledge"
-                                  >
-                                    <svg
-                                      width="13"
-                                      height="13"
-                                      fill="currentColor"
-                                      viewBox="0 0 16 16"
-                                    >
-                                      <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z" />
-                                    </svg>
-                                  </button>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleDeleteProduct(p.id);
-                                    }}
-                                    className="p-1 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-md transition"
-                                    title="Hapus Produk"
-                                  >
-                                    <svg
-                                      width="13"
-                                      height="13"
-                                      fill="currentColor"
-                                      viewBox="0 0 16 16"
-                                    >
-                                      <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z" />
-                                      <path
-                                        fillRule="evenodd"
-                                        d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"
-                                      />
-                                    </svg>
-                                  </button>
+                                  {hasRag ? (
+                                    <span className="text-[9px] font-semibold text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/30 flex items-center gap-1">
+                                      <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                                      🧠 RAG Ready
+                                    </span>
+                                  ) : null}
+
+                                  {isSelected && (
+                                    <span className="text-[9px] font-bold text-blue-300 bg-blue-500/15 px-2 py-0.5 rounded-full border border-blue-500/30">
+                                      🎯 Live Utama
+                                    </span>
+                                  )}
                                 </div>
+                              </div>
+
+                              {/* Action Buttons */}
+                              <div className="flex items-center gap-1 shrink-0 pl-1">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedProductForEdit(p);
+                                    setEditModalTab("BASIC");
+                                    setShowEditProductModal(true);
+                                  }}
+                                  className="p-1.5 text-slate-400 hover:text-blue-300 hover:bg-blue-500/15 rounded-lg border border-transparent hover:border-blue-500/20 transition active:scale-90"
+                                  title="Edit Produk & RAG Knowledge"
+                                >
+                                  <svg
+                                    width="13"
+                                    height="13"
+                                    fill="currentColor"
+                                    viewBox="0 0 16 16"
+                                  >
+                                    <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteProduct(p.id);
+                                  }}
+                                  className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/15 rounded-lg border border-transparent hover:border-rose-500/20 transition active:scale-90"
+                                  title="Hapus Produk"
+                                >
+                                  <svg
+                                    width="13"
+                                    height="13"
+                                    fill="currentColor"
+                                    viewBox="0 0 16 16"
+                                  >
+                                    <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z" />
+                                    <path
+                                      fillRule="evenodd"
+                                      d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"
+                                    />
+                                  </svg>
+                                </button>
                               </div>
                             </div>
                           </div>
@@ -2583,22 +2585,19 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  {/* 3. Kolom Kanan: Ringkasan Siaran & Estimasi Omzet */}
+                  {/* 3. Kolom Kanan: Ringkasan Siaran & Proyeksi Ringkas */}
                   <div className="md:col-span-4 flex flex-col justify-between rounded-xl border border-[#232c42] bg-[#111827]/80 p-3.5">
                     <div>
-                      <p className="text-xs font-bold text-white mb-3 flex items-center gap-1.5 border-b border-[#232c42] pb-2">
-                        <span>📋</span> Ringkasan Konfigurasi
+                      <p className="text-xs font-bold text-white mb-2.5 flex items-center justify-between border-b border-[#232c42] pb-2">
+                        <span className="flex items-center gap-1.5">
+                          <span>📋</span> Ringkasan Siaran
+                        </span>
+                        <span className="text-[10px] text-blue-400 font-medium bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
+                          {selectedDuration} Jam
+                        </span>
                       </p>
 
-                      <div className="space-y-2.5 text-[11px]">
-                        <div className="flex items-center justify-between">
-                          <span className="text-slate-400 flex items-center gap-1">
-                            ⏱️ Durasi
-                          </span>
-                          <span className="font-semibold text-white">
-                            {selectedDuration} Jam
-                          </span>
-                        </div>
+                      <div className="space-y-2 text-[11px]">
                         <div className="flex items-center justify-between">
                           <span className="text-slate-400 flex items-center gap-1">
                             🛍️ Total Produk
@@ -2619,63 +2618,130 @@ export default function Dashboard() {
                           <span className="text-slate-400 flex items-center gap-1">
                             👤 AI Host
                           </span>
-                          <span className="font-semibold text-slate-200">
-                            {selectedAvatar.name}{" "}
-                            <span className="text-purple-300 font-normal">
-                              ({selectedTone})
+                          <span className="font-semibold text-slate-200 truncate max-w-[140px]">
+                            {selectedAvatar.name} ({selectedTone})
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Proyeksi Hasil Siaran - Compact & Inline */}
+                    {(() => {
+                      const productPrice =
+                        typeof activeFeaturedProduct?.price === "number"
+                          ? activeFeaturedProduct.price
+                          : parseInt(
+                              String(
+                                activeFeaturedProduct?.price || "",
+                              ).replace(/[^0-9]/g, ""),
+                            ) ||
+                            (products.length > 0
+                              ? Math.round(
+                                  products.reduce(
+                                    (acc, p) =>
+                                      acc +
+                                      (typeof p.price === "number"
+                                        ? p.price
+                                        : parseInt(
+                                            String(p.price || "").replace(
+                                              /[^0-9]/g,
+                                              "",
+                                            ),
+                                          ) || 99000),
+                                    0,
+                                  ) / products.length,
+                                )
+                              : 99000);
+
+                      const platformMultiplier = selectedPlatform
+                        .toLowerCase()
+                        .includes("tiktok")
+                        ? 1.25
+                        : selectedPlatform.toLowerCase().includes("shopee")
+                          ? 1.1
+                          : selectedPlatform.toLowerCase().includes("tokopedia")
+                            ? 0.95
+                            : selectedPlatform
+                                  .toLowerCase()
+                                  .includes("instagram")
+                              ? 0.85
+                              : 1.0;
+
+                      const durationHours = Math.max(
+                        0.5,
+                        selectedDuration || 1,
+                      );
+                      const organicBoost = durationHours >= 4 ? 1.15 : 1.0;
+
+                      const minViewers = Math.round(
+                        durationHours * 380 * platformMultiplier * organicBoost,
+                      );
+                      const maxViewers = Math.round(
+                        durationHours * 820 * platformMultiplier * organicBoost,
+                      );
+
+                      const minOrders = Math.max(
+                        1,
+                        Math.round(minViewers * 0.018),
+                      );
+                      const maxOrders = Math.max(
+                        minOrders + 1,
+                        Math.round(maxViewers * 0.038),
+                      );
+
+                      const minOmzet = minOrders * productPrice;
+                      const maxOmzet = maxOrders * productPrice;
+
+                      const formatCompactRupiah = (val: number) => {
+                        if (val >= 1_000_000_000) {
+                          return `Rp${(val / 1_000_000_000).toFixed(1)} M`;
+                        }
+                        if (val >= 1_000_000) {
+                          return `Rp${(val / 1_000_000).toFixed(1)} Jt`;
+                        }
+                        if (val >= 1_000) {
+                          return `Rp${(val / 1_000).toFixed(0)} Rb`;
+                        }
+                        return `Rp${val.toLocaleString("id-ID")}`;
+                      };
+
+                      const formatNumber = (num: number) =>
+                        num.toLocaleString("id-ID");
+
+                      return (
+                        <div className="mt-3 pt-2.5 border-t border-[#232c42] space-y-1.5 text-[11px]">
+                          <div className="flex items-center justify-between text-slate-400">
+                            <span className="flex items-center gap-1">
+                              👥 Est. Penonton
                             </span>
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+                            <span className="font-semibold text-slate-200">
+                              {formatNumber(minViewers)} –{" "}
+                              {formatNumber(maxViewers)}
+                            </span>
+                          </div>
 
-                    {/* Estimasi Hasil Live (Viewers & Omzet) */}
-                    <div className="mt-4 pt-3 border-t border-[#232c42] rounded-xl bg-gradient-to-br from-blue-950/30 to-[#0c1221] p-3 border border-blue-500/20">
-                      <p className="text-xs font-bold text-slate-200 mb-2 flex items-center gap-1.5">
-                        <span>📊</span> Proyeksi Hasil Siaran
-                      </p>
+                          <div className="flex items-center justify-between text-slate-400">
+                            <span className="flex items-center gap-1">
+                              📦 Est. Terjual
+                            </span>
+                            <span className="font-semibold text-slate-200">
+                              {formatNumber(minOrders)} –{" "}
+                              {formatNumber(maxOrders)} pcs
+                            </span>
+                          </div>
 
-                      <div className="space-y-2 text-[11px]">
-                        <div className="flex items-center justify-between">
-                          <span className="text-slate-400">Est. Penonton:</span>
-                          <span className="font-mono font-bold text-blue-300">
-                            {selectedDuration <= 2
-                              ? "850 - 1.600"
-                              : selectedDuration <= 8
-                                ? "3.200 - 6.500"
-                                : "12.000 - 28.000"}
-                          </span>
+                          <div className="flex items-center justify-between pt-2 border-t border-[#1f293d]">
+                            <span className="font-bold text-slate-300 flex items-center text-[9px] gap-1">
+                              💰 Potensi Omzet
+                            </span>
+                            <span className="font-black text-emerald-400 text-[10px] tracking-wide">
+                              {formatCompactRupiah(minOmzet)} –{" "}
+                              {formatCompactRupiah(maxOmzet)}
+                            </span>
+                          </div>
                         </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-slate-400">Potensi Omzet:</span>
-                          <span className="font-mono font-black text-emerald-400 text-xs">
-                            {(() => {
-                              const numP =
-                                typeof activeFeaturedProduct.price === "number"
-                                  ? activeFeaturedProduct.price
-                                  : parseInt(
-                                      String(
-                                        activeFeaturedProduct.price,
-                                      ).replace(/[^0-9]/g, ""),
-                                    ) || 99000;
-                              const minU =
-                                selectedDuration <= 2
-                                  ? 12
-                                  : selectedDuration <= 8
-                                    ? 45
-                                    : 160;
-                              const maxU =
-                                selectedDuration <= 2
-                                  ? 30
-                                  : selectedDuration <= 8
-                                    ? 110
-                                    : 420;
-                              return `Rp${((numP * minU) / 1000000).toFixed(1)}jt - Rp${((numP * maxU) / 1000000).toFixed(1)}jt`;
-                            })()}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
@@ -3330,7 +3396,7 @@ export default function Dashboard() {
                     </li>
                     <li>
                       Klik tombol{" "}
-                      <strong>"Siarkan Langsung" / "Go Live"</strong> di dalam
+                      <strong>Siarkan Langsung / Go Live</strong> di dalam
                       aplikasi tersebut.
                     </li>
                     <li>
@@ -4473,18 +4539,28 @@ export default function Dashboard() {
                         <label className="block text-slate-300 font-semibold mb-1">
                           Kategori
                         </label>
-                        <input
-                          type="text"
-                          value={newProductForm.tag}
+                        <select
+                          value={newProductForm.tag || "Skincare"}
                           onChange={(e) =>
                             setNewProductForm({
                               ...newProductForm,
                               tag: e.target.value,
                             })
                           }
-                          placeholder="Skincare / Beauty / Fashion"
-                          className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500"
-                        />
+                          className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 cursor-pointer"
+                        >
+                          <option value="Skincare">✨ Skincare</option>
+                          <option value="Beauty & Makeup">💄 Beauty & Makeup</option>
+                          <option value="Fashion & Pakaian">👗 Fashion & Pakaian</option>
+                          <option value="Hijab & Muslim">🧕 Hijab & Muslim</option>
+                          <option value="Kesehatan & Herbal">🌿 Kesehatan & Herbal</option>
+                          <option value="Elektronik & Gadget">📱 Elektronik & Gadget</option>
+                          <option value="Makanan & Minuman">🍱 Makanan & Minuman</option>
+                          <option value="Ibu & Bayi">🍼 Ibu & Bayi</option>
+                          <option value="Perlengkapan Rumah">🏠 Perlengkapan Rumah</option>
+                          <option value="Aksesoris & Sepatu">👟 Aksesoris & Sepatu</option>
+                          <option value="General">📦 General / Lainnya</option>
+                        </select>
                       </div>
                     </div>
 
@@ -4851,17 +4927,46 @@ export default function Dashboard() {
                         <label className="block text-slate-300 font-semibold mb-1">
                           Kategori
                         </label>
-                        <input
-                          type="text"
-                          value={selectedProductForEdit.tag || ""}
+                        <select
+                          value={selectedProductForEdit.tag || "Skincare"}
                           onChange={(e) =>
                             setSelectedProductForEdit({
                               ...selectedProductForEdit,
                               tag: e.target.value,
                             })
                           }
-                          className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500"
-                        />
+                          className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 cursor-pointer"
+                        >
+                          <option value="Skincare">✨ Skincare</option>
+                          <option value="Beauty & Makeup">💄 Beauty & Makeup</option>
+                          <option value="Fashion & Pakaian">👗 Fashion & Pakaian</option>
+                          <option value="Hijab & Muslim">🧕 Hijab & Muslim</option>
+                          <option value="Kesehatan & Herbal">🌿 Kesehatan & Herbal</option>
+                          <option value="Elektronik & Gadget">📱 Elektronik & Gadget</option>
+                          <option value="Makanan & Minuman">🍱 Makanan & Minuman</option>
+                          <option value="Ibu & Bayi">🍼 Ibu & Bayi</option>
+                          <option value="Perlengkapan Rumah">🏠 Perlengkapan Rumah</option>
+                          <option value="Aksesoris & Sepatu">👟 Aksesoris & Sepatu</option>
+                          <option value="General">📦 General / Lainnya</option>
+                          {selectedProductForEdit.tag &&
+                            ![
+                              "Skincare",
+                              "Beauty & Makeup",
+                              "Fashion & Pakaian",
+                              "Hijab & Muslim",
+                              "Kesehatan & Herbal",
+                              "Elektronik & Gadget",
+                              "Makanan & Minuman",
+                              "Ibu & Bayi",
+                              "Perlengkapan Rumah",
+                              "Aksesoris & Sepatu",
+                              "General",
+                            ].includes(selectedProductForEdit.tag) && (
+                              <option value={selectedProductForEdit.tag}>
+                                🏷️ {selectedProductForEdit.tag}
+                              </option>
+                            )}
+                        </select>
                       </div>
                     </div>
 
@@ -5938,186 +6043,192 @@ export default function Dashboard() {
         {/* ============================================================ */}
         {isConnectingLive && (
           <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/85 backdrop-blur-xl p-4 animate-in fade-in duration-200">
-            <div className="relative w-full max-w-md rounded-3xl border border-indigo-500/30 bg-[#0a0f1d] p-5 sm:p-6 text-center shadow-2xl shadow-indigo-500/25 overflow-hidden">
+            <div className="relative w-full max-w-md max-h-[90vh] rounded-3xl border border-indigo-500/30 bg-[#0a0f1d] text-center shadow-2xl shadow-indigo-500/25 flex flex-col overflow-hidden">
               {/* Decorative radial glows */}
-              <div className="pointer-events-none absolute -top-20 left-1/2 -translate-x-1/2 w-64 h-64 bg-gradient-to-br from-blue-600/25 via-indigo-600/15 to-purple-600/25 blur-3xl rounded-full" />
-              <div className="pointer-events-none absolute -bottom-20 left-1/2 -translate-x-1/2 w-64 h-64 bg-gradient-to-tr from-emerald-600/15 to-blue-600/15 blur-3xl rounded-full" />
+              <div className="pointer-events-none absolute -top-20 left-1/2 -translate-x-1/2 w-64 h-64 bg-gradient-to-br from-blue-600/25 via-indigo-600/15 to-purple-600/25 blur-3xl rounded-full z-0" />
+              <div className="pointer-events-none absolute -bottom-20 left-1/2 -translate-x-1/2 w-64 h-64 bg-gradient-to-tr from-emerald-600/15 to-blue-600/15 blur-3xl rounded-full z-0" />
 
-              {/* Animated AI Pulse Icon */}
-              <div className="relative mx-auto mb-3 flex h-12 w-12 items-center justify-center">
-                <div className="absolute inset-0 rounded-full border border-indigo-500/30 animate-ping opacity-60" />
-                <div className="absolute inset-0 rounded-full border-2 border-t-indigo-500 border-r-purple-500 border-b-transparent border-l-transparent animate-spin" />
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 shadow-md shadow-indigo-500/40 animate-pulse">
-                  <span className="text-base">✨</span>
+              <div className="p-5 sm:p-6 overflow-y-auto flex-1 z-10 custom-scrollbar relative">
+                {/* Animated AI Pulse Icon */}
+                <div className="relative mx-auto mb-3 flex h-12 w-12 items-center justify-center">
+                  <div className="absolute inset-0 rounded-full border border-indigo-500/30 animate-ping opacity-60" />
+                  <div className="absolute inset-0 rounded-full border-2 border-t-indigo-500 border-r-purple-500 border-b-transparent border-l-transparent animate-spin" />
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 shadow-md shadow-indigo-500/40 animate-pulse">
+                    <span className="text-base">✨</span>
+                  </div>
                 </div>
-              </div>
 
-              {/* Header Title */}
-              <h3 className="text-base sm:text-lg font-extrabold text-white tracking-wide mb-0.5">
-                Menyiapkan Sesi Live AI
-              </h3>
-              <p className="text-[11px] text-slate-400 mb-3">
-                Host AI{" "}
-                <span className="text-indigo-300 font-semibold">
-                  {selectedAvatar.name}
-                </span>{" "}
-                di{" "}
-                <span className="text-indigo-300 font-semibold">
-                  {selectedPlatform}
-                </span>
-              </p>
+                {/* Header Title */}
+                <h3 className="text-base sm:text-lg font-extrabold text-white tracking-wide mb-0.5">
+                  Menyiapkan Sesi Live AI
+                </h3>
+                <p className="text-[11px] text-slate-400 mb-3">
+                  Host AI{" "}
+                  <span className="text-indigo-300 font-semibold">
+                    {selectedAvatar.name}
+                  </span>{" "}
+                  di{" "}
+                  <span className="text-indigo-300 font-semibold">
+                    {selectedPlatform}
+                  </span>
+                </p>
 
-              {/* Active Stage Badge */}
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-3 py-1 text-[11px] font-semibold text-indigo-300 mb-3.5">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
-                </span>
-                <span className="truncate max-w-[260px]">
-                  {connectingStageText}
-                </span>
-              </div>
-
-              {/* Stepper Progress Visualizer */}
-              <div className="space-y-1.5 rounded-xl bg-slate-900/90 border border-slate-800/80 p-3 text-left text-[11px] mb-3.5">
-                <div
-                  className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 0 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                >
-                  <span
-                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 0 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-indigo-600 text-white animate-pulse"}`}
-                  >
-                    {connectingStageIndex > 0 ? "✓" : "1"}
+                {/* Active Stage Badge */}
+                <div className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-3 py-1 text-[11px] font-semibold text-indigo-300 mb-3.5">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
                   </span>
-                  <span className="truncate">Alokasi Cloud GPU (RTX 4090)</span>
-                </div>
-                <div
-                  className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 1 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                >
-                  <span
-                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 1 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 1 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
-                  >
-                    {connectingStageIndex > 1 ? "✓" : "2"}
-                  </span>
-                  <span className="truncate">
-                    Neural Lipsync (MuseTalk & DWPose)
-                  </span>
-                </div>
-                <div
-                  className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 2 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                >
-                  <span
-                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 2 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 2 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
-                  >
-                    {connectingStageIndex > 2 ? "✓" : "3"}
-                  </span>
-                  <span className="truncate">
-                    Voice Persona & Skrip Selling
-                  </span>
-                </div>
-                <div
-                  className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 3 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                >
-                  <span
-                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 3 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 3 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
-                  >
-                    {connectingStageIndex > 3 ? "✓" : "4"}
-                  </span>
-                  <span className="truncate">
-                    Koneksi Stream RTMP Handshake
-                  </span>
-                </div>
-                <div
-                  className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 4 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
-                >
-                  <span
-                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${pipelineStatus?.ready ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex >= 4 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
-                  >
-                    {pipelineStatus?.ready ? "✓" : "5"}
-                  </span>
-                  <span className="truncate">
-                    Generate AI Video (
-                    {Math.min(pipelineStatus?.generationCount || 0, 2)}/2
-                    Selesai)
-                  </span>
-                </div>
-              </div>
-
-              {/* RTMP Ready & Action Area */}
-              {isWaitingForGoLive ? (
-                <div className="space-y-2.5">
-                  <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/15 transition text-left">
-                    <input
-                      type="checkbox"
-                      checked={hasConfirmedBroadcast}
-                      onChange={(e) =>
-                        setHasConfirmedBroadcast(e.target.checked)
-                      }
-                      className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-emerald-500 focus:ring-emerald-500 shrink-0 cursor-pointer"
-                    />
-                    <span className="text-white text-xs leading-snug">
-                      Saya sudah klik <strong>Mulai Siaran / Go Live</strong> di{" "}
-                      {selectedPlatform}
-                    </span>
-                  </label>
-
-                  {pipelineStatus?.ready ? (
-                    <button
-                      type="button"
-                      disabled={!hasConfirmedBroadcast}
-                      onClick={async () => {
-                        if (!currentLiveSessionId) return;
-                        try {
-                          const res = await fetch(
-                            "/api/live-stream/go-live-confirm",
-                            {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                sessionId: currentLiveSessionId,
-                              }),
-                            },
-                          );
-                          const json = await res.json();
-                          if (res.ok && json.success) {
-                            setIsConnectingLive(false);
-                            setIsWaitingForGoLive(false);
-                            setIsLiveActive(true);
-                            setIsLivePaused(false);
-                            setLiveSessionPhase("live");
-                            setLiveSeconds(0);
-                            showToast("🔥 AI Host aktif! Siaran live dimulai.");
-                          } else {
-                            showToast(`❌ Gagal konfirmasi: ${json.error}`);
-                          }
-                        } catch {
-                          showToast("❌ Error koneksi saat konfirmasi.");
-                        }
-                      }}
-                      className="w-full flex items-center justify-center py-2.5 rounded-xl font-bold text-sm text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 hover:shadow-emerald-500/25 active:scale-95"
-                    >
-                      {!hasConfirmedBroadcast
-                        ? "Centang konfirmasi di atas"
-                        : "GO! Mulai Live Control"}
-                    </button>
-                  ) : (
-                    <div className="w-full py-2.5 px-3 rounded-xl bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
-                      <span className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
-                      <span className="text-xs text-slate-300 font-medium truncate">
-                        {!pipelineStatus?.isBroadcasting
-                          ? "Menghubungkan ke RTMP Server..."
-                          : `Menunggu Render Video AI (${pipelineStatus?.generationCount || 0}/2)...`}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="w-full py-2.5 px-3 rounded-xl bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
-                  <span className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
-                  <span className="text-xs text-slate-300 font-medium truncate">
+                  <span className="truncate max-w-[260px]">
                     {connectingStageText}
                   </span>
                 </div>
-              )}
+
+                {/* Stepper Progress Visualizer */}
+                <div className="space-y-1.5 rounded-xl bg-slate-900/90 border border-slate-800/80 p-3 text-left text-[11px] mb-3.5">
+                  <div
+                    className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 0 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                  >
+                    <span
+                      className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 0 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-indigo-600 text-white animate-pulse"}`}
+                    >
+                      {connectingStageIndex > 0 ? "✓" : "1"}
+                    </span>
+                    <span className="truncate">
+                      Alokasi Cloud GPU (RTX 4090)
+                    </span>
+                  </div>
+                  <div
+                    className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 1 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                  >
+                    <span
+                      className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 1 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 1 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                    >
+                      {connectingStageIndex > 1 ? "✓" : "2"}
+                    </span>
+                    <span className="truncate">
+                      Neural Lipsync (MuseTalk & DWPose)
+                    </span>
+                  </div>
+                  <div
+                    className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 2 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                  >
+                    <span
+                      className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 2 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 2 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                    >
+                      {connectingStageIndex > 2 ? "✓" : "3"}
+                    </span>
+                    <span className="truncate">
+                      Voice Persona & Skrip Selling
+                    </span>
+                  </div>
+                  <div
+                    className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 3 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                  >
+                    <span
+                      className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${connectingStageIndex > 3 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex === 3 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                    >
+                      {connectingStageIndex > 3 ? "✓" : "4"}
+                    </span>
+                    <span className="truncate">
+                      Koneksi Stream RTMP Handshake
+                    </span>
+                  </div>
+                  <div
+                    className={`flex items-center gap-2 transition-colors ${connectingStageIndex >= 4 ? "text-indigo-200 font-semibold" : "text-slate-500"}`}
+                  >
+                    <span
+                      className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold shrink-0 ${pipelineStatus?.ready ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : connectingStageIndex >= 4 ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-800 text-slate-500"}`}
+                    >
+                      {pipelineStatus?.ready ? "✓" : "5"}
+                    </span>
+                    <span className="truncate">
+                      Generate AI Video (
+                      {Math.min(pipelineStatus?.generationCount || 0, 2)}/2
+                      Selesai)
+                    </span>
+                  </div>
+                </div>
+
+                {/* RTMP Ready & Action Area */}
+                {isWaitingForGoLive ? (
+                  <div className="space-y-2.5">
+                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/15 transition text-left">
+                      <input
+                        type="checkbox"
+                        checked={hasConfirmedBroadcast}
+                        onChange={(e) =>
+                          setHasConfirmedBroadcast(e.target.checked)
+                        }
+                        className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-emerald-500 focus:ring-emerald-500 shrink-0 cursor-pointer"
+                      />
+                      <span className="text-white text-xs leading-snug">
+                        Saya sudah klik <strong>Mulai Siaran / Go Live</strong>{" "}
+                        di {selectedPlatform}
+                      </span>
+                    </label>
+
+                    {pipelineStatus?.ready ? (
+                      <button
+                        type="button"
+                        disabled={!hasConfirmedBroadcast}
+                        onClick={async () => {
+                          if (!currentLiveSessionId) return;
+                          try {
+                            const res = await fetch(
+                              "/api/live-stream/go-live-confirm",
+                              {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  sessionId: currentLiveSessionId,
+                                }),
+                              },
+                            );
+                            const json = await res.json();
+                            if (res.ok && json.success) {
+                              setIsConnectingLive(false);
+                              setIsWaitingForGoLive(false);
+                              setIsLiveActive(true);
+                              setIsLivePaused(false);
+                              setLiveSessionPhase("live");
+                              setLiveSeconds(0);
+                              showToast(
+                                "🔥 AI Host aktif! Siaran live dimulai.",
+                              );
+                            } else {
+                              showToast(`❌ Gagal konfirmasi: ${json.error}`);
+                            }
+                          } catch {
+                            showToast("❌ Error koneksi saat konfirmasi.");
+                          }
+                        }}
+                        className="w-full flex items-center justify-center py-2.5 rounded-xl font-bold text-sm text-white shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 hover:shadow-emerald-500/25 active:scale-95"
+                      >
+                        {!hasConfirmedBroadcast
+                          ? "Centang konfirmasi di atas"
+                          : "GO! Mulai Live Control"}
+                      </button>
+                    ) : (
+                      <div className="w-full py-2.5 px-3 rounded-xl bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
+                        <span className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                        <span className="text-xs text-slate-300 font-medium truncate">
+                          {!pipelineStatus?.isBroadcasting
+                            ? "Menghubungkan ke RTMP Server..."
+                            : `Menunggu Render Video AI (${pipelineStatus?.generationCount || 0}/2)...`}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="w-full py-2.5 px-3 rounded-xl bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
+                    <span className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                    <span className="text-xs text-slate-300 font-medium truncate">
+                      {connectingStageText}
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}

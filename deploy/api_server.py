@@ -287,6 +287,17 @@ async def get_queue_status():
         jid for jid, info in jobs.items() if info.get("status") == "processing"
     ]
     is_broadcasting = broadcaster_process is not None and broadcaster_process.poll() is None
+    
+    rtmp_connected = False
+    if is_broadcasting:
+        status_file = os.path.join(output_dir, "rtmp_status.txt")
+        if os.path.exists(status_file):
+            try:
+                with open(status_file, "r") as f:
+                    rtmp_connected = (f.read().strip() == "connected")
+            except Exception:
+                pass
+
     return {
         "success": True,
         # Monotonic counter — tidak pernah berkurang saat file dihapus broadcaster.
@@ -297,6 +308,8 @@ async def get_queue_status():
         "ready_videos": video_files,
         "active_processing_count": len(active_processing),
         "broadcasting": is_broadcasting,
+        "rtmp_connected": rtmp_connected,
+        "warmed_up": getattr(worker, "_warmed_up", False),
     }
 
 class BroadcastRequest(BaseModel):
@@ -304,7 +317,7 @@ class BroadcastRequest(BaseModel):
     rtmpUrl: Optional[str] = None
     stream_key: Optional[str] = None
     streamKey: Optional[str] = None
-    idle_video: str = "/workspace/ai_live_worker/assets/3d/namira.mp4"
+    idle_video: str = "/workspace/ai_live_worker/assets/3d/namira_idle.mp4"
 
 class PlaybackRequest(BaseModel):
     action: str
@@ -400,7 +413,7 @@ async def stop_broadcast():
     # Bersihkan file video sisa dari sesi sebelumnya (kecuali idle video default)
     import glob
     for f in glob.glob(os.path.join(output_dir, "**", "*.mp4"), recursive=True):
-        if not f.endswith("idle.mp4") and not f.endswith("namira.mp4"):
+        if not f.endswith("idle.mp4") and not f.endswith("namira_idle.mp4"):
             try:
                 os.remove(f)
             except Exception:
