@@ -1,10 +1,13 @@
 import subprocess
 import os
+import sys
+import json
 import glob
 import time
 import urllib.request
 import math
 import re
+import traceback
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 class AIBroadcaster:
