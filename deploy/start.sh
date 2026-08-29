@@ -33,13 +33,11 @@ if [ ! -f "$WORKER_DIR/api_server.py" ]; then
 fi
 
 if [ -f "$WORKER_DIR/env/bin/python" ]; then
-if [ -f "$WORKER_DIR/env/bin/python" ] && "$WORKER_DIR/env/bin/python" -m pip --version >/dev/null 2>&1; then
     PYTHON_BIN="$WORKER_DIR/env/bin/python"
     export PATH="$WORKER_DIR/env/bin:$PATH"
     source "$WORKER_DIR/env/bin/activate" || true
 else
     PYTHON_BIN="python"
-    PYTHON_BIN="$(command -v python3 || command -v python)"
 fi
 
 export COQUI_TOS_AGREED=1
