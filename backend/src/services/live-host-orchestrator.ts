@@ -387,18 +387,6 @@ class LiveHostOrchestrator {
     let isRtmpConnected = false;
     let isWarmedUp = false;
 
-    if (state?.config.podId) {
-      try {
-        const queueStatus = await getRunPodQueueStatus(state.config.podId);
-        renderedCount = queueStatus.ready_videos_count || 0;
-        isBroadcasting = queueStatus.broadcasting ?? false;
-        isRtmpConnected = queueStatus.rtmp_connected ?? false;
-        isWarmedUp = queueStatus.warmed_up ?? false;
-      } catch {}
-    } else {
-      renderedCount = state?.videosQueued ?? 0;
-      isBroadcasting = true;
-      isRtmpConnected = true;
     const podId = state?.config.podId || process.env.RUNPOD_POD_ID || null;
 
     try {
@@ -416,8 +404,6 @@ class LiveHostOrchestrator {
       isWarmedUp = true;
     }
 
-    // Syarat Ready: RTMP terhubung DAN minimal 2 video pembuka selesai dirender
-    const isReady = renderedCount >= 2 && isRtmpConnected;
     // Syarat Ready: RTMP terhubung (atau broadcasting aktif) DAN minimal 2 video pembuka selesai dirender
     const isReady =
       (renderedCount >= 2 && (isRtmpConnected || isBroadcasting)) ||
@@ -427,15 +413,12 @@ class LiveHostOrchestrator {
     let stageText = "Mengalokasikan Cloud GPU NVIDIA RTX 4090...";
 
     if (state) {
-      if (!isWarmedUp) {
       if (!isWarmedUp && renderedCount === 0) {
         stageIndex = 1;
         stageText = "Memuat Neural Lipsync (MuseTalk)...";
-      } else if (state.videosQueued === 0) {
       } else if (state.videosQueued === 0 && renderedCount === 0) {
         stageIndex = 2;
         stageText = "Generate Voice Persona & Skrip Selling...";
-      } else if (!isRtmpConnected) {
       } else if (!isRtmpConnected && !isBroadcasting) {
         stageIndex = 3;
         stageText = "Koneksi Stream RTMP Handshake (Menunggu Server)...";
