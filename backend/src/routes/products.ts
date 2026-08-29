@@ -5,32 +5,30 @@ import { generateProductKnowledge } from "../services/groq-brain.js";
 
 export const PRODUCT_CATEGORIES = [
   "Skincare",
-  "Beauty",
-  "Fashion",
-  "Supplements",
-  "Food & Beverage",
-  "Electronics",
-  "Home & Living",
+  "Beauty & Makeup",
+  "Fashion & Pakaian",
+  "Hijab & Muslim",
+  "Kesehatan & Herbal",
+  "Elektronik & Gadget",
+  "Makanan & Minuman",
+  "Ibu & Bayi",
+  "Perlengkapan Rumah",
+  "Aksesoris & Sepatu",
   "General",
 ] as const;
 
 const productSchema = z.object({
   name: z.string().min(1, "Nama produk wajib diisi"),
-  description: z.string().optional(),
-  price: z.number().min(1, "Harga harus lebih dari 0"),
-  stock: z.number().min(0, "Stok tidak boleh negatif"),
-  sku: z.string().optional(),
-  category: z
-    .enum(PRODUCT_CATEGORIES, {
-      errorMap: () => ({
-        message: `Kategori harus salah satu dari: ${PRODUCT_CATEGORIES.join(", ")}`,
-      }),
-    })
-    .default("General"),
-  image: z.string().optional(),
-  link: z.string().optional(),
-  benefits: z.string().optional(),
-  usage: z.string().optional(),
+  image: z.string().min(1, "Foto / gambar produk wajib diisi"),
+  price: z.number().min(0, "Harga jual live wajib diisi dan valid"),
+  stock: z.number().min(0, "Stok tidak boleh negatif").optional().default(0),
+  category: z.string().min(1, "Kategori wajib diisi"),
+  sku: z.string().optional().default(""),
+  link: z.string().optional().default(""),
+  description: z.string().min(1, "Deskripsi lengkap produk wajib diisi"),
+  benefits: z.string().optional().default(""),
+  usage: z.string().optional().default(""),
+  bannerImage: z.string().optional().default(""),
   faq: z.string().optional(),
   targetAudience: z.string().optional(),
   copywriting: z.string().optional(),
@@ -40,7 +38,25 @@ const bulkProductSchema = z.object({
   products: z.array(productSchema).min(1, "Minimal 1 produk untuk bulk import"),
 });
 
-const updateProductSchema = productSchema.partial();
+const updateProductSchema = z.object({
+  name: z.string().min(1, "Nama produk wajib diisi").optional(),
+  image: z.string().min(1, "Foto produk wajib diisi").optional(),
+  price: z.number().min(0, "Harga jual live harus valid").optional(),
+  stock: z.number().min(0, "Stok tidak boleh negatif").optional(),
+  category: z.string().min(1, "Kategori wajib diisi").optional(),
+  sku: z.string().optional(),
+  link: z.string().optional(),
+  description: z
+    .string()
+    .min(1, "Deskripsi lengkap produk wajib diisi")
+    .optional(),
+  benefits: z.string().optional(),
+  usage: z.string().optional(),
+  bannerImage: z.string().optional(),
+  faq: z.string().optional(),
+  targetAudience: z.string().optional(),
+  copywriting: z.string().optional(),
+});
 
 export async function productsRoutes(server: FastifyInstance) {
   // GET all products
@@ -111,6 +127,7 @@ export async function productsRoutes(server: FastifyInstance) {
       sku,
       category,
       image,
+      bannerImage,
       link,
       benefits,
       usage,
@@ -124,25 +141,32 @@ export async function productsRoutes(server: FastifyInstance) {
         name,
         description,
         category,
+        price,
+        stock,
+        sku,
+        link,
+        benefits,
+        usage,
         image,
+        bannerImage,
       });
+
       const created = await prisma.product.create({
         data: {
           name,
-          description: knowledge.description,
+          description: knowledge.description || description,
           price,
-          stock,
+          stock: stock ?? 0,
           sku: sku || `SKU-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          category: category || "Skincare",
-          image:
-            image ||
-            "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
+          category: category || "General",
+          image: image,
+          bannerImage: bannerImage || "",
           link: link || "",
-          benefits: benefits || knowledge.benefits,
-          usage: usage || knowledge.usage,
-          faq: faq || knowledge.faq,
-          targetAudience: targetAudience || knowledge.targetAudience,
-          copywriting: copywriting || knowledge.copywriting,
+          benefits: knowledge.benefits || benefits || "",
+          usage: knowledge.usage || usage || "",
+          faq: knowledge.faq || faq || "",
+          targetAudience: knowledge.targetAudience || targetAudience || "",
+          copywriting: knowledge.copywriting || copywriting || "",
         },
       });
 
@@ -177,19 +201,19 @@ export async function productsRoutes(server: FastifyInstance) {
               name: p.name,
               description: p.description || "",
               price: p.price,
-              stock: p.stock ?? 50,
+              stock: p.stock ?? 0,
               sku:
                 p.sku ||
                 `SKU-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`,
               category: p.category || "General",
-              image:
-                p.image ||
-                "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
+              image: p.image,
+              bannerImage: p.bannerImage || "",
               link: p.link || "",
               benefits: p.benefits || "",
               usage: p.usage || "",
               faq: p.faq || "",
               targetAudience: p.targetAudience || "",
+              copywriting: p.copywriting || "",
             },
           }),
         ),

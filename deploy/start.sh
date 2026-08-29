@@ -33,11 +33,13 @@ if [ ! -f "$WORKER_DIR/api_server.py" ]; then
 fi
 
 if [ -f "$WORKER_DIR/env/bin/python" ]; then
+if [ -f "$WORKER_DIR/env/bin/python" ] && "$WORKER_DIR/env/bin/python" -m pip --version >/dev/null 2>&1; then
     PYTHON_BIN="$WORKER_DIR/env/bin/python"
     export PATH="$WORKER_DIR/env/bin:$PATH"
     source "$WORKER_DIR/env/bin/activate" || true
 else
     PYTHON_BIN="python"
+    PYTHON_BIN="$(command -v python3 || command -v python)"
 fi
 
 export COQUI_TOS_AGREED=1
@@ -57,8 +59,8 @@ PY
 
 for dep in fastapi uvicorn pydantic; do
 	if ! check_python_import "$dep"; then
-		echo "[ERROR] Python dependency missing: $dep"
-		exit 1
+		echo "[INFO] Dependency $dep belum terpasang. Menginstall otomatis..."
+		"$PYTHON_BIN" -m pip install --no-cache-dir "$dep" || pip install --no-cache-dir "$dep"
 	fi
 done
 

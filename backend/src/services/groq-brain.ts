@@ -184,7 +184,9 @@ Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.product
    - [IDLE] = Obrolan santai biasa.
    - [RAISE_HAND] = Saat menyapa, memanggil, atau melambaikan tangan.
    - [POINT_DOWN] = Saat menyuruh penonton melihat produk di keranjang kuning.
-   - [EXCITED] = Saat membicarakan diskon besar atau sangat antusias.`;
+   - [EXCITED] = Saat membicarakan diskon besar atau sangat antusias.
+   - [NOD] = Saat mengangguk setuju atau mengiyakan pertanyaan.
+   - [SMILE] = Saat tersenyum ramah atau berterima kasih.`;
 
   const userMsg = `Pertanyaan Penonton: "${userQuestion}"`;
 
@@ -226,6 +228,7 @@ Produk yang sedang kamu jual saat ini: ${productName} (Kategori: ${input.product
     `[EXCITED] Halo semuanya! Selamat datang di live streaming bareng ${avatarName}! Hari ini produk ${productName} lagi ada diskon khusus cuma ${productPrice}! Jangan sampai kehabisan ya, langsung tap keranjang kuning sekarang!`,
     `[POINT_DOWN] Buat kakak yang cari produk berkualitas, ${productName} ini solusinya! ${productBenefits ? productBenefits : "Kualitas terjamin dan original"}. Harganya hemat cuma ${productPrice}, stoknya tinggal ${productStock} pcs lagi nih kak!`,
     `[RAISE_HAND] Yang baru gabung jangan lupa tap-tap layarnya ya kak! Produk ${productName} lagi best seller banget hari ini. Yuk checkout sekarang sebelum promonya habis!`,
+    `[SMILE] Terima kasih buat kakak-kakak yang sudah join dan bantu tap-tap layar! Yuk buruan dicek keranjang kuningnya, lagi ada flash sale nih untuk produk ${productName}!`,
   ];
   const randomPitch =
     pitchTemplates[Math.floor(Math.random() * pitchTemplates.length)]!;
@@ -275,7 +278,7 @@ ATURAN WAJIB:
   1. "hook": Sapaan pembuka yang heboh & mengaitkan rasa penasaran penonton (1-2 kalimat).
   2. "showcase": Bedah manfaat utama, keunggulan, dan solusi produk (2-3 kalimat).
   3. "cta": Ajakan beli/checkout mendesak dengan menyebut harga promo ${price} dan sisa stok di keranjang kuning (1-2 kalimat).
-- WAJIB menyisipkan Action Tag di AWAL setiap teks bagian (hook, showcase, cta): [IDLE], [RAISE_HAND], [POINT_DOWN], atau [EXCITED].
+  - WAJIB menyisipkan Action Tag di AWAL setiap teks bagian (hook, showcase, cta): [IDLE], [RAISE_HAND], [POINT_DOWN], [EXCITED], [NOD], atau [SMILE].
 
 Kembalikan HANYA JSON valid:
 {
@@ -437,20 +440,57 @@ Format JSON: {"speech": "...", "action": "HOLD_PRODUCT"|"POINT_CART"|"LAUGH"|"NO
 
 export const generateLunaResponseGroq = generateLunaResponse;
 
-/**
- * Generates product knowledge base and copywriting from product info using Groq.
- */
-export async function generateProductKnowledge(input: {
+export interface GenerateProductKnowledgeInput {
   name: string;
-  description?: string;
+  description: string;
   category?: string;
+  price?: number | string;
+  stock?: number;
+  sku?: string;
+  link?: string;
+  benefits?: string;
+  usage?: string;
   image?: string;
-}): Promise<ProductKnowledge> {
-  const systemPrompt = `Kamu adalah pakar copywriting e-commerce.
-Buat knowledge base dan copywriting produk dalam format JSON valid:
-{"description": "...", "benefits": "...", "usage": "...", "faq": "...", "targetAudience": "...", "copywriting": "..."}`;
+  bannerImage?: string;
+}
 
-  const userPrompt = `Data Produk: Nama: ${input.name}, Kategori: ${input.category || "General"}, Deskripsi: ${input.description || "Tidak tersedia"}`;
+/**
+ * Generates rich product knowledge base and live sales copywriting from product info using LLM.
+ */
+export async function generateProductKnowledge(
+  input: GenerateProductKnowledgeInput,
+): Promise<ProductKnowledge> {
+  const priceDisplay = input.price
+    ? typeof input.price === "number"
+      ? `Rp${input.price.toLocaleString("id-ID")}`
+      : String(input.price)
+    : "Harga Spesial";
+
+  const systemPrompt = `Kamu adalah pakar copywriting e-commerce profesional & live streaming sales strategist.
+Tugasmu adalah menyusun RAG Knowledge Base dan naskah copywriting live sales yang memikat berdasarkan data produk yang diisi oleh penjual.
+
+Format Output WAJIB JSON murni:
+{
+  "description": "Deskripsi produk yang diperkaya, profesional, dan menjual",
+  "benefits": "Daftar manfaat & keunggulan utama produk yang memikat pembeli (mengutamakan data penjual jika ada)",
+  "usage": "Petunjuk & cara pemakaian yang jelas, ringkas, dan tepat sasaran",
+  "faq": "Tanya jawab penting seputar keaslian, keamanan (BPOM/Halal), expired/garansi, dan legalitas",
+  "targetAudience": "Target pembeli ideal yang membutuhkan produk ini",
+  "copywriting": "Naskah live sales pitch persuasif khas live streaming TikTok/Shopee untuk AI host mengajak checkout di keranjang kuning"
+}`;
+
+  const userPrompt = `DATA PRODUK LENGKAP:
+- Nama Produk: ${input.name}
+- Kategori: ${input.category || "General"}
+- Harga Jual Live: ${priceDisplay}
+- Sisa Stok: ${input.stock ?? 0} pcs
+- SKU / Kode Produk: ${input.sku || "-"}
+- Link Checkout: ${input.link || "-"}
+- Deskripsi Lengkap dari Penjual: ${input.description}
+- Keunggulan & Manfaat Utama dari Penjual: ${input.benefits || "Kualitas terbaik & original"}
+- Petunjuk & Cara Pemakaian dari Penjual: ${input.usage || "Gunakan secara teratur sesuai petunjuk"}
+
+Buat RAG Knowledge Base dan Live Copywriting sekarang dalam format JSON.`;
 
   try {
     const client = getGroqClient();
@@ -467,18 +507,31 @@ Buat knowledge base dan copywriting produk dalam format JSON valid:
         const raw = response.text || "";
         const parsed = cleanAndExtractJson(raw) as ProductKnowledge;
         if (parsed?.description && parsed?.copywriting) return parsed;
-      } catch {}
+      } catch (err: any) {
+        console.warn(
+          `[Groq-Brain] generateProductKnowledge error on ${model}:`,
+          err?.message || err,
+        );
+      }
     }
-  } catch {}
+  } catch (err: any) {
+    console.warn(
+      `[Groq-Brain] generateProductKnowledge client error:`,
+      err?.message || err,
+    );
+  }
 
+  // Dynamic Failsafe (strictly derived from user inputs, no generic mock data)
   return {
-    description:
-      input.description ||
-      `Produk ${input.name} berkualitas premium untuk kebutuhan Anda.`,
-    benefits: `Kualitas terbaik, tahan lama, dan terbukti bermanfaat.`,
-    usage: `Gunakan sesuai petunjuk kemasan secara rutin untuk hasil optimal.`,
-    faq: `Produk dijamin 100% original dan aman digunakan.`,
-    targetAudience: `Pria dan wanita yang menginginkan produk berkualitas dengan harga terbaik.`,
-    copywriting: `Jangan lewatkan kesempatan memiliki ${input.name} dengan harga spesial hanya di live streaming hari ini. Yuk checkout sekarang juga!`,
+    description: input.description,
+    benefits:
+      input.benefits ||
+      `Keunggulan utama ${input.name}: kualitas terbaik, produk 100% original, dan terbukti bermanfaat.`,
+    usage:
+      input.usage ||
+      `Gunakan ${input.name} secara rutin sesuai instruksi kemasan untuk mendapatkan hasil maksimal.`,
+    faq: `Q: Apakah produk ${input.name} ini original & bergaransi? A: Ya, 100% produk asli dan bergaransi resmi.`,
+    targetAudience: `Konsumen yang membutuhkan produk ${input.name} berkualitas dengan harga promo terbaik.`,
+    copywriting: `Halo kakak-kakak semuanya! Buat kalian yang lagi cari ${input.name}, produk ini lagi ada promo harga spesial cuma ${priceDisplay}! Kualitasnya terjamin dan stoknya terbatas. Yuk langsung klik keranjang kuning sekarang juga sebelum promonya berakhir!`,
   };
 }

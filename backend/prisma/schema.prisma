@@ -12,10 +12,11 @@ model Product {
   name           String
   description    String?
   price          Int
-  stock          Int
-  sku            String   @unique
+  stock          Int      @default(0)
+  sku            String?
   category       String?
   image          String?
+  bannerImage    String?
   link           String?
   benefits       String?
   usage          String?

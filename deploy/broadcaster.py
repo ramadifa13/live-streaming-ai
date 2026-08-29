@@ -2,20 +2,56 @@ import subprocess
 import os
 import glob
 import time
+import urllib.request
 
 class AIBroadcaster:
-    def __init__(self, rtmp_url, idle_video_path, output_folder):
+    def __init__(self, rtmp_url, idle_video_path, output_folder,
+                 product_name="", product_price="", product_image_url="", banner_image_url=""):
         self.rtmp_url = rtmp_url
         self.idle_video = idle_video_path
         self.output_folder = output_folder
+        self.product_name = product_name
+        self.product_price = product_price
+        self.product_image_url = product_image_url
+        self.banner_image_url = banner_image_url
         self.silence_threshold = 90
         self.last_new_video_time = time.time()
         self.master_process = None
+
+        self.local_product_img = None
+        self.local_banner_img = None
+        self._prepare_overlay_assets()
         
         print("[BROADCASTER] Menginisialisasi Koneksi ke Server RTMP...")
         self.master_process_start_time = 0
         self._ensure_master_process()
-        
+
+    def _prepare_overlay_assets(self):
+        tmp_dir = os.path.join(self.output_folder, "tmp_assets")
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        if self.product_image_url:
+            if self.product_image_url.startswith("http://") or self.product_image_url.startswith("https://"):
+                try:
+                    local_p = os.path.join(tmp_dir, "product_thumb.jpg")
+                    urllib.request.urlretrieve(self.product_image_url, local_p)
+                    self.local_product_img = local_p
+                except Exception as e:
+                    print(f"[BROADCASTER] Gagal download product image: {e}")
+            elif os.path.exists(self.product_image_url):
+                self.local_product_img = self.product_image_url
+
+        if self.banner_image_url:
+            if self.banner_image_url.startswith("http://") or self.banner_image_url.startswith("https://"):
+                try:
+                    local_b = os.path.join(tmp_dir, "banner_promo.jpg")
+                    urllib.request.urlretrieve(self.banner_image_url, local_b)
+                    self.local_banner_img = local_b
+                except Exception as e:
+                    print(f"[BROADCASTER] Gagal download banner image: {e}")
+            elif os.path.exists(self.banner_image_url):
+                self.local_banner_img = self.banner_image_url
+
     def _ensure_master_process(self):
         status_file = os.path.join(self.output_folder, "rtmp_status.txt")
         if self.master_process is None or self.master_process.poll() is not None:
@@ -36,11 +72,7 @@ class AIBroadcaster:
                     self.master_process.wait(timeout=2)
                 except Exception:
                     pass
-
             print("[BROADCASTER] Membuka Master FFmpeg RTMP Ingest Connection...")
-            # MASTER COMMAND OPTIMIZATION: 
-            # - Gunakan -use_wallclock_as_timestamps 1 agar timestamp selalu maju (tidak patah-patah saat ganti video)
-            # - Gunakan -c copy penuh (audio & video) agar sangat ringan di CPU (tidak ngelag)
             master_command = [
                 "ffmpeg",
                 "-y",
@@ -73,6 +105,107 @@ class AIBroadcaster:
                 print(f"[BROADCASTER ERROR] Gagal memulai master FFmpeg: {e}")
                 self.master_process = None
 
+    def _build_worker_command(self, video_path):
+        has_overlay = bool(self.local_banner_img or self.product_name or self.local_product_img or self.product_price)
+        if not has_overlay:
+            return [
+                "ffmpeg",
+                "-re",
+                "-i", video_path,
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-ar", "44100",
+                "-max_muxing_queue_size", "2048",
+                "-f", "mpegts",
+                "pipe:1"
+            ]
+
+        # Composite video overlay: Banner top-center & Floating White Card bottom-center
+        inputs = ["ffmpeg", "-re", "-i", video_path]
+        next_input_idx = 1
+
+        filter_stages = [
+            "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280[v0]"
+        ]
+        pad_idx = 0
+
+        # 1. Banner Image (Top Center)
+        if self.local_banner_img and os.path.exists(self.local_banner_img):
+            inputs.extend(["-loop", "1", "-i", self.local_banner_img])
+            b_pad = next_input_idx
+            next_input_idx += 1
+            filter_stages.append(f"[{b_pad}:v]scale=500:130:force_original_aspect_ratio=decrease[banner]")
+            filter_stages.append(f"[v{pad_idx}][banner]overlay=x=(720-w)/2:y=24[v{pad_idx+1}]")
+            pad_idx += 1
+
+        # 2. Bottom Floating White Card
+        card_w, card_h = 580, 128
+        card_x = (720 - card_w) // 2
+        card_y = 1280 - card_h - 35
+        thumb_size = 96
+        thumb_x = card_x + 16
+        thumb_y = card_y + 16
+        text_x = thumb_x + thumb_size + 18
+        name_y = card_y + 28
+        price_y = card_y + 68
+
+        filter_stages.extend([
+            f"[v{pad_idx}]drawbox=x={card_x+3}:y={card_y+5}:w={card_w}:h={card_h}:color=0x000000@0.28:t=fill[v{pad_idx+1}]",
+            f"[v{pad_idx+1}]drawbox=x={card_x}:y={card_y}:w={card_w}:h={card_h}:color=0xFFFFFF@0.97:t=fill[v{pad_idx+2}]",
+            f"[v{pad_idx+2}]drawbox=x={card_x}:y={card_y}:w={card_w}:h={card_h}:color=0xE2E8F0@1:t=fill[v{pad_idx+3}]",
+        ])
+        pad_idx += 3
+
+        # 3. Product Thumbnail
+        if self.local_product_img and os.path.exists(self.local_product_img):
+            inputs.extend(["-loop", "1", "-i", self.local_product_img])
+            p_pad = next_input_idx
+            next_input_idx += 1
+            filter_stages.append(f"[{p_pad}:v]scale={thumb_size}:{thumb_size}[thumb]")
+            filter_stages.append(f"[v{pad_idx}][thumb]overlay=x={thumb_x}:y={thumb_y}[v{pad_idx+1}]")
+            pad_idx += 1
+
+        # 4. Text: Name & Price
+        safe_name = self.product_name.replace(":", "\\:").replace("'", "\\'")[:26] if self.product_name else ""
+        safe_price = self.product_price.replace(":", "\\:").replace("'", "\\'") if self.product_price else ""
+        if safe_price and not safe_price.startswith("Rp") and safe_price.isdigit():
+            safe_price = f"Rp{int(safe_price):,}".replace(",", ".")
+
+        font_opt = ""
+        for possible_font in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "C\\\\:/Windows/Fonts/arialbd.ttf"
+        ]:
+            if os.path.exists(possible_font.replace("\\\\:", ":")):
+                font_opt = f":fontfile={possible_font}"
+                break
+
+        if safe_name:
+            filter_stages.append(f"[v{pad_idx}]drawtext=text='{safe_name}'{font_opt}:fontsize=24:fontcolor=0x0F172A:x={text_x}:y={name_y}[v{pad_idx+1}]")
+            pad_idx += 1
+
+        if safe_price:
+            filter_stages.append(f"[v{pad_idx}]drawtext=text='{safe_price}'{font_opt}:fontsize=28:fontcolor=0xE11D48:x={text_x}:y={price_y}[v{pad_idx+1}]")
+            pad_idx += 1
+
+        filter_chain = ";".join(filter_stages)
+        return inputs + [
+            "-filter_complex", filter_chain,
+            "-map", f"[v{pad_idx}]",
+            "-map", "0:a?",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-tune", "zerolatency",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-ar", "44100",
+            "-max_muxing_queue_size", "2048",
+            "-f", "mpegts",
+            "pipe:1"
+        ]
+
     def _stream_file_async(self, video_path):
         """Memutar file video secara non-blocking agar bisa diinterupsi oleh respon AI."""
         if not video_path or not os.path.exists(video_path):
@@ -84,18 +217,7 @@ class AIBroadcaster:
             print("[BROADCASTER ERROR] Master FFmpeg pipe tidak tersedia.")
             return None
         
-        worker_command = [
-            "ffmpeg",
-            "-re",
-            "-i", video_path,
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-ar", "44100",
-            "-max_muxing_queue_size", "2048",
-            "-f", "mpegts",
-            "pipe:1"
-        ]
+        worker_command = self._build_worker_command(video_path)
         try:
             worker_process = subprocess.Popen(
                 worker_command,
@@ -229,9 +351,19 @@ if __name__ == "__main__":
     )
     
     OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "/workspace/ai_live_worker/output")
+    PRODUCT_NAME = os.environ.get("PRODUCT_NAME", "")
+    PRODUCT_PRICE = os.environ.get("PRODUCT_PRICE", "")
+    PRODUCT_IMAGE_URL = os.environ.get("PRODUCT_IMAGE_URL", "")
+    BANNER_IMAGE_URL = os.environ.get("BANNER_IMAGE_URL", "")
     
     try:
-        broadcaster = AIBroadcaster(RTMP_URL, IDLE_VIDEO, OUTPUT_FOLDER)
+        broadcaster = AIBroadcaster(
+            RTMP_URL, IDLE_VIDEO, OUTPUT_FOLDER,
+            product_name=PRODUCT_NAME,
+            product_price=PRODUCT_PRICE,
+            product_image_url=PRODUCT_IMAGE_URL,
+            banner_image_url=BANNER_IMAGE_URL
+        )
         broadcaster.start_loop()
     except KeyboardInterrupt:
         print("\n[BROADCASTER] Siaran dimatikan.")

@@ -6,6 +6,7 @@ export interface Product {
   tag: string;
   sku?: string;
   image?: string;
+  bannerImage?: string;
   link?: string;
   description?: string;
   benefits?: string;
@@ -23,6 +24,7 @@ export interface BackendProduct {
   category?: string;
   sku?: string;
   image?: string;
+  bannerImage?: string;
   link?: string;
   description?: string;
   benefits?: string;
@@ -40,6 +42,7 @@ export interface CsvRawItem {
   description: string;
   link: string;
   image: string;
+  bannerImage?: string;
   benefits?: string;
   usage?: string;
   faq?: string;

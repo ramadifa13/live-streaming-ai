@@ -1,6 +1,7 @@
 /* eslint-disable react-hooks/immutability */
 /* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
@@ -55,25 +56,20 @@ export default function Dashboard() {
   const [showAddProductModal, setShowAddProductModal] = useState(false);
   const [showEditProductModal, setShowEditProductModal] = useState(false);
   const [showCsvModal, setShowCsvModal] = useState(false);
-  const [productModalTab, setProductModalTab] = useState<"BASIC" | "RAG">(
-    "BASIC",
-  );
-  const [editModalTab, setEditModalTab] = useState<"BASIC" | "RAG">("BASIC");
   const [selectedProductForEdit, setSelectedProductForEdit] =
     useState<Product | null>(null);
   const [newProductForm, setNewProductForm] = useState({
     name: "",
     price: "",
     stock: 0,
-    tag: "",
+    tag: "Skincare",
     sku: "",
     image: "",
+    bannerImage: "",
     link: "",
     description: "",
     benefits: "",
     usage: "",
-    faq: "",
-    targetAudience: "",
   });
   const [csvText, setCsvText] = useState("");
   const [selectedAvatar, setSelectedAvatar] = useState<Avatar>(avatars[0]);
@@ -112,28 +108,47 @@ export default function Dashboard() {
   );
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("ai_host_products");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed && Array.isArray(parsed) && parsed.length > 0) {
-          setProducts(parsed);
-          setActiveFeaturedProduct(parsed[0]);
-          return;
+    const fetchBackendProducts = async () => {
+      try {
+        const res = await fetch("/api/products");
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.data)) {
+            const mapped: Product[] = json.data.map((p: BackendProduct) => {
+              const numPrice =
+                typeof p.price === "number"
+                  ? p.price
+                  : parseInt(String(p.price).replace(/[^0-9]/g, "")) || 0;
+              return {
+                id: p.id,
+                name: p.name,
+                price: `Rp${numPrice.toLocaleString("id-ID")}`,
+                stock: p.stock ?? 0,
+                tag: p.category || "General",
+                sku: p.sku || "",
+                image: p.image || "",
+                bannerImage: p.bannerImage || "",
+                link: p.link || "",
+                description: p.description || "",
+                benefits: p.benefits || "",
+                usage: p.usage || "",
+                faq: p.faq || "",
+                targetAudience: p.targetAudience || "",
+                copywriting: p.copywriting || "",
+              };
+            });
+            setProducts(mapped);
+            if (mapped.length > 0) {
+              setActiveFeaturedProduct(mapped[0]);
+            }
+          }
         }
+      } catch (err) {
+        console.error("Failed to load products from database:", err);
       }
-    } catch (err) {
-      console.error("Failed to load products from local storage:", err);
-      setProducts([]);
-      setActiveFeaturedProduct({} as Product);
-    }
+    };
+    fetchBackendProducts();
   }, []);
-
-  useEffect(() => {
-    if (products.length > 0) {
-      localStorage.setItem("ai_host_products", JSON.stringify(products));
-    }
-  }, [products]);
   const [isAvatarSpeaking, setIsAvatarSpeaking] = useState(false);
   const [currentLiveVideoUrl, setCurrentLiveVideoUrl] = useState<string | null>(
     null,
@@ -844,37 +859,42 @@ export default function Dashboard() {
 
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (
-      !newProductForm.name ||
-      !newProductForm.price ||
-      !newProductForm.stock ||
-      !newProductForm.tag
-    ) {
-      showToast("❌ Nama, harga, stok, dan kategori wajib diisi.");
+    if (!newProductForm.image) {
+      showToast("❌ Foto / gambar produk wajib diisi.");
       return;
     }
-
+    if (!newProductForm.name.trim()) {
+      showToast("❌ Nama produk wajib diisi.");
+      return;
+    }
     const numPrice =
-      parseInt(String(newProductForm.price).replace(/[^0-9]/g, "")) || 99000;
-    let createdId = `prod_${Date.now()}`;
+      parseInt(String(newProductForm.price).replace(/[^0-9]/g, "")) || 0;
+    if (numPrice <= 0) {
+      showToast("❌ Harga jual live (Rp) wajib diisi dengan angka valid.");
+      return;
+    }
+    if (!newProductForm.tag) {
+      showToast("❌ Kategori produk wajib dipilih.");
+      return;
+    }
+    if (!newProductForm.description.trim()) {
+      showToast("❌ Deskripsi lengkap produk wajib diisi.");
+      return;
+    }
 
     const payload = {
       name: newProductForm.name.trim(),
       price: numPrice,
-      stock: Number(newProductForm.stock) || 50,
-      category: newProductForm.tag || "Skincare",
-      sku: newProductForm.sku || `SKU-${Date.now()}`,
-      image:
-        newProductForm.image ||
-        "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
-      link: newProductForm.link || "",
-      description: newProductForm.description || "",
-      benefits: newProductForm.benefits || "",
-      usage: newProductForm.usage || "",
-      faq: newProductForm.faq || "",
-      targetAudience: newProductForm.targetAudience || "",
+      stock: Number(newProductForm.stock) || 0,
+      category: newProductForm.tag || "General",
+      sku: newProductForm.sku ? newProductForm.sku.trim() : "",
+      image: newProductForm.image,
+      bannerImage: newProductForm.bannerImage || "",
+      link: newProductForm.link ? newProductForm.link.trim() : "",
+      description: newProductForm.description.trim(),
+      benefits: newProductForm.benefits ? newProductForm.benefits.trim() : "",
+      usage: newProductForm.usage ? newProductForm.usage.trim() : "",
     };
-    let savedProduct: BackendProduct;
 
     try {
       const response = await fetch("/api/products", {
@@ -886,126 +906,192 @@ export default function Dashboard() {
       if (!response.ok || !result.success) {
         throw new Error(result.error || "Gagal menyimpan produk");
       }
-      savedProduct = result.data as BackendProduct;
-      createdId = savedProduct.id;
-      Object.assign(payload, {
+      const savedProduct = result.data as BackendProduct;
+
+      const newProd: Product = {
+        id: savedProduct.id,
+        name: savedProduct.name,
+        price: `Rp${numPrice.toLocaleString("id-ID")}`,
+        stock: savedProduct.stock ?? payload.stock,
+        tag: savedProduct.category || payload.category,
+        sku: savedProduct.sku || payload.sku,
+        image: savedProduct.image || payload.image,
+        bannerImage: savedProduct.bannerImage || payload.bannerImage,
+        link: savedProduct.link || payload.link,
         description: savedProduct.description || payload.description,
         benefits: savedProduct.benefits || payload.benefits,
         usage: savedProduct.usage || payload.usage,
-        faq: savedProduct.faq || payload.faq,
-        targetAudience: savedProduct.targetAudience || payload.targetAudience,
+        faq: savedProduct.faq || "",
+        targetAudience: savedProduct.targetAudience || "",
+        copywriting: savedProduct.copywriting || "",
+      };
+
+      setProducts((prev) => [newProd, ...prev]);
+      setActiveFeaturedProduct(newProd);
+      setShowAddProductModal(false);
+      setNewProductForm({
+        name: "",
+        price: "",
+        stock: 0,
+        tag: "Skincare",
+        sku: "",
+        image: "",
+        bannerImage: "",
+        link: "",
+        description: "",
+        benefits: "",
+        usage: "",
       });
       showToast(
-        "✨ AI berhasil membuat knowledge produk dan copywriting host!",
+        "✨ Produk berhasil disimpan dan RAG Knowledge di-generate oleh AI!",
       );
     } catch (error) {
       showToast(
         error instanceof Error ? error.message : "Gagal menyimpan produk",
       );
-      return;
     }
-
-    const newProd: Product = {
-      id: createdId,
-      name: payload.name,
-      price: `Rp${numPrice.toLocaleString("id-ID")}`,
-      stock: payload.stock,
-      tag: payload.category,
-      sku: payload.sku,
-      image: payload.image,
-      link: payload.link,
-      description: payload.description,
-      benefits: payload.benefits,
-      usage: payload.usage,
-      faq: payload.faq,
-      targetAudience: payload.targetAudience,
-      copywriting: savedProduct.copywriting,
-    };
-
-    setProducts((prev) => [newProd, ...prev]);
-    setActiveFeaturedProduct(newProd);
-    setShowAddProductModal(false);
-    setNewProductForm({
-      name: "",
-      price: "",
-      stock: 50,
-      tag: "Skincare",
-      sku: "",
-      image: "",
-      link: "",
-      description: "",
-      benefits: "",
-      usage: "",
-      faq: "",
-      targetAudience: "",
-    });
-    showToast("✨ Produk & RAG Knowledge Base berhasil disimpan ke Database!");
   };
 
   const handleSaveEditProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProductForEdit) return;
+    if (!selectedProductForEdit || !selectedProductForEdit.id) return;
 
+    if (!selectedProductForEdit.image) {
+      showToast("❌ Foto / gambar produk wajib diisi.");
+      return;
+    }
+    if (!selectedProductForEdit.name?.trim()) {
+      showToast("❌ Nama produk wajib diisi.");
+      return;
+    }
     const numPrice =
       typeof selectedProductForEdit.price === "number"
         ? selectedProductForEdit.price
         : parseInt(
             String(selectedProductForEdit.price).replace(/[^0-9]/g, ""),
-          ) || 99000;
+          ) || 0;
+    if (numPrice <= 0) {
+      showToast("❌ Harga jual live (Rp) wajib diisi dengan angka valid.");
+      return;
+    }
+    if (!selectedProductForEdit.tag) {
+      showToast("❌ Kategori produk wajib dipilih.");
+      return;
+    }
+    if (!selectedProductForEdit.description?.trim()) {
+      showToast("❌ Deskripsi lengkap produk wajib diisi.");
+      return;
+    }
 
-    const formattedProduct: Product = {
-      ...selectedProductForEdit,
+    const payload = {
       name: selectedProductForEdit.name.trim(),
-      price: `Rp${numPrice.toLocaleString("id-ID")}`,
+      price: numPrice,
       stock: Number(selectedProductForEdit.stock) || 0,
-      tag: selectedProductForEdit.tag || "General",
-      image:
-        selectedProductForEdit.image ||
-        "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
+      category: selectedProductForEdit.tag || "General",
+      sku: selectedProductForEdit.sku || "",
+      image: selectedProductForEdit.image,
+      bannerImage: selectedProductForEdit.bannerImage || "",
       link: selectedProductForEdit.link || "",
-      description: selectedProductForEdit.description || "",
+      description: selectedProductForEdit.description.trim(),
       benefits: selectedProductForEdit.benefits || "",
       usage: selectedProductForEdit.usage || "",
-      faq: selectedProductForEdit.faq || "",
-      targetAudience: selectedProductForEdit.targetAudience || "",
     };
 
-    setProducts((prev) =>
-      prev.map((p) =>
-        p.id === selectedProductForEdit.id ? formattedProduct : p,
-      ),
-    );
-    if (activeFeaturedProduct.id === selectedProductForEdit.id) {
-      setActiveFeaturedProduct(formattedProduct);
+    try {
+      const response = await fetch(
+        `/api/products/${selectedProductForEdit.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Gagal memperbarui produk");
+      }
+
+      const formattedProduct: Product = {
+        ...selectedProductForEdit,
+        name: payload.name,
+        price: `Rp${numPrice.toLocaleString("id-ID")}`,
+        stock: payload.stock,
+        tag: payload.category,
+        sku: payload.sku,
+        image: payload.image,
+        bannerImage: payload.bannerImage,
+        link: payload.link,
+        description: payload.description,
+        benefits: payload.benefits,
+        usage: payload.usage,
+      };
+
+      setProducts((prev) =>
+        prev.map((p) =>
+          p.id === selectedProductForEdit.id ? formattedProduct : p,
+        ),
+      );
+      if (activeFeaturedProduct.id === selectedProductForEdit.id) {
+        setActiveFeaturedProduct(formattedProduct);
+      }
+      setShowEditProductModal(false);
+      showToast("✅ Produk berhasil diperbarui di database!");
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Gagal memperbarui produk",
+      );
     }
-    setShowEditProductModal(false);
-    showToast("✅ RAG Knowledge Base produk berhasil diperbarui!");
   };
 
   const handleDeleteProduct = async (id?: string) => {
     if (!id) return;
     if (
       confirm(
-        "Apakah Anda yakin ingin menghapus produk ini secara permanen dari RAG Knowledge Base & Database?",
+        "Apakah Anda yakin ingin menghapus produk ini secara permanen dari Database & RAG Knowledge Base?",
       )
     ) {
-      setProducts((prev) => {
-        const next = prev.filter((p) => p.id !== id);
-        if (activeFeaturedProduct.id === id && next.length > 0) {
-          setActiveFeaturedProduct(next[0]);
+      try {
+        const response = await fetch(`/api/products/${id}`, {
+          method: "DELETE",
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          throw new Error(result.error || "Gagal menghapus produk");
         }
-        return next;
-      });
-      showToast("Produk telah dihapus dari database");
-      // Database delete call removed
+        setProducts((prev) => {
+          const next = prev.filter((p) => p.id !== id);
+          if (activeFeaturedProduct.id === id && next.length > 0) {
+            setActiveFeaturedProduct(next[0]);
+          } else if (next.length === 0) {
+            setActiveFeaturedProduct({} as Product);
+          }
+          return next;
+        });
+        showToast("🗑️ Produk telah dihapus dari database!");
+      } catch (error) {
+        showToast(
+          error instanceof Error ? error.message : "Gagal menghapus produk",
+        );
+      }
     }
   };
 
   // Handle CSV Import with Bulk API
   const handleImportCsv = async () => {
     if (!csvText.trim()) return;
-    const lines = csvText.trim().split("n");
-    const rawItems: CsvRawItem[] = [];
+    const lines = csvText.trim().split(/\r?\n/);
+    const rawItems: Array<{
+      name: string;
+      price: number;
+      stock: number;
+      category: string;
+      description: string;
+      link: string;
+      image: string;
+      bannerImage?: string;
+      benefits?: string;
+      usage?: string;
+    }> = [];
 
     for (let idx = 0; idx < lines.length; idx++) {
       const line = lines[idx].trim();
@@ -1017,10 +1103,10 @@ export default function Dashboard() {
         .map((p) => p.trim().replace(/^["']|["']$/g, ""));
       if (parts.length >= 2) {
         const name = parts[0];
-        const priceNum = parseInt(parts[1].replace(/[^0-9]/g, "")) || 99000;
-        const stock = parseInt(parts[2]) || 50;
-        const category = parts[3] || "Skincare";
-        const description = parts[4] || "";
+        const priceNum = parseInt(parts[1].replace(/[^0-9]/g, "")) || 0;
+        const stock = parseInt(parts[2]) || 0;
+        const category = parts[3] || "General";
+        const description = parts[4] || `Produk ${name}`;
         const link = parts[5] || "";
 
         rawItems.push({
@@ -1032,9 +1118,9 @@ export default function Dashboard() {
           link,
           image:
             "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
-          benefits: "Kualitas premium dan terbukti aman",
-          usage: "Gunakan secara teratur sesuai petunjuk",
-          faq: "Original BPOM resmi & garansi uang kembali",
+          bannerImage: "",
+          benefits: "",
+          usage: "",
         });
       }
     }
@@ -1044,32 +1130,52 @@ export default function Dashboard() {
       return;
     }
 
-    const imported = rawItems.map(
-      (p: CsvRawItem) =>
-        ({
-          id: `prod_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-          name: p.name || "",
+    try {
+      const response = await fetch("/api/products/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ products: rawItems }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Gagal mengimpor produk");
+      }
+
+      const imported: Product[] = (result.data as BackendProduct[]).map(
+        (p) => ({
+          id: p.id,
+          name: p.name,
           price:
             typeof p.price === "number"
               ? `Rp${p.price.toLocaleString("id-ID")}`
               : `Rp${p.price || 0}`,
-          stock: Number(p.stock) || 0,
+          stock: p.stock ?? 0,
           tag: p.category || "General",
+          sku: p.sku || "",
           image: p.image || "",
+          bannerImage: p.bannerImage || "",
           link: p.link || "",
-          description: p.description,
-          benefits: p.benefits,
-          usage: p.usage,
-          faq: p.faq,
-        }) as Product,
-    );
-    setProducts((prev) => [...imported, ...prev]);
-    if (imported.length > 0) setActiveFeaturedProduct(imported[0] as any);
-    setShowCsvModal(false);
-    setCsvText("");
-    showToast(
-      `✅ ${imported.length} produk berhasil diimpor ke RAG Knowledge Base!`,
-    );
+          description: p.description || "",
+          benefits: p.benefits || "",
+          usage: p.usage || "",
+          faq: p.faq || "",
+          targetAudience: p.targetAudience || "",
+          copywriting: p.copywriting || "",
+        }),
+      );
+
+      setProducts((prev) => [...imported, ...prev]);
+      if (imported.length > 0) setActiveFeaturedProduct(imported[0]);
+      setShowCsvModal(false);
+      setCsvText("");
+      showToast(
+        `✅ ${imported.length} produk berhasil diimpor & disimpan ke Database!`,
+      );
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Gagal mengimpor produk CSV",
+      );
+    }
   };
 
   // Handle AI Script Generation for Video Ads with Tier & Duration Sync
@@ -1345,7 +1451,6 @@ export default function Dashboard() {
                     </button>
                     <button
                       onClick={() => {
-                        setProductModalTab("BASIC");
                         setShowAddProductModal(true);
                       }}
                       className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white hover:brightness-110 transition active:scale-95 shadow-md shadow-blue-600/30"
@@ -1432,13 +1537,6 @@ export default function Dashboard() {
                         const isSelected =
                           activeFeaturedProduct.id === p.id ||
                           activeFeaturedProduct.name === p.name;
-                        const hasRag = Boolean(
-                          p.benefits ||
-                          p.usage ||
-                          p.faq ||
-                          (p.description && p.description.length > 20),
-                        );
-                        const stockNumber = Number(p.stock) || 0;
 
                         return (
                           <div
@@ -1449,15 +1547,15 @@ export default function Dashboard() {
                                 `🎯 Produk live dialihkan ke: ${p.name}`,
                               );
                             }}
-                            className={`group relative rounded-2xl border p-3 cursor-pointer transition-all duration-200 ${
+                            className={`group relative rounded-xl border px-3 py-2.5 cursor-pointer transition-all duration-200 ${
                               isSelected
-                                ? "border-blue-500/80 bg-gradient-to-r from-blue-950/50 via-[#0d172e] to-[#0a101f] shadow-lg shadow-blue-950/40 ring-1 ring-blue-500/40"
-                                : "border-[#1e293b]/90 bg-[#0e1628]/80 hover:border-slate-600 hover:bg-[#131d35] shadow-sm"
+                                ? "border-blue-500/80 bg-gradient-to-r from-blue-950/40 via-[#0d172e] to-[#0a101f] shadow-md shadow-blue-950/30 ring-1 ring-blue-500/40"
+                                : "border-[#1e293b]/80 bg-[#0e1628]/70 hover:border-slate-600 hover:bg-[#131d35] shadow-xs"
                             }`}
                           >
-                            <div className="flex items-center gap-3.5">
-                              {/* Product Thumbnail */}
-                              <div className="relative h-14 w-14 rounded-xl overflow-hidden shrink-0 bg-[#162038] border border-white/10 shadow-inner">
+                            <div className="flex items-center gap-3">
+                              {/* 1. Gambar Produk */}
+                              <div className="relative h-11 w-11 rounded-lg overflow-hidden shrink-0 bg-[#162038] border border-white/10 shadow-inner">
                                 {p.image?.startsWith("http") ||
                                 p.image?.startsWith("/") ||
                                 p.image?.startsWith("data:") ? (
@@ -1468,85 +1566,55 @@ export default function Dashboard() {
                                   />
                                 ) : (
                                   <div
-                                    className={`h-full w-full flex items-center justify-center text-lg ${p.image || "bg-gradient-to-br from-slate-800 to-slate-900"}`}
+                                    className={`h-full w-full flex items-center justify-center text-base ${p.image || "bg-gradient-to-br from-slate-800 to-slate-900"}`}
                                   >
                                     🛍️
                                   </div>
                                 )}
                                 {isSelected && (
-                                  <div className="absolute inset-0 bg-blue-500/15 ring-2 ring-inset ring-blue-500/50 rounded-xl flex items-start justify-end p-1">
-                                    <span className="flex h-2.5 w-2.5 rounded-full bg-blue-400 shadow-sm shadow-blue-400/80 animate-pulse" />
+                                  <div className="absolute inset-0 bg-blue-500/20 ring-1.5 ring-inset ring-blue-500 rounded-lg flex items-start justify-end p-0.5">
+                                    <span className="flex h-2 w-2 rounded-full bg-blue-400 shadow-xs shadow-blue-400 animate-pulse" />
                                   </div>
                                 )}
                               </div>
 
-                              {/* Details Column */}
+                              {/* 2. Nama Produk & 3. Kategori + 4. Harga */}
                               <div className="flex-1 min-w-0">
-                                {/* Row 1: Name & Price */}
-                                <div className="flex items-center justify-between gap-2">
-                                  <h4
-                                    className={`text-[13px] font-bold truncate leading-snug ${
-                                      isSelected
-                                        ? "text-blue-200"
-                                        : "text-slate-100 group-hover:text-white"
-                                    }`}
-                                  >
-                                    {p.name}
-                                  </h4>
-                                  <span className="text-xs sm:text-[13px] font-black text-emerald-400 shrink-0 font-mono tracking-tight">
+                                {/* 2. Nama Produk */}
+                                <h4
+                                  className={`text-xs font-semibold truncate leading-tight transition-colors ${
+                                    isSelected
+                                      ? "text-blue-200 font-bold"
+                                      : "text-slate-200 group-hover:text-white"
+                                  }`}
+                                >
+                                  {p.name}
+                                </h4>
+
+                                {/* 3. Kategori & 4. Harga */}
+                                <div className="flex items-center justify-between gap-2 mt-1">
+                                  <span className="text-[10px] font-medium text-slate-400 bg-[#141e33] px-2 py-0.5 rounded-md border border-[#22314e] truncate max-w-[130px]">
+                                    {p.tag || "General"}
+                                  </span>
+                                  <span className="text-xs font-bold text-emerald-400 font-mono tracking-tight shrink-0">
                                     {typeof p.price === "number"
                                       ? `Rp${p.price.toLocaleString("id-ID")}`
                                       : p.price}
                                   </span>
                                 </div>
-
-                                {/* Row 2: Category, Stock, RAG Badges */}
-                                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                                  <span className="text-[9.5px] font-medium text-slate-300 bg-slate-800/90 px-2 py-0.5 rounded-full border border-slate-700/60">
-                                    {p.tag || "General"}
-                                  </span>
-
-                                  {stockNumber > 20 ? (
-                                    <span className="text-[9.5px] font-semibold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                                      ● {stockNumber} pcs
-                                    </span>
-                                  ) : stockNumber > 0 ? (
-                                    <span className="text-[9.5px] font-semibold text-amber-300 bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-500/20">
-                                      ⚠️ {stockNumber} pcs
-                                    </span>
-                                  ) : (
-                                    <span className="text-[9.5px] font-semibold text-rose-400 bg-rose-950/40 px-2 py-0.5 rounded-full border border-rose-500/20">
-                                      ✕ Habis
-                                    </span>
-                                  )}
-
-                                  {hasRag ? (
-                                    <span className="text-[9px] font-semibold text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/30 flex items-center gap-1">
-                                      <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-pulse" />
-                                      🧠 RAG Ready
-                                    </span>
-                                  ) : null}
-
-                                  {isSelected && (
-                                    <span className="text-[9px] font-bold text-blue-300 bg-blue-500/15 px-2 py-0.5 rounded-full border border-blue-500/30">
-                                      🎯 Live Utama
-                                    </span>
-                                  )}
-                                </div>
                               </div>
 
                               {/* Action Buttons */}
-                              <div className="flex items-center gap-1 shrink-0 pl-1">
+                              <div className="flex items-center gap-0.5 shrink-0 pl-1">
                                 <button
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setSelectedProductForEdit(p);
-                                    setEditModalTab("BASIC");
                                     setShowEditProductModal(true);
                                   }}
-                                  className="p-1.5 text-slate-400 hover:text-blue-300 hover:bg-blue-500/15 rounded-lg border border-transparent hover:border-blue-500/20 transition active:scale-90"
-                                  title="Edit Produk & RAG Knowledge"
+                                  className="p-1.5 text-slate-400 hover:text-blue-300 hover:bg-blue-500/15 rounded-lg transition active:scale-90"
+                                  title="Edit Produk"
                                 >
                                   <svg
                                     width="13"
@@ -1563,7 +1631,7 @@ export default function Dashboard() {
                                     e.stopPropagation();
                                     handleDeleteProduct(p.id);
                                   }}
-                                  className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/15 rounded-lg border border-transparent hover:border-rose-500/20 transition active:scale-90"
+                                  className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/15 rounded-lg transition active:scale-90"
                                   title="Hapus Produk"
                                 >
                                   <svg
@@ -2482,7 +2550,7 @@ export default function Dashboard() {
 
                   {/* 2. Kolom Tengah: 9:16 Video Player Preview */}
                   <div className="md:col-span-4 flex justify-center">
-                    <div className="relative aspect-[9/16] w-full max-w-[210px] h-full min-h-[340px] overflow-hidden rounded-2xl border-2 border-[#232c42] bg-[#0c0919] shadow-2xl">
+                    <div className="relative aspect-[9/16] w-full max-w-[235px] h-full min-h-[350px] overflow-hidden rounded-2xl border-2 border-[#232c42] bg-[#0c0919] shadow-2xl">
                       <RealtimeLivePortraitView
                         avatarName={selectedAvatar.name}
                         avatarImage={selectedAvatar.image}
@@ -2494,91 +2562,49 @@ export default function Dashboard() {
                         className="w-full h-full object-cover"
                       />
 
-                      {/* Top Header Badge Overlay */}
-                      <div className="absolute top-2.5 left-2 right-2 z-20 flex items-center justify-between gap-1 pointer-events-none">
-                        {/* Live / Preview Tag */}
-                        <div className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-black/80 px-2.5 py-1 text-[9px] font-bold text-white backdrop-blur-md border border-white/10 shadow-lg">
-                          <span
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              isLiveActive && !isLivePaused
-                                ? "bg-red-500 animate-ping"
-                                : "bg-cyan-400 animate-pulse"
-                            }`}
-                          />
-                          <span
-                            className={`font-mono tracking-wider ${
-                              isLiveActive ? "text-red-300" : "text-cyan-300"
-                            }`}
-                          >
-                            {isLiveActive
-                              ? isLivePaused
-                                ? "PAUSED"
-                                : "LIVE"
-                              : "PREVIEW"}
-                          </span>
+                      {/* 1. Paling Atas Tengah: Gambar Banner Promosi (Lebar Pas & Kompak) */}
+                      {activeFeaturedProduct?.bannerImage && (
+                        <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[88%] max-w-42 flex justify-center">
+                          <div className="rounded-xl overflow-hidden shadow-2xl border border-white/25 bg-black/60 backdrop-blur-xs p-0.5 w-full">
+                            <img
+                              src={activeFeaturedProduct.bannerImage}
+                              alt="Banner Promosi"
+                              className="w-full h-auto max-h-14 object-cover rounded-lg shadow-sm"
+                            />
+                          </div>
                         </div>
+                      )}
 
-                        {/* Avatar Worker Status */}
-                        <div
-                          className={`pointer-events-auto flex items-center gap-1.5 rounded-full px-2 py-1 text-[9px] font-semibold backdrop-blur-md border`}
-                        >
-                          <span className="truncate max-w-[70px]">
-                            {selectedAvatar.name}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Bottom Product Card Overlay */}
+                      {/* 3. Bottom Center: Floating Card Background Putih (Kompak & Elegan) */}
                       {activeFeaturedProduct?.name &&
                         activeFeaturedProduct.name !== "Memuat Produk..." && (
-                          <div
-                            className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none p-2.5 pt-6"
-                            style={{
-                              background:
-                                "linear-gradient(to top, rgba(5,3,15,0.95) 0%, rgba(5,3,15,0.75) 65%, transparent 100%)",
-                            }}
-                          >
-                            {/* Platform Pill & Stock */}
-                            <div className="flex items-center justify-between mb-1.5">
-                              <span
-                                className={`text-[8.5px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${
-                                  selectedPlatform === "TikTok LIVE"
-                                    ? "bg-yellow-400/20 text-yellow-300 border-yellow-400/40"
-                                    : selectedPlatform === "Shopee Live"
-                                      ? "bg-orange-500/20 text-orange-300 border-orange-400/40"
-                                      : "bg-blue-500/20 text-blue-300 border-blue-400/40"
-                                }`}
-                              >
-                                {selectedPlatform === "TikTok LIVE"
-                                  ? "🛒 Keranjang"
-                                  : selectedPlatform === "Shopee Live"
-                                    ? "🏷️ Flash Sale"
-                                    : "🛒 Toko Live"}
-                              </span>
-                              <span className="text-[9px] font-mono text-slate-300 bg-black/50 px-1.5 py-0.2 rounded border border-white/10">
-                                Sisa: {activeFeaturedProduct.stock || 0} pcs
-                              </span>
-                            </div>
-
-                            {/* Product Info Row */}
-                            <div className="flex items-center gap-2 rounded-xl bg-black/60 p-1.5 border border-white/10 backdrop-blur-md">
+                          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none w-[88%] max-w-[190px] flex justify-center">
+                            <div className="w-full rounded-xl bg-white p-2 shadow-2xl border border-slate-200/90 flex items-center gap-2 text-slate-900 backdrop-blur-md">
+                              {/* 1. Gambar Produk */}
                               <img
                                 src={
                                   activeFeaturedProduct.image?.startsWith(
                                     "http",
                                   ) ||
-                                  activeFeaturedProduct.image?.startsWith("/")
+                                  activeFeaturedProduct.image?.startsWith(
+                                    "/",
+                                  ) ||
+                                  activeFeaturedProduct.image?.startsWith(
+                                    "data:",
+                                  )
                                     ? activeFeaturedProduct.image
                                     : "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80"
                                 }
                                 alt={activeFeaturedProduct.name}
-                                className="h-9 w-9 shrink-0 rounded-lg object-cover border border-white/20"
+                                className="h-10 w-10 shrink-0 rounded-lg object-cover border border-slate-200 shadow-xs"
                               />
+
+                              {/* 2. Nama & 3. Harga Produk */}
                               <div className="flex-1 min-w-0">
-                                <p className="text-[10px] font-bold text-white truncate leading-tight">
+                                <p className="text-[10.5px] font-bold text-slate-900 truncate leading-tight">
                                   {activeFeaturedProduct.name}
                                 </p>
-                                <p className="text-[10.5px] font-black text-emerald-400 mt-0.5 leading-none">
+                                <p className="text-[11px] font-black text-rose-600 font-mono mt-0.5 leading-none">
                                   {typeof activeFeaturedProduct.price ===
                                   "number"
                                     ? `Rp${activeFeaturedProduct.price.toLocaleString("id-ID")}`
@@ -3274,6 +3300,8 @@ export default function Dashboard() {
                                   activeFeaturedProduct.price,
                                 ).replace(/[^0-9]/g, ""),
                                 productImageUrl: activeFeaturedProduct.image,
+                                bannerImageUrl:
+                                  activeFeaturedProduct.bannerImage,
                                 platform: selectedPlatform,
                                 stockCount: activeFeaturedProduct.stock,
                                 ctaLabel:
@@ -3401,9 +3429,8 @@ export default function Dashboard() {
                       Pastikan preview kamera menampilkan video idle Avatar.
                     </li>
                     <li>
-                      Klik tombol{" "}
-                      <strong>Siarkan Langsung / Go Live</strong> di dalam
-                      aplikasi tersebut.
+                      Klik tombol <strong>Siarkan Langsung / Go Live</strong> di
+                      dalam aplikasi tersebut.
                     </li>
                     <li>
                       Setelah siaran berjalan, tekan tombol konfirmasi di bawah
@@ -4313,441 +4340,452 @@ export default function Dashboard() {
 
         {/* --- MODALS --- */}
 
-        {/* --- MODALS --- */}
-
-        {/* Modal: Tambah Produk (2-Tab: Basic Info + RAG Knowledge Base) */}
+        {/* Modal: Tambah Produk */}
         {showAddProductModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm animate-fadeIn">
-            <div className="relative w-full max-w-2xl rounded-2xl border border-blue-500/40 bg-[#0c1221] p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 sm:p-4 backdrop-blur-md animate-fadeIn">
+            <div className="relative w-full max-w-2xl rounded-2xl border border-[#22314e] bg-[#0c1221] p-5 sm:p-6 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
+              {/* Close Button */}
               <button
                 onClick={() => setShowAddProductModal(false)}
-                className="absolute right-4 top-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition"
+                className="absolute right-4 top-4 text-slate-400 hover:text-white p-1.5 rounded-xl hover:bg-white/10 transition active:scale-95"
               >
-                ✕
+                <svg
+                  width="15"
+                  height="15"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2.5"
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
               </button>
-              <div className="flex items-center justify-between mb-4 border-b border-[#232c42] pb-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl">🛍️</span>
-                  <div>
-                    <h3 className="text-lg font-bold text-white">
-                      Tambah Produk Baru
-                    </h3>
-                    <p className="text-[11px] text-slate-400">
-                      Data otomatis diolah ke RAG Knowledge Base Host Live
-                    </p>
-                  </div>
+
+              {/* Modal Header */}
+              <div className="flex items-center gap-3 mb-5 border-b border-[#1e293b] pb-3.5">
+                <div className="h-10 w-10 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-xl shrink-0">
+                  🛍️
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
+                    Tambah Produk Baru
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Data produk otomatis diolah oleh LLM menjadi RAG Knowledge
+                    Base &amp; naskah copywriting live streaming
+                  </p>
                 </div>
               </div>
 
-              {/* Modal Tabs */}
-              <div className="flex border-b border-[#232c42] mb-4 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setProductModalTab("BASIC")}
-                  className={`pb-2 text-xs font-bold transition border-b-2 flex items-center gap-1.5 ${
-                    productModalTab === "BASIC"
-                      ? "border-blue-500 text-blue-400"
-                      : "border-transparent text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  <span>📦 1. Informasi Dasar Produk</span>
-                </button>
-                <button
-                  type="button"
-                  disabled
-                  className={`pb-2 text-xs font-bold transition border-b-2 flex items-center gap-1.5 ${"border-transparent text-emerald-300 cursor-default"}`}
-                >
-                  <span>🧠 RAG Knowledge Base (AI otomatis saat simpan)</span>
-                  <span className="rounded bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 text-[9px] border border-emerald-500/30">
-                    Penting
-                  </span>
-                </button>
-              </div>
-
-              <form onSubmit={handleAddProduct} className="space-y-4 text-xs">
-                {productModalTab === "BASIC" ? (
-                  <>
-                    {/* Image Upload & Preview Section */}
-                    <div className="rounded-xl border border-[#232c42] bg-[#111827] p-3.5">
-                      <label className="block text-slate-300 font-semibold mb-2">
-                        Foto / Gambar Produk
-                      </label>
-                      <div className="flex items-center gap-4">
-                        <div className="h-16 w-16 shrink-0 rounded-xl overflow-hidden border-2 border-blue-500/50 bg-[#1a233a] shadow-inner flex items-center justify-center">
-                          {newProductForm.image ? (
-                            <img
-                              src={newProductForm.image}
-                              alt="Preview"
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <span className="text-2xl">📸</span>
-                          )}
-                        </div>
-                        <div className="flex-1 space-y-2">
-                          <label className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-blue-500/60 bg-blue-500/10 px-3 py-2 cursor-pointer hover:bg-blue-500/20 transition">
-                            <span className="text-xs text-blue-300 font-bold">
-                              📁 Upload Foto dari Komputer / HP
-                            </span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => {
-                                if (e.target.files && e.target.files[0]) {
-                                  const file = e.target.files[0];
-                                  const reader = new FileReader();
-                                  reader.onload = (uploadEvent) => {
-                                    if (uploadEvent.target?.result) {
-                                      setNewProductForm({
-                                        ...newProductForm,
-                                        image: String(
-                                          uploadEvent.target.result,
-                                        ),
-                                      });
-                                      showToast(
-                                        `Foto ${file.name} berhasil diunggah!`,
-                                      );
-                                    }
-                                  };
-                                  reader.readAsDataURL(file);
-                                }
-                              }}
-                            />
-                          </label>
-                          <input
-                            type="text"
-                            value={newProductForm.image}
-                            onChange={(e) =>
-                              setNewProductForm({
-                                ...newProductForm,
-                                image: e.target.value,
-                              })
-                            }
-                            placeholder="Atau tempel URL gambar (https://...)"
-                            className="w-full rounded bg-[#0b101e] border border-[#232c42] px-2.5 py-1.5 text-[11px] text-slate-300 outline-none focus:border-blue-500"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Preset image shortcuts */}
-                      <div className="mt-3 pt-2.5 border-t border-[#232c42]/60">
-                        <p className="text-[10px] text-slate-400 mb-1.5">
-                          Pilihan Cepat Gambar Template:
-                        </p>
-                        <div className="flex gap-2 overflow-x-auto pb-1">
-                          {[
-                            {
-                              name: "Serum",
-                              url: "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80",
-                            },
-                            {
-                              name: "Moisturizer",
-                              url: "https://images.unsplash.com/photo-1598440947619-2c35fc9aa908?w=400&h=400&fit=crop&q=80",
-                            },
-                            {
-                              name: "Sunscreen",
-                              url: "https://images.unsplash.com/photo-1556228720-195a672e8a03?w=400&h=400&fit=crop&q=80",
-                            },
-                            {
-                              name: "Glow Pack",
-                              url: "https://images.unsplash.com/photo-1571781926291-c477ebfd024b?w=400&h=400&fit=crop&q=80",
-                            },
-                            {
-                              name: "Toner",
-                              url: "https://images.unsplash.com/photo-1608248597359-0d12e6900f6b?w=400&h=400&fit=crop&q=80",
-                            },
-                          ].map((preset) => (
-                            <button
-                              type="button"
-                              key={preset.name}
-                              onClick={() => {
-                                setNewProductForm({
-                                  ...newProductForm,
-                                  image: preset.url,
-                                });
-                                showToast(`Foto ${preset.name} dipilih!`);
-                              }}
-                              className={`flex items-center gap-1.5 px-2 py-1 rounded-md border text-[10px] font-medium transition shrink-0 ${
-                                newProductForm.image === preset.url
-                                  ? "border-blue-500 bg-blue-500/20 text-white font-bold"
-                                  : "border-[#232c42] bg-[#0c1221] text-slate-400 hover:text-white"
-                              }`}
-                            >
-                              <img
-                                src={preset.url}
-                                alt={preset.name}
-                                className="h-3.5 w-3.5 rounded-full object-cover"
-                              />
-                              {preset.name}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-300 font-semibold mb-1">
-                        Nama Produk <span className="text-red-400">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={newProductForm.name}
-                        onChange={(e) =>
-                          setNewProductForm({
-                            ...newProductForm,
-                            name: e.target.value,
-                          })
-                        }
-                        placeholder="Contoh: Serum Brightening Collagen 30ml"
-                        className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-medium"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-slate-300 font-semibold mb-1">
-                          Harga Jual Live (Rp){" "}
-                          <span className="text-red-400">*</span>
-                        </label>
-                        <input
-                          type="number"
-                          required
-                          value={newProductForm.price}
-                          onChange={(e) =>
-                            setNewProductForm({
-                              ...newProductForm,
-                              price: e.target.value,
-                            })
-                          }
-                          placeholder="99000"
-                          className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-mono font-bold"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-slate-300 font-semibold mb-1">
-                          Stok Tersedia (pcs)
-                        </label>
-                        <input
-                          type="number"
-                          value={newProductForm.stock}
-                          onChange={(e) =>
-                            setNewProductForm({
-                              ...newProductForm,
-                              stock: Number(e.target.value),
-                            })
-                          }
-                          className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-slate-300 font-semibold mb-1">
-                          Kategori
-                        </label>
-                        <select
-                          value={newProductForm.tag || "Skincare"}
-                          onChange={(e) =>
-                            setNewProductForm({
-                              ...newProductForm,
-                              tag: e.target.value,
-                            })
-                          }
-                          className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 cursor-pointer"
-                        >
-                          <option value="Skincare">✨ Skincare</option>
-                          <option value="Beauty & Makeup">💄 Beauty & Makeup</option>
-                          <option value="Fashion & Pakaian">👗 Fashion & Pakaian</option>
-                          <option value="Hijab & Muslim">🧕 Hijab & Muslim</option>
-                          <option value="Kesehatan & Herbal">🌿 Kesehatan & Herbal</option>
-                          <option value="Elektronik & Gadget">📱 Elektronik & Gadget</option>
-                          <option value="Makanan & Minuman">🍱 Makanan & Minuman</option>
-                          <option value="Ibu & Bayi">🍼 Ibu & Bayi</option>
-                          <option value="Perlengkapan Rumah">🏠 Perlengkapan Rumah</option>
-                          <option value="Aksesoris & Sepatu">👟 Aksesoris & Sepatu</option>
-                          <option value="General">📦 General / Lainnya</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-slate-300 font-semibold mb-1">
-                          SKU / Kode Produk
-                        </label>
-                        <input
-                          type="text"
-                          value={newProductForm.sku}
-                          onChange={(e) =>
-                            setNewProductForm({
-                              ...newProductForm,
-                              sku: e.target.value,
-                            })
-                          }
-                          placeholder="SKU-SBP-001 (Opsional)"
-                          className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-mono text-[11px]"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-slate-300 font-semibold mb-1">
-                          Link Keranjang Kuning / Checkout
-                        </label>
-                        <input
-                          type="url"
-                          value={newProductForm.link || ""}
-                          onChange={(e) =>
-                            setNewProductForm({
-                              ...newProductForm,
-                              link: e.target.value,
-                            })
-                          }
-                          placeholder="https://shopee.co.id/... atau https://tiktok.com/..."
-                          className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 text-[11px]"
-                        />
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  /* TAB 2: RAG Knowledge Base */
-                  <div className="space-y-3.5">
-                    <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-3 text-[11px] text-slate-300">
-                      <p className="font-bold text-blue-300 mb-1">
-                        💡 Bagaimana AI Host menggunakan RAG Knowledge Base ini?
-                      </p>
-                      <p className="text-slate-400">
-                        Saat penonton live bertanya tentang cara pakai, khasiat,
-                        perbandingan produk, atau izin BPOM, AI Host akan
-                        menjawab dengan cepat &amp; akurat berdasarkan data di
-                        bawah ini.
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-300 font-semibold mb-1">
-                        Deskripsi Lengkap Produk
-                      </label>
-                      <textarea
-                        rows={2}
-                        value={newProductForm.description}
-                        onChange={(e) =>
-                          setNewProductForm({
-                            ...newProductForm,
-                            description: e.target.value,
-                          })
-                        }
-                        placeholder="Jelaskan formula, bahan aktif, dan kelebihan umum produk..."
-                        className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-sans"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-300 font-semibold mb-1">
-                        Keunggulan &amp; Manfaat Utama (Key Selling Points)
-                      </label>
-                      <textarea
-                        rows={2}
-                        value={newProductForm.benefits}
-                        onChange={(e) =>
-                          setNewProductForm({
-                            ...newProductForm,
-                            benefits: e.target.value,
-                          })
-                        }
-                        placeholder="Contoh: Mencerahkan noda hitam dalam 14 hari, merawat skin barrier, menghidrasi 24 jam tanpa lengket..."
-                        className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-sans"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-300 font-semibold mb-1">
-                        Petunjuk &amp; Cara Pemakaian (Usage Steps)
-                      </label>
-                      <textarea
-                        rows={2}
-                        value={newProductForm.usage}
-                        onChange={(e) =>
-                          setNewProductForm({
-                            ...newProductForm,
-                            usage: e.target.value,
-                          })
-                        }
-                        placeholder="Contoh: Gunakan 2-3 tetes pada wajah bersih setiap pagi & malam sebelum pelembap. Oleskan merata dan tepuk lembut..."
-                        className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-sans"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-slate-300 font-semibold mb-1">
-                          FAQ &amp; Izin Resmi (BPOM / Halal / Keamanan)
-                        </label>
-                        <textarea
-                          rows={2}
-                          value={newProductForm.faq}
-                          onChange={(e) =>
-                            setNewProductForm({
-                              ...newProductForm,
-                              faq: e.target.value,
-                            })
-                          }
-                          placeholder="Contoh: 100% Original resmi BPOM, aman untuk kulit sensitif dan bumil/busui..."
-                          className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-sans"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-slate-300 font-semibold mb-1">
-                          Target Audiens / Tipe Pengguna
-                        </label>
-                        <textarea
-                          rows={2}
-                          value={newProductForm.targetAudience}
-                          onChange={(e) =>
-                            setNewProductForm({
-                              ...newProductForm,
-                              targetAudience: e.target.value,
-                            })
-                          }
-                          placeholder="Contoh: Cocok untuk pria & wanita usia 18+ dengan masalah kulit kusam atau dehidrasi..."
-                          className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-sans"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between pt-3 border-t border-[#232c42]">
-                  <div className="flex items-center gap-2">
-                    {productModalTab === "BASIC" ? (
-                      <button
-                        type="button"
-                        disabled
-                        className="text-emerald-300 font-semibold cursor-default"
-                      >
-                        🧠 RAG akan dibuat otomatis oleh AI saat disimpan
-                      </button>
+              <form onSubmit={handleAddProduct} className="space-y-3.5 text-xs">
+                {/* 1. Foto / Gambar Produk (Required) */}
+                <div className="rounded-xl border border-[#22314e] bg-[#0f172a]/70 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-slate-200 font-bold text-[11px] flex items-center gap-1">
+                      <span>1. Foto / Gambar Produk</span>
+                      <span className="text-red-400">*</span>
+                    </label>
+                    {newProductForm.image ? (
+                      <span className="text-[9.5px] font-semibold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                        ✓ Foto Terpasang
+                      </span>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => setProductModalTab("BASIC")}
-                        className="text-slate-400 hover:text-slate-300 font-semibold"
-                      >
-                        ← Kembali ke Info Dasar
-                      </button>
+                      <span className="text-[9.5px] font-semibold text-rose-400 bg-rose-950/60 px-2 py-0.5 rounded-full border border-rose-500/30">
+                        Wajib Diupload
+                      </span>
                     )}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex items-center gap-3">
+                    <div className="h-18 w-18 shrink-0 rounded-xl overflow-hidden border-2 border-blue-500/40 bg-[#090e1a] shadow-inner flex items-center justify-center">
+                      {newProductForm.image ? (
+                        <img
+                          src={newProductForm.image}
+                          alt="Preview"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-2xl">📸</span>
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/15 hover:border-blue-400 px-3 py-2.5 cursor-pointer transition text-center group">
+                        <span className="text-xs text-blue-300 font-bold flex items-center gap-1.5 group-hover:scale-105 transition">
+                          <span>📁</span>
+                          <span>Upload Foto dari Komputer / HP</span>
+                        </span>
+                        <span className="text-[9.5px] text-slate-400 mt-0.5">
+                          Format JPG, PNG, WebP (Rasio 1:1)
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              const file = e.target.files[0];
+                              const reader = new FileReader();
+                              reader.onload = (uploadEvent) => {
+                                if (uploadEvent.target?.result) {
+                                  setNewProductForm({
+                                    ...newProductForm,
+                                    image: String(uploadEvent.target.result),
+                                  });
+                                  showToast(
+                                    `Foto ${file.name} berhasil diunggah!`,
+                                  );
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Nama Produk (Required) */}
+                <div>
+                  <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                    2. Nama Produk <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newProductForm.name}
+                    onChange={(e) =>
+                      setNewProductForm({
+                        ...newProductForm,
+                        name: e.target.value,
+                      })
+                    }
+                    placeholder="Contoh: Serum Brightening Collagen 30ml"
+                    className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] px-3 py-2.5 text-white placeholder-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 font-medium text-xs transition"
+                  />
+                </div>
+
+                {/* 3, 4, 5. Harga (Req), Stok (Opt), Kategori (Req) */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                      3. Harga Jual Live <span className="text-red-400">*</span>
+                    </label>
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-xs font-bold text-slate-400">
+                        Rp
+                      </span>
+                      <input
+                        type="number"
+                        required
+                        value={newProductForm.price}
+                        onChange={(e) =>
+                          setNewProductForm({
+                            ...newProductForm,
+                            price: e.target.value,
+                          })
+                        }
+                        placeholder="99000"
+                        className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] pl-9 pr-3 py-2.5 text-emerald-400 font-mono font-bold text-xs placeholder-slate-500 outline-none focus:border-emerald-500 focus:ring-1 focus:emerald-500/50 transition"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                      4. Stok Tersedia{" "}
+                      <span className="text-slate-400 font-normal">
+                        (Opsional)
+                      </span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        value={newProductForm.stock || ""}
+                        onChange={(e) =>
+                          setNewProductForm({
+                            ...newProductForm,
+                            stock: Number(e.target.value),
+                          })
+                        }
+                        placeholder="0 (pcs)"
+                        className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] px-3 py-2.5 text-white font-mono text-xs placeholder-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition"
+                      />
+                      <span className="absolute inset-y-0 right-0 flex items-center pr-3 text-[10px] text-slate-400 pointer-events-none">
+                        pcs
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                      5. Kategori <span className="text-red-400">*</span>
+                    </label>
+                    <select
+                      value={newProductForm.tag || "Skincare"}
+                      onChange={(e) =>
+                        setNewProductForm({
+                          ...newProductForm,
+                          tag: e.target.value,
+                        })
+                      }
+                      className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] px-3 py-2.5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 text-xs cursor-pointer transition font-medium"
+                    >
+                      <option value="Skincare">✨ Skincare</option>
+                      <option value="Beauty & Makeup">
+                        💄 Beauty &amp; Makeup
+                      </option>
+                      <option value="Fashion & Pakaian">
+                        👗 Fashion &amp; Pakaian
+                      </option>
+                      <option value="Hijab & Muslim">
+                        🧕 Hijab &amp; Muslim
+                      </option>
+                      <option value="Kesehatan & Herbal">
+                        🌿 Kesehatan &amp; Herbal
+                      </option>
+                      <option value="Elektronik & Gadget">
+                        📱 Elektronik &amp; Gadget
+                      </option>
+                      <option value="Makanan & Minuman">
+                        🍱 Makanan &amp; Minuman
+                      </option>
+                      <option value="Ibu & Bayi">🍼 Ibu &amp; Bayi</option>
+                      <option value="Perlengkapan Rumah">
+                        🏠 Perlengkapan Rumah
+                      </option>
+                      <option value="Aksesoris & Sepatu">
+                        👟 Aksesoris &amp; Sepatu
+                      </option>
+                      <option value="General">📦 General / Lainnya</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* 6, 7. SKU (Opt), Link Keranjang (Opt) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                      6. SKU / Kode Produk{" "}
+                      <span className="text-slate-400 font-normal">
+                        (Opsional)
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      value={newProductForm.sku}
+                      onChange={(e) =>
+                        setNewProductForm({
+                          ...newProductForm,
+                          sku: e.target.value,
+                        })
+                      }
+                      placeholder="Contoh: SKU-SBP-001"
+                      className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] px-3 py-2.5 text-slate-200 font-mono text-[11px] placeholder-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                      7. Link Keranjang Kuning / Checkout{" "}
+                      <span className="text-slate-400 font-normal">
+                        (Opsional)
+                      </span>
+                    </label>
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                        🔗
+                      </span>
+                      <input
+                        type="url"
+                        value={newProductForm.link || ""}
+                        onChange={(e) =>
+                          setNewProductForm({
+                            ...newProductForm,
+                            link: e.target.value,
+                          })
+                        }
+                        placeholder="https://shopee.co.id/... atau https://tiktok.com/..."
+                        className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] pl-8 pr-3 py-2.5 text-slate-200 text-[11px] placeholder-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 8. Deskripsi Lengkap Produk (Required) */}
+                <div>
+                  <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                    8. Deskripsi Lengkap Produk{" "}
+                    <span className="text-red-400">*</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    required
+                    value={newProductForm.description}
+                    onChange={(e) =>
+                      setNewProductForm({
+                        ...newProductForm,
+                        description: e.target.value,
+                      })
+                    }
+                    placeholder="Jelaskan formula, bahan aktif, dan kelebihan umum produk..."
+                    className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] p-3 text-slate-200 text-xs placeholder-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 font-sans transition"
+                  />
+                </div>
+
+                {/* 9. Keunggulan & Manfaat Utama (Optional) */}
+                <div>
+                  <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                    9. Keunggulan &amp; Manfaat Utama{" "}
+                    <span className="text-slate-400 font-normal">
+                      (Opsional)
+                    </span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={newProductForm.benefits}
+                    onChange={(e) =>
+                      setNewProductForm({
+                        ...newProductForm,
+                        benefits: e.target.value,
+                      })
+                    }
+                    placeholder="Contoh: Mencerahkan noda hitam dalam 14 hari, merawat skin barrier, menghidrasi 24 jam tanpa lengket..."
+                    className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] p-2.5 text-slate-200 text-xs placeholder-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 font-sans transition"
+                  />
+                </div>
+
+                {/* 10. Petunjuk & Cara Pemakaian (Optional) */}
+                <div>
+                  <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                    10. Petunjuk &amp; Cara Pemakaian{" "}
+                    <span className="text-slate-400 font-normal">
+                      (Opsional)
+                    </span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={newProductForm.usage}
+                    onChange={(e) =>
+                      setNewProductForm({
+                        ...newProductForm,
+                        usage: e.target.value,
+                      })
+                    }
+                    placeholder="Contoh: Gunakan 2-3 tetes pada wajah bersih setiap pagi & malam sebelum pelembap. Oleskan merata dan tepuk lembut..."
+                    className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] p-2.5 text-slate-200 text-xs placeholder-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 font-sans transition"
+                  />
+                </div>
+
+                {/* 11. Gambar Banner (Optional) */}
+                <div className="rounded-xl border border-[#22314e] bg-[#0f172a]/70 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-slate-200 font-bold text-[11px] flex items-center gap-1">
+                      <span>11. Gambar Banner Promosi</span>
+                      <span className="text-slate-400 font-normal">
+                        (Opsional)
+                      </span>
+                    </label>
+                    {newProductForm.bannerImage ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9.5px] font-semibold text-purple-400 bg-purple-950/60 px-2 py-0.5 rounded-full border border-purple-500/30">
+                          ✓ Banner Terpasang
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewProductForm({
+                              ...newProductForm,
+                              bannerImage: "",
+                            });
+                            showToast("Banner promosi dihapus");
+                          }}
+                          className="text-[9.5px] text-rose-400 hover:underline"
+                        >
+                          Hapus
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-[9.5px] font-medium text-slate-400 bg-slate-800/60 px-2 py-0.5 rounded-full">
+                        Opsional
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="h-16 w-32 shrink-0 rounded-xl overflow-hidden border-2 border-indigo-500/40 bg-[#090e1a] shadow-inner flex items-center justify-center">
+                      {newProductForm.bannerImage ? (
+                        <img
+                          src={newProductForm.bannerImage}
+                          alt="Banner Preview"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-medium">
+                          Banner 16:9
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-indigo-500/40 bg-indigo-500/5 hover:bg-indigo-500/15 hover:border-indigo-400 px-3 py-2 cursor-pointer transition text-center group">
+                        <span className="text-xs text-indigo-300 font-bold flex items-center gap-1.5 group-hover:scale-105 transition">
+                          <span>🖼️</span>
+                          <span>Upload Banner Promosi</span>
+                        </span>
+                        <span className="text-[9.5px] text-slate-400 mt-0.5">
+                          Format JPG, PNG, WebP (16:9 Landscape)
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              const file = e.target.files[0];
+                              const reader = new FileReader();
+                              reader.onload = (uploadEvent) => {
+                                if (uploadEvent.target?.result) {
+                                  setNewProductForm({
+                                    ...newProductForm,
+                                    bannerImage: String(
+                                      uploadEvent.target.result,
+                                    ),
+                                  });
+                                  showToast(
+                                    `Banner ${file.name} berhasil diunggah!`,
+                                  );
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* MODAL FOOTER */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-[#1e293b]">
+                  <div className="text-slate-400 text-[11px] flex items-center gap-1.5">
+                    <span>🧠</span>
+                    <span>
+                      RAG Knowledge &amp; Copywriting di-generate otomatis oleh
+                      LLM
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                     <button
                       type="button"
                       onClick={() => setShowAddProductModal(false)}
-                      className="rounded-lg border border-[#232c42] px-4 py-2 text-slate-300 hover:bg-white/5"
+                      className="rounded-xl border border-[#22314e] bg-[#0f172a] px-4 py-2 text-slate-300 hover:bg-white/5 hover:text-white transition font-medium"
                     >
                       Batal
                     </button>
                     <button
                       type="submit"
-                      className="rounded-lg bg-blue-600 px-5 py-2 font-bold text-white hover:bg-blue-500 shadow-lg shadow-blue-600/30"
+                      className="rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 font-bold text-white hover:brightness-110 shadow-lg shadow-blue-600/30 transition active:scale-95"
                     >
-                      Simpan Produk &amp; RAG
+                      ✨ Simpan Produk &amp; Generate RAG
                     </button>
                   </div>
                 </div>
@@ -4756,21 +4794,39 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Modal: Edit Produk (2-Tab: Basic Info + RAG Knowledge Base) */}
+        {/* Modal: Edit Produk */}
         {showEditProductModal && selectedProductForEdit && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm animate-fadeIn">
-            <div className="relative w-full max-w-2xl rounded-2xl border border-blue-500/40 bg-[#0c1221] p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 sm:p-4 backdrop-blur-md animate-fadeIn">
+            <div className="relative w-full max-w-2xl rounded-2xl border border-[#22314e] bg-[#0c1221] p-5 sm:p-6 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
+              {/* Close Button */}
               <button
                 onClick={() => setShowEditProductModal(false)}
-                className="absolute right-4 top-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition"
+                className="absolute right-4 top-4 text-slate-400 hover:text-white p-1.5 rounded-xl hover:bg-white/10 transition active:scale-95"
               >
-                ✕
+                <svg
+                  width="15"
+                  height="15"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2.5"
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
               </button>
-              <div className="flex items-center gap-2 mb-4 border-b border-[#232c42] pb-3">
-                <span className="text-2xl">✏️</span>
+
+              {/* Modal Header */}
+              <div className="flex items-center gap-3 mb-5 border-b border-[#1e293b] pb-3.5">
+                <div className="h-10 w-10 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-xl shrink-0">
+                  ✏️
+                </div>
                 <div>
-                  <h3 className="text-lg font-bold text-white">
-                    Edit Produk &amp; RAG Knowledge
+                  <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
+                    Edit Data Produk
                   </h3>
                   <p className="text-[11px] text-slate-400">
                     ID: {selectedProductForEdit.id || "N/A"}
@@ -4778,208 +4834,239 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Modal Tabs */}
-              <div className="flex border-b border-[#232c42] mb-4 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setEditModalTab("BASIC")}
-                  className={`pb-2 text-xs font-bold transition border-b-2 flex items-center gap-1.5 ${
-                    editModalTab === "BASIC"
-                      ? "border-blue-500 text-blue-400"
-                      : "border-transparent text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  <span>📦 1. Informasi Dasar Produk</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditModalTab("RAG")}
-                  className={`pb-2 text-xs font-bold transition border-b-2 flex items-center gap-1.5 ${
-                    editModalTab === "RAG"
-                      ? "border-blue-500 text-blue-400"
-                      : "border-transparent text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  <span>🧠 2. RAG Knowledge Base (AI Host Brain)</span>
-                </button>
-              </div>
-
               <form
                 onSubmit={handleSaveEditProduct}
-                className="space-y-4 text-xs"
+                className="space-y-3.5 text-xs"
               >
-                {editModalTab === "BASIC" ? (
-                  <>
-                    {/* Image Upload & Preview in Edit */}
-                    <div className="rounded-xl border border-[#232c42] bg-[#111827] p-3.5">
-                      <label className="block text-slate-300 font-semibold mb-2">
-                        Foto / Gambar Produk
-                      </label>
-                      <div className="flex items-center gap-4">
-                        <div className="h-16 w-16 shrink-0 rounded-xl overflow-hidden border-2 border-blue-500/50 bg-[#1a233a] shadow-inner flex items-center justify-center">
-                          {selectedProductForEdit.image?.startsWith("http") ||
-                          selectedProductForEdit.image?.startsWith("/") ||
-                          selectedProductForEdit.image?.startsWith("data:") ? (
-                            <img
-                              src={selectedProductForEdit.image}
-                              alt={selectedProductForEdit.name}
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <div
-                              className={`h-full w-full ${selectedProductForEdit.image || "bg-[#e5cbbb]"}`}
-                            />
-                          )}
-                        </div>
-                        <div className="flex-1 space-y-2">
-                          <label className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-blue-500/60 bg-blue-500/10 px-3 py-2 cursor-pointer hover:bg-blue-500/20 transition">
-                            <span className="text-xs text-blue-300 font-bold">
-                              📁 Ganti Foto Produk
-                            </span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => {
-                                if (e.target.files && e.target.files[0]) {
-                                  const file = e.target.files[0];
-                                  const reader = new FileReader();
-                                  reader.onload = (uploadEvent) => {
-                                    if (uploadEvent.target?.result) {
-                                      setSelectedProductForEdit({
-                                        ...selectedProductForEdit,
-                                        image: String(
-                                          uploadEvent.target.result,
-                                        ),
-                                      });
-                                      showToast(
-                                        `Foto ${file.name} berhasil diperbarui!`,
-                                      );
-                                    }
-                                  };
-                                  reader.readAsDataURL(file);
-                                }
-                              }}
-                            />
-                          </label>
-                          <input
-                            type="text"
-                            value={selectedProductForEdit.image || ""}
-                            onChange={(e) =>
-                              setSelectedProductForEdit({
-                                ...selectedProductForEdit,
-                                image: e.target.value,
-                              })
-                            }
-                            placeholder="Atau tempel URL gambar (https://...)"
-                            className="w-full rounded bg-[#0b101e] border border-[#232c42] px-2.5 py-1.5 text-[11px] text-slate-300 outline-none focus:border-blue-500"
-                          />
-                        </div>
-                      </div>
+                {/* 1. Foto / Gambar Produk (Required) */}
+                <div className="rounded-xl border border-[#22314e] bg-[#0f172a]/70 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-slate-200 font-bold text-[11px] flex items-center gap-1">
+                      <span>1. Foto / Gambar Produk</span>
+                      <span className="text-red-400">*</span>
+                    </label>
+                    {selectedProductForEdit.image ? (
+                      <span className="text-[9.5px] font-semibold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                        ✓ Foto Terpasang
+                      </span>
+                    ) : (
+                      <span className="text-[9.5px] font-semibold text-rose-400 bg-rose-950/60 px-2 py-0.5 rounded-full border border-rose-500/30">
+                        Wajib Diupload
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="h-18 w-18 shrink-0 rounded-xl overflow-hidden border-2 border-blue-500/40 bg-[#090e1a] shadow-inner flex items-center justify-center">
+                      {selectedProductForEdit.image ? (
+                        <img
+                          src={selectedProductForEdit.image}
+                          alt={selectedProductForEdit.name}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-2xl">📸</span>
+                      )}
                     </div>
-
-                    <div>
-                      <label className="block text-slate-300 font-semibold mb-1">
-                        Nama Produk
+                    <div className="flex-1">
+                      <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/15 hover:border-blue-400 px-3 py-2.5 cursor-pointer transition text-center group">
+                        <span className="text-xs text-blue-300 font-bold flex items-center gap-1.5 group-hover:scale-105 transition">
+                          <span>📁</span>
+                          <span>Ganti Foto Produk</span>
+                        </span>
+                        <span className="text-[9.5px] text-slate-400 mt-0.5">
+                          Format JPG, PNG, WebP (Rasio 1:1)
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              const file = e.target.files[0];
+                              const reader = new FileReader();
+                              reader.onload = (uploadEvent) => {
+                                if (uploadEvent.target?.result) {
+                                  setSelectedProductForEdit({
+                                    ...selectedProductForEdit,
+                                    image: String(uploadEvent.target.result),
+                                  });
+                                  showToast(
+                                    `Foto ${file.name} berhasil diperbarui!`,
+                                  );
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
                       </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Nama Produk (Required) */}
+                <div>
+                  <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                    2. Nama Produk <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={selectedProductForEdit.name}
+                    onChange={(e) =>
+                      setSelectedProductForEdit({
+                        ...selectedProductForEdit,
+                        name: e.target.value,
+                      })
+                    }
+                    className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] px-3 py-2.5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 font-medium text-xs transition"
+                  />
+                </div>
+
+                {/* 3, 4, 5. Harga (Req), Stok (Opt), Kategori (Req) */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                      3. Harga Jual Live <span className="text-red-400">*</span>
+                    </label>
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-xs font-bold text-slate-400">
+                        Rp
+                      </span>
                       <input
                         type="text"
                         required
-                        value={selectedProductForEdit.name}
+                        value={selectedProductForEdit.price}
                         onChange={(e) =>
                           setSelectedProductForEdit({
                             ...selectedProductForEdit,
-                            name: e.target.value,
+                            price: e.target.value,
                           })
                         }
-                        className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-medium"
+                        className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] pl-9 pr-3 py-2.5 text-emerald-400 font-mono font-bold text-xs outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/50 transition"
                       />
                     </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-slate-300 font-semibold mb-1">
-                          Harga (Rp)
-                        </label>
-                        <input
-                          type="text"
-                          value={selectedProductForEdit.price}
-                          onChange={(e) =>
-                            setSelectedProductForEdit({
-                              ...selectedProductForEdit,
-                              price: e.target.value,
-                            })
-                          }
-                          className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-mono font-bold"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-slate-300 font-semibold mb-1">
-                          Stok (pcs)
-                        </label>
-                        <input
-                          type="number"
-                          value={selectedProductForEdit.stock}
-                          onChange={(e) =>
-                            setSelectedProductForEdit({
-                              ...selectedProductForEdit,
-                              stock: Number(e.target.value),
-                            })
-                          }
-                          className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-slate-300 font-semibold mb-1">
-                          Kategori
-                        </label>
-                        <select
-                          value={selectedProductForEdit.tag || "Skincare"}
-                          onChange={(e) =>
-                            setSelectedProductForEdit({
-                              ...selectedProductForEdit,
-                              tag: e.target.value,
-                            })
-                          }
-                          className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 cursor-pointer"
-                        >
-                          <option value="Skincare">✨ Skincare</option>
-                          <option value="Beauty & Makeup">💄 Beauty & Makeup</option>
-                          <option value="Fashion & Pakaian">👗 Fashion & Pakaian</option>
-                          <option value="Hijab & Muslim">🧕 Hijab & Muslim</option>
-                          <option value="Kesehatan & Herbal">🌿 Kesehatan & Herbal</option>
-                          <option value="Elektronik & Gadget">📱 Elektronik & Gadget</option>
-                          <option value="Makanan & Minuman">🍱 Makanan & Minuman</option>
-                          <option value="Ibu & Bayi">🍼 Ibu & Bayi</option>
-                          <option value="Perlengkapan Rumah">🏠 Perlengkapan Rumah</option>
-                          <option value="Aksesoris & Sepatu">👟 Aksesoris & Sepatu</option>
-                          <option value="General">📦 General / Lainnya</option>
-                          {selectedProductForEdit.tag &&
-                            ![
-                              "Skincare",
-                              "Beauty & Makeup",
-                              "Fashion & Pakaian",
-                              "Hijab & Muslim",
-                              "Kesehatan & Herbal",
-                              "Elektronik & Gadget",
-                              "Makanan & Minuman",
-                              "Ibu & Bayi",
-                              "Perlengkapan Rumah",
-                              "Aksesoris & Sepatu",
-                              "General",
-                            ].includes(selectedProductForEdit.tag) && (
-                              <option value={selectedProductForEdit.tag}>
-                                🏷️ {selectedProductForEdit.tag}
-                              </option>
-                            )}
-                        </select>
-                      </div>
+                  </div>
+                  <div>
+                    <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                      4. Stok Tersedia{" "}
+                      <span className="text-slate-400 font-normal">
+                        (Opsional)
+                      </span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        value={selectedProductForEdit.stock ?? ""}
+                        onChange={(e) =>
+                          setSelectedProductForEdit({
+                            ...selectedProductForEdit,
+                            stock: Number(e.target.value),
+                          })
+                        }
+                        className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] px-3 py-2.5 text-white font-mono text-xs outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition"
+                      />
+                      <span className="absolute inset-y-0 right-0 flex items-center pr-3 text-[10px] text-slate-400 pointer-events-none">
+                        pcs
+                      </span>
                     </div>
+                  </div>
+                  <div>
+                    <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                      5. Kategori <span className="text-red-400">*</span>
+                    </label>
+                    <select
+                      value={selectedProductForEdit.tag || "General"}
+                      onChange={(e) =>
+                        setSelectedProductForEdit({
+                          ...selectedProductForEdit,
+                          tag: e.target.value,
+                        })
+                      }
+                      className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] px-3 py-2.5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 text-xs cursor-pointer transition font-medium"
+                    >
+                      <option value="Skincare">✨ Skincare</option>
+                      <option value="Beauty & Makeup">
+                        💄 Beauty &amp; Makeup
+                      </option>
+                      <option value="Fashion & Pakaian">
+                        👗 Fashion &amp; Pakaian
+                      </option>
+                      <option value="Hijab & Muslim">
+                        🧕 Hijab &amp; Muslim
+                      </option>
+                      <option value="Kesehatan & Herbal">
+                        🌿 Kesehatan &amp; Herbal
+                      </option>
+                      <option value="Elektronik & Gadget">
+                        📱 Elektronik &amp; Gadget
+                      </option>
+                      <option value="Makanan & Minuman">
+                        🍱 Makanan &amp; Minuman
+                      </option>
+                      <option value="Ibu & Bayi">🍼 Ibu &amp; Bayi</option>
+                      <option value="Perlengkapan Rumah">
+                        🏠 Perlengkapan Rumah
+                      </option>
+                      <option value="Aksesoris & Sepatu">
+                        👟 Aksesoris &amp; Sepatu
+                      </option>
+                      <option value="General">📦 General / Lainnya</option>
+                      {selectedProductForEdit.tag &&
+                        ![
+                          "Skincare",
+                          "Beauty & Makeup",
+                          "Fashion & Pakaian",
+                          "Hijab & Muslim",
+                          "Kesehatan & Herbal",
+                          "Elektronik & Gadget",
+                          "Makanan & Minuman",
+                          "Ibu & Bayi",
+                          "Perlengkapan Rumah",
+                          "Aksesoris & Sepatu",
+                          "General",
+                        ].includes(selectedProductForEdit.tag) && (
+                          <option value={selectedProductForEdit.tag}>
+                            🏷️ {selectedProductForEdit.tag}
+                          </option>
+                        )}
+                    </select>
+                  </div>
+                </div>
 
-                    <div>
-                      <label className="block text-slate-300 font-semibold mb-1">
-                        Link Produk / URL Checkout
-                      </label>
+                {/* 6, 7. SKU (Opt), Link Keranjang (Opt) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                      6. SKU / Kode Produk{" "}
+                      <span className="text-slate-400 font-normal">
+                        (Opsional)
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      value={selectedProductForEdit.sku || ""}
+                      onChange={(e) =>
+                        setSelectedProductForEdit({
+                          ...selectedProductForEdit,
+                          sku: e.target.value,
+                        })
+                      }
+                      placeholder="Contoh: SKU-SBP-001"
+                      className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] px-3 py-2.5 text-slate-200 font-mono text-[11px] outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                      7. Link Keranjang Kuning / Checkout{" "}
+                      <span className="text-slate-400 font-normal">
+                        (Opsional)
+                      </span>
+                    </label>
+                    <div className="relative">
+                      <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                        🔗
+                      </span>
                       <input
                         type="url"
                         value={selectedProductForEdit.link || ""}
@@ -4990,98 +5077,176 @@ export default function Dashboard() {
                           })
                         }
                         placeholder="https://shopee.co.id/... atau https://tiktok.com/@toko/..."
-                        className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500"
-                      />
-                    </div>
-                  </>
-                ) : (
-                  /* TAB 2: Edit RAG Knowledge Base */
-                  <div className="space-y-3.5">
-                    <div>
-                      <label className="block text-slate-300 font-semibold mb-1">
-                        Deskripsi Lengkap Produk
-                      </label>
-                      <textarea
-                        rows={2}
-                        value={selectedProductForEdit.description || ""}
-                        onChange={(e) =>
-                          setSelectedProductForEdit({
-                            ...selectedProductForEdit,
-                            description: e.target.value,
-                          })
-                        }
-                        placeholder="Jelaskan formula, bahan aktif, dan kelebihan umum produk..."
-                        className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-sans"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-300 font-semibold mb-1">
-                        Keunggulan &amp; Manfaat Utama (Key Selling Points)
-                      </label>
-                      <textarea
-                        rows={2}
-                        value={selectedProductForEdit.benefits || ""}
-                        onChange={(e) =>
-                          setSelectedProductForEdit({
-                            ...selectedProductForEdit,
-                            benefits: e.target.value,
-                          })
-                        }
-                        placeholder="Contoh: Mencerahkan noda hitam, merawat skin barrier alami..."
-                        className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-sans"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-300 font-semibold mb-1">
-                        Petunjuk &amp; Cara Pemakaian (Usage Steps)
-                      </label>
-                      <textarea
-                        rows={2}
-                        value={selectedProductForEdit.usage || ""}
-                        onChange={(e) =>
-                          setSelectedProductForEdit({
-                            ...selectedProductForEdit,
-                            usage: e.target.value,
-                          })
-                        }
-                        placeholder="Contoh: Oleskan 2-3 tetes pada wajah bersih setiap pagi dan malam..."
-                        className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-sans"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-300 font-semibold mb-1">
-                        FAQ &amp; Izin Resmi (BPOM / Halal / Keamanan)
-                      </label>
-                      <textarea
-                        rows={2}
-                        value={selectedProductForEdit.faq || ""}
-                        onChange={(e) =>
-                          setSelectedProductForEdit({
-                            ...selectedProductForEdit,
-                            faq: e.target.value,
-                          })
-                        }
-                        placeholder="Contoh: 100% Original BPOM resmi, aman untuk kulit sensitif dan bumil/busui..."
-                        className="w-full rounded-lg bg-[#111827] border border-[#232c42] p-2.5 text-white outline-none focus:border-blue-500 font-sans"
+                        className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] pl-8 pr-3 py-2.5 text-slate-200 text-[11px] outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition"
                       />
                     </div>
                   </div>
-                )}
+                </div>
 
-                <div className="flex justify-end gap-2 pt-3 border-t border-[#232c42]">
+                {/* 8. Deskripsi Lengkap Produk (Required) */}
+                <div>
+                  <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                    8. Deskripsi Lengkap Produk{" "}
+                    <span className="text-red-400">*</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    required
+                    value={selectedProductForEdit.description || ""}
+                    onChange={(e) =>
+                      setSelectedProductForEdit({
+                        ...selectedProductForEdit,
+                        description: e.target.value,
+                      })
+                    }
+                    placeholder="Jelaskan formula, bahan aktif, dan kelebihan umum produk..."
+                    className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] p-3 text-slate-200 text-xs outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 font-sans transition"
+                  />
+                </div>
+
+                {/* 9. Keunggulan & Manfaat Utama (Optional) */}
+                <div>
+                  <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                    9. Keunggulan &amp; Manfaat Utama{" "}
+                    <span className="text-slate-400 font-normal">
+                      (Opsional)
+                    </span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={selectedProductForEdit.benefits || ""}
+                    onChange={(e) =>
+                      setSelectedProductForEdit({
+                        ...selectedProductForEdit,
+                        benefits: e.target.value,
+                      })
+                    }
+                    placeholder="Contoh: Mencerahkan noda hitam, merawat skin barrier alami..."
+                    className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] p-2.5 text-slate-200 text-xs outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 font-sans transition"
+                  />
+                </div>
+
+                {/* 10. Petunjuk & Cara Pemakaian (Optional) */}
+                <div>
+                  <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                    10. Petunjuk &amp; Cara Pemakaian{" "}
+                    <span className="text-slate-400 font-normal">
+                      (Opsional)
+                    </span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={selectedProductForEdit.usage || ""}
+                    onChange={(e) =>
+                      setSelectedProductForEdit({
+                        ...selectedProductForEdit,
+                        usage: e.target.value,
+                      })
+                    }
+                    placeholder="Contoh: Oleskan 2-3 tetes pada wajah bersih setiap pagi dan malam..."
+                    className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] p-2.5 text-slate-200 text-xs outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 font-sans transition"
+                  />
+                </div>
+
+                {/* 11. Gambar Banner (Optional) */}
+                <div className="rounded-xl border border-[#22314e] bg-[#0f172a]/70 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-slate-200 font-bold text-[11px] flex items-center gap-1">
+                      <span>11. Gambar Banner Promosi</span>
+                      <span className="text-slate-400 font-normal">
+                        (Opsional)
+                      </span>
+                    </label>
+                    {selectedProductForEdit.bannerImage ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9.5px] font-semibold text-purple-400 bg-purple-950/60 px-2 py-0.5 rounded-full border border-purple-500/30">
+                          ✓ Banner Terpasang
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedProductForEdit({
+                              ...selectedProductForEdit,
+                              bannerImage: "",
+                            });
+                            showToast("Banner promosi dihapus");
+                          }}
+                          className="text-[9.5px] text-rose-400 hover:underline"
+                        >
+                          Hapus
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-[9.5px] font-medium text-slate-400 bg-slate-800/60 px-2 py-0.5 rounded-full">
+                        Opsional
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="h-16 w-32 shrink-0 rounded-xl overflow-hidden border-2 border-indigo-500/40 bg-[#090e1a] shadow-inner flex items-center justify-center">
+                      {selectedProductForEdit.bannerImage ? (
+                        <img
+                          src={selectedProductForEdit.bannerImage}
+                          alt="Banner Preview"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-medium">
+                          Banner 16:9
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-indigo-500/40 bg-indigo-500/5 hover:bg-indigo-500/15 hover:border-indigo-400 px-3 py-2 cursor-pointer transition text-center group">
+                        <span className="text-xs text-indigo-300 font-bold flex items-center gap-1.5 group-hover:scale-105 transition">
+                          <span>🖼️</span>
+                          <span>Ganti Banner Promosi</span>
+                        </span>
+                        <span className="text-[9.5px] text-slate-400 mt-0.5">
+                          Format JPG, PNG, WebP (16:9 Landscape)
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              const file = e.target.files[0];
+                              const reader = new FileReader();
+                              reader.onload = (uploadEvent) => {
+                                if (uploadEvent.target?.result) {
+                                  setSelectedProductForEdit({
+                                    ...selectedProductForEdit,
+                                    bannerImage: String(
+                                      uploadEvent.target.result,
+                                    ),
+                                  });
+                                  showToast(
+                                    `Banner ${file.name} berhasil diperbarui!`,
+                                  );
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* MODAL FOOTER */}
+                <div className="flex justify-end gap-2.5 pt-3 border-t border-[#1e293b]">
                   <button
                     type="button"
                     onClick={() => setShowEditProductModal(false)}
-                    className="rounded-lg border border-[#232c42] px-4 py-2 text-slate-300 hover:bg-white/5"
+                    className="rounded-xl border border-[#22314e] bg-[#0f172a] px-4 py-2 text-slate-300 hover:bg-white/5 hover:text-white transition font-medium"
                   >
                     Batal
                   </button>
                   <button
                     type="submit"
-                    className="rounded-lg bg-blue-600 px-5 py-2 font-bold text-white hover:bg-blue-500 shadow-lg shadow-blue-600/30"
+                    className="rounded-xl bg-blue-600 hover:bg-blue-500 px-5 py-2 font-bold text-white shadow-lg shadow-blue-600/30 transition active:scale-95"
                   >
                     Simpan Perubahan
                   </button>

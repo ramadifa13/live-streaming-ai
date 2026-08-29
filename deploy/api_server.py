@@ -318,6 +318,15 @@ class BroadcastRequest(BaseModel):
     stream_key: Optional[str] = None
     streamKey: Optional[str] = None
     idle_video: str = "/workspace/ai_live_worker/assets/3d/namira_idle.mp4"
+    product_name: Optional[str] = None
+    productName: Optional[str] = None
+    product_price: Optional[str] = None
+    productPrice: Optional[str] = None
+    product_image_url: Optional[str] = None
+    productImageUrl: Optional[str] = None
+    banner_image_url: Optional[str] = None
+    bannerImageUrl: Optional[str] = None
+    platform: Optional[str] = None
 
 class PlaybackRequest(BaseModel):
     action: str
@@ -375,6 +384,11 @@ async def start_broadcast(req: BroadcastRequest):
     env["IDLE_VIDEO"] = req.idle_video
     env["OUTPUT_FOLDER"] = output_dir
     env["WORKER_REQUIRE_AUDIO"] = "1"
+    env["PRODUCT_NAME"] = req.product_name or req.productName or ""
+    env["PRODUCT_PRICE"] = req.product_price or req.productPrice or ""
+    env["PRODUCT_IMAGE_URL"] = req.product_image_url or req.productImageUrl or ""
+    env["BANNER_IMAGE_URL"] = req.banner_image_url or req.bannerImageUrl or ""
+    env["PLATFORM"] = req.platform or ""
     current_broadcast_env = env
 
     log_path = os.path.join(output_dir, "broadcaster.log")
