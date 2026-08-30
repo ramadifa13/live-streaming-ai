@@ -110,7 +110,7 @@ export const LiveChatPanel: React.FC = () => {
       >
         {chatMessages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center py-8 text-center text-slate-500 text-[11px]">
-            <span>[CHAT] Belum ada chat simulasi</span>
+            <span>Belum ada chat simulasi</span>
             <span className="text-[10px] text-slate-600 mt-0.5">
               Ketik pesan di bawah untuk uji respons AI
             </span>

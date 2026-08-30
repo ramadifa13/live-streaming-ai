@@ -389,11 +389,11 @@ export async function synthesizeSpeech(
         audioBuffer = await synthesizeWithGoogleTTS(text);
         engineUsed = "Google Indonesia TTS (Fail-Safe)";
         console.log(
-          `[TTS] ✅ Google TTS fail-safe berhasil (${audioBuffer.length} bytes)`,
+          `Google TTS fail-safe berhasil (${audioBuffer.length} bytes)`,
         );
       } catch (tier3Err) {
         console.error(
-          `[TTS] ❌ Semua tier TTS gagal:`,
+          `Semua tier TTS gagal:`,
           (tier3Err as Error).message,
         );
         engineUsed = "TTS Error";

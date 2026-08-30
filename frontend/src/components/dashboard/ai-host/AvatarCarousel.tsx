@@ -38,10 +38,7 @@ export const AvatarCarousel: React.FC = () => {
         </button>
       )}
 
-      <div  
-        ref={carouselRef}
-        className="flex gap-2 overflow-x-hidden scroll-smooth py-1 px-0.5"
-      >
+      <div ref={carouselRef} className="flex gap-2 overflow-x-hidden scroll-smooth py-1 px-0.5">
         {filteredAvatars.map((av) => {
           const isSelected = selectedAvatar.id === av.id;
           return (
@@ -52,7 +49,7 @@ export const AvatarCarousel: React.FC = () => {
                 if (av.voice) setSelectedVoice(av.voice);
                 showToast(`Avatar dipilih: ${av.name} (${av.role})`);
               }}
-              className={`group/card relative h-[155px] w-[calc(33.333%-6px)] min-w-[95px] flex-shrink-0 overflow-hidden rounded-xl cursor-pointer transition-all duration-300 transform hover:-translate-y-1 ${
+              className={`group/card relative h-38.75 w-[calc(33.333%-6px)] min-w-23.75 shrink-0 overflow-hidden rounded-xl cursor-pointer transition-all duration-300 transform hover:-translate-y-1 ${
                 isSelected
                   ? "border-2 border-blue-500 shadow-[0_0_18px_rgba(59,130,246,0.4)] ring-2 ring-blue-500/30"
                   : "border border-[#232c42] opacity-80 hover:opacity-100 hover:border-slate-600"
@@ -64,16 +61,12 @@ export const AvatarCarousel: React.FC = () => {
                 </div>
               )}
               <div
-                className="absolute inset-0 bg-cover bg-top bg-no-repeat transition-transform duration-500 group-hover/card:scale-110"
+                className="absolute inset-0 bg-cover bg-position-[20%] bg-no-repeat transition-transform duration-500 group-hover/card:scale-110"
                 style={{ backgroundImage: `url('${av.image}')` }}
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-transparent z-10 flex flex-col justify-end p-2">
-                <p className="text-xs font-bold text-white line-clamp-1">
-                  {av.name}
-                </p>
-                <p className="text-[8.5px] text-blue-300 font-medium line-clamp-1">
-                  {av.role}
-                </p>
+              <div className="absolute inset-0 bg-linear-to-t from-black/95 via-black/40 to-transparent z-10 flex flex-col justify-end p-2">
+                <p className="text-xs font-bold text-white line-clamp-1">{av.name}</p>
+                <p className="text-[8.5px] text-blue-300 font-medium line-clamp-1">{av.role}</p>
                 {av.specialty && (
                   <span className="text-[7px] text-slate-300 bg-white/10 px-1 py-0.2 rounded mt-0.5 truncate">
                     {av.specialty}
@@ -84,30 +77,40 @@ export const AvatarCarousel: React.FC = () => {
           );
         })}
 
-       <div className="relative h-[155px] w-[calc(33.333%-6px)] min-w-[95px] flex-shrink-0 overflow-hidden rounded-xl border-2 border-dashed border-slate-700 bg-gradient-to-br from-[#0c1221]/80 to-[#111827]/80 backdrop-blur-sm cursor-default group/soon transition-all duration-300 hover:border-blue-500/40 hover:shadow-[0_0_15px_rgba(59,130,246,0.1)]"  title="Coming Soon">
+        <div
+          className="relative h-38.75 w-[calc(33.333%-6px)] min-w-23.75 shrink-0 overflow-hidden rounded-xl border-2 border-dashed border-slate-700 bg-linear-to-br from-[#0c1221]/80 to-[#111827]/80 backdrop-blur-sm cursor-default group/soon transition-all duration-300 hover:border-blue-500/40 hover:shadow-[0_0_15px_rgba(59,130,246,0.1)]"
+          title="Coming Soon"
+        >
           <div className="absolute inset-0 flex flex-col items-center justify-center p-2">
             <div className="relative mb-2.5">
               <div className="absolute inset-0 rounded-full bg-blue-500/20 blur-md group-hover/soon:bg-blue-500/30 transition-all duration-500 animate-pulse" />
-              
+
               <div className="relative h-12 w-12 rounded-full border border-slate-600/60 bg-slate-800/80 flex items-center justify-center backdrop-blur-md shadow-inner">
-                <svg className="h-5 w-5 text-slate-400 group-hover/soon:text-blue-300 transition-colors duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                <svg
+                  className="h-5 w-5 text-slate-400 group-hover/soon:text-blue-300 transition-colors duration-300"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                  />
                 </svg>
                 <div className="absolute -top-1 -right-1">
                   <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
                 </div>
               </div>
             </div>
-            
-            <p className="text-xs font-bold bg-gradient-to-r from-slate-300 to-slate-500 bg-clip-text text-transparent group-hover/soon:from-blue-200 group-hover/soon:to-blue-400 transition-all duration-300">
+
+            <p className="text-xs font-bold bg-linear-to-r from-slate-300 to-slate-500 bg-clip-text text-transparent group-hover/soon:from-blue-200 group-hover/soon:to-blue-400 transition-all duration-300">
               Coming Soon
             </p>
-            <p className="text-[8.5px] text-amber-400/80 font-medium mt-0.5">
-              AI Host Baru
-            </p>
+            <p className="text-[8.5px] text-amber-400/80 font-medium mt-0.5">AI Host Baru</p>
           </div>
         </div>
-      
       </div>
 
       {filteredAvatars.length > 3 && (

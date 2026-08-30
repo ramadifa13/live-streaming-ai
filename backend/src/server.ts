@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import dotenv from "dotenv";
 import {
   dashboardSummary,
@@ -31,6 +32,12 @@ await server.register(cors, {
   origin: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   credentials: true,
+});
+
+await server.register(multipart, {
+  limits: {
+    fileSize: 25 * 1024 * 1024, // 25 MB – matches bodyLimit
+  },
 });
 
 server.get("/health", async () => ({

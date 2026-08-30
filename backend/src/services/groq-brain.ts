@@ -1,18 +1,128 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 
-const apiKey = process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY || "";
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
 
-export function getGroqClient() {
-  if (!apiKey) {
-    console.error("[Groq/Gemini Brain] API Key tidak ditemukan di .env!");
-  }
-  return new GoogleGenAI({ apiKey });
+const GEMINI_MODEL = process.env.GEMINI_MODEL || process.env.LIVE_BRAIN_MODEL || "gemini-3.7-flash";
+
+const GROQ_MODEL = process.env.GROQ_MODEL || process.env.LIVE_BRAIN_MODEL || "openai/gpt-oss-20b";
+
+const GROQ_BASE_URL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+
+export type HostMode =
+  | "ENGAGE"
+  | "SELL"
+  | "QNA"
+  | "DEMO"
+  | "OBJECTION"
+  | "SOCIAL"
+  | "ANNOUNCEMENT"
+  | "RECOVERY"
+  | "CLOSING";
+
+export type HostIntent =
+  | "ANSWER"
+  | "PRODUCT_INFO"
+  | "PRICE"
+  | "BUYING_INTENT"
+  | "OBJECTION"
+  | "SOCIAL"
+  | "THANKS"
+  | "COMPLAINT"
+  | "ANNOUNCEMENT"
+  | "SELL"
+  | "SPAM"
+  | "OTHER";
+
+export const LunaActionEnum = z.enum([
+  "IDLE",
+  "TALK_EXPRESSIVE",
+  "NOD",
+  "LAUGH",
+  "SHRUG",
+  "HOLD_PRODUCT",
+  "POINT_CART",
+  "WAVE",
+  "THINK",
+  "LISTEN",
+]);
+export type LunaAction = z.infer<typeof LunaActionEnum>;
+
+export const LunaEmotionEnum = z.enum(["happy", "neutral", "surprised", "thinking", "warm", "excited", "empathetic"]);
+export type LunaEmotion = z.infer<typeof LunaEmotionEnum>;
+
+export const HostModeEnum = z.enum([
+  "ENGAGE",
+  "SELL",
+  "QNA",
+  "DEMO",
+  "OBJECTION",
+  "SOCIAL",
+  "ANNOUNCEMENT",
+  "RECOVERY",
+  "CLOSING",
+]);
+
+export const HostIntentEnum = z.enum([
+  "ANSWER",
+  "PRODUCT_INFO",
+  "PRICE",
+  "BUYING_INTENT",
+  "OBJECTION",
+  "SOCIAL",
+  "THANKS",
+  "COMPLAINT",
+  "ANNOUNCEMENT",
+  "SELL",
+  "SPAM",
+  "OTHER",
+]);
+
+export const HostResponseSchema = z.object({
+  speech: z.string().min(3),
+  action: LunaActionEnum,
+  emotion: LunaEmotionEnum,
+  intent: HostIntentEnum,
+  mode: HostModeEnum,
+  topic: z.string().min(1).max(80),
+  ctaType: z.enum(["NONE", "SOFT", "DIRECT", "PRICE", "PRODUCT", "COMMENT"]).default("NONE"),
+  target_product_id: z.string().nullable().default(null),
+  interruptible: z.boolean().default(true),
+  claims: z.array(z.string()).default([]),
+});
+export type HostResponse = z.infer<typeof HostResponseSchema>;
+
+export interface SalesBrainOutput {
+  replyText: string;
+  engineUsed: string;
+  intent: string;
+  action: string;
 }
 
-// ==============================================================================
-// 1. DATA TYPES & INTERFACES
-// ==============================================================================
+export interface ProductKnowledge {
+  description: string;
+  benefits: string;
+  usage: string;
+  faq: string;
+  targetAudience: string;
+  copywriting: string;
+}
+
+export interface GenerateProductKnowledgeInput {
+  name: string;
+  description: string;
+  category?: string;
+  price?: number | string;
+  stock?: number;
+  sku?: string;
+  link?: string;
+  benefits?: string;
+  usage?: string;
+  image?: string;
+  bannerImage?: string;
+}
+
 export interface SalesBrainInput {
   userQuestion: string;
   authorName?: string;
@@ -34,22 +144,18 @@ export interface SalesBrainInput {
     benefits?: string;
     description?: string;
   }>;
-}
-
-export interface SalesBrainOutput {
-  replyText: string;
-  engineUsed: string;
-  intent: string;
-  action: string;
-}
-
-export interface ProductKnowledge {
-  description: string;
-  benefits: string;
-  usage: string;
-  faq: string;
-  targetAudience: string;
-  copywriting: string;
+  recentUtterances?: string[];
+  recentTopics?: string[];
+  recentCTAs?: string[];
+  recentClaims?: string[];
+  avoidPhrases?: string[];
+  avoidTopics?: string[];
+  mode?: HostMode;
+  elapsedMinutes?: number;
+  requestedIntent?: HostIntent;
+  requestedMode?: HostMode;
+  audienceCount?: number;
+  plan?: "2H" | "8H" | "24H";
 }
 
 export interface LiveSalesPitchInput {
@@ -95,351 +201,629 @@ export interface VideoSalesScriptInput {
   style?: string;
 }
 
-export const LunaActionEnum = z.enum([
-  "IDLE",
-  "TALK_EXPRESSIVE",
-  "NOD",
-  "LAUGH",
-  "SHRUG",
-  "HOLD_PRODUCT",
-  "POINT_CART",
-]);
-export type LunaAction = z.infer<typeof LunaActionEnum>;
-
-export const LunaEmotionEnum = z.enum([
-  "happy",
-  "neutral",
-  "surprised",
-  "thinking",
-]);
-export type LunaEmotion = z.infer<typeof LunaEmotionEnum>;
-
-export const LunaStructuredOutputSchema = z.object({
-  speech: z
-    .string()
-    .describe("Jawaban verbal host dalam Bahasa Indonesia santai untuk TTS"),
-  action: LunaActionEnum.describe("Aksi fisik 3D/gesture avatar"),
-  emotion: LunaEmotionEnum.describe("Ekspresi wajah avatar"),
-  target_product_id: z
-    .string()
-    .nullable()
-    .describe("ID produk jika sedang memegang/mempromosikan produk"),
-});
-export type LunaStructuredOutput = z.infer<typeof LunaStructuredOutputSchema>;
-
-const CANDIDATE_GROQ_MODELS = ["gemini-3.1-flash-lite"];
+interface ProviderResult {
+  text: string;
+  provider: "gemini" | "groq" | "fallback";
+  model: string;
+}
 
 function cleanOutputText(text: string): string {
   if (!text) return "";
-  return text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/^\s*```(?:json)?\s*/i, "")
+    .replace(/\s*```\s*$/i, "")
+    .trim();
 }
 
-function cleanAndExtractJson(text: string): any {
-  if (!text) return null;
-  let clean = cleanOutputText(text);
-  clean = clean.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+function cleanAndExtractJson(text: string): unknown {
+  const clean = cleanOutputText(text);
+  if (!clean) return null;
   const firstBrace = clean.indexOf("{");
   const lastBrace = clean.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    clean = clean.substring(firstBrace, lastBrace + 1);
-  }
+  if (firstBrace < 0 || lastBrace <= firstBrace) return null;
   try {
-    return JSON.parse(clean);
+    return JSON.parse(clean.slice(firstBrace, lastBrace + 1));
   } catch {
     return null;
   }
 }
 
-export async function checkGroqHealth(): Promise<{
-  online: boolean;
-  model: string;
-}> {
-  return { online: true, model: "Groq Cloud (0% CPU Load)" };
+function normalizeText(text: string): string {
+  return text
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\[[^\]]+\]/g, " ")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/[^a-z0-9\s]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
-export const checkOllamaHealth = checkGroqHealth;
 
-// ==============================================================================
-// 2. CORE GROQ LLM FUNCTIONS (ANTI-CRASH & ZERO-CPU)
-// ==============================================================================
+function tokenSet(text: string): Set<string> {
+  return new Set(
+    normalizeText(text)
+      .split(" ")
+      .filter((t) => t.length >= 3),
+  );
+}
 
-/**
- * Generates dynamic sales responses for conversational selling during live stream.
- * NEVER THROWS: Guaranteed zero-crash fallback.
- */
-export async function generateDynamicSalesResponse(
-  input: SalesBrainInput,
-): Promise<SalesBrainOutput> {
-  const {
-    userQuestion,
-    authorName,
-    avatarName = "Namira",
-    tone = "Persuasif",
-    productName = "Produk",
-    productPrice = "Harga Spesial",
-    productDescription = "Deskripsi produk",
-    productBenefits = "Banyak manfaat dan keunggulan",
-    productUsage = "Mudah digunakan",
-    productFaq = "Terjamin kualitasnya",
-    productStock = 50,
-    allProducts = [],
-  } = input;
+function lexicalSimilarity(a: string, b: string): number {
+  const aa = tokenSet(a);
+  const bb = tokenSet(b);
+  if (!aa.size || !bb.size) return 0;
+  let intersection = 0;
+  for (const token of aa) if (bb.has(token)) intersection++;
+  return intersection / Math.max(1, Math.sqrt(aa.size * bb.size));
+}
 
-  const catalogContext =
-    allProducts.length > 1
-      ? `\n--- SELURUH KATALOG PRODUK DI SESI LIVE INI (CROSS-SELLING) ---\n` +
-        allProducts
-          .map(
-            (p, idx) =>
-              `${idx + 1}. ${p.name} (Harga: ${typeof p.price === "number" ? `Rp${p.price.toLocaleString("id-ID")}` : p.price}) - ${p.benefits || p.category || ""}`,
-          )
-          .join("\n")
-      : "";
-
-  const systemPrompt = `Kamu adalah ${avatarName}, seorang Top Live Host & Streamer profesional di Indonesia yang sedang siaran langsung jualan di TikTok / Shopee / Instagram Live.
-Gaya bicara kamu: ${tone}, sangat luwes, natural, cerdas, dan ekspresif. Menggunakan Bahasa Indonesia santai khas live streamer ("aku", "kamu", "nih", "banget", "ya", "yuk", "cus", "lho", "dong", "sih", "kan", "deh").
-
-PRODUK UTAMA YANG SEDANG DISOROT: ${productName} (Kategori: ${input.productCategory || "General"}, Harga promo live: ${productPrice}, Sisa Stok: ${productStock} pcs).
-
---- RAG KNOWLEDGE BASE PRODUK UTAMA ---
-1. Deskripsi: ${productDescription}
-2. Manfaat & Keunggulan: ${productBenefits}
-3. Petunjuk Pemakaian: ${productUsage}
-4. FAQ & Info Keamanan (BPOM/Halal): ${productFaq}
-${catalogContext}
-
---- BANK PENANGANAN KERAGUAN PEMBELI (SMART OBJECTION HANDLING) ---
-- Keaslian: "Semua produk 100% original bergaransi resmi, ada barcode segel pabrik ya."
-- Keamanan Kulit/Kesehatan: "Formulanya sudah teruji klinis dan BPOM/Halal, aman digunakan harian."
-- Pengiriman/COD: "Packing gratis bubble wrap tebal plus kardus, dan bisa bayar di tempat (COD) ke seluruh Indonesia."
-- Garansi/Promo: "Harga promo dan kupon gratis ongkir ini cuma berlaku selama sesi live ya."
-
---- ATURAN GAYA BICARA NATURAL & CERDAS (SANGAT PENTING) ---
-1. DILARANG KERAS mengulang-ulang kata pembuka robotik seperti "Halo kak", "Halo kakak", "Halo semuanya", atau "Selamat datang di live". Kalimat harus mengalir spontan layaknya manusia asli di depan kamera.
-2. Gunakan variasi pembuka obrolan dan partikel alami khas streamer ("nih", "kan", "lho", "deh", "yuk"):
-   - "Nah, kalian perhatiin deh tekstur dan formulanya..."
-   - "Buat kamu yang dari kemarin cari solusi buat..."
-   - "Jujur ya, ini pribadi salah satu favorit aku..."
-   - "Banyak banget yang nanya ke aku soal..."
-   - "Kabar baiknya, khusus di sesi live hari ini..."
-   - "Bisa banget ya, karena formulanya udah teruji..."
-   - "Langsung cus tap keranjang kuning sekarang..."
-3. KETIKA MENJAWAB KOMENTAR / PERTANYAAN PENONTON:
-   - Buat seolah-olah kamu sedang melirik dan membaca komentar di layar ponsel live streaming.
-   - Jika nama penonton diketahui (${authorName ? `Nama: "Kak ${authorName}"` : "nama umum"}), SEBUT namanya secara hangat (contoh: "Ada pertanyaan dari Kak ${authorName || "Audience"} nih: '...'... ").
-   - SELALU sertakan tanda jeda titik tiga (...) agar ada jeda nafas natural sebelum memberikan jawaban solutif.
-4. KEMAMPUAN CROSS-SELLING & MEMBANDINGKAN PRODUK:
-   - Jika penonton bertanya tentang produk lain di katalog atau bingung memilih: jelaskan perbedaannya dengan cerdas menggunakan data katalog di atas dan rekomendasikan combo bundle jika cocok!
-5. Setelah menjawab inti pertanyaan, selipkan transisi halus (*conversational pivot*) untuk mengajak penonton mengamankan promo ${productPrice} di keranjang kuning.
-6. Panjang jawaban sekitar 2 - 4 kalimat mengalir (durasi bicara 12 - 20 detik, sekitar 30 - 50 kata).
-7. WAJIB SELALU sisipkan SATU Action Tag di AWAL jawabanmu:
-   - [IDLE] = Obrolan santai atau penjelasan detail.
-   - [RAISE_HAND] = Saat menyapa atau melambaikan tangan dengan antusias.
-   - [POINT_DOWN] = Saat mengajak penonton melihat keranjang kuning atau promo.
-   - [EXCITED] = Saat membahas diskon besar, promo terbatas, atau merespon kabar gembira.
-   - [NOD] = Saat mengiyakan pertanyaan atau setuju.
-   - [SMILE] = Saat tersenyum ramah atau membagikan tips.`;
-
-  const userMsg = `Pertanyaan / Arahan Topik Live: "${userQuestion}"`;
-
-  try {
-    const client = getGroqClient();
-    for (const model of CANDIDATE_GROQ_MODELS) {
-      try {
-        const response = await client.models.generateContent({
-          model: model,
-          contents: `${systemPrompt}\n\n${userMsg}`,
-          config: {
-            temperature: 0.7,
-            maxOutputTokens: 300,
-          },
-        });
-
-        const rawText = response.text || "";
-        const text = cleanOutputText(rawText);
-        if (text) {
-          return {
-            replyText: text,
-            engineUsed: `Groq (${model})`,
-            intent: "dynamic_llm",
-            action: "reply",
-          };
-        }
-      } catch (err: any) {
-        console.warn(
-          `[Groq-Brain] Model ${model} notice: ${err?.message || err}`,
-        );
-      }
+function hasHighPhraseOverlap(text: string, previous: string[]): boolean {
+  const normalized = normalizeText(text);
+  const words = normalized.split(" ").filter(Boolean);
+  if (words.length < 7) return false;
+  const phrases = new Set<string>();
+  for (let i = 0; i < words.length - 2; i++) {
+    phrases.add(words.slice(i, i + 3).join(" "));
+  }
+  for (const prev of previous) {
+    const pw = normalizeText(prev).split(" ").filter(Boolean);
+    if (pw.length < 3) continue;
+    let hits = 0;
+    for (let i = 0; i < pw.length - 2; i++) {
+      if (phrases.has(pw.slice(i, i + 3).join(" "))) hits++;
     }
-  } catch (err: any) {
-    console.warn(`[Groq-Brain] Groq client error: ${err?.message || err}`);
+    if (hits >= 2) return true;
+  }
+  return false;
+}
+
+function extractActionTag(text: string): { speech: string; action: LunaAction } {
+  const match = text.match(/^\s*\[([A-Z_]+)\]\s*/i);
+  if (!match) return { speech: text.trim(), action: "TALK_EXPRESSIVE" };
+  const tag = String(match[1]).toUpperCase();
+  const mapping: Record<string, LunaAction> = {
+    IDLE: "IDLE",
+    TALK_EXPRESSIVE: "TALK_EXPRESSIVE",
+    NOD: "NOD",
+    LAUGH: "LAUGH",
+    SHRUG: "SHRUG",
+    HOLD_PRODUCT: "HOLD_PRODUCT",
+    POINT_CART: "POINT_CART",
+    RAISE_HAND: "WAVE",
+    WAVE: "WAVE",
+    POINT_DOWN: "POINT_CART",
+    EXCITED: "TALK_EXPRESSIVE",
+    SMILE: "NOD",
+    THINK: "THINK",
+    LISTEN: "LISTEN",
+  };
+  return {
+    speech: text.slice(match[0].length).trim(),
+    action: mapping[tag] || "TALK_EXPRESSIVE",
+  };
+}
+
+function cleanForTts(text: string): string {
+  return extractActionTag(text)
+    .speech.replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function buildCatalogContext(allProducts: SalesBrainInput["allProducts"]): string {
+  if (!allProducts?.length) return "Tidak ada katalog tambahan.";
+  return allProducts
+    .slice(0, 8)
+    .map((p, i) => {
+      const price = typeof p.price === "number" ? `Rp${p.price.toLocaleString("id-ID")}` : p.price;
+      return `${i + 1}. ${p.name} | ${price} | ${p.category || "General"} | ${p.benefits || ""}`;
+    })
+    .join("\n");
+}
+
+function buildHostSystemPrompt(input: SalesBrainInput): string {
+  const host = input.avatarName || "Namira";
+  const tone = input.tone || "Persuasif namun hangat";
+  const mode = input.requestedMode || input.mode || "ENGAGE";
+  const plan = input.plan || "2H";
+  const elapsed = Math.max(0, Math.round(input.elapsedMinutes || 0));
+  const recentUtterances = (input.recentUtterances || []).slice(-12);
+  const recentTopics = (input.recentTopics || []).slice(-10);
+  const recentCTAs = (input.recentCTAs || []).slice(-6);
+  const recentClaims = (input.recentClaims || []).slice(-12);
+
+  return `Kamu adalah ${host}, AI Live Host e-commerce Indonesia yang sedang benar-benar siaran langsung.
+
+TUJUAN:
+- Terlihat seperti manusia yang sedang memperhatikan suasana live, bukan generator skrip.
+- Percakapan terasa spontan, nyambung, hangat, cerdas, dan tidak looping.
+- Jawab komentar terlebih dahulu bila konteksnya membutuhkan jawaban.
+- Jangan memaksakan CTA di setiap respons.
+- Jangan mengulang ide, opening, CTA, benefit, atau klaim yang baru saja digunakan.
+
+GAYA:
+- Bahasa Indonesia percakapan, natural, lisan, pendek-padat.
+- Gunakan "aku", "kamu", "kita", partikel seperlunya.
+- Variasikan panjang kalimat dan ritme.
+- Jangan terdengar seperti membaca brosur.
+- Jangan membuka dengan "Halo kak", "Halo kakak", "Halo semuanya", "Selamat datang di live", kecuali mode memang RECOVERY dan sangat perlu.
+- Jangan memakai filler berulang seperti "nah", "nih", "jadi", "oke", "yuk" pada setiap respons.
+
+MODE SESI SEKARANG: ${mode}
+PAKET LIVE: ${plan}
+WAKTU BERJALAN: ${elapsed} menit
+
+PRODUK UTAMA:
+Nama: ${input.productName || "Produk"}
+Kategori: ${input.productCategory || "General"}
+Harga: ${input.productPrice || "Harga Spesial"}
+Stok: ${input.productStock ?? "Tidak diketahui"}
+Deskripsi: ${input.productDescription || "Tidak ada"}
+Manfaat: ${input.productBenefits || "Tidak ada"}
+Cara pakai: ${input.productUsage || "Tidak ada"}
+FAQ/keamanan/legalitas: ${input.productFaq || "Tidak ada"}
+
+CATALOG:
+${buildCatalogContext(input.allProducts)}
+
+MEMORI TERAKHIR — WAJIB DIHINDARI SECARA SEMANTIK:
+UTTERANCES:
+${recentUtterances.map((x, i) => `${i + 1}. ${x}`).join("\n") || "-"}
+TOPICS:
+${recentTopics.join(" | ") || "-"}
+CTA TERAKHIR:
+${recentCTAs.join(" | ") || "-"}
+CLAIMS TERAKHIR:
+${recentClaims.join(" | ") || "-"}
+PHRASES YANG DIHINDARI:
+${(input.avoidPhrases || []).slice(-12).join(" | ") || "-"}
+TOPIK YANG DIHINDARI:
+${(input.avoidTopics || []).slice(-8).join(" | ") || "-"}
+
+ATURAN FAKTA:
+- Hanya nyatakan fakta yang ada di data produk/konteks.
+- Jangan mengarang BPOM, halal, teruji klinis, garansi, original, COD, gratis ongkir, stok, jumlah pembeli, viral, repeat order, atau hasil pemakaian.
+- Jika fakta tidak tersedia, katakan secara natural bahwa host perlu cek detailnya; jangan mengarang.
+- Jangan menyebut kota, nama pembeli, atau aktivitas checkout bila tidak diberikan oleh event system.
+
+ATURAN INTERAKSI:
+- Jika komentar berupa pujian/obrolan santai: balas sebagai manusia; CTA opsional dan biasanya NONE.
+- Jika pertanyaan produk: jawab inti pertanyaan dulu, CTA hanya bila relevan.
+- Jika buying intent: fokus membantu keputusan pembelian.
+- Jika objection: akui keraguan, jawab fakta yang tersedia, jangan defensif.
+- Jika spam/duplikat: abaikan atau gabungkan, jangan menjawab berulang.
+- Jika komentar membutuhkan klarifikasi yang tidak tersedia: minta penonton memberi detail seperlunya.
+
+ANTI-LOOP:
+- Jangan mengulang kalimat dengan sinonim tipis.
+- Jangan mengulang topik yang sama hanya karena prompt berubah.
+- Jangan mengulang CTA yang sama dua kali berturut-turut.
+- Jangan menyebut benefit yang baru saja disebut kecuali komentar memang menanyakannya lagi.
+- Jangan menggunakan struktur kalimat yang sama seperti 1–2 respons terakhir.
+
+OUTPUT:
+Kembalikan SATU JSON murni, tanpa markdown, dengan schema:
+{
+  "speech": "kalimat yang benar-benar diucapkan host",
+  "action": "IDLE|TALK_EXPRESSIVE|NOD|LAUGH|SHRUG|HOLD_PRODUCT|POINT_CART|WAVE|THINK|LISTEN",
+  "emotion": "happy|neutral|surprised|thinking|warm|excited|empathetic",
+  "intent": "ANSWER|PRODUCT_INFO|PRICE|BUYING_INTENT|OBJECTION|SOCIAL|THANKS|COMPLAINT|ANNOUNCEMENT|SELL|SPAM|OTHER",
+  "mode": "ENGAGE|SELL|QNA|DEMO|OBJECTION|SOCIAL|ANNOUNCEMENT|RECOVERY|CLOSING",
+  "topic": "label pendek topic respons",
+  "ctaType": "NONE|SOFT|DIRECT|PRICE|PRODUCT|COMMENT",
+  "target_product_id": null,
+  "interruptible": true,
+  "claims": []
+}
+
+Panjang speech: umumnya 25–55 kata untuk speech normal; komentar singkat bisa lebih pendek. Jangan menambahkan salam pembuka robotik.`;
+}
+
+async function callGemini(prompt: string): Promise<ProviderResult> {
+  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY tidak tersedia");
+  const client = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+  const response = await client.models.generateContent({
+    model: GEMINI_MODEL,
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      temperature: Number(process.env.LIVE_BRAIN_TEMPERATURE || 0.85),
+      maxOutputTokens: Number(process.env.LIVE_BRAIN_MAX_TOKENS || 450),
+    },
+  });
+  return {
+    text: response.text || "",
+    provider: "gemini",
+    model: GEMINI_MODEL,
+  };
+}
+
+async function callGroq(prompt: string): Promise<ProviderResult> {
+  if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY tidak tersedia");
+
+  const response = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${GROQ_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages: [
+        {
+          role: "system",
+          content: "Kembalikan JSON valid persis sesuai instruksi. Jangan menambahkan markdown.",
+        },
+        { role: "user", content: prompt },
+      ],
+      temperature: Number(process.env.LIVE_BRAIN_TEMPERATURE || 0.85),
+      max_tokens: Number(process.env.LIVE_BRAIN_MAX_TOKENS || 450),
+      response_format: { type: "json_object" },
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Groq ${response.status}: ${body.slice(0, 500)}`);
   }
 
-  // Graceful Natural Offline Fallback Templates
-  const pitchTemplates = [
-    `[POINT_DOWN] Nah, buat kalian yang lagi butuh ${productName}, produk ini kualitasnya beneran premium dan original. Khusus di live sekarang harganya cuma ${productPrice}, jangan sampai kehabisan ya!`,
-    `[EXCITED] Jujur ini salah satu best seller kita yang paling cepat ludes! ${productBenefits ? productBenefits : "Manfaatnya kerasa banget"}. Mumpung lagi ada promo live ${productPrice}, yuk langsung amankan di keranjang kuning!`,
-    `[SMILE] Perhatiin deh detail dan keunggulannya, bener-bener dirancang buat kamu yang mau hasil terbaik. Stok promo tinggal ${productStock} pcs aja, langsung checkout sekarang ya!`,
-    `[NOD] Bener banget, banyak yang udah repeat order karena kualitasnya se-worth it itu. Langsung tap keranjang kuning sekarang sebelum kupon promonya habis ya!`,
+  const data = (await response.json()) as any;
+  return {
+    text: data?.choices?.[0]?.message?.content || "",
+    provider: "groq",
+    model: GROQ_MODEL,
+  };
+}
+
+async function callBrain(prompt: string): Promise<ProviderResult> {
+  const provider = (process.env.LIVE_BRAIN_PROVIDER || "auto").toLowerCase();
+
+  if (provider === "groq") return callGroq(prompt);
+  if (provider === "gemini") return callGemini(prompt);
+
+  if (GROQ_API_KEY) {
+    try {
+      return await callGroq(prompt);
+    } catch (err) {
+      console.warn("[LiveBrain] Groq gagal, fallback ke Gemini:", err);
+    }
+  }
+  return callGemini(prompt);
+}
+
+function inferIntentFromText(text: string): HostIntent {
+  const q = normalizeText(text);
+  if (!q) return "OTHER";
+  if (/^(wkwk|haha|hehe|lol|bagus|cantik|ganteng|keren|suka)/i.test(q)) return "SOCIAL";
+  if (/harga|berapa|rupiah|diskon|promo/.test(q)) return "PRICE";
+  if (/beli|checkout|order|pesan|ambil|ready|stok/.test(q)) return "BUYING_INTENT";
+  if (/kenapa|takut|ragu|mahal|beda|cocok|aman|boleh|worth/.test(q)) return "OBJECTION";
+  if (/cara|pakai|fungsi|manfaat|buat apa|bedanya|isi|ukuran|warna/.test(q)) return "PRODUCT_INFO";
+  return "ANSWER";
+}
+
+function fallbackResponse(input: SalesBrainInput): HostResponse {
+  const product = input.productName || "produk ini";
+  const price = input.productPrice || "harga live";
+  const benefits = input.productBenefits || "detail manfaatnya bisa kita lihat dari info produk";
+  const intent = input.requestedIntent || inferIntentFromText(input.userQuestion);
+
+  const candidates: HostResponse[] = [
+    {
+      speech: `Aku tangkep pertanyaannya... soal ${product}, ${benefits.split(/[.!?]/)[0] || "detail produknya"}. Untuk harga saat ini, patokannya ${price}; detail yang belum tertulis di data produk jangan aku tebak-tebak ya.`,
+      action: "THINK",
+      emotion: "thinking",
+      intent,
+      mode: "QNA",
+      topic: "klarifikasi produk",
+      ctaType: "NONE",
+      target_product_id: null,
+      interruptible: true,
+      claims: [],
+    },
+    {
+      speech: `Yang ini enaknya memang dilihat dari kebutuhannya dulu... kalau kamu lagi cari ${product}, bagian yang paling menonjol itu ${benefits.split(/[.!?]/)[0] || "fiturnya"}. Jadi jangan sekadar ikut ramai, pilih yang memang kepakai buat kamu.`,
+      action: "TALK_EXPRESSIVE",
+      emotion: "warm",
+      intent: intent === "SOCIAL" ? "PRODUCT_INFO" : intent,
+      mode: "ENGAGE",
+      topic: "value produk",
+      ctaType: "SOFT",
+      target_product_id: null,
+      interruptible: true,
+      claims: [],
+    },
+    {
+      speech: `Oke, aku jawab dari info yang memang kita punya ya... ${product} harganya ${price}. Kalau pertanyaannya soal kecocokan atau detail spesifik, kasih konteks sedikit biar aku jawabnya tepat, bukan asal nebak.`,
+      action: "NOD",
+      emotion: "empathetic",
+      intent: "ANSWER",
+      mode: "QNA",
+      topic: "jawaban kontekstual",
+      ctaType: "NONE",
+      target_product_id: null,
+      interruptible: true,
+      claims: [],
+    },
   ];
-  const randomPitch =
-    pitchTemplates[Math.floor(Math.random() * pitchTemplates.length)]!;
+
+  const index = Math.floor(Math.random() * candidates.length);
+  return candidates[index] || candidates[0]!;
+}
+
+function selectSafeParsedResponse(parsed: unknown, input: SalesBrainInput): HostResponse | null {
+  const validated = HostResponseSchema.safeParse(parsed);
+  if (!validated.success) return null;
+
+  const response = validated.data;
+  const knownProductIds = new Set([...(input.allProducts || []).map((p) => String(p.id))]);
+  if (response.target_product_id && knownProductIds.size > 0 && !knownProductIds.has(response.target_product_id)) {
+    response.target_product_id = null;
+  }
+  const prior = input.recentUtterances || [];
+  const topic = normalizeText(response.topic);
+  const avoidTopic = (input.avoidTopics || []).some((x) => normalizeText(x) === topic);
+
+  if (avoidTopic) return null;
+  if (lexicalSimilarity(response.speech, prior[prior.length - 1] || "") > 0.84) {
+    return null;
+  }
+  if (hasHighPhraseOverlap(response.speech, prior)) return null;
+
+  const lowerSpeech = normalizeText(response.speech);
+  const forbiddenClaimPatterns = [
+    /teruji klinis/,
+    /bpom/,
+    /halal/,
+    /100 persen original/,
+    /100% original/,
+    /garansi resmi/,
+    /gratis ongkir/,
+    /cod ke seluruh indonesia/,
+    /ribuan pembeli/,
+    /viral/,
+    /repeat order/,
+  ];
+  const faq = normalizeText(input.productFaq || "");
+  const description = normalizeText(input.productDescription || "");
+  const known = `${faq} ${description} ${normalizeText(input.productBenefits || "")} ${normalizeText(input.productUsage || "")}`;
+  for (const pattern of forbiddenClaimPatterns) {
+    const match = pattern.test(lowerSpeech);
+    if (match && !pattern.test(known)) return null;
+  }
 
   return {
-    replyText: randomPitch,
-    engineUsed: "Resilient Offline Template (Failsafe)",
-    intent: "fallback_sales_pitch",
-    action: "reply",
+    ...response,
+    speech: cleanForTts(response.speech),
+  };
+}
+
+/**
+ * Main live response generator. Backward-compatible with old callers.
+ */
+export async function generateHostResponse(input: SalesBrainInput): Promise<HostResponse> {
+  const hostInput: SalesBrainInput = {
+    ...input,
+    requestedIntent: input.requestedIntent || inferIntentFromText(input.userQuestion),
+    requestedMode: input.requestedMode || input.mode || "ENGAGE",
+  };
+
+  const systemPrompt = buildHostSystemPrompt(hostInput);
+  const userPrompt = `EVENT LIVE TERKINI:\n${input.userQuestion}\n\nPilih respons yang paling relevan terhadap event ini. Jangan mengarang fakta.`;
+
+  try {
+    const provider = await callBrain(`${systemPrompt}\n\n${userPrompt}`);
+    const parsed = cleanAndExtractJson(provider.text);
+    const response = selectSafeParsedResponse(parsed, hostInput);
+    if (response) return response;
+
+    const retryPrompt = `${systemPrompt}\n\nREGENERATE. RESPONS SEBELUMNYA TIDAK LOLOS VALIDASI.\nEVENT: ${input.userQuestion}\nBuat pendekatan yang berbeda secara nyata dari memori terakhir.`;
+    const retry = await callBrain(retryPrompt);
+    const retryParsed = cleanAndExtractJson(retry.text);
+    const retryResponse = selectSafeParsedResponse(retryParsed, hostInput);
+    if (retryResponse) return retryResponse;
+  } catch (err: any) {
+    console.warn(`[LiveBrain] generateHostResponse error: ${err?.message || err}`);
+  }
+
+  return fallbackResponse(hostInput);
+}
+
+export async function generateDynamicSalesResponse(input: SalesBrainInput): Promise<SalesBrainOutput> {
+  const hostInput: SalesBrainInput = {
+    ...input,
+    requestedIntent: input.requestedIntent || inferIntentFromText(input.userQuestion),
+    requestedMode: input.requestedMode || input.mode || "ENGAGE",
+  };
+
+  const systemPrompt = buildHostSystemPrompt(hostInput);
+  const userPrompt = `EVENT LIVE TERKINI:\n${input.userQuestion}\n\nJangan mengulang respons lama. Jawab berdasarkan fakta yang tersedia dan suasana live saat ini.`;
+
+  try {
+    const provider = await callBrain(`${systemPrompt}\n\n${userPrompt}`);
+    const parsed = cleanAndExtractJson(provider.text);
+    const response = selectSafeParsedResponse(parsed, hostInput);
+
+    if (response) {
+      return {
+        replyText: response.speech,
+        engineUsed: `${provider.provider}:${provider.model}`,
+        intent: response.intent,
+        action: response.action,
+      };
+    }
+
+    // One controlled regeneration with stronger anti-repeat instruction.
+    const retryPrompt = `${systemPrompt}\n\nREGENERATE DENGAN PERBEDAAN NYATA.\nEVENT: ${input.userQuestion}\nJangan memakai struktur kalimat, opening, CTA, atau topik yang sama dengan memori terakhir.`;
+    const retry = await callBrain(retryPrompt);
+    const retryParsed = cleanAndExtractJson(retry.text);
+    const retryResponse = selectSafeParsedResponse(retryParsed, hostInput);
+    if (retryResponse) {
+      return {
+        replyText: retryResponse.speech,
+        engineUsed: `${retry.provider}:${retry.model}:retry`,
+        intent: retryResponse.intent,
+        action: retryResponse.action,
+      };
+    }
+  } catch (err: any) {
+    console.warn(`[LiveBrain] generation error: ${err?.message || err}`);
+  }
+
+  const fallback = fallbackResponse(hostInput);
+  return {
+    replyText: fallback.speech,
+    engineUsed: "stateful-fallback",
+    intent: fallback.intent,
+    action: fallback.action,
   };
 }
 
 export const generateDynamicSalesResponseGroq = generateDynamicSalesResponse;
 export const generateDynamicSalesResponseGemini = generateDynamicSalesResponse;
 
-/**
- * Generates structured 3-part live sales pitch (Hook, Showcase, CTA) using Groq.
- * NEVER THROWS: Guaranteed zero-crash fallback.
- */
-export async function generateLiveSalesPitchFromAI(
-  input: LiveSalesPitchInput,
-): Promise<LiveSalesPitchOutput> {
-  const hostName = input.avatarName || "Namira";
-  const tone = input.tone || "Persuasif";
-  const category = input.productCategory || input.category || "General";
-  const price = input.productPrice || "Harga Spesial";
-  const stock = input.productStock ?? 50;
-
-  const systemPrompt = `Kamu adalah ${hostName}, seorang Top Live Host & Streamer profesional di Indonesia.
-Buat naskah live sales pitch terstruktur dalam Bahasa Indonesia yang sangat natural, santai, meyakinkan, dan tidak kaku ("aku", "kamu", "nih", "yuk", "cus").
-
-DATA PRODUK:
-- Nama Produk: ${input.productName}
-- Kategori: ${category}
-- Harga Promo Live: ${price}
-- Sisa Stok: ${stock} pcs
-- Deskripsi dari Penjual: ${input.productDescription || "Tidak ada deskripsi"}
-- Keunggulan & Manfaat: ${input.productBenefits || "Kualitas terbaik dan teruji"}
-- Petunjuk Pemakaian: ${input.productUsage || "Mudah digunakan"}
-- FAQ / Izin: ${input.productFaq || "Terjamin original dan aman"}
-
-GAYA BICARA: ${tone} (bahasa live streaming natural & ekspresif, BUKAN seperti membaca brosur atau robot).
-
-ATURAN WAJIB (SANGAT PENTING):
-1. DILARANG KERAS mengulang-ulang "Halo kak", "Halo kakak", atau salam kaku di awal kalimat.
-2. Naskah harus dibagi menjadi 3 bagian dalam format JSON:
-   1. "hook": Kalimat pembuka penasaran/solutif yang langsung menarik perhatian tanpa kata 'halo' (1-2 kalimat). Contoh: "Kalian yang punya masalah kulit kusam wajib merapat deh sekarang..."
-   2. "showcase": Bedah manfaat utama, keunggulan, dan sensasi penggunaan produk secara ekspresif (2-3 kalimat).
-   3. "cta": Ajakan checkout mendesak dengan menyebut harga promo ${price} dan sisa stok ${stock} pcs di keranjang kuning (1-2 kalimat).
-   - WAJIB menyisipkan Action Tag di AWAL setiap teks bagian (hook, showcase, cta): [IDLE], [RAISE_HAND], [POINT_DOWN], [EXCITED], [NOD], atau [SMILE].
-
-Kembalikan HANYA JSON valid:
-{
-  "hook": "...",
-  "showcase": "...",
-  "cta": "..."
-}`;
+export async function checkGroqHealth(): Promise<{
+  online: boolean;
+  model: string;
+  provider: string;
+  latencyMs?: number;
+  error?: string;
+}> {
+  const started = Date.now();
+  const provider = (process.env.LIVE_BRAIN_PROVIDER || "auto").toLowerCase();
 
   try {
-    const client = getGroqClient();
-    for (const model of CANDIDATE_GROQ_MODELS) {
-      try {
-        const response = await client.models.generateContent({
-          model: model,
-          contents: `${systemPrompt}\n\nBuat naskah live sales pitch untuk ${input.productName} dalam format JSON`,
-          config: {
-            responseMimeType: "application/json",
-            temperature: 0.7,
-          },
-        });
-        const raw = response.text || "";
-        const parsed = cleanAndExtractJson(raw);
-        if (parsed?.hook && parsed?.showcase && parsed?.cta) {
-          return {
-            productName: input.productName,
-            price,
-            stock,
-            category,
-            avatarName: hostName,
-            tone,
-            hook: String(parsed.hook),
-            showcase: String(parsed.showcase),
-            cta: String(parsed.cta),
-            fullScript: `${parsed.hook}\n\n${parsed.showcase}\n\n${parsed.cta}`,
-          };
-        }
-      } catch (err: any) {
-        console.warn(
-          `[Groq-Brain] generateLiveSalesPitch notice: ${err?.message || err}`,
-        );
+    if (provider === "groq" || (provider === "auto" && GROQ_API_KEY)) {
+      const response = await fetch(`${GROQ_BASE_URL}/models`, {
+        headers: { Authorization: `Bearer ${GROQ_API_KEY}` },
+      });
+      if (!response.ok) {
+        return {
+          online: false,
+          model: GROQ_MODEL,
+          provider: "groq",
+          latencyMs: Date.now() - started,
+          error: `HTTP ${response.status}`,
+        };
       }
+      return {
+        online: true,
+        model: GROQ_MODEL,
+        provider: "groq",
+        latencyMs: Date.now() - started,
+      };
     }
-  } catch (err: any) {
-    console.warn(`[Groq-Brain] Pitch error: ${err?.message || err}`);
-  }
 
-  // Graceful Natural Fallback template
-  const fallbackHook = `[EXCITED] Nah, buat kalian yang dari kemarin nyari solusi terbaik, kenalin nih ${input.productName}!`;
-  const fallbackShowcase = `[IDLE] Produk ini bener-bener diformulasikan khusus dengan bahan pilihan dan kualitas premium.`;
-  const fallbackCta = `[POINT_DOWN] Khusus di sesi live sekarang harganya diskon jadi cuma ${price} dan stoknya tinggal ${stock} pcs lagi. Yuk langsung amankan di keranjang kuning sekarang!`;
+    if (GEMINI_API_KEY) {
+      const client = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+      // Small real request so health really means reachable + authorized.
+      await client.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: "Balas satu kata: OK",
+        config: { maxOutputTokens: 4, temperature: 0 },
+      });
+      return {
+        online: true,
+        model: GEMINI_MODEL,
+        provider: "gemini",
+        latencyMs: Date.now() - started,
+      };
+    }
+
+    return {
+      online: false,
+      model: "none",
+      provider: "none",
+      latencyMs: Date.now() - started,
+      error: "GROQ_API_KEY dan GEMINI_API_KEY tidak tersedia",
+    };
+  } catch (err: any) {
+    return {
+      online: false,
+      model: provider === "groq" ? GROQ_MODEL : GEMINI_MODEL,
+      provider: provider === "groq" ? "groq" : "gemini",
+      latencyMs: Date.now() - started,
+      error: err?.message || String(err),
+    };
+  }
+}
+
+export const checkOllamaHealth = checkGroqHealth;
+
+// Deprecated compatibility API. Jangan gunakan untuk request baru.
+export function getGroqClient() {
+  if (!GEMINI_API_KEY) {
+    console.warn(
+      "[LiveBrain] getGroqClient() dipertahankan hanya untuk kompatibilitas lama. Request baru lewat generateDynamicSalesResponse().",
+    );
+  }
+  return new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+}
+
+export async function generateLiveSalesPitchFromAI(input: LiveSalesPitchInput): Promise<LiveSalesPitchOutput> {
+  const price = input.productPrice || "Harga Spesial";
+  const stock = input.productStock ?? 0;
+  const category = input.productCategory || input.category || "General";
+
+  const result = await generateDynamicSalesResponse({
+    userQuestion: `Buat satu segmen selling yang terdiri dari hook singkat, showcase manfaat, lalu CTA ringan untuk ${input.productName}. Jangan memakai salam kaku.`,
+    avatarName: input.avatarName,
+    tone: input.tone,
+    productName: input.productName,
+    productPrice: price,
+    productCategory: category,
+    productDescription: input.productDescription,
+    productBenefits: input.productBenefits,
+    productUsage: input.productUsage,
+    productFaq: input.productFaq,
+    productStock: stock,
+    allProducts: input.allProducts,
+    requestedIntent: "SELL",
+    requestedMode: "SELL",
+  });
+
+  const script = cleanForTts(result.replyText);
+  const sentences = script
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const hook = sentences.slice(0, 1).join(" ") || script;
+  const cta = sentences.slice(-1).join(" ") || script;
+  const showcase = sentences.slice(1, -1).join(" ") || script;
 
   return {
     productName: input.productName,
     price,
     stock,
     category,
-    avatarName: hostName,
-    tone,
-    hook: fallbackHook,
-    showcase: fallbackShowcase,
-    cta: fallbackCta,
-    fullScript: `${fallbackHook}\n\n${fallbackShowcase}\n\n${fallbackCta}`,
+    avatarName: input.avatarName || "Namira",
+    tone: input.tone || "Persuasif",
+    hook,
+    showcase,
+    cta,
+    fullScript: [hook, showcase, cta].filter(Boolean).join("\n\n"),
   };
 }
 
 export const generateLiveSalesPitchFromAIGroq = generateLiveSalesPitchFromAI;
 export const generateLiveSalesPitchFromAIGemini = generateLiveSalesPitchFromAI;
 
-/**
- * Generates vertical video ads script (Tiktok/Reels) using Groq.
- */
-export async function generateVideoSalesScript(
-  params: VideoSalesScriptInput,
-): Promise<string> {
-  const prompt = `Buat 1 naskah video pendek promosi produk:
-Nama Produk: ${params.productName}
-Kategori: ${params.productCategory || "General"}
-Harga: ${params.productPrice || "Harga Spesial"}
-Durasi: ${params.durationType || "30s"}
-Style: ${params.style || "Viral TikTok"}
-Deskripsi: ${params.productDescription || "Produk berkualitas"}
-
-Berikan hanya naskahnya langsung tanpa intro/outro tambahan dalam bahasa Indonesia santai.`;
-
-  try {
-    const client = getGroqClient();
-    for (const model of CANDIDATE_GROQ_MODELS) {
-      try {
-        const response = await client.models.generateContent({
-          model: model,
-          contents: prompt,
-          config: {
-            temperature: 0.7,
-          },
-        });
-        const text = (response.text || "").trim();
-        if (text) return text;
-      } catch {}
-    }
-  } catch {}
-
-  return `Halo semuanya! Buat kalian yang lagi cari ${params.productName}, ini dia solusinya! Kualitas premium dengan harga hemat cuma ${params.productPrice || "terbaik hari ini"}. Yuk langsung checkout sekarang sebelum kehabisan!`;
+export async function generateVideoSalesScript(params: VideoSalesScriptInput): Promise<string> {
+  const result = await generateDynamicSalesResponse({
+    userQuestion: `Buat script video ${params.durationType || "30s"} untuk produk ${params.productName}. Style: ${params.style || "Viral TikTok"}.`,
+    productName: params.productName,
+    productDescription: params.productDescription,
+    productPrice: params.productPrice,
+    productCategory: params.productCategory,
+    requestedIntent: "SELL",
+    requestedMode: "SELL",
+  });
+  return result.replyText;
 }
 
 export const generateVideoSalesScriptGroq = generateVideoSalesScript;
 export const generateVideoSalesScriptGemini = generateVideoSalesScript;
 
-/**
- * Generates structured host response with 3D animation actions and emotions using Groq.
- */
 export async function generateLunaResponse(
   userComment: string,
   product?: {
@@ -449,140 +833,96 @@ export async function generateLunaResponse(
     stock: number;
     description?: string;
   } | null,
-  avatarName: string = "Namira",
-  tone: string = "Persuasif",
-): Promise<LunaStructuredOutput> {
-  const productSection = product
-    ? `\nPRODUK AKTIF: Nama: ${product.name}, Harga: ${product.price}, Stok: ${product.stock}`
-    : "";
-
-  const systemPrompt = `Kamu adalah ${avatarName}, AI Live Streamer.
-Gaya bicara: ${tone}, ramah, interaktif.
-${productSection}
-Format JSON: {"speech": "...", "action": "HOLD_PRODUCT"|"POINT_CART"|"LAUGH"|"NOD"|"SHRUG"|"TALK_EXPRESSIVE"|"IDLE", "emotion": "happy"|"neutral"|"surprised"|"thinking", "target_product_id": "${product ? product.id : null}"}`;
-
+  avatarName = "Namira",
+  tone = "Persuasif",
+): Promise<{
+  speech: string;
+  action: LunaAction;
+  emotion: LunaEmotion;
+  target_product_id: string | null;
+}> {
   try {
-    const client = getGroqClient();
-    for (const model of CANDIDATE_GROQ_MODELS) {
-      try {
-        const response = await client.models.generateContent({
-          model: model,
-          contents: `${systemPrompt}\n\nKomentar Penonton: "${userComment}"`,
-          config: {
-            responseMimeType: "application/json",
-            temperature: 0.7,
-          },
-        });
-        const raw = response.text || "";
-        const parsed = cleanAndExtractJson(raw);
-        const validated = LunaStructuredOutputSchema.safeParse(parsed);
-        if (validated.success) return validated.data;
-      } catch {}
-    }
-  } catch {}
-
-  return {
-    speech: `Halo kak, makasih banyak ya udah mampir! ${product ? `Yuk langsung dicek ${product.name} di keranjang kuning mumpung lagi diskon!` : ""}`,
-    action: "TALK_EXPRESSIVE",
-    emotion: "happy",
-    target_product_id: product ? product.id : null,
-  };
+    const result = await generateDynamicSalesResponse({
+      userQuestion: `Komentar penonton: ${userComment}`,
+      avatarName,
+      tone,
+      productName: product?.name,
+      productPrice:
+        product && typeof product.price === "number"
+          ? `Rp${product.price.toLocaleString("id-ID")}`
+          : product?.price != null
+            ? String(product.price)
+            : undefined,
+      productStock: product?.stock,
+      productDescription: product?.description,
+      requestedIntent: inferIntentFromText(userComment),
+      requestedMode: "QNA",
+    });
+    return {
+      speech: result.replyText,
+      action: (result.action as LunaAction) || "TALK_EXPRESSIVE",
+      emotion: "warm",
+      target_product_id: product?.id || null,
+    };
+  } catch {
+    return {
+      speech: `Aku lihat komentarnya... ${product ? `Untuk ${product.name}, ` : ""}aku jawab dari info yang memang tersedia ya.`,
+      action: "THINK",
+      emotion: "thinking",
+      target_product_id: product?.id || null,
+    };
+  }
 }
 
 export const generateLunaResponseGroq = generateLunaResponse;
 
-export interface GenerateProductKnowledgeInput {
-  name: string;
-  description: string;
-  category?: string;
-  price?: number | string;
-  stock?: number;
-  sku?: string;
-  link?: string;
-  benefits?: string;
-  usage?: string;
-  image?: string;
-  bannerImage?: string;
-}
+export async function generateProductKnowledge(input: GenerateProductKnowledgeInput): Promise<ProductKnowledge> {
+  const priceDisplay =
+    input.price == null
+      ? "Harga Spesial"
+      : typeof input.price === "number"
+        ? `Rp${input.price.toLocaleString("id-ID")}`
+        : String(input.price);
 
-/**
- * Generates rich product knowledge base and live sales copywriting from product info using LLM.
- */
-export async function generateProductKnowledge(
-  input: GenerateProductKnowledgeInput,
-): Promise<ProductKnowledge> {
-  const priceDisplay = input.price
-    ? typeof input.price === "number"
-      ? `Rp${input.price.toLocaleString("id-ID")}`
-      : String(input.price)
-    : "Harga Spesial";
+  const prompt = `Kamu adalah product knowledge editor.
+Buat JSON murni dengan field: description, benefits, usage, faq, targetAudience, copywriting.
+Jangan menambahkan klaim legal/medis/commercial yang tidak ada pada data input.
 
-  const systemPrompt = `Kamu adalah pakar copywriting e-commerce profesional & live streaming sales strategist.
-Tugasmu adalah menyusun RAG Knowledge Base dan naskah copywriting live sales yang memikat berdasarkan data produk yang diisi oleh penjual.
-
-Format Output WAJIB JSON murni:
-{
-  "description": "Deskripsi produk yang diperkaya, profesional, dan menjual",
-  "benefits": "Daftar manfaat & keunggulan utama produk yang memikat pembeli (mengutamakan data penjual jika ada)",
-  "usage": "Petunjuk & cara pemakaian yang jelas, ringkas, dan tepat sasaran",
-  "faq": "Tanya jawab penting seputar keaslian, keamanan (BPOM/Halal), expired/garansi, dan legalitas",
-  "targetAudience": "Target pembeli ideal yang membutuhkan produk ini",
-  "copywriting": "Naskah live sales pitch persuasif khas live streaming TikTok/Shopee untuk AI host mengajak checkout di keranjang kuning"
-}`;
-
-  const userPrompt = `DATA PRODUK LENGKAP:
-- Nama Produk: ${input.name}
-- Kategori: ${input.category || "General"}
-- Harga Jual Live: ${priceDisplay}
-- Sisa Stok: ${input.stock ?? 0} pcs
-- SKU / Kode Produk: ${input.sku || "-"}
-- Link Checkout: ${input.link || "-"}
-- Deskripsi Lengkap dari Penjual: ${input.description}
-- Keunggulan & Manfaat Utama dari Penjual: ${input.benefits || "Kualitas terbaik & original"}
-- Petunjuk & Cara Pemakaian dari Penjual: ${input.usage || "Gunakan secara teratur sesuai petunjuk"}
-
-Buat RAG Knowledge Base dan Live Copywriting sekarang dalam format JSON.`;
+DATA:
+Nama: ${input.name}
+Kategori: ${input.category || "General"}
+Harga: ${priceDisplay}
+Stok: ${input.stock ?? 0}
+SKU: ${input.sku || "-"}
+Link: ${input.link || "-"}
+Deskripsi: ${input.description}
+Manfaat: ${input.benefits || ""}
+Cara pakai: ${input.usage || ""}`;
 
   try {
-    const client = getGroqClient();
-    for (const model of CANDIDATE_GROQ_MODELS) {
-      try {
-        const response = await client.models.generateContent({
-          model: model,
-          contents: `${systemPrompt}\n\n${userPrompt}`,
-          config: {
-            responseMimeType: "application/json",
-            temperature: 0.7,
-          },
-        });
-        const raw = response.text || "";
-        const parsed = cleanAndExtractJson(raw) as ProductKnowledge;
-        if (parsed?.description && parsed?.copywriting) return parsed;
-      } catch (err: any) {
-        console.warn(
-          `[Groq-Brain] generateProductKnowledge error on ${model}:`,
-          err?.message || err,
-        );
-      }
+    const provider = await callBrain(prompt);
+    const parsed = cleanAndExtractJson(provider.text) as any;
+    if (
+      parsed &&
+      typeof parsed.description === "string" &&
+      typeof parsed.benefits === "string" &&
+      typeof parsed.usage === "string" &&
+      typeof parsed.faq === "string" &&
+      typeof parsed.targetAudience === "string" &&
+      typeof parsed.copywriting === "string"
+    ) {
+      return parsed as ProductKnowledge;
     }
   } catch (err: any) {
-    console.warn(
-      `[Groq-Brain] generateProductKnowledge client error:`,
-      err?.message || err,
-    );
+    console.warn(`[LiveBrain] generateProductKnowledge: ${err?.message || err}`);
   }
 
-  // Dynamic Failsafe (strictly derived from user inputs, no generic mock data)
   return {
     description: input.description,
-    benefits:
-      input.benefits ||
-      `Keunggulan utama ${input.name}: kualitas terbaik, produk 100% original, dan terbukti bermanfaat.`,
-    usage:
-      input.usage ||
-      `Gunakan ${input.name} secara rutin sesuai instruksi kemasan untuk mendapatkan hasil maksimal.`,
-    faq: `Q: Apakah produk ${input.name} ini original & bergaransi? A: Ya, 100% produk asli dan bergaransi resmi.`,
-    targetAudience: `Konsumen yang membutuhkan produk ${input.name} berkualitas dengan harga promo terbaik.`,
-    copywriting: `Halo kakak-kakak semuanya! Buat kalian yang lagi cari ${input.name}, produk ini lagi ada promo harga spesial cuma ${priceDisplay}! Kualitasnya terjamin dan stoknya terbatas. Yuk langsung klik keranjang kuning sekarang juga sebelum promonya berakhir!`,
+    benefits: input.benefits || `Keunggulan ${input.name} berdasarkan data penjual.`,
+    usage: input.usage || `Gunakan ${input.name} sesuai petunjuk pada kemasan atau informasi resmi produk.`,
+    faq: "Gunakan hanya informasi resmi produk untuk menjawab legalitas, keamanan, garansi, dan keaslian.",
+    targetAudience: `Konsumen yang membutuhkan ${input.name}.`,
+    copywriting: `Untuk kamu yang sedang mempertimbangkan ${input.name}, cek detail produk dan manfaat yang memang tersedia di informasi resminya.`,
   };
 }

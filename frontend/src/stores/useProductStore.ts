@@ -179,64 +179,65 @@ export const useProductStore = create<ProductState>((set, get) => ({
     return newProd;
   },
 
-  saveEditedProduct: async () => {
-    const editProd = get().selectedProductForEdit;
-    if (!editProd || !editProd.id) throw new Error("Produk tidak ditemukan.");
-    if (!editProd.image) throw new Error("Foto / gambar produk wajib diisi.");
-    if (!editProd.name?.trim()) throw new Error("Nama produk wajib diisi.");
+saveEditedProduct: async () => {
+     const editProd = get().selectedProductForEdit;
+     if (!editProd || !editProd.id) throw new Error("Produk tidak ditemukan.");
+     // Image is optional for update; keep existing if not provided
+     // if (!editProd.image) throw new Error("Foto / gambar produk wajib diisi.");
+     if (!editProd.name?.trim()) throw new Error("Nama produk wajib diisi.");
 
-    const numPrice =
-      typeof editProd.price === "number"
-        ? editProd.price
-        : parseInt(String(editProd.price).replace(/\D/g, ""), 10) || 0;
-    if (numPrice <= 0) throw new Error("Harga jual live (Rp) wajib diisi dengan angka valid.");
-    if (!editProd.tag) throw new Error("Kategori produk wajib dipilih.");
-    if (!editProd.description?.trim()) throw new Error("Deskripsi lengkap produk wajib diisi.");
+     const numPrice =
+       typeof editProd.price === "number"
+         ? editProd.price
+         : parseInt(String(editProd.price).replace(/\D/g, ""), 10) || 0;
+     if (numPrice <= 0) throw new Error("Harga jual live (Rp) wajib diisi dengan angka valid.");
+     if (!editProd.tag) throw new Error("Kategori produk wajib dipilih.");
+     if (!editProd.description?.trim()) throw new Error("Deskripsi lengkap produk wajib diisi.");
 
-    const payload = {
-      name: editProd.name.trim(),
-      price: numPrice,
-      stock: Number(editProd.stock) || 0,
-      category: editProd.tag || "General",
-      sku: editProd.sku || "",
-      image: editProd.image,
-      bannerImage: editProd.bannerImage || "",
-      link: editProd.link || "",
-      description: editProd.description.trim(),
-      benefits: editProd.benefits || "",
-      usage: editProd.usage || "",
-    };
+     const payload = {
+       name: editProd.name.trim(),
+       price: numPrice,
+       stock: Number(editProd.stock) || 0,
+       category: editProd.tag || "General",
+       sku: editProd.sku || "",
+       image: editProd.image,
+       bannerImage: editProd.bannerImage || "",
+       link: editProd.link || "",
+       description: editProd.description.trim(),
+       benefits: editProd.benefits || "",
+       usage: editProd.usage || "",
+     };
 
-    await productService.updateProduct(editProd.id, payload);
+     await productService.updateProduct(editProd.id, payload);
 
-    const formattedProduct: Product = {
-      ...editProd,
-      name: payload.name,
-      price: `Rp${numPrice.toLocaleString("id-ID")}`,
-      stock: payload.stock,
-      tag: payload.category,
-      sku: payload.sku,
-      image: payload.image,
-      bannerImage: payload.bannerImage,
-      link: payload.link,
-      description: payload.description,
-      benefits: payload.benefits,
-      usage: payload.usage,
-    };
+     const formattedProduct: Product = {
+       ...editProd,
+       name: payload.name,
+       price: `Rp${numPrice.toLocaleString("id-ID")}`,
+       stock: payload.stock,
+       tag: payload.category,
+       sku: payload.sku,
+       image: payload.image,
+       bannerImage: payload.bannerImage,
+       link: payload.link,
+       description: payload.description,
+       benefits: payload.benefits,
+       usage: payload.usage,
+     };
 
-    set((state) => ({
-      products: state.products.map((p) =>
-        p.id === editProd.id ? formattedProduct : p,
-      ),
-      activeFeaturedProduct:
-        state.activeFeaturedProduct.id === editProd.id
-          ? formattedProduct
-          : state.activeFeaturedProduct,
-      selectedProductForEdit: null,
-    }));
+     set((state) => ({
+       products: state.products.map((p) =>
+         p.id === editProd.id ? formattedProduct : p,
+       ),
+       activeFeaturedProduct:
+         state.activeFeaturedProduct.id === editProd.id
+           ? formattedProduct
+           : state.activeFeaturedProduct,
+       selectedProductForEdit: null,
+     }));
 
-    return formattedProduct;
-  },
+     return formattedProduct;
+   },
 
   deleteProduct: async (id?: string) => {
     if (!id) return false;
