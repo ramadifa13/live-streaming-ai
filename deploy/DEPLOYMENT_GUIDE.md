@@ -106,33 +106,9 @@
       pm2 save
       ```
 
-  9. **Redeploy script (optional)**
+  9. **Redeploy script **
     ```bash
-    #!/usr/bin/env bash
-    set -euo pipefail
-    REPO_DIR="/var/www/app"
-    cd "$REPO_DIR"
-    git fetch --prune
-    git reset --hard origin/main   
-
-
-    cd "$REPO_DIR/backend"
-    npm install
-    npx prisma generate
-    npm run build
-
-
-    cd "$REPO_DIR/frontend"
-    npm install
-    npm run build
-
-    pm2 restart api
-    pm2 restart frontend
-    pm2 save
-
-    nginx -t && systemctl reload nginx
-
-    certbot renew --quiet
+    ssh root@202.10.35.186 "/root/deploy.sh"
     ```
 
  10. **Verification**
