@@ -10,10 +10,12 @@
   },
   "dependencies": {
     "@pixiv/three-vrm": "^3.5.5",
+    "lucide-react": "^1.37.0",
     "next": "16.3.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "three": "^0.185.1"
+    "three": "^0.185.1",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
