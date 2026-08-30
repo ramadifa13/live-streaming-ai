@@ -25,7 +25,6 @@ interface AiHostState {
   renderProgress: number;
   hasRenderedVideo: boolean;
 
-  // Actions
   setSelectedAvatar: (avatar: Avatar) => void;
   setSelectedTone: (tone: string) => void;
   setSelectedVoice: (voice: string) => void;
@@ -115,15 +114,17 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
 
     set({ isSynthesizingAudio: true, isAvatarSpeaking: true });
 
+    const state = get();
+    const ttsOptions = {
+      text,
+      voice: opts?.voice || state.selectedVoice,
+      avatarName: opts?.avatar || state.selectedAvatar.name,
+      speed: opts?.speed ?? state.speechSpeed,
+      tone: opts?.tone || state.selectedTone,
+    };
+
     try {
-      const state = get();
-      const blob = await aiService.synthesizeTTS({
-        text,
-        voice: opts?.voice || state.selectedVoice,
-        avatarName: opts?.avatar || state.selectedAvatar.name,
-        speed: opts?.speed ?? state.speechSpeed,
-        tone: opts?.tone || state.selectedTone,
-      });
+      const blob = await aiService.synthesizeTTS(ttsOptions);
 
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
@@ -148,7 +149,8 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
 
       await audio.play().catch(() => {});
     } catch (err) {
-      console.warn("[speakText] Audio playback notice:", err);
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      console.warn("[speakText] Audio playback notice:", errorMessage);
       set({
         isPlayingAudio: false,
         isAvatarSpeaking: false,
@@ -234,8 +236,7 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
             set({ isRenderingVideo: false });
           }
         } catch {
-          // Keep polling on network glitch
-        }
+          }
       }, 1500);
     } catch (err) {
       set({ isRenderingVideo: false });

@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Sparkles } from "lucide-react";
+import { Wifi } from "lucide-react";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 
@@ -26,9 +26,7 @@ export const ConnectingOverlay: React.FC = () => {
           <div className="relative mx-auto mb-3 flex h-12 w-12 items-center justify-center">
             <div className="absolute inset-0 rounded-full border border-indigo-500/30 animate-ping opacity-60" />
             <div className="absolute inset-0 rounded-full border-2 border-t-indigo-500 border-r-purple-500 border-b-transparent border-l-transparent animate-spin" />
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 shadow-md shadow-indigo-500/40 animate-pulse">
-              <Sparkles className="w-5 h-5 text-white" />
-            </div>
+            <Wifi className="relative w-6 h-6 text-indigo-400" />
           </div>
 
           <h3 className="text-base sm:text-lg font-extrabold text-white tracking-wide mb-0.5">

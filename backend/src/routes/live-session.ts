@@ -120,11 +120,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       reply.code(404);
       return { error: "avatar not found" };
     }
-    if (avatar.name.toLowerCase() !== "namira") {
-      reply.code(400);
-      return { error: "Demo hanya mendukung AI Host Namira" };
-    }
-
     try {
       const result = await liveSessionManager.startSession({
         productId: parsed.data.productId,

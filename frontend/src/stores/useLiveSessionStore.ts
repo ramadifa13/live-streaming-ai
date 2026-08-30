@@ -25,7 +25,7 @@ export interface PipelineStatus {
 }
 
 interface LiveSessionState {
-  // Session & Status
+
   currentLiveSessionId: string | null;
   liveSessionPhase: "idle" | "pending" | "live" | "ended";
   isLiveActive: boolean;
@@ -37,11 +37,9 @@ interface LiveSessionState {
   connectingStageIndex: number;
   connectingStageText: string;
 
-  // Duration & Timers
   selectedDuration: number;
   liveSeconds: number;
 
-  // Platform & RTMP
   selectedPlatform: string;
   connectMode: "1CLICK" | "MANUAL";
   customRtmpUrl: string;
@@ -49,7 +47,6 @@ interface LiveSessionState {
   connectedAccount: ConnectedAccount | null;
   oauthConfigStatus: Record<string, boolean>;
 
-  // Automations
   automations: {
     autoReply: boolean;
     autoPin: boolean;
@@ -57,17 +54,14 @@ interface LiveSessionState {
     autoModeration: boolean;
   };
 
-  // Chat
   chatMessages: ChatMessage[];
   inputChat: string;
   isAiAutoReplyOn: boolean;
 
-  // Metrics & Data
   metrics: LiveMetrics;
   sessionSummary: SessionSummaryData | null;
   pipelineStatus: PipelineStatus | null;
 
-  // Actions
   setSelectedDuration: (hours: number) => void;
   setSelectedPlatform: (plat: string) => void;
   setConnectMode: (mode: "1CLICK" | "MANUAL") => void;
@@ -105,8 +99,6 @@ interface LiveSessionState {
   setIsLiveActive: (active: boolean) => void;
   setIsLivePaused: (paused: boolean) => void;
   setLiveSessionPhase: (phase: "idle" | "pending" | "live" | "ended") => void;
-
-  // Complex Actions
   handlePlatformSelect: (platName: string) => void;
   cancelInitialization: () => void;
   endLiveSession: () => Promise<SessionSummaryData>;
@@ -125,14 +117,12 @@ export const useLiveSessionStore = create<LiveSessionState>()(
       hasConfirmedBroadcast: false,
       connectingStageIndex: 0,
       connectingStageText: "Mengalokasikan Cloud GPU RTX 4090...",
-
       selectedDuration: 1,
       liveSeconds: 0,
-
-      selectedPlatform: "Shopee Live",
+      selectedPlatform: "Instagram Live",
       connectMode: "1CLICK",
       customRtmpUrl: "",
-      streamKey: "live_sec_892348a7b9c1e2f",
+      streamKey: "",
       connectedAccount: null,
       oauthConfigStatus: {},
 
@@ -290,3 +280,4 @@ export const useLiveSessionStore = create<LiveSessionState>()(
     },
   ),
 );
+

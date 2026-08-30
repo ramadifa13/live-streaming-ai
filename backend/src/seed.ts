@@ -11,7 +11,7 @@ async function seedDatabase() {
           style: "Energetic",
           language: "Indonesia",
           voice: "id-ID-GadisNeural",
-          description: "AI host utama untuk demo live streaming",
+          description: "AI host utama untuk live streaming",
         },
       ],
     });

@@ -26,7 +26,8 @@ export const aiService = {
 
     if (!res.ok) {
       const errJson = await res.json().catch(() => null);
-      throw new Error(errJson?.error || "Gagal memproses audio TTS dari backend.");
+      const errorMsg = errJson?.error || `HTTP ${res.status}: Gagal memproses audio TTS dari backend.`;
+      throw new Error(errorMsg);
     }
 
     const contentType = res.headers.get("content-type") || "";

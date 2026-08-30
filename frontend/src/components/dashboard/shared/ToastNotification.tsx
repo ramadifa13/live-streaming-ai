@@ -4,6 +4,27 @@ import React from "react";
 import { CheckCircle2, AlertCircle, AlertTriangle, Sparkles, X } from "lucide-react";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 
+const icons = {
+  success: CheckCircle2,
+  error: AlertCircle,
+  warning: AlertTriangle,
+  info: Sparkles,
+};
+
+const iconColors = {
+  success: "text-emerald-400",
+  error: "text-rose-400",
+  warning: "text-amber-400",
+  info: "text-blue-400",
+};
+
+const containerStyles = {
+  success: "border-emerald-500/50 bg-[#062817]/95 text-emerald-200 shadow-emerald-500/20",
+  error: "border-rose-500/50 bg-[#2d0f15]/95 text-rose-200 shadow-rose-500/20",
+  warning: "border-amber-500/50 bg-[#2b1e09]/95 text-amber-200 shadow-amber-500/20",
+  info: "border-blue-500/50 bg-[#0f172a]/95 text-blue-200 shadow-blue-500/20",
+};
+
 export const ToastNotification: React.FC = () => {
   const toastMessage = useDashboardUIStore((state) => state.toastMessage);
   const toastType = useDashboardUIStore((state) => state.toastType);
@@ -11,38 +32,17 @@ export const ToastNotification: React.FC = () => {
 
   if (!toastMessage) return null;
 
-  const typeStyles = {
-    success: {
-      container:
-        "border-emerald-500/50 bg-[#062817]/95 text-emerald-200 shadow-emerald-500/20",
-      icon: <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />,
-    },
-    error: {
-      container:
-        "border-rose-500/50 bg-[#2d0f15]/95 text-rose-200 shadow-rose-500/20",
-      icon: <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />,
-    },
-    warning: {
-      container:
-        "border-amber-500/50 bg-[#2b1e09]/95 text-amber-200 shadow-amber-500/20",
-      icon: <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />,
-    },
-    info: {
-      container:
-        "border-blue-500/50 bg-[#0f172a]/95 text-blue-200 shadow-blue-500/20",
-      icon: <Sparkles className="w-4 h-4 text-blue-400 shrink-0" />,
-    },
-  };
-
-  const currentStyle = typeStyles[toastType] || typeStyles.info;
+  const IconComponent = icons[toastType] || icons.info;
+  const iconColor = iconColors[toastType] || iconColors.info;
+  const containerStyle = containerStyles[toastType] || containerStyles.info;
 
   return (
     <aside
       aria-live="polite"
       aria-label="Notifikasi sistem"
-      className={`fixed bottom-6 right-6 z-50 flex max-w-sm sm:max-w-md items-center gap-2.5 rounded-2xl border px-4 py-3 text-xs font-semibold shadow-2xl backdrop-blur-md transition-all duration-300 animate-in fade-in slide-in-from-bottom-5 ${currentStyle.container}`}
+      className={`fixed bottom-6 right-6 z-50 flex max-w-sm sm:max-w-md items-center gap-2.5 rounded-2xl border px-4 py-3 text-xs font-semibold shadow-2xl backdrop-blur-md transition-all duration-300 animate-in fade-in slide-in-from-bottom-5 ${containerStyle}`}
     >
-      {currentStyle.icon}
+      <IconComponent className={`w-4 h-4 ${iconColor} shrink-0`} />
       <span className="flex-1 leading-snug">{toastMessage}</span>
       <button
         type="button"

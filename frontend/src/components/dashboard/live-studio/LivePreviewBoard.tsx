@@ -26,7 +26,6 @@ export const LivePreviewBoard: React.FC = () => {
   const products = useProductStore((state) => state.products);
   const activeFeaturedProduct = useProductStore((state) => state.activeFeaturedProduct);
 
-  // Proyeksi Hasil Siaran calculation
   const productPrice =
     parsePriceToNumber(activeFeaturedProduct?.price) ||
     (products.length > 0
@@ -63,7 +62,7 @@ export const LivePreviewBoard: React.FC = () => {
           : "border-[#232c42] bg-[#0c1221]"
       }`}
     >
-      {/* Header Step 4 */}
+      
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#232c42]/80 pb-3">
         <div className="flex items-center gap-2">
           <span className="rounded-md bg-blue-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-blue-400 border border-blue-500/20">
@@ -87,14 +86,14 @@ export const LivePreviewBoard: React.FC = () => {
         Pratinjau interaktif avatar AI, simulasi live chat, dan estimasi performa siaran langsung Anda.
       </p>
 
-      {/* 3-Column Layout: Chat Simulation | Video Preview Player | Summary & Revenue */}
+      
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-stretch min-h-[360px]">
-        {/* 1. Kolom Kiri: Simulasi Live Chat */}
+        
         <div className="md:col-span-4">
           <LiveChatPanel />
         </div>
 
-        {/* 2. Kolom Tengah: 9:16 Video Player Preview */}
+        
         <div className="md:col-span-4 flex justify-center">
           <div className="relative aspect-[9/16] w-full max-w-[235px] h-full min-h-[350px] overflow-hidden rounded-2xl border-2 border-[#232c42] bg-[#0c0919] shadow-2xl">
             <RealtimeLivePortraitView
@@ -108,7 +107,7 @@ export const LivePreviewBoard: React.FC = () => {
               className="w-full h-full object-cover"
             />
 
-            {/* Gambar Banner Promosi */}
+            
             {activeFeaturedProduct?.bannerImage && (
               <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[50%] max-w-[226px] flex justify-center animate-in fade-in slide-in-from-top-2 duration-300">
                 <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/40 bg-black/60 backdrop-blur-md p-0.5 w-full relative h-14">
@@ -123,11 +122,11 @@ export const LivePreviewBoard: React.FC = () => {
               </div>
             )}
 
-            {/* Bottom Floating Product Card */}
+            
             {activeFeaturedProduct?.name && activeFeaturedProduct.name !== "Memuat Produk..." && (
               <div className="absolute bottom-[5%] left-1/2 -translate-x-1/2 z-20 pointer-events-none w-[92%] max-w-[218px] flex justify-center animate-in fade-in slide-in-from-bottom-2 duration-300">
                 <div className="w-full rounded-2xl bg-white/98 p-2.5 shadow-[0_10px_30px_rgba(0,0,0,0.35)] border border-slate-100/90 flex items-center gap-2.5 text-slate-900 backdrop-blur-md ring-1 ring-black/5">
-                  {/* Foto Produk Thumbnail */}
+                  
                   <div className="relative h-11 w-11 shrink-0 rounded-xl overflow-hidden bg-slate-100 border border-slate-200/80 shadow-xs">
                     <Image
                       src={
@@ -144,7 +143,7 @@ export const LivePreviewBoard: React.FC = () => {
                     />
                   </div>
 
-                  {/* Info Produk */}
+                  
                   <div className="flex-1 min-w-0">
                     <p className="text-[10px] font-bold text-slate-900 truncate leading-tight">
                       {activeFeaturedProduct.name}
@@ -168,7 +167,7 @@ export const LivePreviewBoard: React.FC = () => {
           </div>
         </div>
 
-        {/* 3. Kolom Kanan: Summary & Proyeksi */}
+        
         <div className="md:col-span-4 flex flex-col justify-between rounded-xl border border-[#232c42] bg-[#111827]/80 p-3.5">
           <div>
             <p className="text-xs font-bold text-white mb-2.5 flex items-center justify-between border-b border-[#232c42] pb-2">
@@ -206,7 +205,7 @@ export const LivePreviewBoard: React.FC = () => {
             </div>
           </div>
 
-          {/* Proyeksi Hasil Siaran */}
+          
           <div className="mt-3 pt-2.5 border-t border-[#232c42] space-y-1.5 text-[11px]">
             <div className="flex items-center justify-between text-slate-400">
               <span className="flex items-center gap-1.5">
@@ -243,3 +242,5 @@ export const LivePreviewBoard: React.FC = () => {
     </div>
   );
 };
+
+

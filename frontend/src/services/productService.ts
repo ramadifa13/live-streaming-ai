@@ -17,7 +17,10 @@ export interface CreateProductPayload {
 export const productService = {
   async fetchProducts(): Promise<BackendProduct[]> {
     const res = await fetch("/api/products");
-    if (!res.ok) throw new Error("Gagal mengambil data produk");
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}: Gagal mengambil data produk`);
+    }
     const json = await res.json();
     if (json.success && Array.isArray(json.data)) {
       return json.data;

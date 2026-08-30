@@ -38,23 +38,10 @@ export const AiHostPanel: React.FC = () => {
           <h3 className="text-lg font-bold text-white flex items-center gap-2">
             <span>Pilih AI Host &amp; Suara TTS</span>
           </h3>
-          <p className="text-[11px] text-slate-400">
-            AI Host 3D dengan suara neural, tempo bicara, dan persona host.
-          </p>
+          <p className="text-[11px] text-slate-400">AI Host 3D dengan suara neural, tempo bicara, dan persona host.</p>
         </div>
       </div>
-
-      <div className="mb-3 flex items-center justify-between border-b border-[#232c42] pb-2 text-xs font-medium">
-        <span className="text-blue-400 font-semibold">3D VRM AI Host</span>
-        <span className="text-[9.5px] text-slate-400 font-mono">
-          Mode demo aktif
-        </span>
-      </div>
-
-      {/* Avatar Carousel */}
       <AvatarCarousel />
-
-      {/* Voice & Tone Settings */}
       <VoiceToneSettings />
     </div>
   );

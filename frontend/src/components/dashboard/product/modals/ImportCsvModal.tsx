@@ -23,7 +23,7 @@ export const ImportCsvModal: React.FC = () => {
     try {
       const count = await importCsvProducts();
       setShowCsvModal(false);
-      showToast(`✅ ${count} produk berhasil diimpor & disimpan ke Database!`);
+      showToast(` ${count} produk berhasil diimpor & disimpan ke Database!`);
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal mengimpor produk CSV");
     } finally {
@@ -35,7 +35,7 @@ export const ImportCsvModal: React.FC = () => {
     setCsvText(
       `Toner Wajah Centella Hydrating, 85000, 100, Skincare, Toner penenang kulit kemerahan dan melembapkan, https://shopee.co.id/toner\nLip Cream Velvet Matte 03 Nude, 65000, 150, Beauty, Lip cream tahan 12 jam tidak kering di bibir, https://tiktok.com/@toko/lipcream\nSunscreen Serum SPF 50 PA++++, 95000, 75, Skincare, Perlindungan UV maksimal ringan tanpa whitecast, https://shopee.co.id/sunscreen`,
     );
-    showToast("✨ Contoh data CSV disalin!");
+    showToast("Contoh data CSV disalin!");
   };
 
   return (
@@ -50,19 +50,14 @@ export const ImportCsvModal: React.FC = () => {
         </button>
         <div className="flex items-center gap-2 mb-2">
           <FileSpreadsheet className="w-6 h-6 text-blue-400" />
-          <h3 className="text-lg font-bold text-white">
-            Import Data Produk Massal (CSV)
-          </h3>
+          <h3 className="text-lg font-bold text-white">Import Data Produk Massal (CSV)</h3>
         </div>
         <p className="text-xs text-slate-400 mb-3">
-          Format baris:{" "}
-          <code className="text-blue-300">Nama Produk, Harga, Stok, Kategori, Deskripsi, Link</code>
+          Format baris: <code className="text-blue-300">Nama Produk, Harga, Stok, Kategori, Deskripsi, Link</code>
         </p>
 
         <div className="mb-3 flex justify-between items-center text-[11px]">
-          <span className="text-slate-400">
-            Tempel teks CSV atau upload file .csv:
-          </span>
+          <span className="text-slate-400">Tempel teks CSV atau upload file .csv:</span>
           <button
             type="button"
             onClick={handleInsertSample}
@@ -92,8 +87,7 @@ export const ImportCsvModal: React.FC = () => {
                 const file = e.target.files?.[0];
                 if (file) {
                   const reader = new FileReader();
-                  reader.onload = (event) =>
-                    setCsvText(event.target?.result as string);
+                  reader.onload = (event) => setCsvText(event.target?.result as string);
                   reader.readAsText(file);
                 }
               }}

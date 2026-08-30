@@ -32,7 +32,7 @@ export const VoiceToneSettings: React.FC = () => {
   const activeFeaturedProduct = useProductStore((state) => state.activeFeaturedProduct);
   const showToast = useDashboardUIStore((state) => state.showToast);
 
-  const handlePlayAudioPreview = async (
+const handlePlayAudioPreview = async (
     voice: string = selectedVoice,
     tone: string = selectedTone,
     speed: number = speechSpeed,
@@ -41,11 +41,11 @@ export const VoiceToneSettings: React.FC = () => {
       tone === "FOMO"
         ? `Halo kak! Khusus promo hari ini, stok ${activeFeaturedProduct?.name && activeFeaturedProduct.name !== "Memuat Produk..." ? activeFeaturedProduct.name : "produk ini"} terbatas ya, yuk buruan checkout sekarang juga!`
         : tone === "Professional"
-          ? `Halo semuanya, selamat datang. Saya ${selectedAvatar.name}. Hari ini kami mereview spesifikasi dan keunggulan ${activeFeaturedProduct?.name && activeFeaturedProduct.name !== "Memuat Produk..." ? activeFeaturedProduct.name : "produk unggulan kami"}.`
-          : `Halo semuanya! Selamat datang di live streaming. Saya ${selectedAvatar.name}. Yuk langsung cek penawaran dan voucher spesial hari ini ya!`;
+        ? `Halo semuanya, selamat datang. Saya ${selectedAvatar.name}. Hari ini kami mereview spesifikasi dan keunggulan ${activeFeaturedProduct?.name && activeFeaturedProduct.name !== "Memuat Produk..." ? activeFeaturedProduct.name : "produk unggulan kami"}.`
+        : `Halo semuanya! Selamat datang di live streaming. Saya ${selectedAvatar.name}. Yuk langsung cek penawaran dan voucher spesial hari ini ya!`;
 
     showToast(
-      `🔊 Memutar suara ${selectedAvatar.name} (${tone} • ${speed}x)...`,
+      `Memutar suara ${selectedAvatar.name} (${tone} ${speed}x)...`,
     );
     try {
       await speakText(previewText, {
@@ -54,14 +54,14 @@ export const VoiceToneSettings: React.FC = () => {
         speed,
         avatar: selectedAvatar.name,
       });
-    } catch {
-      showToast("⚠️ Gagal memproses audio.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Gagal memproses audio.";
+      showToast(`Gagal memutar audio: ${msg}`);
     }
   };
 
   return (
     <>
-      {/* Voice & Language Dropdowns */}
       <div className="mb-3 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         <div>
           <label className="mb-1 block text-[10.5px] font-semibold text-slate-300">
@@ -116,7 +116,6 @@ export const VoiceToneSettings: React.FC = () => {
         </div>
       </div>
 
-      {/* Tone & Audio Player Visualizer */}
       <div className="mb-3 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         <div>
           <label className="mb-1 block text-[10.5px] font-semibold text-slate-300">

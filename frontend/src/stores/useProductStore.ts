@@ -52,7 +52,6 @@ interface ProductState {
   newProductForm: NewProductFormData;
   isLoadingProducts: boolean;
 
-  // Actions
   setSearchQuery: (q: string) => void;
   setProductCategoryFilter: (cat: string) => void;
   setSelectedProductForEdit: (prod: Product | null) => void;
@@ -63,7 +62,6 @@ interface ProductState {
   resetNewProductForm: () => void;
   setProducts: (products: Product[] | ((prev: Product[]) => Product[])) => void;
 
-  // Async operations
   loadProducts: () => Promise<void>;
   createProduct: () => Promise<Product>;
   saveEditedProduct: () => Promise<Product>;
@@ -276,3 +274,4 @@ export const useProductStore = create<ProductState>((set, get) => ({
     return imported.length;
   },
 }));
+

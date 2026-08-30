@@ -18,16 +18,7 @@ import { BroadcastSettingsPanel } from "@/components/dashboard/broadcast/Broadca
 import { LivePreviewBoard } from "@/components/dashboard/live-studio/LivePreviewBoard";
 import { LiveControlBar } from "@/components/dashboard/live-studio/LiveControlBar";
 import { VideoAdsGeneratorPanel } from "@/components/dashboard/video-ads/VideoAdsGeneratorPanel";
-
-import { AddProductModal } from "@/components/dashboard/product/modals/AddProductModal";
-import { EditProductModal } from "@/components/dashboard/product/modals/EditProductModal";
-import { ImportCsvModal } from "@/components/dashboard/product/modals/ImportCsvModal";
-import { LiveScriptModal } from "@/components/dashboard/product/modals/LiveScriptModal";
-import { EndLiveConfirmModal } from "@/components/dashboard/live-studio/modals/EndLiveConfirmModal";
-import { SessionSummaryModal } from "@/components/dashboard/live-studio/modals/SessionSummaryModal";
-import { SettingsModal } from "@/components/dashboard/live-studio/modals/SettingsModal";
-import { TutorialModal } from "@/components/dashboard/live-studio/modals/TutorialModal";
-import { ConnectingOverlay } from "@/components/dashboard/live-studio/modals/ConnectingOverlay";
+import { DashboardModals } from "@/components/dashboard/DashboardModals";
 
 export default function Dashboard() {
   const appMode = useDashboardUIStore((state) => state.appMode);
@@ -84,7 +75,7 @@ export default function Dashboard() {
 
     if (oauthSuccess) {
       const decodedPlat = decodeURIComponent(oauthSuccess);
-      showToast(`✅ ${decodedPlat} berhasil terhubung — ${decodeURIComponent(oauthDisplay || "")}`);
+      showToast(`${decodedPlat} berhasil terhubung — ${decodeURIComponent(oauthDisplay || "")}`);
       oauthService.fetchProfile(decodedPlat).then((acc) => {
         if (acc?.isConnected) {
           setConnectedAccount(acc);
@@ -104,17 +95,15 @@ export default function Dashboard() {
         access_denied: "Akses ditolak oleh pengguna.",
       };
       const msg = errMessages[oauthError] || `OAuth error: ${oauthError}`;
-      showToast(`❌ ${msg}`);
+      showToast(`Gagal: ${msg}`);
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, [setConnectedAccount, setSelectedPlatform, setStreamKey, showToast]);
 
-  // 4. Fetch OAuth configuration status
   useEffect(() => {
     oauthService.fetchConfigStatus().then(setOauthConfigStatus);
   }, [setOauthConfigStatus]);
 
-  // 5. Fetch OAuth profile for selected platform
   useEffect(() => {
     oauthService.fetchProfile(selectedPlatform).then((acc) => {
       if (acc?.isConnected) {
@@ -126,7 +115,6 @@ export default function Dashboard() {
     });
   }, [selectedPlatform, setConnectedAccount, setStreamKey]);
 
-  // 6. 10-Minute Auto-Rotate Product Timer
   useEffect(() => {
     if (!isLiveActive || products.length <= 1 || !automations.autoPin) return;
 
@@ -141,7 +129,7 @@ export default function Dashboard() {
             sender: `AI Host (${selectedAvatar.name})`,
             isAi: true,
             avatarColor: "bg-[#4148e2]",
-            text: `Sekarang kita beralih ke ${nextProd.name} ya kakak! Harganya spesial cuma ${nextProd.price}! Yuk langsung diamankan di keranjang kuning ya! ✨`,
+            text: `Sekarang kita beralih ke ${nextProd.name} ya kakak! Harganya spesial cuma ${nextProd.price}! Yuk langsung diamankan di keranjang kuning ya!`,
             time: new Date().toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
@@ -159,6 +147,7 @@ export default function Dashboard() {
 
     return () => clearInterval(interval);
   }, [isLiveActive, products, automations.autoPin, selectedAvatar.name, setActiveFeaturedProduct, addChatMessage]);
+
   useEffect(() => {
     if (!isLiveActive || isLivePaused) return;
     const maxAllowedSeconds = selectedDuration * 3600;
@@ -171,7 +160,7 @@ export default function Dashboard() {
           setIsLivePaused(false);
           setLiveSessionPhase("ended");
           setShowSummaryModal(true);
-          showToast(`⏱️ Waktu siaran telah mencapai batas durasi ${selectedDuration} Jam. Live streaming selesai!`);
+          showToast(`Waktu siaran telah mencapai batas durasi ${selectedDuration} jam. Live streaming selesai!`);
 
           liveSessionService
             .stopSession({
@@ -233,7 +222,6 @@ export default function Dashboard() {
     setMetrics,
   ]);
 
-  // 8. Poll Live Metrics & Session Status from Backend
   useEffect(() => {
     if (!isLiveActive || isLivePaused) return;
 
@@ -268,6 +256,7 @@ export default function Dashboard() {
 
     return () => clearInterval(interval);
   }, [isLiveActive, isLivePaused, liveSessionPhase, setIsLiveActive, setIsLivePaused, setLiveSessionPhase, setMetrics]);
+
   useEffect(() => {
     if ((!isWaitingForGoLive && !isConnectingLive) || !currentLiveSessionId) return;
 
@@ -304,15 +293,7 @@ export default function Dashboard() {
           <VideoAdsGeneratorPanel />
         )}
 
-        <AddProductModal />
-        <EditProductModal />
-        <ImportCsvModal />
-        <LiveScriptModal />
-        <EndLiveConfirmModal />
-        <SessionSummaryModal />
-        <SettingsModal />
-        <TutorialModal />
-        <ConnectingOverlay />
+        <DashboardModals />
       </div>
     </div>
   );

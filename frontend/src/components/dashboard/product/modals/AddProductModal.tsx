@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Image from "next/image";
-import { X, Sparkles, Upload, Image as ImageIcon, ShoppingBag, Link2 } from "lucide-react";
+import { X, Upload, Image as ImageIcon, ShoppingBag, Link2 } from "lucide-react";
 import { useProductStore } from "@/stores/useProductStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 
@@ -25,7 +25,7 @@ export const AddProductModal: React.FC = () => {
     try {
       await createProduct();
       setShowAddProductModal(false);
-      showToast("✨ Produk berhasil disimpan dan RAG Knowledge di-generate oleh AI!");
+      showToast("Produk berhasil disimpan dan RAG Knowledge di-generate oleh AI!");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal menyimpan produk");
     } finally {
@@ -36,7 +36,7 @@ export const AddProductModal: React.FC = () => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 sm:p-4 backdrop-blur-md animate-fadeIn">
       <div className="relative w-full max-w-2xl rounded-2xl border border-[#22314e] bg-[#0c1221] shadow-2xl max-h-[88vh] flex flex-col overflow-hidden">
-        {/* Modal Header */}
+        
         <div className="flex items-center justify-between px-5 sm:px-6 pt-5 pb-3.5 border-b border-[#1e293b] shrink-0 bg-[#0c1221]">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
@@ -59,9 +59,9 @@ export const AddProductModal: React.FC = () => {
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
-          {/* Modal Body */}
+          
           <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4 custom-modal-scrollbar space-y-3.5 text-xs pr-4 sm:pr-5">
-            {/* 1. Foto / Gambar Produk */}
+            
             <div className="rounded-xl border border-[#22314e] bg-[#0f172a]/70 p-3">
               <div className="flex items-center justify-between mb-2">
                 <label className="text-slate-200 font-bold text-[11px] flex items-center gap-1">
@@ -118,7 +118,7 @@ export const AddProductModal: React.FC = () => {
               </div>
             </div>
 
-            {/* 2. Nama Produk */}
+            
             <div>
               <label className="block text-slate-200 font-bold text-[11px] mb-1">
                 2. Nama Produk <span className="text-red-400">*</span>
@@ -133,7 +133,7 @@ export const AddProductModal: React.FC = () => {
               />
             </div>
 
-            {/* 3, 4, 5. Harga, Stok, Kategori */}
+            
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-slate-200 font-bold text-[11px] mb-1">
@@ -174,27 +174,27 @@ export const AddProductModal: React.FC = () => {
                 <label className="block text-slate-200 font-bold text-[11px] mb-1">
                   5. Kategori <span className="text-red-400">*</span>
                 </label>
-                <select
+<select
                   value={newProductForm.tag || "Skincare"}
                   onChange={(e) => setNewProductForm({ tag: e.target.value })}
                   className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] px-3 py-2.5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 text-xs cursor-pointer transition font-medium"
                 >
-                  <option value="Skincare">✨ Skincare</option>
-                  <option value="Beauty & Makeup">💄 Beauty &amp; Makeup</option>
-                  <option value="Fashion & Pakaian">👗 Fashion &amp; Pakaian</option>
-                  <option value="Hijab & Muslim">🧕 Hijab &amp; Muslim</option>
-                  <option value="Kesehatan & Herbal">🌿 Kesehatan &amp; Herbal</option>
-                  <option value="Elektronik & Gadget">📱 Elektronik &amp; Gadget</option>
-                  <option value="Makanan & Minuman">🍱 Makanan &amp; Minuman</option>
-                  <option value="Ibu & Bayi">🍼 Ibu &amp; Bayi</option>
-                  <option value="Perlengkapan Rumah">🏠 Perlengkapan Rumah</option>
-                  <option value="Aksesoris & Sepatu">👟 Aksesoris &amp; Sepatu</option>
-                  <option value="General">📦 General / Lainnya</option>
+                  <option value="Skincare"> Skincare</option>
+                  <option value="Beauty & Makeup"> Beauty & Makeup</option>
+                  <option value="Fashion & Pakaian"> Fashion & Pakaian</option>
+                  <option value="Hijab & Muslim"> Hijab & Muslim</option>
+                  <option value="Kesehatan & Herbal"> Kesehatan & Herbal</option>
+                  <option value="Elektronik & Gadget"> Elektronik & Gadget</option>
+                  <option value="Makanan & Minuman"> Makanan & Minuman</option>
+                  <option value="Ibu & Bayi"> Ibu & Bayi</option>
+                  <option value="Perlengkapan Rumah"> Perlengkapan Rumah</option>
+                  <option value="Aksesoris & Sepatu"> Aksesoris & Sepatu</option>
+                  <option value="General"> General / Lainnya</option>
                 </select>
               </div>
             </div>
 
-            {/* 6, 7. SKU, Link Keranjang */}
+            
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-slate-200 font-bold text-[11px] mb-1">
@@ -227,7 +227,7 @@ export const AddProductModal: React.FC = () => {
               </div>
             </div>
 
-            {/* 8. Deskripsi Lengkap */}
+            
             <div>
               <label className="block text-slate-200 font-bold text-[11px] mb-1">
                 8. Deskripsi Lengkap Produk <span className="text-red-400">*</span>
@@ -242,7 +242,7 @@ export const AddProductModal: React.FC = () => {
               />
             </div>
 
-            {/* 9. Keunggulan & Manfaat */}
+            
             <div>
               <label className="block text-slate-200 font-bold text-[11px] mb-1">
                 9. Keunggulan &amp; Manfaat Utama <span className="text-slate-400 font-normal">(Opsional)</span>
@@ -256,7 +256,7 @@ export const AddProductModal: React.FC = () => {
               />
             </div>
 
-            {/* 10. Petunjuk & Cara Pemakaian */}
+            
             <div>
               <label className="block text-slate-200 font-bold text-[11px] mb-1">
                 10. Petunjuk &amp; Cara Pemakaian <span className="text-slate-400 font-normal">(Opsional)</span>
@@ -270,7 +270,7 @@ export const AddProductModal: React.FC = () => {
               />
             </div>
 
-            {/* 11. Banner Promosi */}
+            
             <div className="rounded-xl border border-[#22314e] bg-[#0f172a]/70 p-3">
               <div className="flex items-center justify-between mb-2">
                 <label className="text-slate-200 font-bold text-[11px] flex items-center gap-1">
@@ -346,12 +346,8 @@ export const AddProductModal: React.FC = () => {
             </div>
           </div>
 
-          {/* Modal Footer */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 sm:px-6 py-3.5 border-t border-[#1e293b] bg-[#090e1a]/95 backdrop-blur shrink-0">
-            <div className="text-slate-400 text-[11px] flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-              <span>RAG Knowledge &amp; Copywriting di-generate otomatis oleh LLM</span>
-            </div>
+          
+          <div className="flex flex-col sm:flex-row items-center justify-end gap-3 px-5 sm:px-6 py-3.5 border-t border-[#1e293b] bg-[#090e1a]/95 backdrop-blur shrink-0">
             <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
               <button
                 type="button"
@@ -363,9 +359,9 @@ export const AddProductModal: React.FC = () => {
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 font-bold text-white hover:brightness-110 shadow-lg shadow-blue-600/30 transition active:scale-95 cursor-pointer disabled:opacity-70"
+                className="rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 font-bold text-white hover:brightness-110 shadow-lg shadow-blue-600/30 transition active:scale-95 cursor-pointer disabled:opacity-70 whitespace-nowrap"
               >
-                {isSubmitting ? "Menyimpan..." : "✨ Simpan Produk & Generate RAG"}
+                {isSubmitting ? "Menyimpan..." : "Simpan Produk & Generate RAG"}
               </button>
             </div>
           </div>
@@ -374,3 +370,4 @@ export const AddProductModal: React.FC = () => {
     </div>
   );
 };
+

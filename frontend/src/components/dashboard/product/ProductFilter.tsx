@@ -4,8 +4,6 @@ import React, { useMemo } from "react";
 import { Search, X } from "lucide-react";
 import { useProductStore } from "@/stores/useProductStore";
 
-const CATEGORIES = ["ALL", "Skincare", "Beauty", "Fashion", "General"];
-
 export const ProductFilter: React.FC = () => {
   const products = useProductStore((state) => state.products);
   const searchQuery = useProductStore((state) => state.searchQuery);
@@ -15,12 +13,16 @@ export const ProductFilter: React.FC = () => {
 
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = { ALL: products.length };
+    const uniqueTags = new Set<string>();
     products.forEach((p) => {
       const tag = p.tag || "General";
+      uniqueTags.add(tag);
       counts[tag] = (counts[tag] || 0) + 1;
     });
-    return counts;
+    return { counts, uniqueTags: Array.from(uniqueTags).sort() };
   }, [products]);
+
+  const CATEGORIES = ["ALL", ...categoryCounts.uniqueTags];
 
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -46,10 +48,9 @@ export const ProductFilter: React.FC = () => {
         )}
       </div>
 
-      {/* Category Pills */}
       <div className="flex items-center gap-1 overflow-x-auto pb-0.5 text-[10px]">
         {CATEGORIES.map((cat) => {
-          const count = categoryCounts[cat] ?? 0;
+          const count = categoryCounts.counts[cat] ?? 0;
           const isActive = productCategoryFilter === cat;
           return (
             <button

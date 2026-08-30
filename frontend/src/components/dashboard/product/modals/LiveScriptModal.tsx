@@ -33,7 +33,7 @@ export const LiveScriptModal: React.FC = () => {
   const handleRegenerate = async () => {
     try {
       await fetchLiveSalesScript(activeFeaturedProduct);
-      showToast("✨ Naskah promosi AI Host berhasil dibuat ulang!");
+      showToast(" Naskah promosi AI Host berhasil dibuat ulang!");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal generate naskah");
     }
@@ -52,20 +52,11 @@ export const LiveScriptModal: React.FC = () => {
         <div className="flex items-center gap-2 mb-2 border-b border-[#232c42] pb-3">
           <ScrollText className="w-6 h-6 text-blue-400" />
           <div>
-            <h3 className="text-lg font-bold text-white">
-              AI Generated Sales Script (RAG Engine)
-            </h3>
+            <h3 className="text-lg font-bold text-white">AI Generated Sales Script (RAG Engine)</h3>
             <p className="text-[11px] text-slate-400">
-              Presenter:{" "}
-              <strong className="text-blue-300">
-                {selectedAvatar.name}
-              </strong>{" "}
-              • Gaya:{" "}
-              <strong className="text-purple-300">{selectedTone}</strong>{" "}
-              • Produk:{" "}
-              <strong className="text-emerald-300">
-                {activeFeaturedProduct.name}
-              </strong>
+              Presenter: <strong className="text-blue-300">{selectedAvatar.name}</strong> • Gaya:{" "}
+              <strong className="text-purple-300">{selectedTone}</strong> • Produk:{" "}
+              <strong className="text-emerald-300">{activeFeaturedProduct.name}</strong>
             </p>
           </div>
         </div>
@@ -74,47 +65,37 @@ export const LiveScriptModal: React.FC = () => {
           <div className="py-12 text-center space-y-3">
             <div className="h-8 w-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
             <p className="text-xs text-slate-300 font-semibold">
-              AI Host sedang menganalisis deskripsi &amp; manfaat produk...
+              AI Host sedang menganalisis deskripsi & manfaat produk...
             </p>
-            <p className="text-[10px] text-slate-500">
-              Menyusun Hook, Problem-Solution, dan Call To Action...
-            </p>
+            <p className="text-[10px] text-slate-500">Menyusun Hook, Problem-Solution, dan Call To Action...</p>
           </div>
         ) : liveSalesScriptData ? (
           <div className="rounded-xl bg-[#111827] border border-[#232c42] p-4 text-xs text-slate-200 space-y-3 font-sans max-h-72 overflow-y-auto pr-1.5 shadow-inner">
             <div className="rounded-lg bg-blue-950/30 border border-blue-500/20 p-2.5">
               <p className="text-[10px] font-bold text-blue-400 uppercase tracking-wider mb-1">
-                🎣 [1. HOOK PEMBUKA &amp; SAPAAN]
+                [HOOK] [1. HOOK PEMBUKA & SAPAAN]
               </p>
-              <p className="text-slate-200 leading-relaxed">
-                &ldquo;{liveSalesScriptData.hook}&rdquo;
-              </p>
+              <p className="text-slate-200 leading-relaxed">&ldquo;{liveSalesScriptData.hook}&rdquo;</p>
             </div>
 
             <div className="rounded-lg bg-purple-950/30 border border-purple-500/20 p-2.5">
               <p className="text-[10px] font-bold text-purple-400 uppercase tracking-wider mb-1">
-                💡 [2. BEDAH MANFAAT &amp; SELLING POINTS]
+                [TIPS] [2. BEDAH MANFAAT & SELLING POINTS]
               </p>
-              <p className="text-slate-200 leading-relaxed">
-                &ldquo;{liveSalesScriptData.showcase}&rdquo;
-              </p>
+              <p className="text-slate-200 leading-relaxed">&ldquo;{liveSalesScriptData.showcase}&rdquo;</p>
             </div>
 
             <div className="rounded-lg bg-emerald-950/30 border border-emerald-500/20 p-2.5">
               <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-1">
-                ⚡ [3. CALL TO ACTION &amp; URGENCY PROMO]
+                [CTA] [3. CALL TO ACTION & URGENCY PROMO]
               </p>
-              <p className="text-slate-200 leading-relaxed">
-                &ldquo;{liveSalesScriptData.cta}&rdquo;
-              </p>
+              <p className="text-slate-200 leading-relaxed">&ldquo;{liveSalesScriptData.cta}&rdquo;</p>
             </div>
           </div>
         ) : (
           <div className="py-8 text-center space-y-2">
             <AlertTriangle className="w-8 h-8 mx-auto text-amber-400" />
-            <p className="text-xs text-amber-300 font-semibold">
-              Belum ada naskah yang digenerate oleh AI.
-            </p>
+            <p className="text-xs text-amber-300 font-semibold">Belum ada naskah yang digenerate oleh AI.</p>
             <p className="text-[10px] text-slate-400">
               Klik tombol di bawah untuk membuat naskah otomatis dari AI Host.
             </p>

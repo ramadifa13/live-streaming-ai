@@ -1,19 +1,50 @@
 import type { NextConfig } from "next";
 import path from "path";
+import { env } from "./src/env";
 
-// Backend URL: reads from .env (NEXT_PUBLIC_BACKEND_URL)
-// - Local dev  : http://localhost:4000
-// - RunPod prod: https://odmobbl78r5e79-4000.proxy.runpod.net
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
+// Backend URL: reads from validated env
+const BACKEND_URL = env.NEXT_PUBLIC_BACKEND_URL;
 
-// AI Worker URL: reads from .env (AVATAR_WORKER_URL)
-// - Local dev  : http://localhost:8000
-// - RunPod prod: https://odmobbl78r5e79-8000.proxy.runpod.net
-const WORKER_URL = process.env.AVATAR_WORKER_URL || "http://localhost:8000";
+// AI Worker URL: reads from validated env
+const WORKER_URL = env.AVATAR_WORKER_URL;
 
 const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname, ".."),
+  },
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "images.unsplash.com",
+        pathname: "/photo-**",
+      },
+      {
+        protocol: "https",
+        hostname: "**.runpod.net",
+        pathname: "/**",
+      },
+      {
+        protocol: "http",
+        hostname: "localhost",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "*.shopee.co.id",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "*.tiktok.com",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "*.tokopedia.net",
+        pathname: "/**",
+      },
+    ],
   },
   async rewrites() {
     return [

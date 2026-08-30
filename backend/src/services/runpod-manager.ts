@@ -366,19 +366,18 @@ export async function startPodAndWait(
 ): Promise<string | null> {
   updateGpuActivity();
 
-  // ── Skenario 1: DEMO PHASE — Jika ada RUNPOD_POD_ID di .env ────────────────
   if (process.env.RUNPOD_POD_ID) {
     const staticPodId = process.env.RUNPOD_POD_ID.trim();
     if (staticPodId.length > 0) {
       console.log(
-        `[RunPodManager] 🔍 [Demo Phase] Memeriksa status Pod statis di .env (${staticPodId})...`,
+        `Memeriksa status Pod statis di .env (${staticPodId})...`,
       );
 
       let status = await getPodStatus(staticPodId).catch(() => null);
 
       if (!status || status.desiredStatus !== "RUNNING") {
         console.log(
-          `[RunPodManager] ⚠️ Pod statis ${staticPodId} dalam kondisi mati/berhenti (${status?.desiredStatus || "UNKNOWN"}). Menghidupkan pod otomatis...`,
+          ` Pod statis ${staticPodId} dalam kondisi mati/berhenti (${status?.desiredStatus || "UNKNOWN"}). Menghidupkan pod otomatis...`,
         );
         await resumePod(staticPodId);
 
@@ -388,7 +387,7 @@ export async function startPodAndWait(
           status = await getPodStatus(staticPodId).catch(() => null);
           if (status && status.desiredStatus === "RUNNING") {
             console.log(
-              `[RunPodManager] ✅ Pod statis ${staticPodId} kini RUNNING (dalam ${Math.round((Date.now() - resumeStart) / 1000)}s)!`,
+              ` Pod statis ${staticPodId} kini RUNNING (dalam ${Math.round((Date.now() - resumeStart) / 1000)}s)!`,
             );
             break;
           }
@@ -396,7 +395,7 @@ export async function startPodAndWait(
         }
       } else {
         console.log(
-          `[RunPodManager] ✅ Pod statis ${staticPodId} sudah dalam kondisi RUNNING.`,
+          ` Pod statis ${staticPodId} sudah dalam kondisi RUNNING.`,
         );
       }
 
@@ -408,7 +407,7 @@ export async function startPodAndWait(
   // ── Skenario 2: PRODUCTION PHASE — Buat Pod Baru On-Demand Otomatis ────────
   if (!process.env.RUNPOD_NETWORK_VOLUME_ID && !process.env.RUNPOD_POD_ID) {
     console.log(
-      "[RunPodManager] No RUNPOD_NETWORK_VOLUME_ID or RUNPOD_POD_ID. Skipping start.",
+      ` No RUNPOD_NETWORK_VOLUME_ID or RUNPOD_POD_ID. Skipping start.`,
     );
     return null;
   }
@@ -421,7 +420,7 @@ export async function startPodAndWait(
   ).toLowerCase();
   if (currentProvider === "mock") {
     console.log(
-      "[RunPodManager] GPU/Avatar provider is mock. Skipping pod start.",
+      ` GPU/Avatar provider is mock. Skipping pod start.`,
     );
     return null;
   }

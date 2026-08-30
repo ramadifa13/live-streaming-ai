@@ -1,107 +1,5 @@
-# Panduan Lengkap Deployment & Arsitektur: LiveStreamer AI
 
-Panduan operasional, konfigurasi multi-tier, dan deployment produksi platform **LiveStreamer AI** untuk UMKM dan agensi live streaming.
-
----
-
-## 1. Arsitektur Sistem Multi-Tier
-
-```mermaid
-flowchart TD
-    subgraph ClientTier [1. Client / UMKM Dashboard]
-        FE[Next.js 16 App Router\nInteractive Wizard & Realtime Analytics]
-    end
-
-    subgraph BackendTier [2. Backend & Intelligence Engine]
-        BE[Node.js Fastify Server]
-        DB[(PostgreSQL Database\nNeon / Supabase)]
-        LLM[Dynamic LLM Brain - Gemini / Groq\nRealtime Sales Script & Chat Handler]
-        TTS[Microsoft Edge Neural TTS (100% Gratis)\nNatural Prosody & 16kHz Direct Ingest]
-        Orchestrator[RunPod Lifecycle Manager\nGrace Period Cooldown]
-    end
-
-    subgraph WorkerTier [3. AI Worker GPU Tier - RunPod]
-        WorkerAPI[FastAPI Port 8000\nTTL Job Store & Memory Guard]
-        MuseTalk[MuseTalk v1.5 UNet FP16\nPre-Cached Video Landmarks]
-        Broadcaster[FFmpeg RTMP Broadcaster\nZero-Idle Continuous Stream Engine]
-    end
-
-    subgraph PlatformTier [4. Target Live Platforms]
-        TikTok[♪ TikTok LIVE]
-        Shopee[🛍️ Shopee Live]
-        YouTube[▶ YouTube Live]
-        Instagram[📸 Instagram Live]
-        Custom[🔗 Custom RTMP]
-    end
-
-    FE <-->|REST API / SSE| BE
-    BE <--> DB
-    BE <--> LLM
-    BE --> TTS
-    BE <-->|Auto-Provisioning / GraphQL| Orchestrator
-    Orchestrator <-->|On-Demand Pod Management| WorkerAPI
-    TTS -->|Audio 16kHz Base64 Pre-synthesized| WorkerAPI
-    WorkerAPI <--> MuseTalk
-    MuseTalk --> Broadcaster
-    Broadcaster --> PlatformTier
-```
-
----
-
-## 2. Matriks Paket Durasi, Harga & Hak Akses Otomatisasi
-
-| Paket             |   Durasi   |     Harga     | Auto-Reply Chat | Auto-Pin Produk | Auto-Promo Diskon | Auto-Moderasi AI | Target Penggunaan                             |
-| :---------------- | :--------: | :-----------: | :-------------: | :-------------: | :---------------: | :--------------: | :-------------------------------------------- |
-| **Demo Live**     | **1 Jam**  | **Rp49.000**  |    ✅ Aktif     |  🔒 _Terkunci_  |   🔒 _Terkunci_   |  🔒 _Terkunci_   | Uji coba fitur & presentasi ke klien UMKM.    |
-| **Express Live**  | **2 Jam**  | **Rp99.000**  |    ✅ Aktif     |    ✅ Aktif     |   🔒 _Terkunci_   |  🔒 _Terkunci_   | Sesi flash live singkat / prime time malam.   |
-| **Shift Live**    | **8 Jam**  | **Rp299.000** |    ✅ Aktif     |    ✅ Aktif     |     ✅ Aktif      |     ✅ Aktif     | Siaran marathon 1 shift kerja (malam-pagi).   |
-| **Marathon 24/7** | **24 Jam** | **Rp699.000** |    ✅ Aktif     |    ✅ Aktif     |     ✅ Aktif      |     ✅ Aktif     | Siaran 24 jam nonstop + rotasi katalog penuh. |
-
-> [!NOTE]
-> Seluruh pengaturan durasi, platform, dan sistem otomatisasi akan **terkunci otomatis (_disabled_) saat siaran langsung sedang berlangsung (`isLiveActive = true`)** demi menjaga kestabilan _pipeline_ video dan koneksi RTMP.
-
----
-
-## 3. Matriks Environment Variables
-
-### A. Backend (`backend/.env`)
-
-| Variabel                   |   Wajib   | Contoh / Default                                                          | Keterangan                                                                  |
-| :------------------------- | :-------: | :------------------------------------------------------------------------ | :-------------------------------------------------------------------------- |
-| `PORT`                     | Opsional  | `4000`                                                                    | Port listening HTTP backend.                                                |
-| `HOST`                     | Opsional  | `0.0.0.0`                                                                 | Bind host address.                                                          |
-| `DATABASE_URL`             | **Wajib** | `postgresql://user:pass@ep-sample.neon.tech/livestreamai?sslmode=require` | Connection string PostgreSQL (Neon.tech / Supabase / Render).               |
-| `GEMINI_API_KEY`           | **Wajib** | `AIzaSyYourGeminiApiKey`                                                  | API Key Google Gemini (atau `GROQ_API_KEY` untuk fallback).                 |
-| `GROQ_API_KEY`             | Opsional  | `gsk_YourGroqApiKeyHere`                                                  | API Key Groq untuk backup dynamic LLM.                                      |
-| `AVATAR_PROVIDER`          | **Wajib** | `musetalk` (Prod GPU) / `mock` (Local Dev)                                | Provider avatar rendering.                                                  |
-| `RUNPOD_API_KEY`           | Opsional  | `rpa_YourRunPodApiKey`                                                    | API key akun RunPod untuk auto-start / stop pod.                            |
-| `RUNPOD_NETWORK_VOLUME_ID` | Opsional  | `vol-your-network-volume`                                                 | ID Network Volume RunPod tempat menyimpan bobot model AI.                   |
-| `RUNPOD_POD_ID`            | Opsional  | `your-pod-id`                                                             | ID Pod GPU spesifik (jika menggunakan dedicated pod).                       |
-| `RUNPOD_WORKER_URL`        | Opsional  | `http://localhost:8000`                                                   | URL langsung ke worker API.                                                 |
-| `RUNPOD_IDLE_TIMEOUT_MS`   | Opsional  | `600000` (10 Menit)                                                       | Batas waktu idle GPU sebelum otomatis dimatikan.                            |
-| `POD_TERMINATE_DELAY_MS`   | Opsional  | `60000` (60 Detik)                                                        | **Grace Period Cooldown**: Jeda waktu sebelum Pod dimatikan saat sesi stop. |
-| `EDGE_TTS_VOICE`           | Opsional  | `id-ID-GadisNeural`                                                       | Default suara host wanita bahasa Indonesia Edge-TTS.                        |
-
-### B. Frontend (`frontend/.env.local`)
-
-| Variabel                  |   Wajib   | Contoh / Default                                             | Keterangan                         |
-| :------------------------ | :-------: | :----------------------------------------------------------- | :--------------------------------- |
-| `NEXT_PUBLIC_BACKEND_URL` | **Wajib** | `http://localhost:4000` (Dev) / `https://api.yourdomain.com` | Endpoint REST & WebSocket Backend. |
-
-### C. AI Worker (`deploy/.env`)
-
-| Variabel                   |  Wajib   | Contoh / Default                 | Keterangan                                         |
-| :------------------------- | :------: | :------------------------------- | :------------------------------------------------- |
-| `PORT`                     | Opsional | `8000`                           | Port HTTP Worker FastAPI.                          |
-| `MUSETALK_BATCH_SIZE`      | Opsional | `16` (RTX 4090) / `8` (RTX 3090) | Batch size inferensi UNet MuseTalk v1.5.           |
-| `MUSETALK_WARMUP_ON_START` | Opsional | `1` (Eager)                      | Pre-load model saat container boot.                |
-| `WORKER_REQUIRE_AUDIO`     | Opsional | `1`                              | Wajib menerima pre-synthesized audio dari Backend. |
-
----
-
-## 4. Langkah-Langkah Deployment
-
-### Langkah 1: Setup RunPod GPU Worker (RTX 3090 / RTX 4090)
+### Setup RunPod GPU Worker (RTX 3090 / RTX 4090)
 
 1. Buat **Network Volume** (20–30 GB) di region pilihan Anda pada dashboard RunPod.
 2. Deploy GPU Pod dengan template **PyTorch (Python 3.10 & CUDA 11.8)** dan pasang Network Volume ke mount path `/workspace`.
@@ -121,7 +19,7 @@ flowchart TD
 
 ---
 
-### Langkah 2: Deploy Backend di Render / VPS / Railway
+### Deploy Backend di Render / VPS / Railway
 
 1. Buat Web Service baru (Node.js runtime).
 2. Konfigurasi direktori dan perintah:
@@ -136,7 +34,7 @@ flowchart TD
 
 ---
 
-### Langkah 3: Deploy Frontend di Vercel
+### Deploy Frontend di Vercel
 
 1. Hubungkan repository GitHub ke Vercel.
 2. Konfigurasi:

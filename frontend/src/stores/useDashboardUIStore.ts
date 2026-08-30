@@ -9,7 +9,6 @@ interface DashboardUIState {
   toastType: ToastType;
   toastTimeout: ReturnType<typeof setTimeout> | null;
 
-  // Modals
   showAddProductModal: boolean;
   showEditProductModal: boolean;
   showCsvModal: boolean;
@@ -19,7 +18,6 @@ interface DashboardUIState {
   showEndLiveConfirm: boolean;
   showSummaryModal: boolean;
 
-  // Actions
   setCurrentStep: (step: number) => void;
   setAppMode: (mode: "LIVE_STUDIO" | "VIDEO_GENERATOR") => void;
   showToast: (msg: string, type?: ToastType) => void;

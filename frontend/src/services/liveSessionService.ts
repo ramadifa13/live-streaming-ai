@@ -116,20 +116,20 @@ export const liveSessionService = {
 
   async fetchMetrics() {
     const res = await fetch("/api/live-session/metrics");
-    if (res.ok) {
-      return await res.json();
+    if (!res.ok) {
+      return null;
     }
-    return null;
+    return await res.json();
   },
 
   async fetchPipelineStatus(sessionId: string) {
     const res = await fetch(
       `/api/live-stream/pipeline-status?sessionId=${encodeURIComponent(sessionId)}`,
     );
-    if (res.ok) {
-      return await res.json();
+    if (!res.ok) {
+      return null;
     }
-    return null;
+    return await res.json();
   },
 
   async confirmGoLive(sessionId: string) {
@@ -146,12 +146,14 @@ export const liveSessionService = {
   },
 
   async switchProduct(productId: string, productName: string) {
-    try {
-      await fetch("/api/live-session/switch-product", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId, productName }),
-      });
-    } catch {}
+    const res = await fetch("/api/live-session/switch-product", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ productId, productName }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.warn("[switchProduct] Failed:", err.error || `HTTP ${res.status}`);
+    }
   },
 };

@@ -66,13 +66,13 @@ export const SessionSummaryModal: React.FC = () => {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    showToast("📥 Laporan Analitik CSV Lengkap berhasil di-download!");
+    showToast("Laporan Analitik CSV Lengkap berhasil di-download!");
   };
 
   const handleStartNewSession = () => {
     setShowSummaryModal(false);
     setLiveSeconds(0);
-    showToast("✨ Siap untuk memulai sesi siaran live baru!");
+    showToast(" Siap untuk memulai sesi siaran live baru!");
   };
 
   return (
@@ -99,7 +99,6 @@ export const SessionSummaryModal: React.FC = () => {
           </div>
         </div>
 
-        {/* Metric Cards Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
           <div className="rounded-xl border border-[#232c42] bg-[#111827] p-3 text-center">
             <p className="text-[10px] text-slate-400 mb-1">Durasi Siaran</p>
@@ -127,7 +126,6 @@ export const SessionSummaryModal: React.FC = () => {
           </div>
         </div>
 
-        {/* Financial Performance Box */}
         <div className="rounded-2xl border border-emerald-500/30 bg-gradient-to-r from-emerald-950/40 via-[#0e192c] to-[#0c1221] p-4 mb-5">
           <p className="text-xs font-bold uppercase tracking-wider text-emerald-400 mb-3">
             Ringkasan Finansial &amp; Profitabilitas
@@ -150,7 +148,6 @@ export const SessionSummaryModal: React.FC = () => {
           </div>
         </div>
 
-        {/* Product Performance Breakdown Table */}
         <div className="rounded-xl border border-[#232c42] bg-[#111827] p-3 mb-5">
           <p className="text-xs font-bold text-slate-300 mb-2.5 flex items-center gap-1.5">
             <Tag className="w-3.5 h-3.5 text-blue-400" />
@@ -198,7 +195,6 @@ export const SessionSummaryModal: React.FC = () => {
           </div>
         </div>
 
-        {/* Action Buttons & Comprehensive CSV Exporter */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-[#232c42]">
           <button
             type="button"

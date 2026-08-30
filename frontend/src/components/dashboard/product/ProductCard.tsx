@@ -20,13 +20,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const setShowEditProductModal = useDashboardUIStore((state) => state.setShowEditProductModal);
   const showToast = useDashboardUIStore((state) => state.showToast);
 
-  const isSelected =
-    activeFeaturedProduct.id === product.id ||
-    activeFeaturedProduct.name === product.name;
+  const isSelected = activeFeaturedProduct.id === product.id || activeFeaturedProduct.name === product.name;
 
   const handleSelect = () => {
     setActiveFeaturedProduct(product);
-    showToast(`🎯 Produk live dialihkan ke: ${product.name}`);
+    showToast(` Produk live dialihkan ke: ${product.name}`);
   };
 
   const handleEdit = (e: React.MouseEvent) => {
@@ -38,26 +36,18 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!product.id) return;
-    if (
-      confirm(
-        "Apakah Anda yakin ingin menghapus produk ini secara permanen dari Database & RAG Knowledge Base?",
-      )
-    ) {
+    if (confirm("Apakah Anda yakin ingin menghapus produk ini secara permanen dari Database & RAG Knowledge Base?")) {
       try {
         await deleteProduct(product.id);
-        showToast("🗑️ Produk telah dihapus dari database!");
+        showToast("Produk telah dihapus dari database!");
       } catch (err) {
-        showToast(
-          err instanceof Error ? err.message : "Gagal menghapus produk",
-        );
+        showToast(err instanceof Error ? err.message : "Gagal menghapus produk");
       }
     }
   };
 
   const hasValidImage =
-    product.image?.startsWith("http") ||
-    product.image?.startsWith("/") ||
-    product.image?.startsWith("data:");
+    product.image?.startsWith("http") || product.image?.startsWith("/") || product.image?.startsWith("data:");
 
   return (
     <div
@@ -69,7 +59,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
       }`}
     >
       <div className="flex items-center gap-3">
-        {/* 1. Gambar Produk */}
         <div className="relative h-11 w-11 rounded-lg overflow-hidden shrink-0 bg-[#162038] border border-white/10 shadow-inner">
           {hasValidImage ? (
             <Image
@@ -95,13 +84,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           )}
         </div>
 
-        {/* 2. Nama Produk & Kategori + Harga */}
         <div className="flex-1 min-w-0">
           <h4
             className={`text-xs font-semibold truncate leading-tight transition-colors ${
-              isSelected
-                ? "text-blue-200 font-bold"
-                : "text-slate-200 group-hover:text-white"
+              isSelected ? "text-blue-200 font-bold" : "text-slate-200 group-hover:text-white"
             }`}
           >
             {product.name}
@@ -112,14 +98,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
               {product.tag || "General"}
             </span>
             <span className="text-xs font-bold text-emerald-400 font-mono tracking-tight shrink-0">
-              {typeof product.price === "number"
-                ? `Rp${product.price.toLocaleString("id-ID")}`
-                : product.price}
+              {typeof product.price === "number" ? `Rp${product.price.toLocaleString("id-ID")}` : product.price}
             </span>
           </div>
         </div>
 
-        {/* Action Buttons */}
         <div className="flex items-center gap-0.5 shrink-0 pl-1">
           <button
             type="button"

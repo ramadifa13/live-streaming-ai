@@ -20,7 +20,7 @@ const OAUTH_PLATFORM_CONFIGS: Record<string, () => PlatformOAuthConfig> = {
     tokenUrl: "https://open.tiktokapis.com/v2/oauth/token/",
     userInfoUrl: "https://open.tiktokapis.com/v2/user/info/",
     scopes: ["user.info.basic", "live.stream.create", "live.stream.manage"],
-    rtmpIngestUrl: "rtmp://live.tiktok.com/live/",
+    rtmpIngestUrl: "",
   }),
   shopee: () => ({
     clientId: process.env.SHOPEE_APP_ID || "",
@@ -29,7 +29,7 @@ const OAUTH_PLATFORM_CONFIGS: Record<string, () => PlatformOAuthConfig> = {
     tokenUrl: "https://partner.shopeemobile.com/api/v2/auth/token/get",
     userInfoUrl: "https://partner.shopeemobile.com/api/v2/shop/get_shop_info",
     scopes: ["partner.shop.read_write"],
-    rtmpIngestUrl: "rtmp://live.shopee.co.id/live/",
+    rtmpIngestUrl: "",
   }),
   youtube: () => ({
     clientId: process.env.YOUTUBE_CLIENT_ID || "",
@@ -38,7 +38,7 @@ const OAUTH_PLATFORM_CONFIGS: Record<string, () => PlatformOAuthConfig> = {
     tokenUrl: "https://oauth2.googleapis.com/token",
     userInfoUrl: "https://www.googleapis.com/oauth2/v3/userinfo",
     scopes: ["https://www.googleapis.com/auth/youtube", "https://www.googleapis.com/auth/youtube.force-ssl"],
-    rtmpIngestUrl: "rtmp://a.rtmp.youtube.com/live2",
+    rtmpIngestUrl: "",
   }),
   instagram: () => ({
     clientId: process.env.INSTAGRAM_APP_ID || "",
@@ -47,7 +47,7 @@ const OAUTH_PLATFORM_CONFIGS: Record<string, () => PlatformOAuthConfig> = {
     tokenUrl: "https://api.instagram.com/oauth/access_token",
     userInfoUrl: "https://graph.instagram.com/me",
     scopes: ["instagram_basic", "instagram_content_publish", "instagram_manage_comments"],
-    rtmpIngestUrl: "rtmps://live-upload.instagram.com:443/rtmp/",
+    rtmpIngestUrl: "",
   }),
   facebook: () => ({
     clientId: process.env.FACEBOOK_APP_ID || "",
@@ -56,7 +56,7 @@ const OAUTH_PLATFORM_CONFIGS: Record<string, () => PlatformOAuthConfig> = {
     tokenUrl: "https://graph.facebook.com/v18.0/oauth/access_token",
     userInfoUrl: "https://graph.facebook.com/me",
     scopes: ["publish_video", "pages_read_engagement", "pages_manage_posts"],
-    rtmpIngestUrl: "rtmps://live-api-s.facebook.com:443/rtmp/",
+    rtmpIngestUrl: "",
   }),
 };
 

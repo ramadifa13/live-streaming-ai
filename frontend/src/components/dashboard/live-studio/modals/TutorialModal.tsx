@@ -41,7 +41,6 @@ export const TutorialModal: React.FC = () => {
           </div>
         </div>
 
-        {/* Platform Selection Tabs */}
         <div className="flex flex-wrap gap-1.5 mb-4 p-1 rounded-xl bg-[#111827] border border-[#232c42]">
           {PLATFORM_TABS.map((p) => {
             const IconComponent = p.icon;
@@ -63,7 +62,6 @@ export const TutorialModal: React.FC = () => {
           })}
         </div>
 
-        {/* Platform Details Content */}
         <div className="space-y-3.5 text-xs text-slate-200">
           {tutorialPlatformTab === "TikTok LIVE" && (
             <div className="space-y-3 animate-fadeIn">

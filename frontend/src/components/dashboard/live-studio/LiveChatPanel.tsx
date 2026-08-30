@@ -104,14 +104,13 @@ export const LiveChatPanel: React.FC = () => {
         </button>
       </div>
 
-      {/* Chat Message Stream */}
       <div
         ref={chatContainerRef}
         className="flex-1 space-y-2 overflow-y-auto pr-1 max-h-[250px] md:max-h-none scrollbar-thin scrollbar-thumb-slate-700"
       >
         {chatMessages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center py-8 text-center text-slate-500 text-[11px]">
-            <span>👋 Belum ada chat simulasi</span>
+            <span>[CHAT] Belum ada chat simulasi</span>
             <span className="text-[10px] text-slate-600 mt-0.5">
               Ketik pesan di bawah untuk uji respons AI
             </span>
@@ -146,7 +145,6 @@ export const LiveChatPanel: React.FC = () => {
         )}
       </div>
 
-      {/* Input Chat Form */}
       <form onSubmit={handleSendChat} className="mt-2.5 relative">
         <input
           type="text"

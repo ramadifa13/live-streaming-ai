@@ -63,6 +63,10 @@ export const oauthService = {
     const res = await fetch(
       `/api/oauth/authorize?platform=${encodeURIComponent(platform)}`,
     );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { error: err.error || `HTTP ${res.status}: Gagal mendapatkan URL autorisasi` };
+    }
     return await res.json();
   },
 };

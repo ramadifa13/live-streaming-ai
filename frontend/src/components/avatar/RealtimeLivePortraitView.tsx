@@ -35,7 +35,6 @@ export default function RealtimeLivePortraitView({
       ? "/avatars/namira.png"
       : avatarImage || "/avatars/namira.png";
 
-  // When videoUrl changes, safely play the video
   useEffect(() => {
     const video = videoRef.current;
     if (video) {
@@ -59,7 +58,6 @@ export default function RealtimeLivePortraitView({
     <div
       className={`relative w-full h-full overflow-hidden bg-[#07050f] select-none ${className}`}
     >
-      {/* ── Visual Output (Smooth Dynamic Video Player) ── */}
       <video
         ref={videoRef}
         src={videoUrl || resolvedFillerSrc}
@@ -72,11 +70,9 @@ export default function RealtimeLivePortraitView({
         className="w-full h-full object-cover transition-opacity duration-300"
       />
 
-      {/* ── VIGNETTE OVERLAY (premium depth) ── */}
       <div className="absolute inset-0 bg-gradient-to-t from-[#07050f]/70 via-transparent to-black/30 pointer-events-none" />
       <div className="absolute inset-0 bg-gradient-to-r from-black/20 via-transparent to-black/20 pointer-events-none" />
 
-      {/* ── GPU LIVE BADGE (top-right) ── */}
       {isGpuLive && (
         <div className="absolute top-3 right-3 z-30 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-400/40 backdrop-blur-md shadow-[0_0_20px_rgba(16,185,129,0.3)]">
           <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
@@ -86,7 +82,6 @@ export default function RealtimeLivePortraitView({
         </div>
       )}
 
-      {/* ── LIVE WATERMARK (top-left, only when truly live) ── */}
       {isLiveActive && (
         <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/20 border border-red-400/50 backdrop-blur-md shadow-[0_0_20px_rgba(239,68,68,0.4)]">
           <span className="h-2 w-2 rounded-full bg-red-500 animate-ping shadow-[0_0_8px_rgba(239,68,68,0.9)]" />
@@ -96,7 +91,6 @@ export default function RealtimeLivePortraitView({
         </div>
       )}
 
-      {/* ── SPEAKING WAVEFORM OVERLAY (Floating safely above bottom e-commerce card) ── */}
       {isSpeaking && (
         <div className="absolute bottom-28 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 rounded-full bg-[#0c1024]/90 backdrop-blur-xl border border-purple-500/50 shadow-[0_0_30px_rgba(124,58,237,0.5)] animate-fadeIn">
           <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-ping shadow-[0_0_10px_rgba(52,211,153,0.8)]" />

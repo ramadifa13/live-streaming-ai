@@ -197,7 +197,6 @@ export default function HomeLanding() {
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 selection:bg-blue-600 selection:text-white font-sans">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        {/* Navigation Header */}
         <header className="py-6">
           <nav className="flex items-center justify-between border-b border-[#1f2638] pb-6">
             <Link
@@ -225,15 +224,14 @@ export default function HomeLanding() {
                 className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-blue-600/30 hover:bg-blue-500 transition active:scale-95 flex items-center gap-1.5"
               >
                 <Zap className="w-3.5 h-3.5" />
-                <span>Buka Dashboard</span>
+                <span>Mulai Sekarang</span>
               </Link>
             </div>
           </nav>
         </header>
 
         <main className="pt-4">
-          {/* Hero Section */}
-          <section className="mb-12">
+            <section className="mb-12">
             <div className="grid items-center gap-10 lg:grid-cols-[1fr_1.1fr]">
               <div className="space-y-6 pt-8">
                 <AccentBadge title="AI LIVE SELLING OTONOM & VIDEO PROMO OTOMATIS" />
@@ -281,7 +279,6 @@ export default function HomeLanding() {
                 </div>
               </div>
 
-              {/* Hero Image Mockup (Clickable to Dashboard) */}
               <Link
                 href="/dashboard"
                 className="group block relative h-[550px] w-full rounded-2xl border border-[#2c3140] overflow-hidden bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-[#41295a] to-[#2F0743] shadow-2xl transition hover:border-blue-500/50"
@@ -294,8 +291,6 @@ export default function HomeLanding() {
                   }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
-
-                {/* Live Badge */}
                 <div className="absolute left-4 top-4 flex items-center gap-3 rounded bg-black/50 px-2 py-1 backdrop-blur-sm border border-white/10">
                   <span className="flex items-center gap-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
                     <div className="h-1.5 w-1.5 rounded-full bg-white animate-ping" />{" "}
@@ -306,7 +301,6 @@ export default function HomeLanding() {
                   </span>
                 </div>
 
-                {/* Floating Chat Bubbles */}
                 <div className="absolute left-4 top-32 flex flex-col gap-3">
                   <div className="max-w-[200px] rounded-lg border border-white/10 bg-black/40 p-2.5 backdrop-blur-md shadow-lg">
                     <div className="flex items-center justify-between mb-1">
@@ -350,12 +344,11 @@ export default function HomeLanding() {
                     </div>
                     <p className="text-[10px] text-slate-200">
                       Produk ini membantu melembapkan kulit dan mencerahkan
-                      wajah ✨
+                      wajah
                     </p>
                   </div>
                 </div>
 
-                {/* Floating Hearts */}
                 <div className="absolute right-4 bottom-28 flex flex-col gap-2">
                   <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-r from-red-500 to-pink-500 shadow-lg animate-bounce text-white">
                     <Heart className="w-3.5 h-3.5 fill-current" />
@@ -368,7 +361,6 @@ export default function HomeLanding() {
                   </div>
                 </div>
 
-                {/* Product Banner */}
                 <div className="absolute bottom-4 right-4 flex items-center justify-between rounded-xl bg-black/60 p-2.5 backdrop-blur-md border border-white/10 shadow-2xl">
                   <div className="flex items-center gap-3">
                     <Image
@@ -404,7 +396,6 @@ export default function HomeLanding() {
             </div>
           </section>
 
-          {/* Brands */}
           <section className="py-12">
             <p className="mb-8 text-center text-xs font-semibold uppercase tracking-widest text-slate-500">
               Digunakan untuk berbagai kebutuhan bisnis
@@ -437,7 +428,6 @@ export default function HomeLanding() {
             </div>
           </section>
 
-          {/* Features Section */}
           <section id="fitur" className="py-16 text-center scroll-mt-10">
             <p className="text-[10px] font-bold uppercase tracking-widest text-blue-500 mb-2">
               SEMUA DALAM SATU PLATFORM AI
@@ -467,7 +457,6 @@ export default function HomeLanding() {
             </div>
           </section>
 
-          {/* Workflow Section */}
           <section id="workflow" className="py-16 scroll-mt-10">
             <div className="text-center mb-12">
               <p className="text-[10px] font-bold uppercase tracking-widest text-blue-500 mb-2">
@@ -509,7 +498,6 @@ export default function HomeLanding() {
             </div>
           </section>
 
-          {/* Pricing Section */}
           <section id="pricing" className="pb-20 pt-10 scroll-mt-10">
             <div className="text-center mb-12">
               <p className="text-[10px] font-bold uppercase tracking-widest text-blue-500 mb-2">
@@ -628,7 +616,6 @@ export default function HomeLanding() {
             </div>
           </section>
 
-          {/* CTA Banner */}
           <section
             id="demo"
             className="mt-4 rounded-2xl bg-gradient-to-r from-[#170936] to-[#071638] p-8 md:flex md:items-center md:justify-between border border-blue-500/20 scroll-mt-10"
@@ -646,19 +633,11 @@ export default function HomeLanding() {
                 href="/dashboard"
                 className="inline-flex items-center rounded-lg bg-blue-600 hover:bg-blue-500 px-6 py-2.5 text-sm font-semibold text-white transition active:scale-95"
               >
-                Mulai Gratis 7 Hari
+                Kenapa masih disini? buruan mulai dari sekarang!
               </Link>
-              <button
-                type="button"
-                onClick={() => setShowDemoModal(true)}
-                className="rounded-lg border border-[#2c3140] bg-[#0c1221] hover:bg-[#151f33] px-6 py-2.5 text-sm font-semibold text-slate-200 transition active:scale-95 cursor-pointer"
-              >
-                Lihat Demo
-              </button>
             </div>
           </section>
 
-          {/* FAQ / Highlights */}
           <section
             id="faq"
             className="mt-12 grid grid-cols-2 gap-6 border-t border-[#1f2638] pt-8 sm:grid-cols-4 px-4 pb-8 scroll-mt-10"
@@ -715,7 +694,6 @@ export default function HomeLanding() {
         </main>
       </div>
 
-      {/* Demo Modal */}
       {showDemoModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-fadeIn">
           <div className="relative w-full max-w-lg rounded-2xl border border-blue-500/30 bg-[#0c1221] p-6 shadow-2xl">

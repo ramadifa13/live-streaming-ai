@@ -69,21 +69,21 @@ export const LiveControlBar: React.FC = () => {
 
   const handleCopy = async (text: string, label: string) => {
     const ok = await copyToClipboard(text);
-    if (ok) showToast(`${label} disalin ke clipboard!`);
+    if (ok) showToast(`${label} berhasil disalin ke clipboard!`);
   };
 
   const handleSwitchNextProduct = async () => {
     const nextIdx = (products.findIndex((p) => p.id === activeFeaturedProduct.id) + 1) % products.length;
     const nextProd = products[nextIdx];
     setActiveFeaturedProduct(nextProd);
-    showToast(`🎯 Produk aktif siaran diubah ke: ${nextProd.name}`);
+    showToast(`Produk aktif siaran diubah ke: ${nextProd.name}`);
 
     const switchMsg: ChatMessage = {
       id: String(Date.now()),
       sender: `AI Host (${selectedAvatar.name})`,
       isAi: true,
       avatarColor: "bg-[#4148e2]",
-      text: `Sekarang kita beralih ke ${nextProd.name} ya kakak! Harganya spesial cuma ${nextProd.price}! Yuk langsung diamankan di keranjang kuning ya! ✨`,
+      text: `Sekarang kita beralih ke ${nextProd.name} ya kakak! Harganya spesial cuma ${nextProd.price}! Yuk langsung diamankan di keranjang kuning ya!`,
       time: new Date().toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
@@ -96,7 +96,7 @@ export const LiveControlBar: React.FC = () => {
 
   const handleStartLive = async () => {
     useLiveSessionStore.setState({ isConnectingLive: true, hasConfirmedBroadcast: false });
-    showToast(`⏳ Menghubungkan ke server ${selectedPlatform}... Memverifikasi RTMP Ingest Handshake...`);
+    showToast(`Menghubungkan ke server ${selectedPlatform}... Memverifikasi RTMP Ingest Handshake...`);
 
     const activeTargetRtmp =
       customRtmpUrl !== ""
@@ -158,7 +158,7 @@ export const LiveControlBar: React.FC = () => {
             isWaitingForGoLive: false,
             currentLiveSessionId: sessionJson.data?.id,
           });
-          showToast(bcastJson.message || "RTMP terhubung! Sedang mengenerate Video AI...");
+          showToast(bcastJson.message || "RTMP terhubung! Sedang menggenerate Video AI...");
         } else {
           useLiveSessionStore.setState({
             isConnectingLive: false,
@@ -168,7 +168,7 @@ export const LiveControlBar: React.FC = () => {
             liveSeconds: 0,
             currentLiveSessionId: sessionJson.data?.id,
           });
-          showToast(`📡 RTMP terhubung! Menunggu ${selectedPlatform} memulai live...`);
+          showToast(`RTMP terhubung! Menunggu ${selectedPlatform} memulai live...`);
         }
       } else {
         useLiveSessionStore.setState({
@@ -176,7 +176,9 @@ export const LiveControlBar: React.FC = () => {
           isWaitingForGoLive: false,
           currentLiveSessionId: null,
         });
-        showToast(`❌ Gagal terhubung ke ${selectedPlatform}: ${bcastJson.error || "Server RTMP menolak koneksi."}`);
+        showToast(
+          `Gagal terhubung ke ${selectedPlatform}: ${bcastJson.error || "Server RTMP menolak koneksi."}`,
+        );
       }
     } catch {
       if (connectingAbortRef.current?.signal.aborted) return;
@@ -185,7 +187,7 @@ export const LiveControlBar: React.FC = () => {
         isWaitingForGoLive: false,
         currentLiveSessionId: null,
       });
-      showToast("❌ Error koneksi: Pastikan server backend online dan Stream Key valid.");
+      showToast("Error koneksi: Pastikan server backend online dan Stream Key valid.");
     }
   };
 
@@ -205,19 +207,19 @@ export const LiveControlBar: React.FC = () => {
           liveSessionPhase: "live",
           liveSeconds: 0,
         });
-        showToast("✅ AI Host aktif! Siaran live dimulai.");
+        showToast("AI Host aktif! Siaran live dimulai.");
       } else {
-        showToast(`❌ Gagal konfirmasi: ${json.error}`);
+        showToast(`Gagal konfirmasi: ${json.error}`);
       }
     } catch {
-      showToast("❌ Error koneksi saat konfirmasi.");
+      showToast("Error koneksi saat konfirmasi.");
     } finally {
       useLiveSessionStore.setState({ isSubmittingGoLive: false });
     }
   };
 
   const handleOAuthConnect = async () => {
-    showToast(`🔗 Menghubungkan ke ${selectedPlatform} via OAuth 2.0...`);
+    showToast(`Menghubungkan ke ${selectedPlatform} via OAuth 2.0...`);
     try {
       const json = await oauthService.getAuthorizeUrl(selectedPlatform);
       if (json?.authUrl) {
@@ -225,14 +227,13 @@ export const LiveControlBar: React.FC = () => {
         return;
       }
       if (json?.missingEnvKey) {
-        showToast(`❌ ${json.error} (${json.missingEnvKey})`);
+        showToast(`Gagal: ${json.error} (${json.missingEnvKey})`);
       }
     } catch {
-      showToast("❌ Tidak dapat terhubung ke backend. Pastikan server berjalan.");
+      showToast("Tidak dapat terhubung ke backend. Pastikan server berjalan.");
     }
   };
 
-  // 1. STEP 5: SETUP SCREEN (When not yet live & not waiting)
   if (!isLiveActive && !isWaitingForGoLive) {
     return (
       <div
@@ -300,42 +301,41 @@ export const LiveControlBar: React.FC = () => {
 
           <div className="hidden sm:block w-[1px] bg-[#232c42]" />
 
-          <div className="flex-[1.2]">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[11px] font-semibold text-slate-200">
+          <div className="flex-[1.2] min-w-0">
+            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+              <p className="text-[11px] font-semibold text-slate-200 whitespace-nowrap truncate">
                 {selectedPlatform.toLowerCase().includes("custom")
                   ? "Konfigurasi Server RTMP Custom"
                   : `Metode Koneksi (${selectedPlatform})`}
               </p>
               {!selectedPlatform.toLowerCase().includes("custom") && (
-                <div className="flex rounded-lg bg-[#111827] p-0.5 border border-[#232c42]">
+                <div className="flex w-full rounded-lg bg-[#111827] p-0.5 border border-[#232c42]">
                   <button
                     type="button"
                     onClick={() => setConnectMode("1CLICK")}
-                    className={`rounded-md px-2.5 py-1 text-[9px] font-bold transition cursor-pointer ${
+                    className={`flex-1 rounded-md px-2.5 py-1 text-[9px] font-bold transition cursor-pointer ${
                       connectMode === "1CLICK"
                         ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow"
                         : "text-slate-400 hover:text-white"
                     }`}
                   >
-                    ⚡ 1-Klik Connect
+                    1 Klik Connect
                   </button>
                   <button
                     type="button"
                     onClick={() => setConnectMode("MANUAL")}
-                    className={`rounded-md px-2.5 py-1 text-[9px] font-bold transition cursor-pointer ${
+                    className={`flex-1 rounded-md px-2.5 py-1 text-[9px] font-bold transition cursor-pointer ${
                       connectMode === "MANUAL"
                         ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow"
                         : "text-slate-400 hover:text-white"
                     }`}
                   >
-                    🔗 Manual RTMP
+                    Manual RTMP
                   </button>
                 </div>
               )}
             </div>
 
-            {/* TAB 1: 1-Click OAuth Connect */}
             {!selectedPlatform.toLowerCase().includes("custom") && connectMode === "1CLICK" ? (
               <div className="rounded-xl border border-blue-500/30 bg-gradient-to-br from-blue-950/30 via-[#0f172a] to-[#0c1221] p-3 animate-fadeIn">
                 {connectedAccount && connectedAccount.isConnected ? (
@@ -391,7 +391,7 @@ export const LiveControlBar: React.FC = () => {
 
                     {oauthConfigStatus[selectedPlatform] === false && (
                       <div className="mb-3 rounded-lg bg-amber-500/10 border border-amber-500/30 p-2 text-[8px] text-amber-300 text-left leading-relaxed">
-                        <span className="font-bold text-amber-400">⚠️ OAuth belum dikonfigurasi</span>
+                        <span className="font-bold text-amber-400">[!] OAuth belum dikonfigurasi</span>
                         <br />
                         Tambahkan credentials {selectedPlatform} ke file .env backend.
                       </div>
@@ -402,13 +402,12 @@ export const LiveControlBar: React.FC = () => {
                       onClick={handleOAuthConnect}
                       className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-[10.5px] font-bold text-white shadow-md active:scale-95 transition bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:brightness-110 cursor-pointer"
                     >
-                      <span>🔗 Login &amp; Hubungkan Akun {selectedPlatform}</span>
+                      <span>Login & Hubungkan Akun {selectedPlatform}</span>
                     </button>
                   </div>
                 )}
               </div>
             ) : (
-              /* TAB 2: Manual RTMP */
               <div className="space-y-2.5 animate-fadeIn">
                 <div>
                   <div className="flex items-center justify-between mb-1">
@@ -503,7 +502,6 @@ export const LiveControlBar: React.FC = () => {
     );
   }
 
-  // 2. WAITING FOR GO LIVE SCREEN
   if (isWaitingForGoLive) {
     return (
       <div className="flex flex-col rounded-xl border border-yellow-500/40 bg-[#0e1222] p-5 shadow-2xl shadow-yellow-900/10">
@@ -523,7 +521,6 @@ export const LiveControlBar: React.FC = () => {
           <li>Setelah siaran berjalan, tekan tombol konfirmasi di bawah ini.</li>
         </ol>
 
-        {/* Status Persiapan Video AI */}
         <div className="mb-6 rounded-xl bg-black/40 p-4 border border-white/10">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
@@ -550,7 +547,7 @@ export const LiveControlBar: React.FC = () => {
             disabled={isSubmittingGoLive}
             className="w-full py-3.5 rounded-lg text-sm font-bold text-white bg-green-600 hover:bg-green-500 active:scale-95 shadow-[0_0_20px_rgba(34,197,94,0.45)] cursor-pointer"
           >
-            {isSubmittingGoLive ? "Menyambungkan..." : "✅ Konfirmasi Siaran Dimulai"}
+            {isSubmittingGoLive ? "Menyambungkan..." : "[OK] Konfirmasi Siaran Dimulai"}
           </button>
         ) : (
           <div className="w-full py-3 px-4 rounded-lg bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
@@ -572,12 +569,10 @@ export const LiveControlBar: React.FC = () => {
     );
   }
 
-  // 3. LIVE CONTROL CENTER (When isLiveActive === true)
   return (
     <div className="flex flex-col rounded-2xl border border-red-500/40 bg-[#0e1222] ring-1 ring-red-500/20 p-5 relative overflow-hidden transition animate-fadeIn shadow-2xl shadow-red-900/10">
       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-600 via-red-400 to-red-600 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.6)]" />
 
-      {/* Header */}
       <div className="mb-4 flex items-center justify-between relative z-10">
         <div className="flex items-center gap-2.5">
           <div className="relative">
@@ -596,7 +591,6 @@ export const LiveControlBar: React.FC = () => {
         </div>
       </div>
 
-      {/* Duration Cap & Timer Progress Bar */}
       <div className="mb-3 border-b border-[#232c42] pb-3">
         <div className="flex items-center justify-between mb-1.5">
           <div className="flex items-center gap-2">
@@ -631,7 +625,6 @@ export const LiveControlBar: React.FC = () => {
         </div>
       </div>
 
-      {/* Live Metrics Grid */}
       <div className="mb-3">
         <LiveMetricsBar
           viewers={metrics.viewers}
@@ -641,7 +634,6 @@ export const LiveControlBar: React.FC = () => {
         />
       </div>
 
-      {/* Active Live Product Controller */}
       <div className="mb-3 rounded-xl border border-blue-500/20 bg-[#111827] p-2.5">
         <div className="flex items-center justify-between mb-2">
           <p className="text-[9px] font-bold text-slate-300 flex items-center gap-1.5">
@@ -696,14 +688,13 @@ export const LiveControlBar: React.FC = () => {
         </button>
       </div>
 
-      {/* Action Buttons */}
       <div className="mt-auto flex flex-col gap-2">
         <button
           type="button"
           onClick={() => setShowEndLiveConfirm(true)}
           className="w-full rounded-xl bg-gradient-to-r from-red-600 to-rose-700 py-2.5 text-[11px] font-bold text-white hover:brightness-110 transition active:scale-95 shadow-md shadow-red-600/30 cursor-pointer"
         >
-          🛑 Akhiri Live Streaming
+          [STOP] Akhiri Live Streaming
         </button>
         <div className="flex gap-2">
           <button
@@ -717,7 +708,7 @@ export const LiveControlBar: React.FC = () => {
                   await liveSessionService.resumeStream();
                 }
                 setIsLivePaused(nextPause);
-                showToast(nextPause ? "⏸️ Live Streaming Dijeda" : "▶️ Live Streaming Dilanjutkan");
+                showToast(nextPause ? "Live Streaming dijeda" : "Live Streaming dilanjutkan");
               } catch (err) {
                 showToast(err instanceof Error ? err.message : "Gagal mengubah status streaming");
               }
@@ -749,3 +740,4 @@ export const LiveControlBar: React.FC = () => {
     </div>
   );
 };
+

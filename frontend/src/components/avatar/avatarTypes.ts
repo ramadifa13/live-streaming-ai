@@ -1,8 +1,3 @@
-/**
- * Core Avatar Type Definitions for LiveStreamerAI
- * Aligned with photorealistic AI Presenter architecture.
- */
-
 export type AvatarMode = "3D";
 
 export interface AvatarProfile {

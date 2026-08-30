@@ -16,7 +16,7 @@ const TIERS = [
     price: "Rp19.000",
     modal: "~Rp200",
     margin: "98.9%",
-    badge: "⚡ Viral Hook",
+    badge: "[VIRAL] Viral Hook",
   },
   {
     tier: "30s" as const,
@@ -34,7 +34,7 @@ const TIERS = [
     price: "Rp59.000",
     modal: "~Rp600",
     margin: "98.9%",
-    badge: "🎬 Full Review",
+    badge: "[REVIEW] Full Review",
   },
 ];
 
@@ -71,24 +71,24 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
   };
 
   const handleRenderVideoAds = async () => {
-    const tierPrices = {
+const tierPrices = {
       "15s": "Rp19.000 (Short Hook)",
       "30s": "Rp35.000 (Standard Showcase)",
       "60s": "Rp59.000 (Deep Review)",
     };
-    showToast(`⚡ Memulai render video iklan AI ${tierPrices[videoDuration]}...`);
+    showToast(`Memulai render video iklan AI ${tierPrices[videoDuration]}...`);
     try {
       await renderVideo(activeFeaturedProduct);
     } catch {
-      showToast("❌ Gagal render video iklan");
+      showToast("Gagal render video iklan");
     }
   };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_0.8fr] gap-4 animate-fadeIn pb-6">
-      {/* LEFT COLUMN */}
+      
       <div className="space-y-4">
-        {/* Card 1: Pricing Tiers & Duration */}
+        
         <div className="rounded-2xl border border-purple-500/30 bg-[#0c1221] p-5 shadow-xl">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -109,7 +109,7 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
             Instagram Reels, dan YouTube Shorts.
           </p>
 
-          {/* 3 Pricing Tiers Cards */}
+          
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
             {TIERS.map((tier) => (
               <div
@@ -147,7 +147,7 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
             ))}
           </div>
 
-          {/* Product Selector */}
+          
           <div className="pt-3 border-t border-[#232c42]">
             <p className="text-[11px] text-slate-400 mb-2 font-medium">
               Pilih Produk Promosi:
@@ -159,7 +159,7 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
                   onClick={() => {
                     setActiveFeaturedProduct(p);
                     fetchVideoScript(p, videoDuration);
-                    showToast(`Produk iklan: ${p.name}`);
+                    showToast(`Produk iklan dipilih: ${p.name}`);
                   }}
                   className={`flex items-center gap-2.5 rounded-xl border p-2 min-w-[200px] cursor-pointer transition ${
                     activeFeaturedProduct.id === p.id
@@ -194,7 +194,7 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* Card 2: AI Copywriting Script Editor */}
+        
         <div className="rounded-2xl border border-purple-500/30 bg-[#0c1221] p-5 shadow-xl">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
@@ -221,11 +221,11 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
           </div>
 
           <div className="space-y-3 text-xs">
-            {/* Hook */}
+            
             <div className="rounded-xl border border-yellow-500/30 bg-yellow-950/20 p-3">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[10px] font-black text-yellow-400 uppercase tracking-wider">
-                  ⚡ THE HOOK (Detik 01-05)
+                  [HOOK] THE HOOK (Detik 01-05)
                 </span>
                 <span className="text-[9px] text-yellow-300/80 font-bold bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/20">
                   Wajib Menarik Perhatian
@@ -241,11 +241,11 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
               />
             </div>
 
-            {/* Problem & Solution */}
+            
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="rounded-xl border border-[#232c42] bg-[#111827] p-3">
                 <span className="block text-[10px] font-bold text-red-400 uppercase tracking-wider mb-1">
-                  🎯 PROBLEM / KELUHAN (Detik 06-15)
+                  [PROBLEM] PROBLEM / KELUHAN (Detik 06-15)
                 </span>
                 <textarea
                   rows={2}
@@ -258,7 +258,7 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
               </div>
               <div className="rounded-xl border border-[#232c42] bg-[#111827] p-3">
                 <span className="block text-[10px] font-bold text-cyan-400 uppercase tracking-wider mb-1">
-                  ✨ KEUNGGULAN PRODUK (Detik 16-25)
+                  [SOLUSI] KEUNGGULAN PRODUK (Detik 16-25)
                 </span>
                 <textarea
                   rows={2}
@@ -271,7 +271,7 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
               </div>
             </div>
 
-            {/* CTA */}
+            
             <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[10px] font-black text-emerald-400 uppercase tracking-wider">
@@ -319,13 +319,13 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
         </div>
       </div>
 
-      {/* RIGHT COLUMN: Video Phone Preview Player */}
+      
       <div className="flex flex-col items-center justify-start mt-2">
         <div className="w-full max-w-[280px] rounded-[36px] border-4 border-[#1e293b] bg-black p-2.5 shadow-2xl relative overflow-hidden">
-          {/* Phone Notch */}
+          
           <div className="absolute top-4 left-1/2 -translate-x-1/2 h-3.5 w-24 bg-[#1e293b] rounded-full z-40" />
 
-          {/* Video Canvas 9:16 */}
+          
           <div className="relative aspect-[9/16] w-full rounded-[26px] overflow-hidden bg-gradient-to-b from-[#141226] to-[#0a0714] border border-white/10 flex flex-col justify-between p-3.5">
             <RealtimeLivePortraitView
               avatarName={selectedAvatar.name}
@@ -337,7 +337,7 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
               className="absolute inset-0 w-full h-full"
             />
 
-            {/* TOP COMMERCIAL AD STICKER */}
+            
             <div className="relative z-20 space-y-2 mt-4">
               <div className="flex items-center justify-between">
                 <span className="rounded-full bg-red-600/90 px-2.5 py-0.5 text-[8.5px] font-black text-white backdrop-blur-md shadow-lg border border-red-400/40 flex items-center gap-1">
@@ -349,13 +349,13 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
                 </span>
               </div>
 
-              {/* Viral Headline Sticker */}
+              
               <div className="rounded-lg bg-gradient-to-r from-yellow-400 via-amber-300 to-yellow-500 px-3 py-1 text-black font-black text-[10px] text-center shadow-lg transform -rotate-1 border border-yellow-200">
-                🔥 RACUN TIKTOK VIRAL! JANGAN DI-SKIP!
+                [VIRAL] RACUN TIKTOK VIRAL! JANGAN DI-SKIP!
               </div>
             </div>
 
-            {/* BOTTOM COMMERCIAL AD OVERLAYS */}
+            
             <div className="relative z-20 space-y-2 mt-auto">
               <div className="rounded-xl bg-black/80 p-2.5 backdrop-blur-md border border-yellow-400/30 text-center shadow-xl animate-fadeIn">
                 <p className="text-[10px] font-black text-yellow-300 leading-snug">
@@ -363,12 +363,8 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
                 </p>
               </div>
 
-              <div
-                className="rounded-2xl p-2.5 backdrop-blur-md shadow-2xl"
-                style={{
-                  background: "rgba(8,6,24,0.92)",
-                  border: "1px solid rgba(251,191,36,0.35)",
-                }}
+<div
+                className="rounded-2xl p-2.5 backdrop-blur-md shadow-2xl bg-[#080618]/92 border border-yellow-400/35"
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[8px] font-black uppercase tracking-widest text-yellow-400 flex items-center gap-1">
@@ -415,7 +411,7 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
               </div>
             </div>
 
-            {/* Rendering Progress Overlay */}
+            
             {isRenderingVideo && (
               <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/85 p-6 backdrop-blur-sm animate-fadeIn text-center">
                 <div className="h-12 w-12 rounded-full border-4 border-purple-500/30 border-t-purple-500 animate-spin mb-3" />
@@ -436,7 +432,7 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* Download CTA Button */}
+        
         {hasRenderedVideo && (
           <div className="mt-4 w-full max-w-[340px] animate-bounce">
             <a
@@ -455,3 +451,4 @@ export const VideoAdsGeneratorPanel: React.FC = () => {
     </div>
   );
 };
+
