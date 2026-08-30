@@ -40,12 +40,10 @@ export const LunaActionEnum = z.enum([
   "TALK_EXPRESSIVE",
   "NOD",
   "LAUGH",
-  "SHRUG",
-  "HOLD_PRODUCT",
-  "POINT_CART",
+  "POINT_UP",
+  "POINT_DOWN",
   "WAVE",
   "THINK",
-  "LISTEN",
 ]);
 export type LunaAction = z.infer<typeof LunaActionEnum>;
 
@@ -278,30 +276,27 @@ function hasHighPhraseOverlap(text: string, previous: string[]): boolean {
 }
 
 function extractActionTag(text: string): { speech: string; action: LunaAction } {
-  const match = text.match(/^\s*\[([A-Z_]+)\]\s*/i);
-  if (!match) return { speech: text.trim(), action: "TALK_EXPRESSIVE" };
-  const tag = String(match[1]).toUpperCase();
-  const mapping: Record<string, LunaAction> = {
-    IDLE: "IDLE",
-    TALK_EXPRESSIVE: "TALK_EXPRESSIVE",
-    NOD: "NOD",
-    LAUGH: "LAUGH",
-    SHRUG: "SHRUG",
-    HOLD_PRODUCT: "HOLD_PRODUCT",
-    POINT_CART: "POINT_CART",
-    RAISE_HAND: "WAVE",
-    WAVE: "WAVE",
-    POINT_DOWN: "POINT_CART",
-    EXCITED: "TALK_EXPRESSIVE",
-    SMILE: "NOD",
-    THINK: "THINK",
-    LISTEN: "LISTEN",
-  };
-  return {
-    speech: text.slice(match[0].length).trim(),
-    action: mapping[tag] || "TALK_EXPRESSIVE",
-  };
-}
+    const match = text.match(/^\s*\[([A-Z_]+)\]\s*/i);
+    if (!match) return { speech: text.trim(), action: "TALK_EXPRESSIVE" };
+    const tag = String(match[1]).toUpperCase();
+    const mapping: Record<string, LunaAction> = {
+      IDLE: "IDLE",
+      TALK_EXPRESSIVE: "TALK_EXPRESSIVE",
+      NOD: "NOD",
+      LAUGH: "LAUGH",
+      POINT_UP: "POINT_UP",
+      POINT_DOWN: "POINT_DOWN",
+      RAISE_HAND: "WAVE",
+      WAVE: "WAVE",
+      EXCITED: "TALK_EXPRESSIVE",
+      SMILE: "NOD",
+      THINK: "THINK",
+    };
+    return {
+      speech: text.slice(match[0].length).trim(),
+      action: mapping[tag] || "TALK_EXPRESSIVE",
+    };
+  }
 
 function cleanForTts(text: string): string {
   return extractActionTag(text)
@@ -404,7 +399,7 @@ OUTPUT:
 Kembalikan SATU JSON murni, tanpa markdown, dengan schema:
 {
   "speech": "kalimat yang benar-benar diucapkan host",
-  "action": "IDLE|TALK_EXPRESSIVE|NOD|LAUGH|SHRUG|HOLD_PRODUCT|POINT_CART|WAVE|THINK|LISTEN",
+  "action": "IDLE|TALK_EXPRESSIVE|NOD|LAUGH|POINT_UP|POINT_DOWN|WAVE|THINK",
   "emotion": "happy|neutral|surprised|thinking|warm|excited|empathetic",
   "intent": "ANSWER|PRODUCT_INFO|PRICE|BUYING_INTENT|OBJECTION|SOCIAL|THANKS|COMPLAINT|ANNOUNCEMENT|SELL|SPAM|OTHER",
   "mode": "ENGAGE|SELL|QNA|DEMO|OBJECTION|SOCIAL|ANNOUNCEMENT|RECOVERY|CLOSING",
