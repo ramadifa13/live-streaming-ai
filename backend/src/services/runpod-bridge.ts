@@ -16,6 +16,8 @@ export interface RunPod2DStreamParams {
   requireWorker?: boolean;
   wait?: boolean;
   action?: string;
+  /** Tandai sebagai jawaban komentar agar diputar mendahului buffer otonom. */
+  priority?: boolean;
 }
 
 function stripActionTagsForTts(text: string): string {
@@ -318,6 +320,7 @@ export async function forwardToRunPodGPU(
           audio_base64: audioBase64 || "",
           audio_url: params.audioUrl || "",
           action: params.action || "",
+          priority: params.priority === true,
           wait: false, // Gunakan polling agar tidak terkena HTTP timeout
           idle_video_loop: true, // Worker memutar idle video saat antrian kosong → tidak ada freeze
         }),

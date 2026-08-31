@@ -240,9 +240,12 @@ export async function createPod(): Promise<string> {
           cloudType: cloudType,
           gpuCount: 1,
           volumeInGb: 0,
-          containerDiskInGb: 5,
-          minVcpuCount: 2,
-          minMemoryInGb: 15,
+          containerDiskInGb: Number(process.env.RUNPOD_CONTAINER_DISK_GB || "10"),
+          // Pipeline ini CPU-bound di luar GPU: blending per frame MuseTalk,
+          // libx264 720x1280, master FFmpeg, dan ffprobe berjalan bersamaan.
+          // Dengan 2 vCPU throughput jatuh di bawah realtime meski GPU sanggup.
+          minVcpuCount: Number(process.env.RUNPOD_MIN_VCPU || "8"),
+          minMemoryInGb: Number(process.env.RUNPOD_MIN_MEMORY_GB || "24"),
           gpuTypeId: gpuTier.id,
           name: `LiveWorker-${gpuTier.id.replace(/\s+/g, "_")}`,
           imageName: "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04",
@@ -510,14 +513,56 @@ export async function startPodAndWait(
 
   return await waitForWorkerHealth(currentPodId);
 }
+/**
+ * Menghentikan pod tanpa menghapusnya (GPU dilepas, disk & volume tetap ada).
+ *
+ * Dipakai untuk pod statis: terminate akan menghancurkan setup yang dipakai
+ * berulang, sementara membiarkannya RUNNING berarti GPU tetap ditagih 24 jam
+ * sehari walau tidak ada siaran. `podStop` adalah pasangan dari `podResume`
+ * yang sudah dipakai di `startPodAndWait`.
+ */
+export async function pausePod(podId: string): Promise<boolean> {
+  if (!podId) return false;
+  const mutation = `
+    mutation podStop($input: PodStopInput!) {
+      podStop(input: $input) {
+        id
+        desiredStatus
+      }
+    }
+  `;
+  try {
+    const data = await runpodGraphQL(mutation, { input: { podId } });
+    console.log(
+      `[RunPodManager] Pod ${podId} di-STOP (status: ${data?.podStop?.desiredStatus || "SENT"}). Tagihan GPU berhenti.`,
+    );
+    return true;
+  } catch (err: any) {
+    console.error(
+      `[RunPodManager] Gagal men-STOP Pod ${podId}:`,
+      err?.message || err,
+    );
+    return false;
+  }
+}
+
 export async function stopPod(podId: string): Promise<boolean> {
   if (!podId) return true;
 
   if (process.env.RUNPOD_POD_ID === podId) {
+    if ((process.env.RUNPOD_KEEP_POD_WARM ?? "false").toLowerCase() === "true") {
+      console.warn(
+        `[RunPodManager] Pod statis ${podId} DIBIARKAN MENYALA (RUNPOD_KEEP_POD_WARM=true). ` +
+          `GPU tetap ditagih walau tidak ada siaran.`,
+      );
+      return true;
+    }
+    // Jangan terminate pod statis (volume & setup-nya dipakai berulang),
+    // tapi tetap hentikan agar tagihan GPU tidak jalan tanpa siaran.
     console.log(
-      `[RunPodManager] Pod ${podId} is a static pod, skipping termination.`,
+      `[RunPodManager] Pod ${podId} statis — mengirim STOP agar tagihan GPU berhenti.`,
     );
-    return true;
+    return await pausePod(podId);
   }
 
   const mutation = `

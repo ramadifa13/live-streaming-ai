@@ -7,6 +7,7 @@ import time
 import urllib.request
 import math
 import re
+import signal
 import traceback
 from collections import deque
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -26,10 +27,16 @@ class AIBroadcaster:
         # Smooth transitions — tunable via env on RunPod
         self.crossfade_seconds = float(os.environ.get("BROADCAST_CROSSFADE_SECONDS", "0.5"))
         self.fade_seconds = float(os.environ.get("BROADCAST_FADE_SECONDS", "0.4"))
-        self.idle_chunk_seconds = float(os.environ.get("BROADCAST_IDLE_CHUNK_SECONDS", "8.0"))
+        # Chunk idle pendek = jeda lebih singkat sebelum segmen AI berikutnya bisa
+        # masuk. Batas bawah praktis adalah biaya spawn FFmpeg per chunk.
+        self.idle_chunk_seconds = float(os.environ.get("BROADCAST_IDLE_CHUNK_SECONDS", "3.0"))
         self.max_onair_idle_seconds = float(os.environ.get("BROADCAST_MAX_IDLE_SECONDS", "10.0"))
         self.idle_streak_started_at = None
         self.master_process = None
+        self._duration_cache = {}
+        self._audio_cache = {}
+        self._shutting_down = False
+        self._current_worker = None
         self.output_width = 720
         self.output_height = 1280
         self.output_fps = 25
@@ -333,8 +340,49 @@ class AIBroadcaster:
                 print(f"[BROADCASTER ERROR] Gagal memulai master FFmpeg: {e}")
                 self.master_process = None
 
+    def _probe_cache_key(self, video_path):
+        try:
+            stat = os.stat(video_path)
+            return (os.path.abspath(video_path), stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            return (os.path.abspath(video_path), 0, 0)
+
+    def _has_audio(self, video_path):
+        """True bila file punya stream audio. Dicache karena dipanggil per segmen."""
+        key = self._probe_cache_key(video_path)
+        if key in self._audio_cache:
+            return self._audio_cache[key]
+        result = True
+        try:
+            probe = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v", "error",
+                    "-select_streams", "a:0",
+                    "-show_entries", "stream=codec_type",
+                    "-of", "csv=p=0",
+                    video_path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            result = bool(probe.stdout.strip())
+        except Exception:
+            result = True
+        self._audio_cache[key] = result
+        return result
+
     def _probe_duration(self, video_path):
         """Durasi media dalam detik (fallback aman jika ffprobe gagal)."""
+        key = self._probe_cache_key(video_path)
+        if key in self._duration_cache:
+            return self._duration_cache[key]
+        value = self._probe_duration_uncached(video_path)
+        self._duration_cache[key] = value
+        return value
+
+    def _probe_duration_uncached(self, video_path):
         try:
             result = subprocess.run(
                 [
@@ -359,15 +407,28 @@ class AIBroadcaster:
             return 12.0
 
     def _encode_output_args(self):
+        # Master FFmpeg memakai -c:v copy, sehingga SETIAP segmen yang masuk pipe
+        # wajib punya parameter stream identik (resolusi, fps, GOP, kanal audio).
+        # Perbedaan sekecil 720x1276 vs 720x1280 akan merusak muxer FLV.
+        gop = self.output_fps * 2
         return [
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-tune", "zerolatency",
             "-pix_fmt", "yuv420p",
+            "-profile:v", "high",
+            "-level", "4.1",
             "-r", str(self.output_fps),
+            "-g", str(gop),
+            "-keyint_min", str(gop),
+            "-sc_threshold", "0",
+            "-b:v", "2500k",
+            "-maxrate", "3000k",
+            "-bufsize", "6000k",
             "-c:a", "aac",
             "-b:a", "128k",
             "-ar", "44100",
+            "-ac", "2",
             "-max_muxing_queue_size", "2048",
             "-f", "mpegts",
             "pipe:1",
@@ -407,70 +468,69 @@ class AIBroadcaster:
         max_duration=None,
         fade_in=0.0,
         fade_out=0.0,
+        loop_input=False,
+        silent_audio=False,
     ):
+        """Selalu re-encode lewat filter_complex.
+
+        Jalur `-c:v copy` sengaja dihapus: aset avatar bisa berbeda resolusi dan
+        fps antar gesture, dan mengalirkannya apa adanya ke master `-c:v copy`
+        mengubah SPS/PPS di tengah siaran sehingga RTMP diputus platform.
+        """
         duration = self._probe_duration(video_path)
         effective_duration = max_duration if max_duration else duration
         fade_out_start = None
         if fade_out > 0 and effective_duration > fade_out + 0.08:
             fade_out_start = round(effective_duration - fade_out, 3)
 
-        use_fade = fade_in > 0 or fade_out_start is not None
         has_overlay = bool(
             self.overlay_png_path and os.path.exists(self.overlay_png_path)
         )
 
-        # Tanpa overlay & tanpa fade → stream copy (hemat CPU untuk path sederhana)
-        if not has_overlay and not use_fade:
-            cmd = ["ffmpeg", "-y", "-re", "-i", video_path]
-            if max_duration:
-                cmd.extend(["-t", str(max_duration)])
-            cmd.extend([
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-ar", "44100",
-                "-max_muxing_queue_size", "2048",
-                "-f", "mpegts",
-                "pipe:1",
-            ])
-            return cmd
-
         vchain = self._video_fade_chain(fade_in, fade_out, fade_out_start)
-        afilter, amap = self._audio_fade_filters(fade_in, fade_out, fade_out_start)
+
+        cmd = ["ffmpeg", "-y"]
+        if loop_input:
+            cmd.extend(["-stream_loop", "-1"])
+        cmd.extend(["-re", "-i", video_path])
+
+        next_input_idx = 1
+        overlay_idx = None
+        if has_overlay:
+            cmd.extend(["-loop", "1", "-i", self.overlay_png_path])
+            overlay_idx = next_input_idx
+            next_input_idx += 1
+
+        # Idle memakai sumber senyap eksplisit agar audio asli clip tidak
+        # pernah tersiar, apa pun isi file aset yang dipasang operator.
+        silence_idx = None
+        if silent_audio:
+            cmd.extend(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"])
+            silence_idx = next_input_idx
+            next_input_idx += 1
+
+        if silent_audio:
+            afilter, amap = None, f"{silence_idx}:a"
+        else:
+            afilter, amap = self._audio_fade_filters(
+                fade_in, fade_out, fade_out_start
+            )
 
         if has_overlay:
-            if afilter:
-                fc = (
-                    f"[0:v]{vchain}[vbase];"
-                    f"[vbase][1:v]overlay=0:0:shortest=1[vout];"
-                    f"{afilter}"
-                )
-            else:
-                fc = f"[0:v]{vchain}[vbase];[vbase][1:v]overlay=0:0:shortest=1[vout]"
-            cmd = [
-                "ffmpeg", "-y", "-re", "-i", video_path,
-                "-loop", "1", "-i", self.overlay_png_path,
-                "-filter_complex", fc,
-                "-map", "[vout]",
-                "-map", amap,
-            ]
+            fc = (
+                f"[0:v]{vchain}[vbase];"
+                f"[vbase][{overlay_idx}:v]overlay=0:0:shortest=1[vout]"
+            )
         else:
-            if afilter:
-                fc = f"[0:v]{vchain}[vout];{afilter}"
-                cmd = [
-                    "ffmpeg", "-y", "-re", "-i", video_path,
-                    "-filter_complex", fc,
-                    "-map", "[vout]",
-                    "-map", amap,
-                ]
-            else:
-                fc = f"[0:v]{vchain}[vout]"
-                cmd = [
-                    "ffmpeg", "-y", "-re", "-i", video_path,
-                    "-filter_complex", fc,
-                    "-map", "[vout]",
-                    "-map", "0:a?",
-                ]
+            fc = f"[0:v]{vchain}[vout]"
+        if afilter:
+            fc = f"{fc};{afilter}"
+
+        cmd.extend([
+            "-filter_complex", fc,
+            "-map", "[vout]",
+            "-map", amap,
+        ])
 
         if max_duration:
             cmd.extend(["-t", str(max_duration)])
@@ -528,19 +588,63 @@ class AIBroadcaster:
         return cmd
 
     def _spawn_worker(self, command):
+        if self._shutting_down:
+            return None
         self._ensure_master_process()
         if self.master_process is None or self.master_process.stdin is None:
             print("[BROADCASTER ERROR] Master FFmpeg pipe tidak tersedia.")
             return None
         try:
-            return subprocess.Popen(
+            worker = subprocess.Popen(
                 command,
                 stdout=self.master_process.stdin,
                 stderr=subprocess.DEVNULL,
             )
+            self._current_worker = worker
+            return worker
         except Exception as e:
             print(f"[BROADCASTER ERROR] Gagal spawn worker FFmpeg: {e}")
             return None
+
+    def shutdown(self):
+        """Matikan worker dan master FFmpeg secara eksplisit.
+
+        Tanpa ini, SIGTERM hanya menghentikan proses Python sementara FFmpeg
+        master tetap hidup dan terus memegang koneksi publish RTMP. Broadcaster
+        berikutnya lalu publish ke stream key yang sama dan ditolak platform,
+        sehingga siaran mati permanen meski watchdog terus me-restart.
+        """
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+        print("[BROADCASTER] Menutup worker dan master FFmpeg...")
+
+        for label, proc in (
+            ("worker", getattr(self, "_current_worker", None)),
+            ("master", self.master_process),
+        ):
+            if proc is None or proc.poll() is not None:
+                continue
+            try:
+                proc.terminate()
+                proc.wait(timeout=3)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            print(f"[BROADCASTER] FFmpeg {label} dihentikan.")
+
+        self._current_worker = None
+        self.master_process = None
+
+        try:
+            with open(
+                os.path.join(self.output_folder, "rtmp_status.txt"), "w"
+            ) as f:
+                f.write("disconnected")
+        except Exception:
+            pass
 
     def _stream_file_async(
         self,
@@ -548,6 +652,8 @@ class AIBroadcaster:
         max_duration=None,
         fade_in=0.0,
         fade_out=0.0,
+        loop_input=False,
+        silent_audio=False,
     ):
         """Putar satu clip dengan optional fade in/out di awal/akhir."""
         if not video_path or not os.path.exists(video_path):
@@ -558,6 +664,8 @@ class AIBroadcaster:
             max_duration=max_duration,
             fade_in=fade_in,
             fade_out=fade_out,
+            loop_input=loop_input,
+            silent_audio=silent_audio,
         )
         return self._spawn_worker(worker_command)
 
@@ -567,6 +675,14 @@ class AIBroadcaster:
             return self._stream_file_async(to_path, fade_in=self.fade_seconds)
         if not to_path or not os.path.exists(to_path):
             return self._stream_file_async(from_path, fade_out=self.fade_seconds)
+        # acrossfade menuntut kedua input punya stream audio; tanpa penjagaan ini
+        # satu aset tanpa audio membuat FFmpeg langsung mati dan siaran nge-gap.
+        if not (self._has_audio(from_path) and self._has_audio(to_path)):
+            print(
+                f"[BROADCASTER] Crossfade dilewati — {os.path.basename(from_path)} "
+                f"atau {os.path.basename(to_path)} tidak punya stream audio."
+            )
+            return self._stream_file_async(to_path, fade_in=self.fade_seconds)
         label_from = os.path.basename(from_path)
         label_to = os.path.basename(to_path)
         print(
@@ -576,13 +692,40 @@ class AIBroadcaster:
         return self._spawn_worker(self._build_crossfade_command(from_path, to_path))
 
     def _stream_idle_chunk(self):
-        """Idle loop dengan fade in/out — tidak restart FFmpeg secara kasar."""
+        """Idle chunk: input di-loop, audio senyap, tanpa fade.
+
+        `-stream_loop -1` membuat clip idle 5 detik mengisi penuh chunk tanpa
+        sambungan, dan fade dihapus supaya penonton tidak melihat kedip berkala
+        setiap kali chunk berganti.
+        """
         return self._stream_file_async(
             self.idle_video,
             max_duration=self.idle_chunk_seconds,
-            fade_in=self.fade_seconds,
-            fade_out=self.fade_seconds,
+            loop_input=True,
+            silent_audio=True,
         )
+
+    def _sequence_key(self, path):
+        """Urutan tayang = urutan SUBMIT, bukan urutan selesai render.
+
+        Nama file worker berbentuk `[prio_]task_<epoch_ms>_<hex>.mp4`, dan
+        epoch_ms ditetapkan saat job diterima API sehingga mencerminkan urutan
+        yang dimaksud orchestrator. Mengurutkan dengan ctime salah karena
+        beberapa job berjalan bersamaan dan lock inferensi GPU tidak menjamin
+        FIFO, sehingga host bisa menyinggung hal yang belum diucapkan.
+
+        Prefix `prio_` dipakai untuk jawaban komentar dan selalu naik ke depan
+        antrian agar interaksi tidak terasa tertunda.
+        """
+        basename = os.path.basename(path)
+        match = re.match(r"^(prio_)?task_(\d{10,})_", basename)
+        if match:
+            rank = 0 if match.group(1) else 1
+            return (rank, int(match.group(2)), basename)
+        try:
+            return (2, os.path.getctime(path), basename)
+        except OSError:
+            return (2, 0.0, basename)
 
     def _collect_ai_queue(self, last_spoken_video, idle_abs):
         search_pattern = os.path.join(self.output_folder, "**", "*.mp4")
@@ -596,7 +739,7 @@ class AIBroadcaster:
                 and not os.path.basename(path).endswith(".tmp")
                 and os.path.getsize(path) >= 1024
             ],
-            key=os.path.getctime,
+            key=self._sequence_key,
         )
 
     def _cleanup_played_ai(self, video_path, idle_abs):
@@ -636,12 +779,9 @@ class AIBroadcaster:
             return self._stream_crossfade_async(from_path, to_path), to_path, is_idle
 
         if to_path and os.path.exists(to_path):
-            worker = self._stream_file_async(
-                to_path,
-                fade_in=fade_in if not is_idle else self.fade_seconds,
-                fade_out=self.fade_seconds if is_idle else 0.0,
-                max_duration=self.idle_chunk_seconds if is_idle else None,
-            )
+            if is_idle:
+                return self._stream_idle_chunk(), to_path, True
+            worker = self._stream_file_async(to_path, fade_in=fade_in)
             return worker, to_path, is_idle
         return None, from_path, is_idle
 
@@ -658,7 +798,7 @@ class AIBroadcaster:
         current_path = None
         pending_ai_queue = deque()
 
-        while True:
+        while not self._shutting_down:
             try:
                 # 0. Hot-Swap Video Overlay
                 update_file = os.path.join(self.output_folder, "update_overlay.json")
@@ -693,9 +833,19 @@ class AIBroadcaster:
 
                 # Kumpulkan video AI baru ke antrian (tanpa interrupt kasar)
                 if playback_active:
+                    queue_changed = False
                     for path in self._collect_ai_queue(last_spoken_video, idle_abs):
                         if path not in pending_ai_queue:
                             pending_ai_queue.append(path)
+                            queue_changed = True
+                    if queue_changed:
+                        # Urut ulang seluruh antrian, bukan hanya batch baru:
+                        # jawaban komentar (prefix prio_) sering muncul setelah
+                        # beberapa segmen otonom sudah mengantre, dan append
+                        # biasa akan menaruhnya di belakang.
+                        reordered = sorted(pending_ai_queue, key=self._sequence_key)
+                        pending_ai_queue.clear()
+                        pending_ai_queue.extend(reordered)
 
                 # Worker selesai → transisi halus ke segmen berikutnya
                 if current_worker and current_worker.poll() is not None:
@@ -878,6 +1028,7 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"[BROADCASTER ERROR] Gagal membaca {config_file}: {e}")
     
+    broadcaster = None
     try:
         broadcaster = AIBroadcaster(
             RTMP_URL, IDLE_VIDEO, OUTPUT_FOLDER,
@@ -886,7 +1037,20 @@ if __name__ == "__main__":
             product_image_url=PRODUCT_IMAGE_URL,
             banner_image_url=BANNER_IMAGE_URL
         )
+
+        def _handle_termination(signum, _frame):
+            print(f"\n[BROADCASTER] Sinyal {signum} diterima — menutup siaran.")
+            broadcaster.shutdown()
+
+        # Tanpa handler ini, SIGTERM dari api_server meninggalkan FFmpeg master
+        # hidup sebagai proses yatim yang masih memegang slot publish RTMP.
+        signal.signal(signal.SIGTERM, _handle_termination)
+        signal.signal(signal.SIGINT, _handle_termination)
+
         broadcaster.start_loop()
     except KeyboardInterrupt:
         print("\n[BROADCASTER] Siaran dimatikan.")
+    finally:
+        if broadcaster is not None:
+            broadcaster.shutdown()
 

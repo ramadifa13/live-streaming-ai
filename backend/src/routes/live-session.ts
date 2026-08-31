@@ -298,6 +298,9 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         rtmpUrl,
         streamKey,
         plan: durationHoursToPlan(managedSession.durationHours ?? 2),
+        // Durasi sebenarnya, bukan bucket plan — mencegah loop generasi berhenti
+        // lebih awal pada durasi non-standar (misal 3 jam ter-map ke plan "2H").
+        maxDurationMs: (managedSession.durationHours ?? 2) * 3600 * 1000,
       };
       liveHostOrchestrator.startPipelineBackground(hostConfig);
     }

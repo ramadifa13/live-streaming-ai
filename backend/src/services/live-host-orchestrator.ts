@@ -42,6 +42,12 @@ export interface HostConfig {
   podId?: string | null;
   sessionId: string;
   plan?: StreamPlan;
+  /**
+   * Durasi sesi sebenarnya dalam ms. Plan hanya bucket (2H/8H/24H), sehingga
+   * sesi 3 jam ter-map ke plan "2H" dan loop generasi berhenti satu jam lebih
+   * awal — GPU menganggur tetapi tetap ditagih. Nilai ini dipakai bila ada.
+   */
+  maxDurationMs?: number;
 }
 
 export interface PendingComment {
@@ -431,6 +437,17 @@ function estimateDurationSeconds(text: string): number {
 
 class LiveHostOrchestrator {
   private sessions = new Map<string, HostRuntimeState>();
+  private onSessionExpired?: (sessionId: string) => void;
+
+  /**
+   * Dipanggil saat durasi plan habis. Tanpa handler ini loop generasi hanya
+   * berhenti sementara pod tetap menyala dan tertagih sampai dihentikan manual.
+   */
+  public setSessionExpiredHandler(
+    handler: (sessionId: string) => void,
+  ): void {
+    this.onSessionExpired = handler;
+  }
 
   constructor() {
     livePlatformConnector.setSpeechCallback(
@@ -601,7 +618,11 @@ class LiveHostOrchestrator {
   }
 
   private isSessionExpired(state: HostRuntimeState): boolean {
-    return this.elapsedMs(state) >= this.getPolicy(state).durationMs;
+    const limitMs =
+      state.config.maxDurationMs && state.config.maxDurationMs > 0
+        ? state.config.maxDurationMs
+        : this.getPolicy(state).durationMs;
+    return this.elapsedMs(state) >= limitMs;
   }
 
   private async runPreLivePipeline(sessionId: string): Promise<void> {
@@ -661,6 +682,13 @@ class LiveHostOrchestrator {
         if (!s || s.abortController.signal.aborted || !s.isLive) break;
         if (this.isSessionExpired(s)) {
           console.log(`[LiveHost] ⏹️ Plan ${s.config.plan} selesai: ${sessionId}`);
+          try {
+            this.onSessionExpired?.(sessionId);
+          } catch (err: any) {
+            console.warn(
+              `[LiveHost] Session expiry handler notice: ${err?.message || err}`,
+            );
+          }
           break;
         }
 
@@ -914,7 +942,17 @@ class LiveHostOrchestrator {
 
     // Bila TTS gagal, submit tetap dilakukan bila worker mampu menghasilkan audio/video
     // dari text; ini mempertahankan jalur fallback lama.
-    await this.submitToGPU(sessionId, finalText, audioBase64, response.action);
+    //
+    // Jawaban komentar ditandai prioritas agar broadcaster memutarnya sebelum
+    // sisa buffer otonom. Tanpa ini jawaban harus mengantre di belakang
+    // targetBufferSeconds penuh, sehingga terasa ~30 detik terlambat.
+    await this.submitToGPU(
+      sessionId,
+      finalText,
+      audioBase64,
+      response.action,
+      source === "comment",
+    );
 
     state.counters.generated++;
     state.lastActivityAt = Date.now();
@@ -1306,6 +1344,7 @@ class LiveHostOrchestrator {
     text: string,
     audioBase64?: string,
     action?: string,
+    priority = false,
   ): Promise<void> {
     const state = this.sessions.get(sessionId);
     if (!state) return;
@@ -1331,6 +1370,7 @@ class LiveHostOrchestrator {
         requireWorker: true,
         wait: false,
         action: gesture || "TALK_EXPRESSIVE",
+        priority,
       });
 
       state.counters.submitted++;

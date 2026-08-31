@@ -19,6 +19,9 @@ deploy/SadTalker/
 deploy/live_videos/*.mp4
 !deploy/live_videos/.gitkeep
 
+# Backup clip avatar sebelum normalisasi 720x1280/25fps
+deploy/assets_original/
+
 # System & IDE
 .DS_Store
 *.log

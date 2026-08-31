@@ -7,6 +7,7 @@ import asyncio
 import uuid
 import subprocess
 import base64
+import signal
 import tempfile
 import time
 from contextlib import asynccontextmanager
@@ -27,8 +28,32 @@ JOB_TTL_SECONDS = 3600  # 1 hour TTL
 AVG_RENDER_SECONDS = 10.0
 IDLE_CLIP_BASENAMES = {"namira_idle.mp4", "namira.mp4", "idle.mp4"}
 
+_duration_cache: Dict[tuple, float] = {}
+
+
 def _probe_duration_seconds(path: str) -> float:
-    """Durasi file video (detik) untuk perhitungan buffer playable."""
+    """Durasi file video (detik) untuk perhitungan buffer playable.
+
+    Dicache per (path, mtime, size). Tanpa cache, endpoint queue-status
+    memanggil ffprobe untuk setiap file pada setiap polling — sekitar dua kali
+    per detik dari orchestrator plus frontend — dan merebut CPU dari encoder.
+    """
+    try:
+        stat = os.stat(path)
+        cache_key = (os.path.abspath(path), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return 12.0
+    cached = _duration_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    value = _probe_duration_uncached(path)
+    if len(_duration_cache) > 512:
+        _duration_cache.clear()
+    _duration_cache[cache_key] = value
+    return value
+
+
+def _probe_duration_uncached(path: str) -> float:
     try:
         result = subprocess.run(
             [
@@ -97,10 +122,96 @@ def prune_old_jobs():
 broadcaster_process: Optional[subprocess.Popen] = None
 current_broadcast_env: Optional[Dict[str, str]] = None
 watchdog_task: Optional[asyncio.Task] = None
+broadcaster_log_handle = None
+broadcaster_restarts = 0
+broadcaster_next_restart_at = 0.0
+MAX_BROADCASTER_RESTARTS = 8
+
+
+def _broadcaster_script_path() -> str:
+    candidate = os.path.join(os.path.dirname(__file__), "broadcaster.py")
+    if os.path.exists(candidate):
+        return candidate
+    return "/workspace/ai_live_worker/broadcaster.py"
+
+
+def _spawn_broadcaster(env: Dict[str, str]) -> subprocess.Popen:
+    """Start broadcaster.py in its own process group.
+
+    Process group is required so that terminating the broadcaster also reaps its
+    child FFmpeg processes. Otherwise the master FFmpeg survives as an orphan,
+    keeps holding the RTMP publish slot, and every later broadcast is rejected by
+    the platform as a duplicate publish.
+    """
+    global broadcaster_log_handle
+
+    script = _broadcaster_script_path()
+    log_path = os.path.join(worker.output_dir, "broadcaster.log")
+
+    if broadcaster_log_handle is not None:
+        try:
+            broadcaster_log_handle.close()
+        except Exception:
+            pass
+
+    broadcaster_log_handle = open(log_path, "a", encoding="utf-8")
+    popen_kwargs: Dict[str, Any] = {
+        "cwd": os.path.dirname(script),
+        "env": env,
+        "stdout": broadcaster_log_handle,
+        "stderr": subprocess.STDOUT,
+    }
+    if os.name == "posix":
+        popen_kwargs["start_new_session"] = True
+
+    return subprocess.Popen(["python", script], **popen_kwargs)
+
+
+def _terminate_broadcaster(timeout: float = 8.0) -> None:
+    """Stop the broadcaster and every FFmpeg it owns."""
+    global broadcaster_process, broadcaster_log_handle
+
+    proc = broadcaster_process
+    broadcaster_process = None
+
+    if proc is not None and proc.poll() is None:
+        signalled_group = False
+        if os.name == "posix":
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                signalled_group = True
+            except Exception:
+                pass
+        if not signalled_group:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            print("[AI-Worker] Broadcaster tidak berhenti — mengirim SIGKILL.")
+            if os.name == "posix":
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except Exception:
+                    pass
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    if broadcaster_log_handle is not None:
+        try:
+            broadcaster_log_handle.close()
+        except Exception:
+            pass
+        broadcaster_log_handle = None
 
 async def periodic_cleanup_and_watchdog():
     """Background supervisor: auto-restarts crashed broadcaster and cleans up temp files."""
     global broadcaster_process, current_broadcast_env
+    global broadcaster_restarts, broadcaster_next_restart_at
     while True:
         try:
             await asyncio.sleep(5)
@@ -108,19 +219,36 @@ async def periodic_cleanup_and_watchdog():
             if current_broadcast_env and broadcaster_process is not None:
                 ret = broadcaster_process.poll()
                 if ret is not None:
-                    print(f"[WATCHDOG ALERT] Broadcaster crash terdeteksi (exit code: {ret}). Me-restart broadcaster otomatis...")
-                    log_path = os.path.join(output_dir, "broadcaster.log")
-                    try:
-                        broadcaster_process = subprocess.Popen(
-                            ["python", os.path.join(os.path.dirname(__file__), "broadcaster.py")],
-                            cwd=os.path.dirname(__file__),
-                            env=current_broadcast_env,
-                            stdout=open(log_path, "a"),
-                            stderr=subprocess.STDOUT,
+                    now = time.time()
+                    if broadcaster_restarts >= MAX_BROADCASTER_RESTARTS:
+                        print(
+                            f"[WATCHDOG STOP] Broadcaster gagal {broadcaster_restarts}x "
+                            "berturut-turut. Restart otomatis dihentikan — "
+                            "periksa RTMP URL / stream key."
                         )
-                        print(f"[WATCHDOG SUCCESS] Broadcaster berhasil di-restart (PID: {broadcaster_process.pid})")
-                    except Exception as restart_err:
-                        print(f"[WATCHDOG ERROR] Gagal me-restart broadcaster: {restart_err}")
+                        current_broadcast_env = None
+                        _terminate_broadcaster()
+                    elif now >= broadcaster_next_restart_at:
+                        # Exponential backoff mencegah restart beruntun tiap 5 detik
+                        # ketika penyebabnya permanen, misalnya stream key salah.
+                        backoff = min(60.0, 5.0 * (2 ** broadcaster_restarts))
+                        broadcaster_restarts += 1
+                        broadcaster_next_restart_at = now + backoff
+                        print(
+                            f"[WATCHDOG ALERT] Broadcaster berhenti (exit code: {ret}). "
+                            f"Restart ke-{broadcaster_restarts}, backoff berikutnya {backoff:.0f}s..."
+                        )
+                        _terminate_broadcaster(timeout=2.0)
+                        try:
+                            broadcaster_process = _spawn_broadcaster(current_broadcast_env)
+                            print(
+                                f"[WATCHDOG SUCCESS] Broadcaster di-restart (PID: {broadcaster_process.pid})"
+                            )
+                        except Exception as restart_err:
+                            print(f"[WATCHDOG ERROR] Gagal me-restart broadcaster: {restart_err}")
+            elif broadcaster_process is not None and broadcaster_process.poll() is None:
+                # Siaran sudah dihentikan tetapi proses masih hidup.
+                _terminate_broadcaster()
 
             # 2. Cleanup orphaned temp files older than 30 minutes
             now = time.time()
@@ -153,13 +281,7 @@ async def lifespan(app: FastAPI):
     if watchdog_task:
         watchdog_task.cancel()
     current_broadcast_env = None
-    if broadcaster_process and broadcaster_process.poll() is None:
-        broadcaster_process.terminate()
-        try:
-            broadcaster_process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            broadcaster_process.kill()
-        broadcaster_process = None
+    _terminate_broadcaster()
 
 app = FastAPI(title="LiveStreamer AI Worker", lifespan=lifespan)
 
@@ -182,6 +304,7 @@ class GenerateVideoRequest(BaseModel):
     audioUrl: Optional[str] = None
     wait: Optional[bool] = False
     action: Optional[str] = None
+    priority: Optional[bool] = False
 
 # Mount output folder to serve the generated video files
 output_dir = worker.output_dir
@@ -308,7 +431,11 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
 @app.post("/stream/live-utterance")
 async def generate_neural_video(req: GenerateVideoRequest, wait: bool = False):
     prune_old_jobs()
-    task_id = f"task_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+    # Prefix `prio_` menandai jawaban komentar. Broadcaster mengurutkan file
+    # ber-prefix ini lebih dulu supaya jawaban tidak mengantre di belakang
+    # seluruh buffer segmen otonom.
+    prefix = "prio_" if req.priority else ""
+    task_id = f"{prefix}task_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
     jobs[task_id] = {
         "status": "processing",
         "created_at": time.time(),
@@ -406,11 +533,32 @@ async def start_playback(req: PlaybackRequest):
 @app.post("/stream/start-broadcast")
 async def start_broadcast(req: BroadcastRequest):
     global broadcaster_process, total_videos_rendered, current_broadcast_env
+    global broadcaster_restarts, broadcaster_next_restart_at
     try:
         final_rtmp_url = req.rtmp_url or req.rtmpUrl or ""
         final_stream_key = req.stream_key or req.streamKey or ""
         if not final_rtmp_url or not final_stream_key:
             raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
+
+        # Idempoten: backend membungkus endpoint ini dengan retry, dan handler ini
+        # menghapus seluruh MP4 di output. Tanpa penjagaan ini, retry akibat
+        # timeout palsu akan membuang buffer bicara yang sudah siap tayang.
+        if (
+            broadcaster_process is not None
+            and broadcaster_process.poll() is None
+            and current_broadcast_env is not None
+            and current_broadcast_env.get("RTMP_URL") == final_rtmp_url
+            and current_broadcast_env.get("STREAM_KEY") == final_stream_key
+        ):
+            print(
+                "[AI-Worker] start-broadcast diabaikan — siaran dengan target yang "
+                f"sama sudah aktif (PID: {broadcaster_process.pid})."
+            )
+            return {
+                "success": True,
+                "status": "already_running",
+                "pid": broadcaster_process.pid,
+            }
 
         os.makedirs(output_dir, exist_ok=True)
 
@@ -430,18 +578,12 @@ async def start_broadcast(req: BroadcastRequest):
                     break
 
         # Hentikan broadcaster lama jika ada agar tidak bentrok RTMP URL
-        if broadcaster_process and broadcaster_process.poll() is None:
-            try:
-                broadcaster_process.terminate()
-                broadcaster_process.wait(timeout=2)
-            except Exception:
-                try:
-                    broadcaster_process.kill()
-                except Exception:
-                    pass
+        _terminate_broadcaster(timeout=5.0)
 
-        # Reset counter saat siaran baru dimulai
+        # Reset counter dan state watchdog saat siaran baru dimulai
         total_videos_rendered = 0
+        broadcaster_restarts = 0
+        broadcaster_next_restart_at = 0.0
 
         # Bersihkan sisa video lama dan flag lama sebelum mulai siaran baru
         flag_path = os.path.join(output_dir, "playback_active.flag")
@@ -486,18 +628,7 @@ async def start_broadcast(req: BroadcastRequest):
         env["WORKER_REQUIRE_AUDIO"] = "1"
         current_broadcast_env = env
 
-        log_path = os.path.join(output_dir, "broadcaster.log")
-        broadcaster_script = os.path.join(os.path.dirname(__file__), "broadcaster.py")
-        if not os.path.exists(broadcaster_script):
-            broadcaster_script = "/workspace/ai_live_worker/broadcaster.py"
-
-        broadcaster_process = subprocess.Popen(
-            ["python", broadcaster_script],
-            cwd=os.path.dirname(broadcaster_script),
-            env=env,
-            stdout=open(log_path, "a"),
-            stderr=subprocess.STDOUT,
-        )
+        broadcaster_process = _spawn_broadcaster(env)
         return {"success": True, "status": "starting", "pid": broadcaster_process.pid}
     except Exception as e:
         import traceback
@@ -508,13 +639,7 @@ async def start_broadcast(req: BroadcastRequest):
 async def stop_broadcast():
     global broadcaster_process, total_videos_rendered, current_broadcast_env
     current_broadcast_env = None
-    if broadcaster_process and broadcaster_process.poll() is None:
-        broadcaster_process.terminate()
-        try:
-            broadcaster_process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            broadcaster_process.kill()
-    broadcaster_process = None
+    _terminate_broadcaster(timeout=10.0)
 
     # Reset monotonic counter saat siaran selesai
     total_videos_rendered = 0

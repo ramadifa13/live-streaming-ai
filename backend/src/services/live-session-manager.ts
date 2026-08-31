@@ -23,13 +23,41 @@ export interface ManagedSession {
   podId?: string | null;
   watchdogTimer?: NodeJS.Timeout;
   livePollTimer?: NodeJS.Timeout;
+  pendingTimer?: NodeJS.Timeout;
+  liveDetectionAttempts: number;
   onStateChange?: (state: SessionState, sessionId: string) => void;
 }
 
+/**
+ * Batas waktu sebuah sesi boleh menggantung di state "pending" (RTMP sudah
+ * jalan, tetapi operator belum menekan Go Live). Tanpa batas ini pod terus
+ * ditagih karena watchdog durasi hanya aktif setelah state "live".
+ */
+const PENDING_TIMEOUT_MS = Math.max(
+  60_000,
+  Number(process.env.LIVE_PENDING_TIMEOUT_MS || "1800000"),
+);
+
 class LiveSessionManager {
   private activeSessions: Map<string, ManagedSession> = new Map();
-  private liveDetectionAttempts: number = 0;
   private pendingVoicePreference: string | null = null;
+
+  constructor() {
+    // Saat durasi plan habis, orchestrator berhenti generate. Pod harus ikut
+    // dilepas, kalau tidak GPU menganggur tapi tetap tertagih.
+    liveHostOrchestrator.setSessionExpiredHandler((sessionId) => {
+      if (!this.activeSessions.has(sessionId)) return;
+      console.log(
+        `[LiveSessionManager] Plan sesi ${sessionId} selesai — menghentikan sesi & melepas GPU.`,
+      );
+      void this.stopSession(sessionId).catch((err) =>
+        console.error(
+          `[LiveSessionManager] Gagal menghentikan sesi ${sessionId}:`,
+          err,
+        ),
+      );
+    });
+  }
 
   public async startSession(params: {
     productId: string;
@@ -78,6 +106,7 @@ class LiveSessionManager {
       voice: params.voice || this.pendingVoicePreference || undefined,
       tone: params.tone || "Persuasif",
       podId: typeof podId === "string" ? podId : null,
+      liveDetectionAttempts: 0,
       onStateChange: undefined,
     };
 
@@ -192,6 +221,9 @@ class LiveSessionManager {
         : 0;
 
     this.activeSessions.delete(sessionId);
+    if (this.activeSessions.size === 0) {
+      setLiveSessionActive(false);
+    }
 
     return {
       success: true,
@@ -282,6 +314,12 @@ class LiveSessionManager {
       this.clearWatchdog(sessionId);
     }
 
+    if (newState === "pending") {
+      this.startPendingTimeout(sessionId);
+    } else {
+      this.clearPendingTimeout(sessionId);
+    }
+
     try {
       await prisma.liveSession.updateMany({
         where: {
@@ -333,6 +371,36 @@ class LiveSessionManager {
     }, checkMs);
   }
 
+  private startPendingTimeout(sessionId: string): void {
+    this.clearPendingTimeout(sessionId);
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return;
+
+    session.pendingTimer = setTimeout(() => {
+      const s = this.activeSessions.get(sessionId);
+      if (!s || s.state !== "pending") return;
+      console.warn(
+        `[LiveSessionManager] Sesi ${sessionId} masih "pending" setelah ` +
+          `${Math.round(PENDING_TIMEOUT_MS / 60_000)} menit tanpa Go Live. ` +
+          `Menghentikan sesi agar GPU tidak terus ditagih.`,
+      );
+      void this.stopSession(sessionId).catch((err) =>
+        console.error(
+          `[LiveSessionManager] Gagal menghentikan sesi pending ${sessionId}:`,
+          err,
+        ),
+      );
+    }, PENDING_TIMEOUT_MS);
+  }
+
+  private clearPendingTimeout(sessionId: string): void {
+    const session = this.activeSessions.get(sessionId);
+    if (session?.pendingTimer) {
+      clearTimeout(session.pendingTimer);
+      session.pendingTimer = undefined;
+    }
+  }
+
   private clearWatchdog(sessionId: string): void {
     const session = this.activeSessions.get(sessionId);
     if (session?.watchdogTimer) {
@@ -352,6 +420,7 @@ class LiveSessionManager {
   private clearTimers(sessionId: string): void {
     this.clearWatchdog(sessionId);
     this.clearLivePoll(sessionId);
+    this.clearPendingTimeout(sessionId);
   }
 
   private startPlatformLivePoll(
@@ -371,9 +440,9 @@ class LiveSessionManager {
         return;
       }
 
-      this.liveDetectionAttempts += 1;
+      currentSession.liveDetectionAttempts += 1;
 
-      if (this.liveDetectionAttempts > 60) {
+      if (currentSession.liveDetectionAttempts > 60) {
         console.warn(
           `[LiveSessionManager] Platform live poll timed out after 60 attempts for session ${sessionId}.`,
         );
@@ -483,6 +552,9 @@ class LiveSessionManager {
       releaseGpuForJob(session.podId).catch(() => {});
     }
     this.activeSessions.delete(sessionId);
+    if (this.activeSessions.size === 0) {
+      setLiveSessionActive(false);
+    }
   }
 }
 

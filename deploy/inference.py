@@ -210,14 +210,45 @@ def _get_avatar_materials(video_path, bbox_shift, extra_margin, version, parsing
         input_basename = os.path.splitext(os.path.basename(video_path))[0]
         pkl_path = os.path.join(os.path.dirname(video_path), f"{input_basename}_coords.pkl")
         
+        frame_h, frame_w = frame_list[0].shape[:2]
+        cache_signature = {
+            "format": 2,
+            "frames": len(frame_list),
+            "width": frame_w,
+            "height": frame_h,
+            "bbox_shift": bbox_shift,
+        }
+
+        # Cache landmark disimpan sebagai koordinat piksel absolut, jadi cache
+        # menjadi salah begitu klip diganti atau diubah resolusinya. Nama file
+        # pkl tidak menyimpan resolusi maupun bbox_shift, sehingga tanpa
+        # validasi ini cache basi akan dipakai diam-diam dan wajah ter-crop di
+        # posisi yang salah sepanjang siaran.
+        coord_list = None
         if os.path.exists(pkl_path):
-            with open(pkl_path, 'rb') as f:
-                coord_list = pickle.load(f)
-        else:
+            try:
+                with open(pkl_path, 'rb') as f:
+                    cached = pickle.load(f)
+                if (
+                    isinstance(cached, dict)
+                    and cached.get("signature") == cache_signature
+                ):
+                    coord_list = cached["coords"]
+                else:
+                    print(
+                        f"[AvatarCache] ♻️ Cache landmark {os.path.basename(pkl_path)} "
+                        "tidak cocok dengan klip saat ini — mengekstrak ulang."
+                    )
+            except Exception as cache_err:
+                print(f"[AvatarCache] Cache landmark gagal dibaca: {cache_err}")
+
+        if coord_list is None:
             coord_list = _extract_landmarks_from_frames(frame_list, bbox_shift)
             try:
                 with open(pkl_path, 'wb') as f:
-                    pickle.dump(coord_list, f)
+                    pickle.dump(
+                        {"signature": cache_signature, "coords": coord_list}, f
+                    )
             except Exception:
                 pass
 
