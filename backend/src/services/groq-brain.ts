@@ -4,9 +4,81 @@ import { z } from "zod";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || process.env.LIVE_BRAIN_MODEL || "gemini-3.7-flash";
+const GEMINI_MODEL_RAW =
+  process.env.GEMINI_MODEL || process.env.LIVE_BRAIN_MODEL || "gemini-3.6-flash";
 
-const GROQ_MODEL = process.env.GROQ_MODEL || process.env.LIVE_BRAIN_MODEL || "openai/gpt-oss-20b";
+/** Model Gemini retired / restricted → pengganti GA (Juli 2026+). */
+const DEPRECATED_GEMINI_MODELS: Record<string, string> = {
+  "gemini-3.7-flash": "gemini-3.6-flash",
+  "gemini-2.5-flash": "gemini-3.6-flash",
+  "gemini-2.5-flash-lite": "gemini-3.5-flash-lite",
+  "gemini-2.5-pro": "gemini-3.5-flash",
+  "gemini-2.5-flash-preview-05-20": "gemini-3.6-flash",
+  "gemini-2.5-flash-preview-09-25": "gemini-3.6-flash",
+  "gemini-2.5-flash-lite-preview-09-2025": "gemini-3.5-flash-lite",
+  "gemini-3-flash-preview": "gemini-3.6-flash",
+  "gemini-1.5-flash": "gemini-3.6-flash",
+  "gemini-1.5-flash-latest": "gemini-3.6-flash",
+  "gemini-1.5-flash-8b": "gemini-3.5-flash-lite",
+  "gemini-1.5-pro": "gemini-3.5-flash",
+  "gemini-1.5-pro-latest": "gemini-3.5-flash",
+  "gemini-2.0-flash": "gemini-3.6-flash",
+  "gemini-2.0-flash-lite": "gemini-3.5-flash-lite",
+  "gemini-pro": "gemini-3.6-flash",
+  "gemini-1.0-pro": "gemini-3.6-flash",
+};
+
+const GEMINI_MODEL_FALLBACKS = [
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-flash-latest",
+] as const;
+
+function resolveGeminiModel(requested = GEMINI_MODEL_RAW): string {
+  const normalized = requested.trim();
+  return DEPRECATED_GEMINI_MODELS[normalized] || normalized;
+}
+
+const GEMINI_MODEL = resolveGeminiModel();
+
+if (GEMINI_MODEL !== GEMINI_MODEL_RAW.trim()) {
+  console.warn(
+    `[LiveBrain] GEMINI_MODEL "${GEMINI_MODEL_RAW}" sudah deprecated → memakai "${GEMINI_MODEL}"`,
+  );
+}
+
+const GROQ_MODEL_RAW =
+  process.env.GROQ_MODEL || process.env.LIVE_BRAIN_MODEL || "openai/gpt-oss-20b";
+
+/** Groq decommissioned several Llama IDs (Aug 2026). Map legacy env values to current IDs. */
+const DEPRECATED_GROQ_MODELS: Record<string, string> = {
+  "llama-3.1-8b-instant": "openai/gpt-oss-20b",
+  "llama3-8b-8192": "openai/gpt-oss-20b",
+  "gemma2-9b-it": "openai/gpt-oss-20b",
+  "llama-3.3-70b-versatile": "openai/gpt-oss-120b",
+  "llama3-70b-8192": "openai/gpt-oss-120b",
+};
+
+const GROQ_MODEL_FALLBACKS = [
+  "openai/gpt-oss-20b",
+  "llama-3.3-70b-specdec",
+  "qwen/qwen3-32b",
+  "openai/gpt-oss-120b",
+] as const;
+
+function resolveGroqModel(requested = GROQ_MODEL_RAW): string {
+  const normalized = requested.trim();
+  return DEPRECATED_GROQ_MODELS[normalized] || normalized;
+}
+
+const GROQ_MODEL = resolveGroqModel();
+
+if (GROQ_MODEL !== GROQ_MODEL_RAW.trim()) {
+  console.warn(
+    `[LiveBrain] GROQ_MODEL "${GROQ_MODEL_RAW}" sudah deprecated → memakai "${GROQ_MODEL}"`,
+  );
+}
 
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
 
@@ -460,39 +532,116 @@ Kembalikan SATU JSON murni, tanpa markdown, dengan schema:
 Panjang speech: MAKSIMAL 20–35 kata (≈8–14 detik audio). Komentar balasan 8–18 kata. Speech pendek = render lebih cepat & siaran lebih hidup. Jangan menambahkan salam pembuka robotik.`;
 }
 
+function isGemini3FamilyModel(model: string): boolean {
+  return /^gemini-3(\.|$|-)/.test(model) || model === "gemini-flash-latest";
+}
+
+function buildGeminiGenerationConfig(model: string) {
+  const config: {
+    responseMimeType: string;
+    maxOutputTokens: number;
+    temperature?: number;
+  } = {
+    responseMimeType: "application/json",
+    maxOutputTokens: Number(process.env.LIVE_BRAIN_MAX_TOKENS || 320),
+  };
+  // Gemini 3.x: temperature/top_p deprecated — pakai JSON schema saja
+  if (!isGemini3FamilyModel(model)) {
+    config.temperature = Number(process.env.LIVE_BRAIN_TEMPERATURE || 0.85);
+  }
+  return config;
+}
+
+async function callGeminiWithModel(
+  prompt: string,
+  model: string,
+): Promise<ProviderResult> {
+  const client = getGeminiClient();
+  const response = await client.models.generateContent({
+    model,
+    contents: prompt,
+    config: buildGeminiGenerationConfig(model),
+  });
+  return {
+    text: response.text || "",
+    provider: "gemini",
+    model,
+  };
+}
+
+function geminiModelCandidates(): string[] {
+  const primary = resolveGeminiModel();
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of [primary, ...GEMINI_MODEL_FALLBACKS]) {
+    if (!seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+function isGeminiModelNotFound(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /not found|404|invalid.*model|model.*does not exist|is not supported|NOT_FOUND|no longer available|deprecated|shut down|shutdown|limiting access|not available for/i.test(
+    msg,
+  );
+}
+
 async function callGemini(prompt: string): Promise<ProviderResult> {
   if (Date.now() < geminiBlockedUntil) {
     throw new Error("Gemini circuit open — rate limit cooldown aktif");
   }
 
-  try {
-    const client = getGeminiClient();
-    const response = await client.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        temperature: Number(process.env.LIVE_BRAIN_TEMPERATURE || 0.85),
-        maxOutputTokens: Number(process.env.LIVE_BRAIN_MAX_TOKENS || 320),
-      },
-    });
-    return {
-      text: response.text || "",
-      provider: "gemini",
-      model: GEMINI_MODEL,
-    };
-  } catch (err) {
-    if (isRateLimitError(err)) tripCircuit("gemini");
-    throw err;
+  const candidates = geminiModelCandidates();
+  let lastError: Error | null = null;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const model = candidates[i]!;
+    try {
+      if (model !== GEMINI_MODEL_RAW.trim() && model !== resolveGeminiModel(GEMINI_MODEL_RAW)) {
+        console.warn(`[LiveBrain] Gemini mencoba model alternatif: ${model}`);
+      }
+      return await callGeminiWithModel(prompt, model);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (isRateLimitError(err)) {
+        tripCircuit("gemini");
+        throw lastError;
+      }
+      const canRetry = i < candidates.length - 1 && isGeminiModelNotFound(err);
+      if (!canRetry) throw lastError;
+      console.warn(
+        `[LiveBrain] Gemini model ${model} tidak tersedia, coba berikutnya...`,
+      );
+    }
   }
+
+  throw lastError || new Error("Gemini gagal — tidak ada model yang tersedia");
 }
 
-async function callGroq(prompt: string): Promise<ProviderResult> {
-  if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY tidak tersedia");
-  if (Date.now() < groqBlockedUntil) {
-    throw new Error("Groq circuit open — rate limit cooldown aktif");
+function groqModelCandidates(): string[] {
+  const primary = resolveGroqModel();
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of [primary, ...GROQ_MODEL_FALLBACKS]) {
+    if (!seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
   }
+  return out;
+}
 
+function isGroqModelNotFound(errBody: string): boolean {
+  return /model_not_found|does not exist|decommissioned|deprecated/i.test(errBody);
+}
+
+async function callGroqWithModel(
+  prompt: string,
+  model: string,
+): Promise<ProviderResult> {
   const response = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
@@ -500,7 +649,7 @@ async function callGroq(prompt: string): Promise<ProviderResult> {
       Authorization: `Bearer ${GROQ_API_KEY}`,
     },
     body: JSON.stringify({
-      model: GROQ_MODEL,
+      model,
       messages: [
         {
           role: "system",
@@ -524,8 +673,38 @@ async function callGroq(prompt: string): Promise<ProviderResult> {
   return {
     text: data?.choices?.[0]?.message?.content || "",
     provider: "groq",
-    model: GROQ_MODEL,
+    model,
   };
+}
+
+async function callGroq(prompt: string): Promise<ProviderResult> {
+  if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY tidak tersedia");
+  if (Date.now() < groqBlockedUntil) {
+    throw new Error("Groq circuit open — rate limit cooldown aktif");
+  }
+
+  const candidates = groqModelCandidates();
+  let lastError: Error | null = null;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const model = candidates[i]!;
+    try {
+      if (model !== GROQ_MODEL_RAW && model !== resolveGroqModel(GROQ_MODEL_RAW)) {
+        console.warn(`[LiveBrain] Groq mencoba model alternatif: ${model}`);
+      }
+      return await callGroqWithModel(prompt, model);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const canRetry =
+        i < candidates.length - 1 && isGroqModelNotFound(lastError.message);
+      if (!canRetry) throw lastError;
+      console.warn(
+        `[LiveBrain] Groq model ${model} tidak tersedia, coba berikutnya...`,
+      );
+    }
+  }
+
+  throw lastError || new Error("Groq gagal — tidak ada model yang tersedia");
 }
 
 async function callBrain(prompt: string): Promise<ProviderResult> {

@@ -29,6 +29,7 @@ class AILiveWorker:
 
         # Batch size untuk inferensi UNet (Default 16 untuk RTX 3090/4090/A100)
         self.batch_size = int(os.environ.get("MUSETALK_BATCH_SIZE", "16"))
+        self.use_float16 = self._resolve_use_float16()
 
         # Lock untuk serialisasi inferensi GPU intra-process
         self._inference_lock = threading.Lock()
@@ -91,6 +92,19 @@ class AILiveWorker:
                     f"[WARNING] Could not create symlink {link_path}: {link_err}"
                 )
 
+    def _resolve_use_float16(self) -> bool:
+        worker_dir = self.base_dir
+        if worker_dir not in sys.path:
+            sys.path.insert(0, worker_dir)
+        try:
+            from gpu_compat import log_gpu_status, resolve_use_float16
+
+            log_gpu_status(0)
+            return resolve_use_float16(True, 0)
+        except Exception as exc:
+            print(f"[GPU WARNING] {exc}", flush=True)
+            return False
+
     def _musetalk_paths(self):
         models_root = os.path.join(self.musetalk_dir, "models")
         return {
@@ -106,6 +120,8 @@ class AILiveWorker:
     def _warmup_musetalk(self):
         print(f"[WARMUP] ⏳ Pre-loading MuseTalk models ke GPU VRAM (batch_size={self.batch_size})...")
         musetalk_dir = self.musetalk_dir
+        if self.base_dir not in sys.path:
+            sys.path.insert(0, self.base_dir)
         if musetalk_dir not in sys.path:
             sys.path.insert(0, musetalk_dir)
 
@@ -116,7 +132,7 @@ class AILiveWorker:
             paths = self._musetalk_paths()
             dummy_args = Namespace(
                 gpu_id=0,
-                use_float16=True,
+                use_float16=self.use_float16,
                 version="v15",
                 left_cheek_width=90,
                 right_cheek_width=90,
@@ -435,6 +451,8 @@ class AILiveWorker:
                         f"Whisper model tidak ditemukan: {whisper_dir}"
                     )
 
+                if self.base_dir not in sys.path:
+                    sys.path.insert(0, self.base_dir)
                 if musetalk_dir not in sys.path:
                     sys.path.insert(0, musetalk_dir)
 
@@ -462,7 +480,7 @@ class AILiveWorker:
                         output_vid_name=f"{task_id}.mp4",
                         use_saved_coord=True,
                         saved_coord=True,
-                        use_float16=True,
+                        use_float16=self.use_float16,
                         parsing_mode="jaw",
                         left_cheek_width=90,
                         right_cheek_width=90,

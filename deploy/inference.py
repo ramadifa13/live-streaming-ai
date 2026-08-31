@@ -21,6 +21,14 @@ from musetalk.utils.audio_processor import AudioProcessor
 from musetalk.utils.utils import get_file_type, get_video_fps, datagen, load_all_model
 from musetalk.utils.preprocessing import coord_placeholder
 
+try:
+    from gpu_compat import log_gpu_status, resolve_use_float16
+except ImportError:
+    _worker_root = os.environ.get("WORKER_ROOT", "/workspace/ai_live_worker")
+    if _worker_root not in sys.path:
+        sys.path.insert(0, _worker_root)
+    from gpu_compat import log_gpu_status, resolve_use_float16
+
 def _extract_landmarks_from_frames(frames, bbox_shift=0):
     """
     Ekstraksi landmark dan bounding box langsung dari list frame array numpy (RAM).
@@ -100,9 +108,11 @@ def fast_check_ffmpeg():
 
 def _load_models_cached(args):
     global _models_cache
+    gpu_id = getattr(args, "gpu_id", 0)
+    use_float16 = resolve_use_float16(getattr(args, "use_float16", True), gpu_id)
     cache_key = (
-        getattr(args, "gpu_id", 0),
-        getattr(args, "use_float16", True),
+        gpu_id,
+        use_float16,
         getattr(args, "version", "v15"),
         getattr(args, "left_cheek_width", 90),
         getattr(args, "right_cheek_width", 90),
@@ -115,9 +125,8 @@ def _load_models_cached(args):
     if cache_key not in _models_cache:
         with _lock:
             if cache_key not in _models_cache:
-                gpu_id = getattr(args, "gpu_id", 0)
                 device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu")
-                print(f"[MuseTalk-Cache] 🚀 Loading all models to {device} (one-time load)...")
+                print(f"[MuseTalk-Cache] 🚀 Loading all models to {device} (fp16={use_float16})...")
                 
                 vae, unet, pe = load_all_model(
                     unet_model_path=args.unet_model_path,
@@ -127,7 +136,7 @@ def _load_models_cached(args):
                 )
                 timesteps = torch.tensor([0], device=device)
 
-                if getattr(args, "use_float16", True):
+                if use_float16:
                     pe = pe.half()
                     vae.vae = vae.vae.half()
                     unet.model = unet.model.half()
