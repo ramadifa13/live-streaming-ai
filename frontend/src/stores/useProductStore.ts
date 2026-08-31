@@ -1,7 +1,9 @@
 import { create } from "zustand";
-import { BackendProduct, Product } from "@/app/dashboard/types";
-import { productService } from "@/services/productService";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { Product } from "@/app/dashboard/types";
 import { parseProductCsv } from "@/utils/csvParser";
+import { aiService } from "@/services/aiService";
+import { normalizeProductCategory } from "@/lib/product-categories";
 
 export interface NewProductFormData {
   name: string;
@@ -15,6 +17,7 @@ export interface NewProductFormData {
   description: string;
   benefits: string;
   usage: string;
+  faq: string;
 }
 
 const initialProductForm: NewProductFormData = {
@@ -29,6 +32,7 @@ const initialProductForm: NewProductFormData = {
   description: "",
   benefits: "",
   usage: "",
+  faq: "",
 };
 
 const defaultFeaturedProduct: Product = {
@@ -69,210 +73,243 @@ interface ProductState {
   importCsvProducts: () => Promise<number>;
 }
 
-function mapBackendProduct(p: BackendProduct): Product {
-  const numPrice =
-    typeof p.price === "number"
-      ? p.price
-      : parseInt(String(p.price).replace(/[^0-9]/g, ""), 10) || 0;
-  return {
-    id: p.id,
-    name: p.name,
-    price: `Rp${numPrice.toLocaleString("id-ID")}`,
-    stock: p.stock ?? 0,
-    tag: p.category || "General",
-    sku: p.sku || "",
-    image: p.image || "",
-    bannerImage: p.bannerImage || "",
-    link: p.link || "",
-    description: p.description || "",
-    benefits: p.benefits || "",
-    usage: p.usage || "",
-    faq: p.faq || "",
-    targetAudience: p.targetAudience || "",
-    copywriting: p.copywriting || "",
-  };
+function newLocalId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return `local_${crypto.randomUUID()}`;
+  return `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export const useProductStore = create<ProductState>((set, get) => ({
-  products: [],
-  searchQuery: "",
-  productCategoryFilter: "ALL",
-  selectedProductForEdit: null,
-  activeFeaturedProduct: defaultFeaturedProduct,
-  pinnedProductIds: [],
-  csvText: "",
-  newProductForm: initialProductForm,
-  isLoadingProducts: false,
+function formatPrice(numPrice: number): string {
+  return `Rp${numPrice.toLocaleString("id-ID")}`;
+}
 
-  setSearchQuery: (q) => set({ searchQuery: q }),
-  setProductCategoryFilter: (cat) => set({ productCategoryFilter: cat }),
-  setSelectedProductForEdit: (prod) => set({ selectedProductForEdit: prod }),
-  setActiveFeaturedProduct: (prod) =>
-    set((state) => ({
-      activeFeaturedProduct:
-        typeof prod === "function" ? prod(state.activeFeaturedProduct) : prod,
-    })),
-  setPinnedProductIds: (ids) =>
-    set((state) => ({
-      pinnedProductIds:
-        typeof ids === "function" ? ids(state.pinnedProductIds) : ids,
-    })),
-  setCsvText: (text) => set({ csvText: text }),
-  setNewProductForm: (form) =>
-    set((state) => ({
-      newProductForm: { ...state.newProductForm, ...form },
-    })),
-  resetNewProductForm: () => set({ newProductForm: initialProductForm }),
-  setProducts: (prods) =>
-    set((state) => ({
-      products: typeof prods === "function" ? prods(state.products) : prods,
-    })),
-
-  loadProducts: async () => {
-    set({ isLoadingProducts: true });
-    try {
-      const backendProds = await productService.fetchProducts();
-      const mapped = backendProds.map(mapBackendProduct);
-      set({ products: mapped });
-      if (mapped.length > 0 && get().activeFeaturedProduct.id === "loading") {
-        set({ activeFeaturedProduct: mapped[0] });
-      }
-    } catch (err) {
-      console.error("Failed to load products:", err);
-    } finally {
-      set({ isLoadingProducts: false });
-    }
-  },
-
-  createProduct: async () => {
-    const form = get().newProductForm;
-    if (!form.image) throw new Error("Foto / gambar produk wajib diisi.");
-    if (!form.name.trim()) throw new Error("Nama produk wajib diisi.");
-    const numPrice = parseInt(String(form.price).replace(/\D/g, ""), 10) || 0;
-    if (numPrice <= 0) throw new Error("Harga jual live (Rp) wajib diisi dengan angka valid.");
-    if (!form.tag) throw new Error("Kategori produk wajib dipilih.");
-    if (!form.description.trim()) throw new Error("Deskripsi lengkap produk wajib diisi.");
-
-    const payload = {
-      name: form.name.trim(),
-      price: numPrice,
-      stock: Number(form.stock) || 0,
-      category: form.tag || "General",
-      sku: form.sku ? form.sku.trim() : "",
-      image: form.image,
-      bannerImage: form.bannerImage || "",
-      link: form.link ? form.link.trim() : "",
-      description: form.description.trim(),
-      benefits: form.benefits ? form.benefits.trim() : "",
-      usage: form.usage ? form.usage.trim() : "",
-    };
-
-    const saved = await productService.createProduct(payload);
-    const newProd = mapBackendProduct(saved);
-
-    set((state) => ({
-      products: [newProd, ...state.products],
-      activeFeaturedProduct: newProd,
-      newProductForm: initialProductForm,
-    }));
-
-    return newProd;
-  },
-
-saveEditedProduct: async () => {
-     const editProd = get().selectedProductForEdit;
-     if (!editProd || !editProd.id) throw new Error("Produk tidak ditemukan.");
-     // Image is optional for update; keep existing if not provided
-     // if (!editProd.image) throw new Error("Foto / gambar produk wajib diisi.");
-     if (!editProd.name?.trim()) throw new Error("Nama produk wajib diisi.");
-
-     const numPrice =
-       typeof editProd.price === "number"
-         ? editProd.price
-         : parseInt(String(editProd.price).replace(/\D/g, ""), 10) || 0;
-     if (numPrice <= 0) throw new Error("Harga jual live (Rp) wajib diisi dengan angka valid.");
-     if (!editProd.tag) throw new Error("Kategori produk wajib dipilih.");
-     if (!editProd.description?.trim()) throw new Error("Deskripsi lengkap produk wajib diisi.");
-
-     const payload = {
-       name: editProd.name.trim(),
-       price: numPrice,
-       stock: Number(editProd.stock) || 0,
-       category: editProd.tag || "General",
-       sku: editProd.sku || "",
-       image: editProd.image,
-       bannerImage: editProd.bannerImage || "",
-       link: editProd.link || "",
-       description: editProd.description.trim(),
-       benefits: editProd.benefits || "",
-       usage: editProd.usage || "",
-     };
-
-     await productService.updateProduct(editProd.id, payload);
-
-     const formattedProduct: Product = {
-       ...editProd,
-       name: payload.name,
-       price: `Rp${numPrice.toLocaleString("id-ID")}`,
-       stock: payload.stock,
-       tag: payload.category,
-       sku: payload.sku,
-       image: payload.image,
-       bannerImage: payload.bannerImage,
-       link: payload.link,
-       description: payload.description,
-       benefits: payload.benefits,
-       usage: payload.usage,
-     };
-
-     set((state) => ({
-       products: state.products.map((p) =>
-         p.id === editProd.id ? formattedProduct : p,
-       ),
-       activeFeaturedProduct:
-         state.activeFeaturedProduct.id === editProd.id
-           ? formattedProduct
-           : state.activeFeaturedProduct,
-       selectedProductForEdit: null,
-     }));
-
-     return formattedProduct;
-   },
-
-  deleteProduct: async (id?: string) => {
-    if (!id) return false;
-    await productService.deleteProduct(id);
-
-    set((state) => {
-      const next = state.products.filter((p) => p.id !== id);
-      let newFeatured = state.activeFeaturedProduct;
-      if (state.activeFeaturedProduct.id === id) {
-        newFeatured = next.length > 0 ? next[0] : defaultFeaturedProduct;
-      }
-      return {
-        products: next,
-        activeFeaturedProduct: newFeatured,
-      };
+async function attachScriptBank(product: Product): Promise<Product> {
+  try {
+    const pack = await aiService.prepareProduct({
+      name: product.name,
+      price: product.price,
+      category: product.tag,
+      description: product.description,
+      benefits: product.benefits,
+      usage: product.usage,
+      faq: product.faq,
+      stock: product.stock,
+      sku: product.sku,
+      link: product.link,
+      targetAudience: product.targetAudience,
+      copywriting: product.copywriting,
+      bannerImage: product.bannerImage,
     });
+    return {
+      ...product,
+      scriptBank: pack.scriptBank,
+      faqPack: pack.faqPack,
+      benefits: product.benefits?.trim() || pack.enriched.benefits || product.benefits,
+      usage: product.usage?.trim() || pack.enriched.usage || product.usage,
+      faq: product.faq?.trim() || pack.enriched.faq || product.faq,
+      targetAudience:
+        product.targetAudience?.trim() ||
+        pack.enriched.targetAudience ||
+        product.targetAudience,
+      copywriting:
+        product.copywriting?.trim() ||
+        pack.enriched.copywriting ||
+        product.copywriting,
+    };
+  } catch (err) {
+    console.warn("[ProductStore] Script bank LLM dilewati, pakai generator lokal saat live:", err);
+    return product;
+  }
+}
 
-    return true;
-  },
-
-  importCsvProducts: async () => {
-    const rawItems = parseProductCsv(get().csvText);
-    if (rawItems.length === 0) throw new Error("Tidak ada data CSV yang valid!");
-
-    const result = await productService.bulkImport(rawItems);
-    const imported = result.map(mapBackendProduct);
-
-    set((state) => ({
-      products: [...imported, ...state.products],
-      activeFeaturedProduct:
-        imported.length > 0 ? imported[0] : state.activeFeaturedProduct,
+export const useProductStore = create<ProductState>()(
+  persist(
+    (set, get) => ({
+      products: [],
+      searchQuery: "",
+      productCategoryFilter: "ALL",
+      selectedProductForEdit: null,
+      activeFeaturedProduct: defaultFeaturedProduct,
+      pinnedProductIds: [],
       csvText: "",
-    }));
+      newProductForm: initialProductForm,
+      isLoadingProducts: false,
 
-    return imported.length;
-  },
-}));
+      setSearchQuery: (q) => set({ searchQuery: q }),
+      setProductCategoryFilter: (cat) => set({ productCategoryFilter: cat }),
+      setSelectedProductForEdit: (prod) => set({ selectedProductForEdit: prod }),
+      setActiveFeaturedProduct: (prod) =>
+        set((state) => ({
+          activeFeaturedProduct:
+            typeof prod === "function" ? prod(state.activeFeaturedProduct) : prod,
+        })),
+      setPinnedProductIds: (ids) =>
+        set((state) => ({
+          pinnedProductIds:
+            typeof ids === "function" ? ids(state.pinnedProductIds) : ids,
+        })),
+      setCsvText: (text) => set({ csvText: text }),
+      setNewProductForm: (form) =>
+        set((state) => ({
+          newProductForm: { ...state.newProductForm, ...form },
+        })),
+      resetNewProductForm: () => set({ newProductForm: initialProductForm }),
+      setProducts: (prods) =>
+        set((state) => ({
+          products: typeof prods === "function" ? prods(state.products) : prods,
+        })),
 
+      loadProducts: async () => {
+        const { products, activeFeaturedProduct } = get();
+        if (products.length > 0 && activeFeaturedProduct.id === "loading") {
+          set({ activeFeaturedProduct: products[0]! });
+        }
+        set({ isLoadingProducts: false });
+      },
+
+      createProduct: async () => {
+        const form = get().newProductForm;
+        if (!form.image) throw new Error("Foto / gambar produk wajib diisi.");
+        if (!form.name.trim()) throw new Error("Nama produk wajib diisi.");
+        const numPrice = parseInt(String(form.price).replace(/\D/g, ""), 10) || 0;
+        if (numPrice <= 0) throw new Error("Harga jual live (Rp) wajib diisi dengan angka valid.");
+        if (!form.tag) throw new Error("Kategori produk wajib dipilih.");
+        if (form.tag === "General" || form.tag === "Lainnya") {
+          throw new Error("Pilih kategori produk yang spesifik.");
+        }
+        if (!form.description.trim()) throw new Error("Deskripsi lengkap produk wajib diisi.");
+
+        let newProd: Product = {
+          id: newLocalId(),
+          name: form.name.trim(),
+          price: formatPrice(numPrice),
+          stock: Number(form.stock) || 0,
+          tag: normalizeProductCategory(form.tag),
+          sku: form.sku ? form.sku.trim() : "",
+          image: form.image,
+          bannerImage: form.bannerImage || "",
+          link: form.link ? form.link.trim() : "",
+          description: form.description.trim(),
+          benefits: form.benefits.trim() || undefined,
+          usage: form.usage.trim() || undefined,
+          faq: form.faq.trim() || undefined,
+        };
+        newProd = await attachScriptBank(newProd);
+
+        set((state) => ({
+          products: [newProd, ...state.products],
+          activeFeaturedProduct: newProd,
+          newProductForm: initialProductForm,
+        }));
+
+        return newProd;
+      },
+
+      saveEditedProduct: async () => {
+        const editProd = get().selectedProductForEdit;
+        if (!editProd || !editProd.id) throw new Error("Produk tidak ditemukan.");
+        if (!editProd.name?.trim()) throw new Error("Nama produk wajib diisi.");
+
+        const numPrice =
+          typeof editProd.price === "number"
+            ? editProd.price
+            : parseInt(String(editProd.price).replace(/\D/g, ""), 10) || 0;
+        if (numPrice <= 0) throw new Error("Harga jual live (Rp) wajib diisi dengan angka valid.");
+        if (!editProd.tag) throw new Error("Kategori produk wajib dipilih.");
+        if (editProd.tag === "General" || editProd.tag === "Lainnya") {
+          throw new Error("Pilih kategori produk yang spesifik.");
+        }
+        if (!editProd.description?.trim()) throw new Error("Deskripsi lengkap produk wajib diisi.");
+
+        let formattedProduct: Product = {
+          ...editProd,
+          name: editProd.name.trim(),
+          price: formatPrice(numPrice),
+          stock: Number(editProd.stock) || 0,
+          tag: normalizeProductCategory(editProd.tag),
+          sku: editProd.sku || "",
+          description: editProd.description.trim(),
+          benefits: editProd.benefits?.trim() || undefined,
+          usage: editProd.usage?.trim() || undefined,
+          faq: editProd.faq?.trim() || undefined,
+        };
+        formattedProduct = await attachScriptBank(formattedProduct);
+
+        set((state) => ({
+          products: state.products.map((p) =>
+            p.id === editProd.id ? formattedProduct : p,
+          ),
+          activeFeaturedProduct:
+            state.activeFeaturedProduct.id === editProd.id
+              ? formattedProduct
+              : state.activeFeaturedProduct,
+          selectedProductForEdit: null,
+        }));
+
+        return formattedProduct;
+      },
+
+      deleteProduct: async (id?: string) => {
+        if (!id) return false;
+        set((state) => {
+          const next = state.products.filter((p) => p.id !== id);
+          let newFeatured = state.activeFeaturedProduct;
+          if (state.activeFeaturedProduct.id === id) {
+            newFeatured = next.length > 0 ? next[0]! : defaultFeaturedProduct;
+          }
+          return {
+            products: next,
+            activeFeaturedProduct: newFeatured,
+          };
+        });
+        return true;
+      },
+
+      importCsvProducts: async () => {
+        const rawItems = parseProductCsv(get().csvText);
+        if (rawItems.length === 0) throw new Error("Tidak ada data CSV yang valid!");
+
+        const imported: Product[] = rawItems.map((item) => ({
+          id: newLocalId(),
+          name: item.name,
+          price: formatPrice(item.price),
+          stock: item.stock,
+          tag: normalizeProductCategory(item.category),
+          image: item.image || "",
+          bannerImage: item.bannerImage || "",
+          link: item.link || "",
+          description: item.description || "",
+          benefits: item.benefits || "",
+          usage: item.usage || "",
+          faq: item.faq || "",
+        }));
+
+        set((state) => ({
+          products: [...imported, ...state.products],
+          activeFeaturedProduct:
+            imported.length > 0 ? imported[0]! : state.activeFeaturedProduct,
+          csvText: "",
+        }));
+
+        return imported.length;
+      },
+    }),
+    {
+      name: "livio-pay-per-use-products",
+      storage: createJSONStorage(() => {
+        if (typeof window === "undefined") {
+          return {
+            getItem: () => null,
+            setItem: () => {},
+            removeItem: () => {},
+          };
+        }
+        return localStorage;
+      }),
+      partialize: (state) => ({
+        products: state.products,
+        activeFeaturedProduct: state.activeFeaturedProduct,
+        pinnedProductIds: state.pinnedProductIds,
+      }),
+    },
+  ),
+);

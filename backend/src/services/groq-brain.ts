@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { StreamPlan } from "./live-host-orchestrator.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
+const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.LIVE_BRAIN_API_KEY || "";
 
 const GEMINI_MODEL_RAW =
   process.env.GEMINI_MODEL || process.env.LIVE_BRAIN_MODEL || "gemini-3.6-flash";
@@ -48,7 +48,9 @@ if (GEMINI_MODEL !== GEMINI_MODEL_RAW.trim()) {
 }
 
 const GROQ_MODEL_RAW =
-  process.env.GROQ_MODEL || process.env.LIVE_BRAIN_MODEL || "openai/gpt-oss-20b";
+  process.env.GROQ_MODEL ||
+  process.env.LIVE_BRAIN_MODEL ||
+  "openai/gpt-oss-20b";
 
 const DEPRECATED_GROQ_MODELS: Record<string, string> = {
   "llama-3.1-8b-instant": "openai/gpt-oss-20b",
@@ -56,12 +58,13 @@ const DEPRECATED_GROQ_MODELS: Record<string, string> = {
   "gemma2-9b-it": "openai/gpt-oss-20b",
   "llama-3.3-70b-versatile": "openai/gpt-oss-120b",
   "llama3-70b-8192": "openai/gpt-oss-120b",
+  "llama-3.3-70b-specdec": "openai/gpt-oss-120b",
+  "qwen/qwen3-32b": "openai/gpt-oss-120b",
 };
 
+/** Model aktif Groq (developer tier). Primary cepat; fallback lebih kuat. */
 const GROQ_MODEL_FALLBACKS = [
   "openai/gpt-oss-20b",
-  "llama-3.3-70b-specdec",
-  "qwen/qwen3-32b",
   "openai/gpt-oss-120b",
 ] as const;
 
@@ -78,35 +81,114 @@ if (GROQ_MODEL !== GROQ_MODEL_RAW.trim()) {
   );
 }
 
-const GROQ_BASE_URL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+const GROQ_BASE_URL = (process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").replace(
+  /\/+$/,
+  "",
+);
 
 const CIRCUIT_BREAKER_MS = Number(process.env.LIVE_BRAIN_CIRCUIT_MS || 45_000);
+const SELFHOST_CIRCUIT_MS = Number(process.env.LIVE_BRAIN_SELFHOST_CIRCUIT_MS || 5_000);
 const VALIDATION_RETRY_COOLDOWN_MS = Number(process.env.LIVE_BRAIN_RETRY_COOLDOWN_MS || 30_000);
+const MAX_INFLIGHT = Math.max(1, Number(process.env.LIVE_BRAIN_MAX_INFLIGHT || 12));
+const BANK_MAX_TOKENS = Number(process.env.LIVE_BRAIN_BANK_MAX_TOKENS || 1400);
 
 let groqBlockedUntil = 0;
 let geminiBlockedUntil = 0;
 let globalBrainBackoffUntil = 0;
-let lastValidationRetryAt = 0;
+const sessionBackoffUntil = new Map<string, number>();
+const lastValidationRetryAt = new Map<string, number>();
 let geminiClient: GoogleGenAI | null = null;
+
+class BrainSemaphore {
+  private available: number;
+  private readonly waiters: Array<() => void> = [];
+  constructor(max: number) {
+    this.available = max;
+  }
+  async acquire(): Promise<void> {
+    if (this.available > 0) {
+      this.available--;
+      return;
+    }
+    await new Promise<void>((resolve) => this.waiters.push(resolve));
+  }
+  release(): void {
+    const next = this.waiters.shift();
+    if (next) next();
+    else this.available++;
+  }
+}
+
+const brainSemaphore = new BrainSemaphore(MAX_INFLIGHT);
+
+function liveBrainProvider(): string {
+  const raw = (process.env.LIVE_BRAIN_PROVIDER || "auto").toLowerCase();
+  // Legacy self-host flags dinonaktifkan — stack hanya Groq + Gemini.
+  if (raw === "ollama" || raw === "vllm" || raw === "local") return "auto";
+  return raw;
+}
+
+/** Tetap diexport untuk kompatibilitas; selalu false setelah Ollama/vLLM dibersihkan. */
+export function isSelfHostedBrain(): boolean {
+  return false;
+}
+
+function groqAuthToken(): string {
+  return GROQ_API_KEY || "";
+}
 
 function isRateLimitError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /429|rate.?limit|resource_exhausted|quota|too many requests/i.test(msg);
+  return /429|rate.?limit|resource_exhausted|quota|too many requests|503/i.test(msg);
 }
 
-function tripCircuit(provider: "groq" | "gemini", ms = CIRCUIT_BREAKER_MS): void {
-  const until = Date.now() + ms;
+function pruneBackoffMap(map: Map<string, number>): void {
+  const now = Date.now();
+  for (const [key, until] of map) {
+    if (until <= now) map.delete(key);
+  }
+}
+
+function tripCircuit(
+  provider: "groq" | "gemini",
+  ms = CIRCUIT_BREAKER_MS,
+  sessionId?: string,
+): void {
+  const selfHostedGroq = provider === "groq" && isSelfHostedBrain();
+  const duration = selfHostedGroq ? Math.min(ms, SELFHOST_CIRCUIT_MS) : ms;
+  const until = Date.now() + duration;
+
+  if (sessionId) {
+    const jitter = 400 + Math.floor(Math.random() * 2_400);
+    sessionBackoffUntil.set(sessionId, Date.now() + duration + jitter);
+  }
+
+  if (selfHostedGroq) {
+    return;
+  }
+
   if (provider === "groq") groqBlockedUntil = until;
   else geminiBlockedUntil = until;
   globalBrainBackoffUntil = Math.max(globalBrainBackoffUntil, until);
 }
 
-export function getBrainBackoffMs(): number {
-  return Math.max(0, globalBrainBackoffUntil - Date.now());
+export function getBrainBackoffMs(sessionId?: string): number {
+  pruneBackoffMap(sessionBackoffUntil);
+  const sessionWait = sessionId
+    ? Math.max(0, (sessionBackoffUntil.get(sessionId) || 0) - Date.now())
+    : 0;
+  const globalWait = Math.max(0, globalBrainBackoffUntil - Date.now());
+  return Math.max(sessionWait, globalWait);
 }
 
-function canValidationRetry(): boolean {
-  return Date.now() - lastValidationRetryAt >= VALIDATION_RETRY_COOLDOWN_MS;
+function canValidationRetry(sessionId?: string): boolean {
+  const key = sessionId || "_global";
+  return Date.now() - (lastValidationRetryAt.get(key) || 0) >= VALIDATION_RETRY_COOLDOWN_MS;
+}
+
+interface BrainCallOptions {
+  sessionId?: string;
+  maxTokens?: number;
 }
 
 function getGeminiClient(): GoogleGenAI {
@@ -203,29 +285,6 @@ export interface SalesBrainOutput {
   action: string;
 }
 
-export interface ProductKnowledge {
-  description: string;
-  benefits: string;
-  usage: string;
-  faq: string;
-  targetAudience: string;
-  copywriting: string;
-}
-
-export interface GenerateProductKnowledgeInput {
-  name: string;
-  description: string;
-  category?: string;
-  price?: number | string;
-  stock?: number;
-  sku?: string;
-  link?: string;
-  benefits?: string;
-  usage?: string;
-  image?: string;
-  bannerImage?: string;
-}
-
 export interface SalesBrainInput {
   userQuestion: string;
   authorName?: string;
@@ -259,6 +318,7 @@ export interface SalesBrainInput {
   requestedMode?: HostMode;
   audienceCount?: number;
   plan?: StreamPlan;
+  sessionId?: string;
 }
 
 export interface LiveSalesPitchInput {
@@ -583,9 +643,12 @@ function isGeminiModelNotFound(err: unknown): boolean {
   );
 }
 
-async function callGemini(prompt: string): Promise<ProviderResult> {
+async function callGemini(prompt: string, options: BrainCallOptions = {}): Promise<ProviderResult> {
   if (Date.now() < geminiBlockedUntil) {
     throw new Error("Gemini circuit open — rate limit cooldown aktif");
+  }
+  if (getBrainBackoffMs(options.sessionId) > 0) {
+    throw new Error("Session brain cooldown aktif");
   }
 
   const candidates = geminiModelCandidates();
@@ -601,7 +664,7 @@ async function callGemini(prompt: string): Promise<ProviderResult> {
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       if (isRateLimitError(err)) {
-        tripCircuit("gemini");
+        tripCircuit("gemini", CIRCUIT_BREAKER_MS, options.sessionId);
         throw lastError;
       }
       const canRetry = i < candidates.length - 1 && isGeminiModelNotFound(err);
@@ -617,6 +680,7 @@ async function callGemini(prompt: string): Promise<ProviderResult> {
 
 function groqModelCandidates(): string[] {
   const primary = resolveGroqModel();
+  if (isSelfHostedBrain()) return [primary];
   const seen = new Set<string>();
   const out: string[] = [];
   for (const id of [primary, ...GROQ_MODEL_FALLBACKS]) {
@@ -632,35 +696,57 @@ function isGroqModelNotFound(errBody: string): boolean {
   return /model_not_found|does not exist|decommissioned|deprecated/i.test(errBody);
 }
 
+function parseRetryAfterMs(response: Response): number | undefined {
+  const raw = response.headers.get("retry-after");
+  if (!raw) return undefined;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds > 0) return seconds * 1000;
+  return undefined;
+}
+
 async function callGroqWithModel(
   prompt: string,
   model: string,
+  options: BrainCallOptions = {},
+  useJsonFormat = true,
 ): Promise<ProviderResult> {
+  const maxTokens = options.maxTokens || Number(process.env.LIVE_BRAIN_MAX_TOKENS || 320);
+  const body: Record<string, unknown> = {
+    model,
+    messages: [
+      {
+        role: "system",
+        content: "Kembalikan JSON valid persis sesuai instruksi. Jangan menambahkan markdown.",
+      },
+      { role: "user", content: prompt },
+    ],
+    temperature: Number(process.env.LIVE_BRAIN_TEMPERATURE || 0.85),
+    max_tokens: maxTokens,
+  };
+  if (useJsonFormat) body.response_format = { type: "json_object" };
+
   const response = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${GROQ_API_KEY}`,
+      Authorization: `Bearer ${groqAuthToken()}`,
     },
-    body: JSON.stringify({
-      model,
-      messages: [
-        {
-          role: "system",
-          content: "Kembalikan JSON valid persis sesuai instruksi. Jangan menambahkan markdown.",
-        },
-        { role: "user", content: prompt },
-      ],
-      temperature: Number(process.env.LIVE_BRAIN_TEMPERATURE || 0.85),
-      max_tokens: Number(process.env.LIVE_BRAIN_MAX_TOKENS || 320),
-      response_format: { type: "json_object" },
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    if (response.status === 429) tripCircuit("groq");
-    throw new Error(`Groq ${response.status}: ${body.slice(0, 500)}`);
+    const errBody = await response.text().catch(() => "");
+    if (
+      useJsonFormat &&
+      (response.status === 400 || response.status === 422) &&
+      /response_format|json_object|json schema/i.test(errBody)
+    ) {
+      return callGroqWithModel(prompt, model, options, false);
+    }
+    if (response.status === 429 || response.status === 503) {
+      tripCircuit("groq", parseRetryAfterMs(response) || CIRCUIT_BREAKER_MS, options.sessionId);
+    }
+    throw new Error(`Groq ${response.status}: ${errBody.slice(0, 500)}`);
   }
 
   const data = (await response.json()) as any;
@@ -671,10 +757,15 @@ async function callGroqWithModel(
   };
 }
 
-async function callGroq(prompt: string): Promise<ProviderResult> {
-  if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY tidak tersedia");
+async function callGroq(prompt: string, options: BrainCallOptions = {}): Promise<ProviderResult> {
+  if (!GROQ_API_KEY && !isSelfHostedBrain()) {
+    throw new Error("GROQ_API_KEY tidak tersedia");
+  }
   if (Date.now() < groqBlockedUntil) {
     throw new Error("Groq circuit open — rate limit cooldown aktif");
+  }
+  if (getBrainBackoffMs(options.sessionId) > 0) {
+    throw new Error("Session brain cooldown aktif");
   }
 
   const candidates = groqModelCandidates();
@@ -686,7 +777,7 @@ async function callGroq(prompt: string): Promise<ProviderResult> {
       if (model !== GROQ_MODEL_RAW && model !== resolveGroqModel(GROQ_MODEL_RAW)) {
         console.warn(`[LiveBrain] Groq mencoba model alternatif: ${model}`);
       }
-      return await callGroqWithModel(prompt, model);
+      return await callGroqWithModel(prompt, model, options);
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       const canRetry =
@@ -701,28 +792,35 @@ async function callGroq(prompt: string): Promise<ProviderResult> {
   throw lastError || new Error("Groq gagal — tidak ada model yang tersedia");
 }
 
-async function callBrain(prompt: string): Promise<ProviderResult> {
-  const provider = (process.env.LIVE_BRAIN_PROVIDER || "auto").toLowerCase();
+async function callBrain(prompt: string, options: BrainCallOptions = {}): Promise<ProviderResult> {
+  await brainSemaphore.acquire();
+  try {
+    const provider = liveBrainProvider();
 
-  if (provider === "gemini") return callGemini(prompt);
-  if (provider === "groq") return callGroq(prompt);
+    if (provider === "gemini") return callGemini(prompt, options);
+    if (provider === "groq") return callGroq(prompt, options);
 
-  // auto: prefer Groq when circuit open skip failed provider immediately
-  if (GROQ_API_KEY && Date.now() >= groqBlockedUntil) {
-    try {
-      return await callGroq(prompt);
-    } catch (err) {
-      if (!isRateLimitError(err)) {
-        console.warn("[LiveBrain] Groq gagal, fallback ke Gemini:", err);
+    // auto: Groq dulu, Gemini cadangan
+    if (GROQ_API_KEY && Date.now() >= groqBlockedUntil) {
+      try {
+        return await callGroq(prompt, options);
+      } catch (err) {
+        if (!isRateLimitError(err)) {
+          console.warn("[LiveBrain] Groq gagal, fallback ke Gemini:", err);
+        } else {
+          console.warn("[LiveBrain] Groq rate limit, fallback ke Gemini");
+        }
       }
     }
-  }
 
-  if (GEMINI_API_KEY && Date.now() >= geminiBlockedUntil) {
-    return callGemini(prompt);
-  }
+    if (GEMINI_API_KEY && Date.now() >= geminiBlockedUntil) {
+      return callGemini(prompt, options);
+    }
 
-  throw new Error("Semua provider LLM sedang cooldown atau tidak tersedia");
+    throw new Error("Semua provider LLM sedang cooldown atau tidak tersedia");
+  } finally {
+    brainSemaphore.release();
+  }
 }
 
 function inferIntentFromText(text: string): HostIntent {
@@ -839,17 +937,18 @@ async function generateValidatedHostResponse(
 ): Promise<HostResponse | null> {
   const systemPrompt = buildHostSystemPrompt(hostInput);
   const userPrompt = `EVENT LIVE TERKINI:\n${userQuestion}\n\n${userPromptSuffix}`;
+  const callOpts = { sessionId: hostInput.sessionId };
 
-  const provider = await callBrain(`${systemPrompt}\n\n${userPrompt}`);
+  const provider = await callBrain(`${systemPrompt}\n\n${userPrompt}`, callOpts);
   const parsed = cleanAndExtractJson(provider.text);
   const response = selectSafeParsedResponse(parsed, hostInput);
   if (response) return response;
 
-  if (!canValidationRetry()) return null;
+  if (!canValidationRetry(hostInput.sessionId)) return null;
 
-  lastValidationRetryAt = Date.now();
+  lastValidationRetryAt.set(hostInput.sessionId || "_global", Date.now());
   const retryPrompt = `${systemPrompt}\n\nREGENERATE. RESPONS SEBELUMNYA TIDAK LOLOS VALIDASI.\nEVENT: ${userQuestion}\nBuat pendekatan yang berbeda secara nyata dari memori terakhir.`;
-  const retry = await callBrain(retryPrompt);
+  const retry = await callBrain(retryPrompt, callOpts);
   const retryParsed = cleanAndExtractJson(retry.text);
   return selectSafeParsedResponse(retryParsed, hostInput);
 }
@@ -915,6 +1014,339 @@ export async function generateDynamicSalesResponse(input: SalesBrainInput): Prom
 export const generateDynamicSalesResponseGroq = generateDynamicSalesResponse;
 export const generateDynamicSalesResponseGemini = generateDynamicSalesResponse;
 
+const ScriptBankLineSchema = HostResponseSchema.extend({
+  speech: z.string().min(8),
+});
+
+export async function generateScriptBankLines(input: SalesBrainInput): Promise<HostResponse[]> {
+  const systemPrompt = buildHostSystemPrompt(input);
+  const prompt = `${systemPrompt}
+
+TUGAS: buat 10–14 ucapan host otonom yang BERBEDA dan NATURAL (bukan robot).
+Gaya TikTok/Shopee host: kasual, hidup, 12–32 kata.
+LARANG frasa kaku berulang: "dari data produk", "yang tertulis", "aku nggak nebak", "patokannya".
+Jangan mengarang fakta. Campur topik: benefit, how_to_use, value, social, objection, filler, promo_pitch.
+Kembalikan JSON murni:
+{"lines":[{ "speech":"", "action":"TALK_EXPRESSIVE", "emotion":"warm", "intent":"SELL", "mode":"ENGAGE", "topic":"", "ctaType":"NONE", "target_product_id":null, "interruptible":true, "claims":[] }]}`;
+
+  try {
+    const result = await callBrain(prompt, {
+      sessionId: input.sessionId,
+      maxTokens: BANK_MAX_TOKENS,
+    });
+    const parsed = cleanAndExtractJson(result.text) as { lines?: unknown } | unknown[] | null;
+    const rawLines = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray((parsed as { lines?: unknown })?.lines)
+        ? (parsed as { lines: unknown[] }).lines
+        : [];
+    const accepted: HostResponse[] = [];
+    for (const item of rawLines) {
+      const validated = ScriptBankLineSchema.safeParse(item);
+      if (!validated.success) continue;
+      const safe = selectSafeParsedResponse(validated.data, input);
+      if (safe) accepted.push(safe);
+    }
+    return accepted;
+  } catch (err: any) {
+    console.warn(`[LiveBrain] generateScriptBankLines: ${err?.message || err}`);
+    return [];
+  }
+}
+
+export function liveBrainDuringLive(): boolean {
+  return process.env.LIVE_BRAIN_DURING_LIVE === "1";
+}
+
+export function liveBrainRefillWhenLow(): boolean {
+  return process.env.LIVE_BRAIN_REFILL_WHEN_LOW !== "0";
+}
+
+const StructuredBankSchema = z.object({
+  enriched: z
+    .object({
+      benefits: z.string().optional(),
+      usage: z.string().optional(),
+      faq: z.string().optional(),
+      targetAudience: z.string().optional(),
+      copywriting: z.string().optional(),
+    })
+    .optional(),
+  faqPack: z
+    .array(
+      z.object({
+        category: z.string(),
+        triggers: z.array(z.string()).min(3),
+        answers: z.array(z.string()).min(2),
+      }),
+    )
+    .optional(),
+  lines: z
+    .array(
+      z.object({
+        speech: z.string().min(8),
+        topic: z.string().optional(),
+        mode: z.string().optional(),
+        intent: z.string().optional(),
+        ctaType: z.string().optional(),
+        action: z.string().optional(),
+        emotion: z.string().optional(),
+      }),
+    )
+    .optional(),
+  promoPitch: z.array(z.string()).optional(),
+  filler: z.array(z.string()).optional(),
+  productBridge: z.array(z.string()).optional(),
+  fallback: z
+    .object({
+      outOfTopic: z.array(z.string()).optional(),
+      soldOut: z.array(z.string()).optional(),
+      troll: z.array(z.string()).optional(),
+    })
+    .optional(),
+});
+
+function mapTopicMode(topic: string): { topic: string; mode: HostMode; intent?: HostIntent; ctaType?: string } {
+  const t = topic.toLowerCase();
+  if (t.includes("promo") || t.includes("pitch")) return { topic: "promo_pitch", mode: "SELL", ctaType: "SOFT" };
+  if (t.includes("filler")) return { topic: "filler", mode: "ENGAGE", intent: "SOCIAL" };
+  if (t.includes("banner")) return { topic: "banner_callout", mode: "ENGAGE", intent: "SOCIAL" };
+  if (t.includes("bridge") || t.includes("transisi")) return { topic: "catalog_bridge", mode: "SELL" };
+  if (t.includes("sold")) return { topic: "sold_out", mode: "SELL", intent: "ANNOUNCEMENT" };
+  if (t.includes("troll") || t.includes("spam") || t.includes("out")) return { topic: "deflection", mode: "SOCIAL", intent: "SOCIAL" };
+  if (t.includes("faq") || t.includes("qna")) return { topic: "faq", mode: "QNA", intent: "PRODUCT_INFO" };
+  if (t.includes("usage") || t.includes("pakai")) return { topic: "how_to_use", mode: "DEMO", intent: "PRODUCT_INFO" };
+  return { topic: topic || "benefit", mode: "ENGAGE" };
+}
+
+export async function prepareProductScriptPack(input: {
+  name: string;
+  price?: string | number;
+  category?: string;
+  description?: string;
+  benefits?: string;
+  usage?: string;
+  faq?: string;
+  stock?: number;
+  sku?: string;
+  link?: string;
+  targetAudience?: string;
+  copywriting?: string;
+  bannerImage?: string;
+  avatarName?: string;
+  tone?: string;
+}): Promise<{
+  lines: HostResponse[];
+  engine: "local" | "live-brain";
+  count: number;
+  enriched: {
+    benefits?: string;
+    usage?: string;
+    faq?: string;
+    targetAudience?: string;
+    copywriting?: string;
+  };
+  faqPack: Array<{ category: string; triggers: string[]; answers: string[] }>;
+}> {
+  const priceDisplay =
+    input.price == null
+      ? "Harga live"
+      : typeof input.price === "number"
+        ? `Rp${input.price.toLocaleString("id-ID")}`
+        : String(input.price);
+
+  const {
+    seedLocalScriptBank,
+    emptyScriptBank,
+    mergeScriptLines,
+    buildDefaultFaqPack,
+    faqAnswerLines,
+  } = await import("./live-script-bank.js");
+
+  const category = input.category && input.category !== "Lainnya" && input.category !== "General"
+    ? input.category
+    : "Skincare";
+
+  const factsBase = {
+    id: "prepare",
+    name: input.name,
+    price: priceDisplay,
+    category,
+    benefits: input.benefits || "",
+    description: input.description || "",
+    usage: input.usage || "",
+    faq: input.faq || "",
+    stock: input.stock,
+    copywriting: input.copywriting || "",
+    targetAudience: input.targetAudience || "",
+    hasBanner: Boolean(input.bannerImage?.trim()),
+  };
+
+  const needOptional =
+    !input.benefits?.trim() ||
+    !input.usage?.trim() ||
+    !input.faq?.trim() ||
+    !input.targetAudience?.trim() ||
+    !input.copywriting?.trim();
+
+  let enriched: {
+    benefits?: string;
+    usage?: string;
+    faq?: string;
+    targetAudience?: string;
+    copywriting?: string;
+  } = {};
+  let faqPack = buildDefaultFaqPack(factsBase);
+  let llmLines: HostResponse[] = [];
+  let engine: "local" | "live-brain" = "local";
+
+  const systemRules = `Kamu penulis naskah host live TikTok/Shopee (Bahasa Indonesia kasual, natural, antusias).
+Wajib:
+- Sapaan natural (Kak/Guys/Bestie) TIDAK di setiap baris; campur tanpa sapaan.
+- Speech 5–15 detik (12–32 kata), terdengar manusia, JANGAN kaku/robot.
+- LARANG frasa robotik berulang seperti "dari data produk", "yang tertulis", "aku nggak nebak", "patokannya".
+- JANGAN mengarang klaim medis/legal/garansi/testimoni palsu.
+- Field enriched HANYA diisi bila input kosong; paraphrase dari Nama+Deskripsi(+Manfaat/Cara pakai jika ada). Jangan menambah fakta baru di luar input.
+- Jika ada banner overlay di siaran, boleh sebutkan banner atas/bawah secara natural (1-2 baris), jangan berulang.`;
+
+  const prompt = `${systemRules}
+
+INPUT PRODUK:
+Nama: ${input.name}
+Kategori: ${category}
+Harga: ${priceDisplay}
+Stok: ${input.stock ?? 0}
+Deskripsi: ${input.description || "-"}
+Manfaat (opsional): ${input.benefits || "(kosong — isi enriched.benefits dari deskripsi saja)"}
+Cara pakai (opsional): ${input.usage || "(kosong — isi enriched.usage dari deskripsi saja bila masuk akal)"}
+FAQ seller (opsional): ${input.faq || "(kosong)"}
+Target audience (opsional): ${input.targetAudience || "(kosong)"}
+Copywriting (opsional): ${input.copywriting || "(kosong)"}
+Banner overlay di live: ${factsBase.hasBanner ? "ADA (atas + bawah host, opsional disebut)" : "TIDAK ADA"}
+
+Kembalikan JSON murni:
+{
+  "enriched": { "benefits": "", "usage": "", "faq": "", "targetAudience": "", "copywriting": "" },
+  "faqPack": [
+    { "category": "harga|manfaat|cara_pakai|pengiriman", "triggers": ["7-10 sinonim"], "answers": ["3 jawaban natural"] }
+  ],
+  "promoPitch": ["5 pitch Hook+USP+harga+CTA lembut"],
+  "filler": ["5 kalimat filler 3-5 detik"],
+  "productBridge": ["3 jembatan multi-produk"],
+  "fallback": { "outOfTopic": ["3"], "soldOut": ["3"], "troll": ["3"] },
+  "lines": [{ "speech":"", "topic":"benefit|how_to_use|value|social_engagement|objection|faq|promo_pitch|filler|banner_callout", "mode":"ENGAGE|SELL|DEMO|QNA|SOCIAL|OBJECTION", "intent":"SELL|PRODUCT_INFO|SOCIAL|PRICE", "ctaType":"NONE|SOFT|PRICE" }]
+}
+Minimal 14 item di lines. ${needOptional ? "Isi enriched untuk field yang kosong." : "enriched boleh string kosong."}
+${factsBase.hasBanner ? 'Sertakan 2 baris topic "banner_callout" yang menunjuk banner atas/bawah secara natural.' : "Jangan sebut banner."}`;
+
+  try {
+    const result = await callBrain(prompt, { maxTokens: Math.max(BANK_MAX_TOKENS, 1800) });
+    const parsedRaw = cleanAndExtractJson(result.text);
+    const parsed = StructuredBankSchema.safeParse(parsedRaw);
+    if (parsed.success) {
+      engine = "live-brain";
+      const data = parsed.data;
+      if (data.enriched) {
+        enriched = {
+          benefits:
+            !input.benefits?.trim() && (data.enriched as any).benefits?.trim?.()
+              ? String((data.enriched as any).benefits).trim()
+              : undefined,
+          usage:
+            !input.usage?.trim() && (data.enriched as any).usage?.trim?.()
+              ? String((data.enriched as any).usage).trim()
+              : undefined,
+          faq: !input.faq?.trim() && data.enriched.faq?.trim() ? data.enriched.faq.trim() : undefined,
+          targetAudience:
+            !input.targetAudience?.trim() && data.enriched.targetAudience?.trim()
+              ? data.enriched.targetAudience.trim()
+              : undefined,
+          copywriting:
+            !input.copywriting?.trim() && data.enriched.copywriting?.trim()
+              ? data.enriched.copywriting.trim()
+              : undefined,
+        };
+      }
+      if (data.faqPack?.length) {
+        faqPack = data.faqPack.map((item) => ({
+          category: item.category,
+          triggers: item.triggers.slice(0, 12),
+          answers: item.answers.slice(0, 5),
+        }));
+      }
+
+      const pushSpeech = (speech: string, topic: string) => {
+        const meta = mapTopicMode(topic);
+        llmLines.push({
+          speech,
+          action: "TALK_EXPRESSIVE",
+          emotion: "warm",
+          intent: (meta.intent as HostIntent) || "SELL",
+          mode: meta.mode,
+          topic: meta.topic,
+          ctaType: (meta.ctaType as any) || "NONE",
+          target_product_id: null,
+          interruptible: true,
+          claims: [],
+        });
+      };
+
+      for (const speech of data.promoPitch || []) pushSpeech(speech, "promo_pitch");
+      for (const speech of data.filler || []) pushSpeech(speech, "filler");
+      for (const speech of data.productBridge || []) pushSpeech(speech, "catalog_bridge");
+      for (const speech of data.fallback?.outOfTopic || []) pushSpeech(speech, "deflection");
+      for (const speech of data.fallback?.soldOut || []) pushSpeech(speech, "sold_out");
+      for (const speech of data.fallback?.troll || []) pushSpeech(speech, "deflection");
+      for (const item of data.lines || []) {
+        const meta = mapTopicMode(item.topic || "benefit");
+        llmLines.push({
+          speech: item.speech,
+          action: "TALK_EXPRESSIVE",
+          emotion: (item.emotion as any) || "warm",
+          intent: (item.intent as HostIntent) || meta.intent || "SELL",
+          mode: (item.mode as HostMode) || meta.mode,
+          topic: meta.topic,
+          ctaType: (item.ctaType as any) || meta.ctaType || "NONE",
+          target_product_id: null,
+          interruptible: true,
+          claims: [],
+        });
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[LiveBrain] prepareProductScriptPack LLM: ${err?.message || err}`);
+  }
+
+  const facts = {
+    ...factsBase,
+    benefits: enriched.benefits || input.benefits || "",
+    usage: enriched.usage || input.usage || "",
+    faq: enriched.faq || input.faq || "",
+    copywriting: enriched.copywriting || input.copywriting || "",
+    targetAudience: enriched.targetAudience || input.targetAudience || "",
+    faqPack,
+  };
+
+  const bank = emptyScriptBank("prepare");
+  mergeScriptLines(bank, seedLocalScriptBank(facts, []), []);
+  mergeScriptLines(bank, faqAnswerLines(faqPack), []);
+  mergeScriptLines(bank, llmLines, []);
+
+  return {
+    lines: bank.lines,
+    engine: llmLines.length > 0 || engine === "live-brain" ? "live-brain" : "local",
+    count: bank.lines.length,
+    enriched: {
+      benefits: enriched.benefits || input.benefits || undefined,
+      usage: enriched.usage || input.usage || undefined,
+      faq: enriched.faq || input.faq || undefined,
+      targetAudience: enriched.targetAudience || input.targetAudience || undefined,
+      copywriting: enriched.copywriting || input.copywriting || undefined,
+    },
+    faqPack,
+  };
+}
+
 export async function checkGroqHealth(): Promise<{
   online: boolean;
   model: string;
@@ -923,12 +1355,12 @@ export async function checkGroqHealth(): Promise<{
   error?: string;
 }> {
   const started = Date.now();
-  const provider = (process.env.LIVE_BRAIN_PROVIDER || "auto").toLowerCase();
+  const provider = liveBrainProvider();
 
   try {
-    if (provider === "groq" || (provider === "auto" && GROQ_API_KEY)) {
+    if ((provider === "groq" || provider === "auto") && GROQ_API_KEY) {
       const response = await fetch(`${GROQ_BASE_URL}/models`, {
-        headers: { Authorization: `Bearer ${GROQ_API_KEY}` },
+        headers: { Authorization: `Bearer ${groqAuthToken()}` },
       });
       if (!response.ok) {
         return {
@@ -948,7 +1380,6 @@ export async function checkGroqHealth(): Promise<{
     }
 
     if (GEMINI_API_KEY) {
-      // Lightweight check — no full generation on boot (saves quota).
       getGeminiClient();
       return {
         online: true,
@@ -963,19 +1394,20 @@ export async function checkGroqHealth(): Promise<{
       model: "none",
       provider: "none",
       latencyMs: Date.now() - started,
-      error: "GROQ_API_KEY dan GEMINI_API_KEY tidak tersedia",
+      error: "Tidak ada endpoint LLM yang tersedia",
     };
   } catch (err: any) {
     return {
       online: false,
-      model: provider === "groq" ? GROQ_MODEL : GEMINI_MODEL,
-      provider: provider === "groq" ? "groq" : "gemini",
+      model: provider === "gemini" ? GEMINI_MODEL : GROQ_MODEL,
+      provider: provider === "gemini" ? "gemini" : "groq",
       latencyMs: Date.now() - started,
       error: err?.message || String(err),
     };
   }
 }
 
+/** @deprecated gunakan checkGroqHealth — Ollama sudah dihapus. */
 export const checkOllamaHealth = checkGroqHealth;
 
 // Deprecated compatibility API. Jangan gunakan untuk request baru.
@@ -1105,53 +1537,3 @@ export async function generateLunaResponse(
 
 export const generateLunaResponseGroq = generateLunaResponse;
 
-export async function generateProductKnowledge(input: GenerateProductKnowledgeInput): Promise<ProductKnowledge> {
-  const priceDisplay =
-    input.price == null
-      ? "Harga Spesial"
-      : typeof input.price === "number"
-        ? `Rp${input.price.toLocaleString("id-ID")}`
-        : String(input.price);
-
-  const prompt = `Kamu adalah product knowledge editor.
-Buat JSON murni dengan field: description, benefits, usage, faq, targetAudience, copywriting.
-Jangan menambahkan klaim legal/medis/commercial yang tidak ada pada data input.
-
-DATA:
-Nama: ${input.name}
-Kategori: ${input.category || "General"}
-Harga: ${priceDisplay}
-Stok: ${input.stock ?? 0}
-SKU: ${input.sku || "-"}
-Link: ${input.link || "-"}
-Deskripsi: ${input.description}
-Manfaat: ${input.benefits || ""}
-Cara pakai: ${input.usage || ""}`;
-
-  try {
-    const provider = await callBrain(prompt);
-    const parsed = cleanAndExtractJson(provider.text) as any;
-    if (
-      parsed &&
-      typeof parsed.description === "string" &&
-      typeof parsed.benefits === "string" &&
-      typeof parsed.usage === "string" &&
-      typeof parsed.faq === "string" &&
-      typeof parsed.targetAudience === "string" &&
-      typeof parsed.copywriting === "string"
-    ) {
-      return parsed as ProductKnowledge;
-    }
-  } catch (err: any) {
-    console.warn(`[LiveBrain] generateProductKnowledge: ${err?.message || err}`);
-  }
-
-  return {
-    description: input.description,
-    benefits: input.benefits || `Keunggulan ${input.name} berdasarkan data penjual.`,
-    usage: input.usage || `Gunakan ${input.name} sesuai petunjuk pada kemasan atau informasi resmi produk.`,
-    faq: "Gunakan hanya informasi resmi produk untuk menjawab legalitas, keamanan, garansi, dan keaslian.",
-    targetAudience: `Konsumen yang membutuhkan ${input.name}.`,
-    copywriting: `Untuk kamu yang sedang mempertimbangkan ${input.name}, cek detail produk dan manfaat yang memang tersedia di informasi resminya.`,
-  };
-}

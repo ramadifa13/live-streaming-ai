@@ -1,14 +1,16 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { X, FileSpreadsheet, Upload } from "lucide-react";
 import { useProductStore } from "@/stores/useProductStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
+import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 
 export const ImportCsvModal: React.FC = () => {
   const showCsvModal = useDashboardUIStore((state) => state.showCsvModal);
   const setShowCsvModal = useDashboardUIStore((state) => state.setShowCsvModal);
   const showToast = useDashboardUIStore((state) => state.showToast);
+  const isLiveActive = useLiveSessionStore((state) => state.isLiveActive);
 
   const csvText = useProductStore((state) => state.csvText);
   const setCsvText = useProductStore((state) => state.setCsvText);
@@ -16,14 +18,25 @@ export const ImportCsvModal: React.FC = () => {
 
   const [isImporting, setIsImporting] = useState(false);
 
-  if (!showCsvModal) return null;
+  useEffect(() => {
+    if (showCsvModal && isLiveActive) {
+      setShowCsvModal(false);
+      showToast("Produk tidak bisa ditambah saat live sedang aktif. Akhiri live dulu.");
+    }
+  }, [showCsvModal, isLiveActive, setShowCsvModal, showToast]);
+
+  if (!showCsvModal || isLiveActive) return null;
 
   const handleImport = async () => {
+    if (isLiveActive) {
+      showToast("Produk tidak bisa ditambah saat live sedang aktif. Akhiri live dulu.");
+      return;
+    }
     setIsImporting(true);
     try {
       const count = await importCsvProducts();
       setShowCsvModal(false);
-      showToast(` ${count} produk berhasil diimpor & disimpan ke Database!`);
+      showToast(`${count} produk tersimpan di perangkat ini. Script bank lokal dipakai saat live (tanpa LLM massal).`);
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal mengimpor produk CSV");
     } finally {
@@ -53,7 +66,8 @@ export const ImportCsvModal: React.FC = () => {
           <h3 className="text-lg font-bold text-white">Import Data Produk Massal (CSV)</h3>
         </div>
         <p className="text-xs text-slate-400 mb-3">
-          Format baris: <code className="text-blue-300">Nama Produk, Harga, Stok, Kategori, Deskripsi, Link</code>
+          Data hanya di browser Anda, tidak ke database server. Format:{" "}
+          <code className="text-blue-300">Nama Produk, Harga, Stok, Kategori, Deskripsi, Link</code>
         </p>
 
         <div className="mb-3 flex justify-between items-center text-[11px]">

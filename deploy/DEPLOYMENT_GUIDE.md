@@ -47,6 +47,20 @@ curl -s http://localhost:8000/health
 tail -f /workspace/ai_live_worker/api_server.log
 ```
 
+### 2.5b Aktifkan frame-feed (opsional, lebih natural)
+
+Di `/workspace/ai_live_worker/.env` (atau `env`):
+
+```bash
+BROADCAST_MODE=frame_feed
+MUSETALK_RAW_FEED=1
+MUSETALK_SKIP_MP4=1
+```
+
+Lalu restart worker / redeploy. Idle dipotong per frame; MuseTalk menyerahkan
+`.ffseg` raw (tanpa encode MP4); pose cycle berlanjut antar clip.
+Rollback: `BROADCAST_MODE=segment`.
+
 ### 2.6 Redeploy VPS (backend + frontend)
 
 ```bash
@@ -148,6 +162,24 @@ certbot --nginx -d yourdomain.com -d www.yourdomain.com
 ```
 
 ### 3.8 Restart setelah ubah .env
+
+Di `.env` backend VPS:
+
+```bash
+# Off = tidak LLM tiap clip/komentar (default jika tidak di-set)
+LIVE_BRAIN_DURING_LIVE=0
+
+# On = jika bank hampir habis, LLM isi ulang (throttled). Set 0 untuk lokal-only.
+LIVE_BRAIN_REFILL_WHEN_LOW=1
+
+# Provider: auto | groq | gemini  (ollama/vllm sudah dihapus)
+LIVE_BRAIN_PROVIDER=auto
+GROQ_API_KEY=...
+GROQ_MODEL=openai/gpt-oss-20b
+GEMINI_API_KEY=...
+```
+
+Stack LLM: **Groq primary** (`openai/gpt-oss-20b`, fallback `openai/gpt-oss-120b`) + **Gemini cadangan**. Tidak perlu LLM ketiga selama Gemini key tersedia.
 
 ```bash
 pm2 restart api

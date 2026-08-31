@@ -6,7 +6,7 @@ import { useProductStore } from "@/stores/useProductStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { oauthService } from "@/services/oauthService";
-import { liveSessionService } from "@/services/liveSessionService";
+import { liveSessionService, toLiveProductSnapshot } from "@/services/liveSessionService";
 import { parsePriceToNumber } from "@/utils/formatters";
 import { ChatMessage } from "./types";
 
@@ -158,7 +158,12 @@ export default function Dashboard() {
           };
           addChatMessage(switchMsg);
 
-          liveSessionService.switchProduct(nextProd.id || "1", nextProd.name);
+          liveSessionService.switchProduct(
+            nextProd.id || "1",
+            nextProd.name,
+            toLiveProductSnapshot(nextProd, true),
+            useLiveSessionStore.getState().currentLiveSessionId || undefined,
+          );
 
           return nextProd;
         });

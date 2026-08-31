@@ -5,7 +5,8 @@ import {
   generateDynamicSalesResponseGroq,
   generateVideoSalesScriptGroq,
   generateLiveSalesPitchFromAIGroq,
-  checkOllamaHealth,
+  prepareProductScriptPack,
+  checkGroqHealth,
 } from "../services/groq-brain.js";
 
 const salesResponseSchema = z.object({
@@ -28,22 +29,24 @@ const videoScriptSchema = z.object({
 });
 
 export async function aiBrainRoutes(server: FastifyInstance) {
-  // GET /api/ai/models (Get local Ollama status & models)
+  // GET /api/ai/models — status Groq/Gemini (bukan Ollama)
   server.get("/api/ai/models", async (_request, reply) => {
     try {
-      const health = await checkOllamaHealth();
+      const health = await checkGroqHealth();
       return {
         success: true,
-        provider: "ollama",
+        provider: health.provider,
         online: health.online,
         activeModel: health.model,
+        latencyMs: health.latencyMs,
+        error: health.error,
       };
     } catch (err: any) {
       server.log.error(err);
       reply.code(500);
       return {
         success: false,
-        error: err.message || "Failed to check Ollama status",
+        error: err.message || "Failed to check LLM status",
       };
     }
   });
@@ -170,7 +173,48 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     }
   });
 
-  // POST /api/ai/live-sales-script (Dynamic RAG Live Stream Sales Script)
+  server.post("/api/ai/prepare-product", async (request, reply) => {
+    const schema = z.object({
+      name: z.string().min(1),
+      price: z.union([z.string(), z.number()]).optional(),
+      category: z.string().optional(),
+      description: z.string().optional(),
+      benefits: z.string().optional(),
+      usage: z.string().optional(),
+      faq: z.string().optional(),
+      stock: z.number().optional(),
+      sku: z.string().optional(),
+      link: z.string().optional(),
+      targetAudience: z.string().optional(),
+      copywriting: z.string().optional(),
+      bannerImage: z.string().optional(),
+      avatarName: z.string().optional(),
+      tone: z.string().optional(),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { success: false, error: parsed.error.flatten() };
+    }
+    try {
+      const pack = await prepareProductScriptPack(parsed.data);
+      return {
+        success: true,
+        data: {
+          scriptBank: pack.lines,
+          engine: pack.engine,
+          count: pack.count,
+          enriched: pack.enriched,
+          faqPack: pack.faqPack,
+        },
+      };
+    } catch (err: any) {
+      server.log.error(err);
+      reply.code(500);
+      return { success: false, error: err.message || "Gagal menyiapkan script bank" };
+    }
+  });
+
   server.post("/api/ai/live-sales-script", async (request, reply) => {
     const body = request.body as {
       productId?: string;

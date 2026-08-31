@@ -5,7 +5,10 @@ import {
   releaseGpuForJob,
 } from "./runpod-manager.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
-import { liveHostOrchestrator } from "./live-host-orchestrator.js";
+import {
+  liveHostOrchestrator,
+  type ProductSnapshot,
+} from "./live-host-orchestrator.js";
 import { triggerWorkerPlayback } from "./runpod-bridge.js";
 
 export type SessionState = "starting" | "pending" | "live" | "ended" | "error";
@@ -26,6 +29,8 @@ export interface ManagedSession {
   pendingTimer?: NodeJS.Timeout;
   liveDetectionAttempts: number;
   onStateChange?: (state: SessionState, sessionId: string) => void;
+  product?: ProductSnapshot;
+  catalog: ProductSnapshot[];
 }
 
 /**
@@ -76,6 +81,8 @@ class LiveSessionManager {
     liveVideoId?: string;
     avatarName?: string;
     tone?: string;
+    product?: ProductSnapshot;
+    catalog?: ProductSnapshot[];
   }): Promise<{ sessionId: string; state: SessionState }> {
     const podIdStr = await startPodAndWait();
     const podId = typeof podIdStr === "string" ? podIdStr : null;
@@ -97,6 +104,16 @@ class LiveSessionManager {
       },
     });
 
+    const catalog = params.catalog?.length
+      ? params.catalog
+      : params.product
+        ? [params.product]
+        : [];
+    const product =
+      params.product ||
+      catalog.find((item) => item.id === params.productId) ||
+      catalog[0];
+
     const managedSession: ManagedSession = {
       sessionId: session.id,
       state: "starting",
@@ -110,6 +127,8 @@ class LiveSessionManager {
       podId: typeof podId === "string" ? podId : null,
       liveDetectionAttempts: 0,
       onStateChange: undefined,
+      product,
+      catalog,
     };
 
     this.activeSessions.set(session.id, managedSession);

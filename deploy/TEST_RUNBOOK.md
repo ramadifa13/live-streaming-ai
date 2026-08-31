@@ -115,7 +115,9 @@ Semuanya punya default aman, jadi tidak wajib diisi. Tambahkan ke
 | `RUNPOD_CONTAINER_DISK_GB` | `10` | Ruang untuk log dan output |
 | `RUNPOD_KEEP_POD_WARM` | `false` | `true` = pod statis dibiarkan menyala (GPU tetap ditagih) |
 | `LIVE_PENDING_TIMEOUT_MS` | `1800000` | Batas sesi menggantung di status `pending` |
-| `BROADCAST_IDLE_CHUNK_SECONDS` | `3.0` | Panjang chunk idle di worker |
+| `BROADCAST_IDLE_CHUNK_SECONDS` | `1.5` | Panjang chunk idle di worker (mode segment) |
+| `BROADCAST_MODE` | `segment` | `frame_feed` = encoder kontinu + idle interruptible |
+
 
 ### Perubahan perilaku yang perlu Anda tahu
 
@@ -194,10 +196,9 @@ Jalankan satu sesi pendek, misalnya 15-20 menit, ke akun uji.
 ### Yang harus diamati
 
 **Sambungan antar segmen.** Perhatikan peralihan dari satu kalimat ke kalimat
-berikutnya, dan dari idle ke bicara. Sebelumnya di sini siaran bisa terputus
-karena parameter stream berubah. Sekarang seharusnya mulus, meski masih ada jeda
-sangat singkat di batas segmen — itu keterbatasan arsitektur segmen-per-file yang
-hanya hilang lewat migrasi frame-feed.
+berikutnya, dan dari idle ke bicara. Dengan `BROADCAST_MODE=frame_feed`, idle
+bisa dipotong per frame dan tidak ada spawn FFmpeg antar clip — jeda seharusnya
+jauh lebih pendek. Mode `segment` masih bisa punya jeda singkat di batas file.
 
 **Idle tidak berkedip.** Idle dulu diberi fade in dan fade out setiap chunk
 sehingga terlihat berdenyut. Sekarang idle memakai `-stream_loop` tanpa fade.
@@ -277,16 +278,40 @@ Lalu jalankan ulang `redeploy-worker.sh` di pod dan `deploy.sh` di VPS.
 
 ---
 
-## 5. Yang belum diperbaiki
+## 5. Yang belum diperbaiki (di luar scope natural A/V)
 
-Tiga item ini sengaja belum dikerjakan karena butuh keputusan, bukan sekadar
-waktu:
+1. **Ingest komentar TikTok dan Shopee** — butuh keputusan API/mitra.
+2. **Multi-tenant** 2–3 sesi per pod — butuh keputusan COGS/arsitektur.
 
-1. **Ingest komentar TikTok dan Shopee.** TikTok tidak punya API komentar publik
-   resmi. Pilihannya antara library tidak resmi, webhook, atau jalur mitra resmi.
-   Selama ini belum ada, fitur jawab komentar hanya berjalan di YouTube dan
-   Instagram.
-2. **Migrasi frame-feed** memakai `MuseTalk/scripts/realtime_inference.py` yang
-   sudah ada di repo. Ini yang menghapus jeda di batas segmen dan membuat idle
-   bisa dipotong per frame.
-3. **Multi-tenant** 2-3 sesi per pod untuk menurunkan COGS.
+### Frame-feed + raw handoff — SELESAI
+
+Aktif di worker `.env` (sudah di `deploy/.env`):
+
+```bash
+BROADCAST_MODE=frame_feed
+MUSETALK_RAW_FEED=1
+MUSETALK_SKIP_MP4=1
+```
+
+Yang sudah jalan:
+
+- Encoder RTMP kontinu (`frame_feed.py`)
+- Handoff raw `.ffseg` (tanpa double-encode MP4)
+- Streaming tulis `.ffseg` (hemat RAM)
+- Prefetch clip berikutnya + join AI→AI tanpa idle/fade
+- Idle interruptible per frame
+- Pose cycle MuseTalk berlanjut antar clip
+- Auto-load `.env` di `start.sh` + `api_server.py`
+
+Verifikasi lokal:
+
+```bash
+python deploy/verify_frame_feed.py
+```
+
+Rollback:
+
+```bash
+BROADCAST_MODE=segment
+MUSETALK_SKIP_MP4=0
+```

@@ -17,7 +17,26 @@ import {
 import { livePlatformConnector } from "../services/live-platform-connector.js";
 import { setLiveSessionActive, stopPod } from "../services/runpod-manager.js";
 import { liveSessionManager } from "../services/live-session-manager.js";
-import { liveHostOrchestrator, durationHoursToPlan } from "../services/live-host-orchestrator.js";
+import { liveHostOrchestrator, durationHoursToPlan, normalizeClientProduct } from "../services/live-host-orchestrator.js";
+
+const productSnapshotSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().min(1),
+  price: z.union([z.string(), z.number()]).optional(),
+  stock: z.number().optional(),
+  tag: z.string().optional(),
+  category: z.string().optional(),
+  description: z.string().optional(),
+  benefits: z.string().optional(),
+  usage: z.string().optional(),
+  faq: z.string().optional(),
+  copywriting: z.string().optional(),
+  targetAudience: z.string().optional(),
+  image: z.string().optional(),
+  bannerImage: z.string().optional(),
+  scriptBank: z.array(z.any()).optional(),
+  faqPack: z.array(z.any()).optional(),
+});
 
 const liveSessionSchema = z.object({
   productId: z.string().min(1),
@@ -35,6 +54,8 @@ const liveSessionSchema = z.object({
   liveVideoId: z.string().optional(),
   avatarName: z.string().optional(),
   tone: z.string().optional(),
+  product: productSnapshotSchema.optional(),
+  products: z.array(productSnapshotSchema).optional(),
 });
 
 const liveStopSchema = z.object({
@@ -120,6 +141,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: "avatar not found" };
     }
     try {
+      const catalog = (parsed.data.products || [])
+        .map((item) => normalizeClientProduct(item))
+        .filter((item): item is NonNullable<typeof item> => Boolean(item));
+      const product =
+        normalizeClientProduct(parsed.data.product) ||
+        catalog.find((item) => item.id === parsed.data.productId) ||
+        catalog[0];
+
       const result = await liveSessionManager.startSession({
         productId: parsed.data.productId,
         avatarId: avatar.id,
@@ -136,6 +165,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         avatarName: avatar.name,
         voice: parsed.data.voice || avatar.voice || undefined,
         tone: parsed.data.tone || "Persuasif",
+        product: product || undefined,
+        catalog,
       });
 
       return {
@@ -298,9 +329,9 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         rtmpUrl,
         streamKey,
         plan: durationHoursToPlan(managedSession.durationHours ?? 2),
-        // Durasi sebenarnya, bukan bucket plan — mencegah loop generasi berhenti
-        // lebih awal pada durasi non-standar (misal 3 jam ter-map ke plan "2H").
         maxDurationMs: (managedSession.durationHours ?? 2) * 3600 * 1000,
+        product: managedSession.product,
+        catalog: managedSession.catalog,
       };
       liveHostOrchestrator.startPipelineBackground(hostConfig);
     }
@@ -467,6 +498,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     const bodySchema = z.object({
       productId: z.string().min(1),
       productName: z.string().optional(),
+      sessionId: z.string().optional(),
+      product: productSnapshotSchema.optional(),
     });
     const parsed = bodySchema.safeParse(request.body);
     if (!parsed.success) {
@@ -475,28 +508,34 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     try {
-      const latestSession = await prisma.liveSession.findFirst({
-        where: { status: "live" },
-        orderBy: { createdAt: "desc" },
-      });
+      const latestSession = parsed.data.sessionId
+        ? await prisma.liveSession.findFirst({
+            where: { id: parsed.data.sessionId },
+          })
+        : await prisma.liveSession.findFirst({
+            where: { status: "live" },
+            orderBy: { createdAt: "desc" },
+          });
       if (latestSession) {
         await prisma.liveSession.update({
           where: { id: latestSession.id },
           data: { productId: parsed.data.productId },
         });
+        const snapshot = normalizeClientProduct(parsed.data.product);
         liveHostOrchestrator.switchProduct(
           latestSession.id,
           parsed.data.productId,
+          snapshot || undefined,
         );
 
-        // Hot-Swap video overlay card & banner on Pod without stopping RTMP stream
-        const switchedProd = await prisma.product.findUnique({
-          where: { id: parsed.data.productId },
-        });
+        const managedSession = liveSessionManager.getSession(latestSession.id);
+        if (snapshot && managedSession) {
+          managedSession.product = snapshot;
+          const exists = managedSession.catalog.some((item) => item.id === snapshot.id);
+          if (!exists) managedSession.catalog.push(snapshot);
+        }
+        const switchedProd = snapshot || managedSession?.product;
         if (switchedProd) {
-          const managedSession = liveSessionManager.getSession(
-            latestSession.id,
-          );
           const podId = managedSession?.podId;
           updateRunPodBroadcastProduct(podId, {
             productName: switchedProd.name,

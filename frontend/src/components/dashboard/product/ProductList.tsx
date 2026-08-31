@@ -4,6 +4,7 @@ import React, { useMemo } from "react";
 import { Search } from "lucide-react";
 import { useProductStore } from "@/stores/useProductStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
+import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { ProductCard } from "./ProductCard";
 
 export const ProductList: React.FC = () => {
@@ -14,6 +15,8 @@ export const ProductList: React.FC = () => {
   const setProductCategoryFilter = useProductStore((state) => state.setProductCategoryFilter);
 
   const setShowAddProductModal = useDashboardUIStore((state) => state.setShowAddProductModal);
+  const showToast = useDashboardUIStore((state) => state.showToast);
+  const isLiveActive = useLiveSessionStore((state) => state.isLiveActive);
 
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
@@ -46,12 +49,21 @@ export const ProductList: React.FC = () => {
         </p>
         <button
           type="button"
+          disabled={isLiveActive}
           onClick={() => {
+            if (isLiveActive) {
+              showToast("Produk tidak bisa ditambah saat live sedang aktif. Akhiri live dulu.");
+              return;
+            }
             setSearchQuery("");
             setProductCategoryFilter("ALL");
             setShowAddProductModal(true);
           }}
-          className="mt-2.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-blue-500 transition cursor-pointer"
+          className={`mt-2.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[11px] font-bold text-white transition ${
+            isLiveActive
+              ? "cursor-not-allowed opacity-50"
+              : "hover:bg-blue-500 cursor-pointer"
+          }`}
         >
           + Tambah Produk Baru
         </button>

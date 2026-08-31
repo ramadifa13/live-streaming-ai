@@ -16,6 +16,25 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import uvicorn
+
+try:
+    from load_env import load_env_files
+except ImportError:
+    load_env_files = None
+
+# Muat .env worker sebelum init AILiveWorker / MuseTalk flags.
+if load_env_files is not None:
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _loaded = load_env_files(
+        [
+            os.path.join(_here, ".env"),
+            "/workspace/ai_live_worker/.env",
+            os.path.join(_here, "env.local"),
+        ]
+    )
+    if _loaded:
+        print(f"[AI-Worker] Env loaded: {', '.join(_loaded)}")
+
 from live_worker import AILiveWorker
 
 # Init AI Worker
@@ -32,12 +51,27 @@ _duration_cache: Dict[tuple, float] = {}
 
 
 def _probe_duration_seconds(path: str) -> float:
-    """Durasi file video (detik) untuk perhitungan buffer playable.
+    """Durasi file/segmen (detik) untuk perhitungan buffer playable.
 
     Dicache per (path, mtime, size). Tanpa cache, endpoint queue-status
     memanggil ffprobe untuk setiap file pada setiap polling — sekitar dua kali
     per detik dari orchestrator plus frontend — dan merebut CPU dari encoder.
     """
+    if path.endswith(".ffseg") and os.path.isdir(path):
+        try:
+            from ffseg import ffseg_duration_seconds
+
+            return ffseg_duration_seconds(path)
+        except Exception:
+            try:
+                with open(os.path.join(path, "meta.json"), "r", encoding="utf-8") as fh:
+                    meta = json.load(fh)
+                frames = int(meta.get("frames") or 0)
+                fps = float(meta.get("fps") or 25) or 25.0
+                if frames > 0:
+                    return max(0.4, frames / fps)
+            except Exception:
+                return 8.0
     try:
         stat = os.stat(path)
         cache_key = (os.path.abspath(path), stat.st_mtime_ns, stat.st_size)
@@ -81,9 +115,19 @@ def _probe_duration_uncached(path: str) -> float:
         return 12.0
 
 def _collect_playable_videos(output_folder: str, idle_abs: str = ""):
-    search_pattern = os.path.join(output_folder, "**", "*.mp4")
     playable = []
-    for path in glob.glob(search_pattern, recursive=True):
+    # Raw frame-feed packs
+    for path in glob.glob(os.path.join(output_folder, "**", "*.ffseg"), recursive=True):
+        if not os.path.isdir(path):
+            continue
+        base = os.path.basename(path)
+        if base.startswith("temp_") or base.endswith(".partial"):
+            continue
+        if not os.path.exists(os.path.join(path, "ready.flag")):
+            continue
+        playable.append(path)
+    # Legacy / segment MP4
+    for path in glob.glob(os.path.join(output_folder, "**", "*.mp4"), recursive=True):
         base = os.path.basename(path)
         if base.startswith("temp_") or base.endswith(".tmp"):
             continue
@@ -99,9 +143,32 @@ def _collect_playable_videos(output_folder: str, idle_abs: str = ""):
         playable.append(path)
     return playable
 
-# Monotonic counter: total video yang sudah selesai di-render (tidak pernah berkurang).
-# Dipakai oleh frontend/orchestrator untuk cek pipelineReady tanpa race condition delete.
-total_videos_rendered: int = 0
+def _cleanup_playable_outputs(folder: str, idle_abs: str = "") -> None:
+    """Hapus sisa MP4 + .ffseg dari sesi sebelumnya (kecuali idle asset)."""
+    import shutil
+
+    for f in glob.glob(os.path.join(folder, "**", "*.mp4"), recursive=True):
+        if idle_abs and os.path.abspath(f) == idle_abs:
+            continue
+        base = os.path.basename(f)
+        if base in IDLE_CLIP_BASENAMES or base.endswith("idle.mp4"):
+            continue
+        try:
+            os.remove(f)
+        except Exception:
+            pass
+    for d in glob.glob(os.path.join(folder, "**", "*.ffseg"), recursive=True):
+        if os.path.isdir(d):
+            try:
+                shutil.rmtree(d, ignore_errors=True)
+            except Exception:
+                pass
+    for d in glob.glob(os.path.join(folder, "**", "*.ffseg.partial"), recursive=True):
+        if os.path.isdir(d):
+            try:
+                shutil.rmtree(d, ignore_errors=True)
+            except Exception:
+                pass
 
 def prune_old_jobs():
     """Prune expired jobs to prevent memory leaks during 24/7 streaming."""
@@ -128,15 +195,24 @@ broadcaster_next_restart_at = 0.0
 MAX_BROADCASTER_RESTARTS = 8
 
 
-def _broadcaster_script_path() -> str:
-    candidate = os.path.join(os.path.dirname(__file__), "broadcaster.py")
+def _broadcaster_script_path(mode: Optional[str] = None) -> str:
+    resolved = (mode or os.environ.get("BROADCAST_MODE") or "segment").strip().lower()
+    name = "frame_feed.py" if resolved in ("frame_feed", "frame-feed", "continuous") else "broadcaster.py"
+    candidate = os.path.join(os.path.dirname(__file__), name)
     if os.path.exists(candidate):
         return candidate
+    fallback = f"/workspace/ai_live_worker/{name}"
+    if os.path.exists(fallback):
+        return fallback
+    # Fallback aman ke segment bila frame_feed belum tersinkron.
+    legacy = os.path.join(os.path.dirname(__file__), "broadcaster.py")
+    if os.path.exists(legacy):
+        return legacy
     return "/workspace/ai_live_worker/broadcaster.py"
 
 
 def _spawn_broadcaster(env: Dict[str, str]) -> subprocess.Popen:
-    """Start broadcaster.py in its own process group.
+    """Start broadcaster (segment atau frame_feed) in its own process group.
 
     Process group is required so that terminating the broadcaster also reaps its
     child FFmpeg processes. Otherwise the master FFmpeg survives as an orphan,
@@ -145,8 +221,11 @@ def _spawn_broadcaster(env: Dict[str, str]) -> subprocess.Popen:
     """
     global broadcaster_log_handle
 
-    script = _broadcaster_script_path()
-    log_path = os.path.join(worker.output_dir, "broadcaster.log")
+    mode = (env.get("BROADCAST_MODE") or os.environ.get("BROADCAST_MODE") or "segment").strip().lower()
+    script = _broadcaster_script_path(mode)
+    log_name = "frame_feed.log" if "frame_feed" in os.path.basename(script) else "broadcaster.log"
+    log_path = os.path.join(worker.output_dir, log_name)
+    print(f"[AI-Worker] Spawn broadcast mode={mode} script={os.path.basename(script)}")
 
     if broadcaster_log_handle is not None:
         try:
@@ -594,12 +673,7 @@ async def start_broadcast(req: BroadcastRequest):
                 pass
         import glob
         idle_abs = os.path.abspath(resolved_idle) if resolved_idle else ""
-        for f in glob.glob(os.path.join(output_dir, "**", "*.mp4"), recursive=True):
-            if os.path.abspath(f) != idle_abs:
-                try:
-                    os.remove(f)
-                except Exception:
-                    pass
+        _cleanup_playable_outputs(output_dir, idle_abs)
 
         config_path = os.path.join(output_dir, "broadcast_config.json")
         config_data = {
@@ -626,6 +700,20 @@ async def start_broadcast(req: BroadcastRequest):
         env["OUTPUT_FOLDER"] = output_dir
         env["CONFIG_PATH"] = config_path
         env["WORKER_REQUIRE_AUDIO"] = "1"
+        # Mode siaran: segment (default) | frame_feed (kontinu, idle interruptible)
+        mode = (
+            os.environ.get("BROADCAST_MODE")
+            or env.get("BROADCAST_MODE")
+            or "segment"
+        ).strip().lower()
+        env["BROADCAST_MODE"] = mode
+        # Pastikan proses API (MuseTalk) juga menulis .ffseg saat frame_feed aktif.
+        if mode in ("frame_feed", "frame-feed", "continuous"):
+            os.environ["BROADCAST_MODE"] = mode
+            os.environ.setdefault("MUSETALK_RAW_FEED", "1")
+            os.environ.setdefault("MUSETALK_SKIP_MP4", "1")
+            env["MUSETALK_RAW_FEED"] = os.environ.get("MUSETALK_RAW_FEED", "1")
+            env["MUSETALK_SKIP_MP4"] = os.environ.get("MUSETALK_SKIP_MP4", "1")
         current_broadcast_env = env
 
         broadcaster_process = _spawn_broadcaster(env)
@@ -653,13 +741,7 @@ async def stop_broadcast():
             pass
 
     # Bersihkan file video sisa dari sesi sebelumnya (kecuali idle video default)
-    import glob
-    for f in glob.glob(os.path.join(output_dir, "**", "*.mp4"), recursive=True):
-        if not f.endswith("idle.mp4") and not f.endswith("namira_idle.mp4"):
-            try:
-                os.remove(f)
-            except Exception:
-                pass
+    _cleanup_playable_outputs(output_dir)
 
     return {"success": True, "status": "stopped"}
 

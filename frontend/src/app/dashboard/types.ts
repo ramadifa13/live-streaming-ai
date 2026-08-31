@@ -14,24 +14,20 @@ export interface Product {
   faq?: string;
   targetAudience?: string;
   copywriting?: string;
-}
-
-export interface BackendProduct {
-  id: string;
-  name: string;
-  price: number | string;
-  stock?: number;
-  category?: string;
-  sku?: string;
-  image?: string;
-  bannerImage?: string;
-  link?: string;
-  description?: string;
-  benefits?: string;
-  usage?: string;
-  faq?: string;
-  targetAudience?: string;
-  copywriting?: string;
+  scriptBank?: Array<{
+    speech: string;
+    topic: string;
+    mode: string;
+    action?: string;
+    emotion?: string;
+    intent?: string;
+    ctaType?: string;
+  }>;
+  faqPack?: Array<{
+    category: string;
+    triggers: string[];
+    answers: string[];
+  }>;
 }
 
 export interface CsvRawItem {

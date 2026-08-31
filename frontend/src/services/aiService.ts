@@ -39,6 +39,53 @@ export const aiService = {
     return await res.blob();
   },
 
+  async prepareProduct(params: {
+    name: string;
+    price?: string | number;
+    category?: string;
+    description?: string;
+    benefits?: string;
+    usage?: string;
+    faq?: string;
+    stock?: number;
+    sku?: string;
+    link?: string;
+    targetAudience?: string;
+    copywriting?: string;
+    bannerImage?: string;
+    avatarName?: string;
+    tone?: string;
+  }): Promise<{
+    scriptBank: Product["scriptBank"];
+    faqPack: Product["faqPack"];
+    enriched: {
+      benefits?: string;
+      usage?: string;
+      faq?: string;
+      targetAudience?: string;
+      copywriting?: string;
+    };
+    engine: string;
+    count: number;
+  }> {
+    const res = await fetch("/api/ai/prepare-product", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || !json?.success) {
+      throw new Error(json?.error || "Gagal menyiapkan script bank");
+    }
+    return {
+      scriptBank: json.data?.scriptBank || [],
+      faqPack: json.data?.faqPack || [],
+      enriched: json.data?.enriched || {},
+      engine: json.data?.engine || "local",
+      count: Number(json.data?.count || 0),
+    };
+  },
+
   async generateLiveSalesScript(params: {
     activeProduct: Product;
     avatarName: string;

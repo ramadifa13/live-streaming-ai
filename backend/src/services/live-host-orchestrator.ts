@@ -1,15 +1,36 @@
-import prisma from "../lib/prisma.js";
 import {
   forwardToRunPodGPU,
   getRunPodQueueStatus,
 } from "./runpod-bridge.js";
 import {
   generateHostResponse,
+  generateScriptBankLines,
   getBrainBackoffMs,
+  liveBrainDuringLive,
+  liveBrainRefillWhenLow,
   type HostIntent,
   type HostMode,
   type HostResponse,
+  type SalesBrainInput,
 } from "./groq-brain.js";
+import {
+  buildDefaultFaqPack,
+  buildLocalCommentResponse,
+  commentNeedsLlm,
+  emptyScriptBank,
+  FILLER_TOPICS,
+  mergeScriptLines,
+  nextRhythmTopic,
+  phasePreferTopics,
+  recycleLocalScriptBank,
+  remainingScriptLines,
+  RHYTHM_SLOTS,
+  seedLocalScriptBank,
+  takeScriptLine,
+  type FaqPackEntry,
+  type ScriptBankState,
+  type ScriptProductFacts,
+} from "./live-script-bank.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
 import { synthesizeSpeech } from "./tts.js";
 
@@ -32,6 +53,59 @@ export interface HostConfig {
    * awal — GPU menganggur tetapi tetap ditagih. Nilai ini dipakai bila ada.
    */
   maxDurationMs?: number;
+  product?: ProductSnapshot;
+  catalog?: ProductSnapshot[];
+}
+
+export interface ProductSnapshot {
+  id: string;
+  name: string;
+  price: number | string;
+  category: string;
+  benefits: string;
+  description: string;
+  usage: string;
+  faq: string;
+  copywriting: string;
+  targetAudience?: string;
+  stock: number;
+  image?: string;
+  bannerImage?: string;
+  scriptBank?: HostResponse[];
+  faqPack?: FaqPackEntry[];
+  updatedAt: number;
+}
+
+export function normalizeClientProduct(raw: unknown): ProductSnapshot | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as Record<string, unknown>;
+  const name = String(p.name || "").trim();
+  if (!name) return null;
+  const scriptBank = Array.isArray(p.scriptBank)
+    ? (p.scriptBank as HostResponse[]).filter(
+        (line) => line && typeof line.speech === "string" && line.speech.trim().length >= 8,
+      )
+    : undefined;
+  return {
+    id: String(p.id || `local_${Date.now()}`),
+    name,
+    price: (p.price as string | number) ?? 0,
+    category: String(p.tag || p.category || "Skincare")
+      .replace(/^General$/i, "Skincare")
+      .replace(/^Lainnya$/i, "Skincare"),
+    benefits: String(p.benefits || ""),
+    description: String(p.description || ""),
+    usage: String(p.usage || ""),
+    faq: String(p.faq || ""),
+    copywriting: String(p.copywriting || ""),
+    targetAudience: p.targetAudience ? String(p.targetAudience) : undefined,
+    stock: Number(p.stock ?? 0),
+    image: p.image ? String(p.image) : undefined,
+    bannerImage: p.bannerImage ? String(p.bannerImage) : undefined,
+    scriptBank,
+    faqPack: Array.isArray(p.faqPack) ? (p.faqPack as FaqPackEntry[]) : undefined,
+    updatedAt: Date.now(),
+  };
 }
 
 export interface PendingComment {
@@ -42,29 +116,6 @@ export interface PendingComment {
   priority: number;
   intent: HostIntent;
   dedupeKey: string;
-}
-
-interface ProductSnapshot {
-  id: string;
-  name: string;
-  price: number | string;
-  category: string;
-  benefits: string;
-  description: string;
-  usage: string;
-  faq: string;
-  copywriting: string;
-  stock: number;
-  updatedAt: number;
-}
-
-interface CatalogItem {
-  id: string;
-  name: string;
-  price: number | string;
-  category?: string;
-  benefits?: string;
-  description?: string;
 }
 
 interface HostMemory {
@@ -113,7 +164,7 @@ interface HostRuntimeState {
   lastActivityAt: number;
 
   product?: ProductSnapshot;
-  catalog: CatalogItem[];
+  catalog: ProductSnapshot[];
   productCacheExpiresAt: number;
 
   memory: HostMemory;
@@ -124,12 +175,14 @@ interface HostRuntimeState {
   modeStartedAt: number;
   showTurn: number;
   topicCursor: number;
+  slotCursor: number;
 
   counters: RuntimeCounters;
   lastQueue: QueueMetrics;
 
   // Last known speech queue estimate. Used even if worker API temporarily errors.
   estimatedBufferSeconds: number;
+  scriptBank: ScriptBankState;
 }
 
 interface PlanPolicy {
@@ -219,9 +272,25 @@ const COMMENT_SCAN_MS = 400;
 const GENERATION_BACKOFF_MS = 800;
 /** Batas idle di siaran sebelum orchestrator boost generate (detik). */
 export const MAX_ONAIR_IDLE_SECONDS = 5;
+const SCRIPT_BANK_LOW = Number(process.env.LIVE_SCRIPT_BANK_LOW || 8);
+const SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS = Number(
+  process.env.LIVE_SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS || 90_000,
+);
+const SCRIPT_BANK_LLM_REFILL_MAX = Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_MAX || 8);
+const RHYTHM_SLOT_ATTEMPTS = RHYTHM_SLOTS.length;
 
-async function awaitBrainReady(): Promise<void> {
-  const waitMs = getBrainBackoffMs();
+function topicModesFor(topic: string): HostMode[] {
+  const found = AUTONOMOUS_TOPIC_BANK.find((item) => item.topic === topic);
+  if (found) return found.modes;
+  if (FILLER_TOPICS.has(topic)) return ["ENGAGE", "SOCIAL"];
+  if (topic === "promo_pitch" || topic === "sold_out") return ["SELL", "ENGAGE"];
+  if (topic === "banner_callout") return ["ENGAGE", "SELL"];
+  if (topic === "deflection") return ["SOCIAL", "ENGAGE"];
+  return ["ENGAGE", "SELL"];
+}
+
+async function awaitBrainReady(sessionId?: string): Promise<void> {
+  const waitMs = getBrainBackoffMs(sessionId);
   if (waitMs > 0) await sleep(waitMs);
 }
 
@@ -482,16 +551,31 @@ class LiveHostOrchestrator {
     this.sessions.clear();
   }
 
-  public switchProduct(sessionId: string, productId: string): void {
+  public switchProduct(sessionId: string, productId: string, snapshot?: ProductSnapshot): void {
     const state = this.sessions.get(sessionId);
     if (!state) return;
 
+    const found =
+      snapshot ||
+      state.catalog.find((item) => item.id === productId) ||
+      (state.config.product?.id === productId ? state.config.product : undefined);
+
     state.config.productId = productId;
-    state.product = undefined;
-    state.productCacheExpiresAt = 0;
+    if (found) {
+      state.config.product = found;
+      state.product = { ...found, updatedAt: Date.now() };
+    } else {
+      state.product = undefined;
+    }
+    state.productCacheExpiresAt = found ? Date.now() + PRODUCT_CACHE_TTL_MS : 0;
+    state.scriptBank = emptyScriptBank(productId);
+    if (found?.scriptBank?.length) {
+      state.scriptBank.lines = found.scriptBank.slice();
+    }
     state.memory.topics.push("product_switch");
     state.currentMode = "ENGAGE";
     state.modeStartedAt = Date.now();
+    state.slotCursor = 0;
 
     console.log(
       `[LiveHost] 🔄 Product switched: session=${sessionId}, product=${productId}`,
@@ -536,8 +620,9 @@ class LiveHostOrchestrator {
       preliveRunning: false,
       startedAt: now,
       lastActivityAt: now,
-      catalog: [],
-      productCacheExpiresAt: 0,
+      catalog: config.catalog?.length ? config.catalog : config.product ? [config.product] : [],
+      productCacheExpiresAt: config.product ? Date.now() + PRODUCT_CACHE_TTL_MS : 0,
+      product: config.product,
       memory: {
         utterances: [],
         topics: [],
@@ -555,6 +640,7 @@ class LiveHostOrchestrator {
       modeStartedAt: now,
       showTurn: 0,
       topicCursor: 0,
+      slotCursor: 0,
       counters: {
         generated: 0,
         submitted: 0,
@@ -576,6 +662,7 @@ class LiveHostOrchestrator {
         warmedUp: false,
       },
       estimatedBufferSeconds: 0,
+      scriptBank: emptyScriptBank(config.productId),
     };
 
     this.sessions.set(config.sessionId, state);
@@ -750,6 +837,179 @@ class LiveHostOrchestrator {
     }
   }
 
+  private formatProductPrice(product: ProductSnapshot): string {
+    const numeric = Number(product.price);
+    if (Number.isFinite(numeric)) return `Rp${numeric.toLocaleString("id-ID")}`;
+    return String(product.price || "harga live");
+  }
+
+  private toScriptFacts(product: ProductSnapshot): ScriptProductFacts {
+    return {
+      id: product.id,
+      name: product.name,
+      price: this.formatProductPrice(product),
+      category: product.category,
+      benefits: product.benefits,
+      description: product.description,
+      usage: product.usage,
+      faq: product.faq,
+      stock: product.stock,
+      copywriting: product.copywriting,
+      targetAudience: product.targetAudience,
+      faqPack: product.faqPack?.length ? product.faqPack : buildDefaultFaqPack({
+        id: product.id,
+        name: product.name,
+        price: this.formatProductPrice(product),
+        category: product.category,
+        benefits: product.benefits,
+        description: product.description,
+        usage: product.usage,
+        faq: product.faq,
+        stock: product.stock,
+      }),
+      hasBanner: Boolean(product.bannerImage),
+    };
+  }
+
+  private toBrainInput(
+    state: HostRuntimeState,
+    product: ProductSnapshot,
+    extra: Pick<SalesBrainInput, "userQuestion"> & Partial<SalesBrainInput>,
+  ): SalesBrainInput {
+    return {
+      avatarName: state.config.avatarName,
+      tone: state.config.tone,
+      productName: product.name,
+      productPrice: this.formatProductPrice(product),
+      productDescription: product.description,
+      productCategory: product.category,
+      productBenefits: product.benefits,
+      productUsage: product.usage,
+      productFaq: product.faq,
+      productStock: product.stock,
+      allProducts: state.catalog,
+      recentUtterances: state.memory.utterances.slice(-18),
+      recentTopics: state.memory.topics.slice(-12),
+      recentCTAs: state.memory.ctas.slice(-8),
+      recentClaims: state.memory.claims.slice(-20),
+      avoidPhrases: this.buildAvoidPhrases(state),
+      avoidTopics: state.memory.topics.slice(-10),
+      elapsedMinutes: Math.round(this.elapsedMs(state) / 60_000),
+      plan: parsePlan(state.config.plan),
+      sessionId: state.config.sessionId,
+      ...extra,
+    };
+  }
+
+  private seedScriptBank(state: HostRuntimeState, product: ProductSnapshot): void {
+    if (state.scriptBank.productId !== product.id) {
+      state.scriptBank = emptyScriptBank(product.id);
+    }
+    if (remainingScriptLines(state.scriptBank) > 0) return;
+
+    if (product.scriptBank && product.scriptBank.length > 0) {
+      state.scriptBank.lines = product.scriptBank.slice();
+      // Pastikan selalu ada filler lokal agar buffer rendah tidak idle.
+      mergeScriptLines(
+        state.scriptBank,
+        recycleLocalScriptBank(this.toScriptFacts(product), state.catalog).filter((l) =>
+          FILLER_TOPICS.has(l.topic),
+        ),
+        state.memory.utterances.slice(-12),
+      );
+    } else {
+      state.scriptBank.lines = seedLocalScriptBank(this.toScriptFacts(product), state.catalog);
+    }
+    console.log(
+      `[LiveHost] Script bank seeded: session=${state.config.sessionId} lines=${state.scriptBank.lines.length} source=${product.scriptBank?.length ? "payload+local-filler" : "local"}`,
+    );
+  }
+
+  private maybeRefillScriptBank(sessionId: string): void {
+    const state = this.sessions.get(sessionId);
+    if (!state || !state.product || state.scriptBank.refillInFlight) return;
+
+    const remaining = remainingScriptLines(state.scriptBank);
+    if (remaining > SCRIPT_BANK_LOW) return;
+
+    // 1) Selalu recycle lokal dulu — anti-idle tanpa rate limit.
+    const recycled = recycleLocalScriptBank(
+      this.toScriptFacts(state.product),
+      state.catalog,
+      state.memory.utterances.slice(-24),
+    );
+    const addedLocal = mergeScriptLines(
+      state.scriptBank,
+      recycled,
+      state.memory.utterances.slice(-24),
+    );
+    state.scriptBank.lastRefillAt = Date.now();
+    if (addedLocal > 0) {
+      console.log(
+        `[LiveHost] Script bank local recycle +${addedLocal} (now ${remainingScriptLines(state.scriptBank)}) session=${sessionId}`,
+      );
+    } else if (remaining === 0) {
+      this.seedScriptBank(state, state.product);
+    }
+
+    const stillLow = remainingScriptLines(state.scriptBank) <= Math.max(4, Math.floor(SCRIPT_BANK_LOW / 2));
+    const allowLlm =
+      liveBrainDuringLive() ||
+      (liveBrainRefillWhenLow() && stillLow);
+    if (!allowLlm) return;
+
+    const bank = state.scriptBank;
+    const cooled =
+      Date.now() - (bank.lastLlmRefillAt || 0) >= SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS;
+    const underCap = (bank.llmRefillCount || 0) < SCRIPT_BANK_LLM_REFILL_MAX;
+    if (!cooled || !underCap) return;
+
+    state.scriptBank.refillInFlight = true;
+    void this.refillScriptBank(sessionId).finally(() => {
+      const current = this.sessions.get(sessionId);
+      if (current) current.scriptBank.refillInFlight = false;
+    });
+  }
+
+  private async refillScriptBank(sessionId: string): Promise<void> {
+    const state = this.sessions.get(sessionId);
+    if (!state) return;
+    const product = state.product || (await this.ensureProductSnapshot(state));
+    if (!product) return;
+
+    await awaitBrainReady(sessionId);
+    const lines = await generateScriptBankLines(
+      this.toBrainInput(state, product, {
+        userQuestion:
+          "Isi ulang bank ucapan otonom. Bahasa natural host live, jangan kaku/robot, jangan mengarang fakta.",
+        requestedMode: state.currentMode,
+        requestedIntent: "SELL",
+        mode: state.currentMode,
+        avoidTopics: state.memory.topics.slice(-8),
+      }),
+    );
+    const localBoost = recycleLocalScriptBank(
+      this.toScriptFacts(product),
+      state.catalog,
+      state.memory.utterances.slice(-24),
+    );
+    const added = mergeScriptLines(
+      state.scriptBank,
+      [...lines, ...localBoost],
+      state.memory.utterances.slice(-24),
+    );
+    state.scriptBank.lastRefillAt = Date.now();
+    if (lines.length > 0) {
+      state.scriptBank.llmRefillCount = (state.scriptBank.llmRefillCount || 0) + 1;
+      state.scriptBank.lastLlmRefillAt = Date.now();
+    }
+    if (added > 0) {
+      console.log(
+        `[LiveHost] Script bank refill +${added} llm=${lines.length} (now ${remainingScriptLines(state.scriptBank)}) session=${sessionId}`,
+      );
+    }
+  }
+
   private async generateAndQueueNext(
     sessionId: string,
     source: "prelive" | "live",
@@ -760,44 +1020,53 @@ class LiveHostOrchestrator {
     const product = await this.ensureProductSnapshot(state);
     if (!product) throw new Error("Product aktif tidak ditemukan");
 
+    this.seedScriptBank(state, product);
+    this.maybeRefillScriptBank(sessionId);
+
     const topic = this.chooseAutonomousTopic(state);
     const requestedMode = this.resolveModeForTopic(state, topic.modes);
+    const recent = state.memory.utterances.slice(-18);
+    const recentTopics = state.memory.topics.slice(-3);
+    const recentCtas = state.memory.ctas.slice(-3);
+    const avoidCta = recentCtas.filter((c) => c && c !== "NONE").length >= 1;
+    const bufferCritical =
+      state.lastQueue.queuedVideos === 0 ||
+      (state.lastQueue.bufferSeconds > 0 && state.lastQueue.bufferSeconds <= 4);
+    // Filler hanya saat kritis — jangan prefer hanya karena ritme/slot filler.
+    const preferFiller = bufferCritical;
 
-    await awaitBrainReady();
-    let hostResponse: HostResponse;
-    try {
-      hostResponse = await generateHostResponse({
-        userQuestion: `Buat satu segmen bicara otonom untuk live. Topic: ${topic.topic}. Tujuan segmen: ${topic.prompt}. Jangan terdengar seperti membaca skrip.`,
-        avatarName: state.config.avatarName,
-        tone: state.config.tone,
-        productName: product.name,
-        productPrice: `Rp${Number(product.price).toLocaleString("id-ID")}`,
-        productDescription: product.description,
-        productCategory: product.category,
-        productBenefits: product.benefits,
-        productUsage: product.usage,
-        productFaq: product.faq,
-        productStock: product.stock,
-        allProducts: state.catalog,
-        recentUtterances: state.memory.utterances.slice(-18),
-        recentTopics: state.memory.topics.slice(-12),
-        recentCTAs: state.memory.ctas.slice(-8),
-        recentClaims: state.memory.claims.slice(-20),
-        avoidPhrases: this.buildAvoidPhrases(state),
-        avoidTopics: state.memory.topics.slice(-10),
-        mode: requestedMode,
-        requestedMode,
-        requestedIntent: "SELL",
-        elapsedMinutes: Math.round(this.elapsedMs(state) / 60_000),
-        audienceCount: undefined,
-        plan: parsePlan(state.config.plan),
-      });
-    } catch (err: any) {
+    const elapsedMinutes = Math.round(this.elapsedMs(state) / 60_000);
+    const phaseTopics = phasePreferTopics(elapsedMinutes);
+
+    let hostResponse =
+      takeScriptLine(state.scriptBank, recent, {
+        preferMode: requestedMode,
+        preferTopic: topic.topic,
+        preferTopics: [topic.topic, ...phaseTopics],
+        avoidTopics: recentTopics,
+        preferFiller,
+        avoidCta,
+        recentTopics,
+      }) ||
+      takeScriptLine(state.scriptBank, recent, {
+        preferMode: requestedMode,
+        preferFiller: false,
+        avoidCta,
+        recentTopics,
+      }) ||
+      takeScriptLine(state.scriptBank, recent, {}) ||
+      recycleLocalScriptBank(this.toScriptFacts(product), state.catalog, recent)[0];
+
+    if (!hostResponse) {
       state.counters.failed++;
-      console.warn(`[LiveHost] Autonomous generation error: ${err?.message || err}`);
       await sleep(GENERATION_BACKOFF_MS);
       return;
     }
+
+    hostResponse = {
+      ...hostResponse,
+      topic: hostResponse.topic || topic.topic,
+    };
 
     const accepted = await this.processHostResponse(
       sessionId,
@@ -808,10 +1077,27 @@ class LiveHostOrchestrator {
 
     if (!accepted) {
       state.counters.duplicateResponsesPrevented++;
-      // Jangan menambah lagi dalam satu tick. Response generator berikutnya akan
-      // mendapatkan memory yang sama + topic yang berbeda.
+      const retry =
+        takeScriptLine(state.scriptBank, recent, {
+          preferMode: requestedMode,
+          avoidTopics: [hostResponse.topic, ...recentTopics],
+          avoidCta: true,
+        }) ||
+        takeScriptLine(state.scriptBank, recent, {
+          avoidTopics: [hostResponse.topic, ...recentTopics],
+        }) ||
+        takeScriptLine(state.scriptBank, recent, { preferFiller: true });
+      if (retry) {
+        const retryAccepted = await this.processHostResponse(
+          sessionId,
+          retry,
+          source,
+          retry.topic || topic.topic,
+        );
+        if (retryAccepted) return;
+        state.counters.duplicateResponsesPrevented++;
+      }
       await sleep(150);
-      return;
     }
   }
 
@@ -826,49 +1112,46 @@ class LiveHostOrchestrator {
     if (!product) return;
 
     const author = comment.authorName?.trim();
-    const userQuestion = [
-      `Ada komentar baru dari ${author ? `Kak ${author}` : "penonton"}.`,
-      `Komentar: "${comment.text}".`,
-      "Baca konteks komentar dengan wajar, jangan mengulang isi komentar panjang-panjang.",
-      "Jawab kebutuhan penonton terlebih dahulu; CTA hanya jika benar-benar relevan.",
-    ].join(" ");
+    const facts = this.toScriptFacts(product);
+    const recent = state.memory.utterances.slice(-24);
+    const useLlm = liveBrainDuringLive() && commentNeedsLlm(comment.intent, comment.text);
+    if (!useLlm) {
+      console.log(
+        `[LiveHost] comment local intent=${comment.intent} from=${author || "Audience"}`,
+      );
+    }
 
-    const response = await (async () => {
-      await awaitBrainReady();
+    let response: HostResponse | null = null;
+    if (!useLlm) {
+      response = buildLocalCommentResponse(facts, comment.text, comment.intent, author, recent);
+    } else {
+      const userQuestion = [
+        `Ada komentar baru dari ${author ? `Kak ${author}` : "penonton"}.`,
+        `Komentar: "${comment.text}".`,
+        "Baca konteks komentar dengan wajar, jangan mengulang isi komentar panjang-panjang.",
+        "Jawab kebutuhan penonton terlebih dahulu; CTA hanya jika benar-benar relevan.",
+      ].join(" ");
+
+      await awaitBrainReady(sessionId);
       try {
-        return await generateHostResponse({
-          userQuestion,
-          authorName: author,
-          avatarName: state.config.avatarName,
-          tone: state.config.tone,
-          productName: product.name,
-          productPrice: `Rp${Number(product.price).toLocaleString("id-ID")}`,
-          productDescription: product.description,
-          productCategory: product.category,
-          productBenefits: product.benefits,
-          productUsage: product.usage,
-          productFaq: product.faq,
-          productStock: product.stock,
-          allProducts: state.catalog,
-          recentUtterances: state.memory.utterances.slice(-24),
-          recentTopics: state.memory.topics.slice(-15),
-          recentCTAs: state.memory.ctas.slice(-8),
-          recentClaims: state.memory.claims.slice(-20),
-          avoidPhrases: this.buildAvoidPhrases(state),
-          avoidTopics: state.memory.topics.slice(-10),
-          mode: "QNA",
-          requestedMode: "QNA",
-          requestedIntent: comment.intent,
-          elapsedMinutes: Math.round(this.elapsedMs(state) / 60_000),
-          plan: parsePlan(state.config.plan),
-        });
+        response = await generateHostResponse(
+          this.toBrainInput(state, product, {
+            userQuestion,
+            authorName: author,
+            mode: "QNA",
+            requestedMode: "QNA",
+            requestedIntent: comment.intent,
+            recentUtterances: recent,
+            recentTopics: state.memory.topics.slice(-15),
+          }),
+        );
       } catch (err: any) {
         state.counters.failed++;
         console.warn(`[LiveHost] Comment generation error: ${err?.message || err}`);
+        response = buildLocalCommentResponse(facts, comment.text, comment.intent, author, recent);
         await sleep(GENERATION_BACKOFF_MS);
-        return null;
       }
-    })();
+    }
 
     if (!response) return;
 
@@ -908,10 +1191,6 @@ class LiveHostOrchestrator {
     );
 
     if (maxSimilarity >= 0.88 || this.hasRepeatedStructure(speech, recent)) {
-      return false;
-    }
-
-    if (response.topic && state.memory.topics.slice(-5).includes(normalizeText(response.topic))) {
       return false;
     }
 
@@ -1025,11 +1304,44 @@ class LiveHostOrchestrator {
   }
 
   private chooseAutonomousTopic(state: HostRuntimeState) {
+    const recent = new Set(state.memory.topics.slice(-3));
+    const elapsedMinutes = Math.round(this.elapsedMs(state) / 60_000);
+    const phaseBoost = new Set(phasePreferTopics(elapsedMinutes));
+    const bufferCritical =
+      state.lastQueue.queuedVideos === 0 ||
+      (state.lastQueue.bufferSeconds > 0 && state.lastQueue.bufferSeconds <= 4);
+
+    // Buffer kritis → topik pendek berbasis fakta, bukan stall filler.
+    if (bufferCritical) {
+      const shortTopics = ["micro_tip", "benefit", "how_to_use", "value", "faq"];
+      for (const topic of shortTopics) {
+        if (recent.has(topic)) continue;
+        return {
+          topic,
+          modes: topicModesFor(topic),
+          prompt: "buffer kritis: isi pendek berbasis fakta produk",
+        };
+      }
+    }
+
+    // Ritme slot: putar fungsi, skip yang baru dipakai.
+    for (let attempt = 0; attempt < RHYTHM_SLOT_ATTEMPTS; attempt++) {
+      const { topic, nextCursor } = nextRhythmTopic(state.slotCursor);
+      state.slotCursor = nextCursor;
+      if (recent.has(topic)) continue;
+      if (FILLER_TOPICS.has(topic)) continue;
+      const modes = topicModesFor(topic);
+      return {
+        topic,
+        modes,
+        prompt: phaseBoost.has(topic)
+          ? `fase sesi menit ${elapsedMinutes}: prefer ${topic}`
+          : `ikuti ritme slot: ${topic}`,
+      };
+    }
+
     const mode = this.chooseNextMode(state);
     const candidates = AUTONOMOUS_TOPIC_BANK.filter((item) => item.modes.includes(mode));
-    const recent = new Set(state.memory.topics.slice(-12));
-
-    // Cari kandidat pertama yang belum dipakai baru-baru ini.
     for (let offset = 0; offset < AUTONOMOUS_TOPIC_BANK.length; offset++) {
       const index = (state.topicCursor + offset) % AUTONOMOUS_TOPIC_BANK.length;
       const candidate = AUTONOMOUS_TOPIC_BANK[index]!;
@@ -1039,8 +1351,6 @@ class LiveHostOrchestrator {
       }
     }
 
-    // Bila semua topic baru saja dipakai, putar ulang format setelah memory window,
-    // bukan langsung kalimat yang sama.
     const fallback = candidates[0] || AUTONOMOUS_TOPIC_BANK[state.topicCursor % AUTONOMOUS_TOPIC_BANK.length]!;
     state.topicCursor = (state.topicCursor + 1) % AUTONOMOUS_TOPIC_BANK.length;
     return fallback;
@@ -1194,51 +1504,19 @@ class LiveHostOrchestrator {
   ): Promise<ProductSnapshot | null> {
     if (state.product && Date.now() < state.productCacheExpiresAt) return state.product;
 
-    const product = await prisma.product.findUnique({
-      where: { id: state.config.productId },
-    });
-    if (!product) return null;
+    const found =
+      (state.config.product?.id === state.config.productId ? state.config.product : undefined) ||
+      state.catalog.find((item) => item.id === state.config.productId) ||
+      state.config.product ||
+      state.catalog[0];
 
-    const p = product as any;
-    state.product = {
-      id: String(p.id),
-      name: String(p.name || "Produk"),
-      price: p.price ?? 0,
-      category: String(p.category || "General"),
-      benefits: String(p.benefits || ""),
-      description: String(p.description || ""),
-      usage: String(p.usage || ""),
-      faq: String(p.faq || ""),
-      copywriting: String(p.copywriting || ""),
-      stock: Number(p.stock ?? 0),
-      updatedAt: Date.now(),
-    };
+    if (!found) return state.product || null;
+
+    state.product = { ...found, updatedAt: Date.now() };
     state.productCacheExpiresAt = Date.now() + PRODUCT_CACHE_TTL_MS;
-
-    try {
-      const products = await prisma.product.findMany({
-        take: 8,
-        select: {
-          id: true,
-          name: true,
-          price: true,
-          category: true,
-          benefits: true,
-          description: true,
-        },
-      });
-      state.catalog = products.map((item: any) => ({
-        id: String(item.id),
-        name: String(item.name || "Produk"),
-        price: item.price ?? 0,
-        category: item.category || "General",
-        benefits: item.benefits || "",
-        description: item.description || "",
-      }));
-    } catch (err: any) {
-      console.warn(`[LiveHost] Catalog refresh gagal: ${err?.message || err}`);
+    if (!state.catalog.some((item) => item.id === found.id)) {
+      state.catalog = [found, ...state.catalog];
     }
-
     return state.product;
   }
 
@@ -1346,7 +1624,7 @@ class LiveHostOrchestrator {
     sessionId: string,
     text: string,
     audioBase64?: string,
-    action?: string,
+    action?: string, // diabaikan — pose dikunci TALK_EXPRESSIVE untuk kontinuitas
     priority = false,
   ): Promise<void> {
     const state = this.sessions.get(sessionId);
@@ -1356,10 +1634,14 @@ class LiveHostOrchestrator {
       ? `${state.config.avatarName.toLowerCase().trim()}.png`
       : "namira.png";
 
-    const gesture = (action || "TALK_EXPRESSIVE").toUpperCase().replace(/[^A-Z_]/g, "");
+    void action; // gesture besar sengaja tidak diteruskan ke worker
+
+    // Pose continuity: kunci TALK_EXPRESSIVE. Gesture WAVE/RAISE_HAND ganti clip
+    // sumber dan membuat tangan "loncat" antar segmen.
+    const gesture = "TALK_EXPRESSIVE";
     const taggedText = /^\s*\[[A-Z_]+\]/.test(text)
-      ? text
-      : `[${gesture || "TALK_EXPRESSIVE"}] ${text}`.trim();
+      ? text.replace(/^\s*\[[A-Z_]+\]/, "[TALK_EXPRESSIVE]")
+      : `[TALK_EXPRESSIVE] ${text}`.trim();
 
     try {
       await forwardToRunPodGPU(state.config.podId || process.env.RUNPOD_POD_ID, {
@@ -1372,7 +1654,7 @@ class LiveHostOrchestrator {
         streamKey: state.config.streamKey,
         requireWorker: true,
         wait: false,
-        action: gesture || "TALK_EXPRESSIVE",
+        action: gesture,
         priority,
       });
 

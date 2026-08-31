@@ -1,15 +1,18 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Image from "next/image";
 import { X, Upload, Image as ImageIcon, ShoppingBag, Link2 } from "lucide-react";
 import { useProductStore } from "@/stores/useProductStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
+import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
+import { PRODUCT_CATEGORIES } from "@/lib/product-categories";
 
 export const AddProductModal: React.FC = () => {
   const showAddProductModal = useDashboardUIStore((state) => state.showAddProductModal);
   const setShowAddProductModal = useDashboardUIStore((state) => state.setShowAddProductModal);
   const showToast = useDashboardUIStore((state) => state.showToast);
+  const isLiveActive = useLiveSessionStore((state) => state.isLiveActive);
 
   const newProductForm = useProductStore((state) => state.newProductForm);
   const setNewProductForm = useProductStore((state) => state.setNewProductForm);
@@ -17,15 +20,26 @@ export const AddProductModal: React.FC = () => {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  if (!showAddProductModal) return null;
+  useEffect(() => {
+    if (showAddProductModal && isLiveActive) {
+      setShowAddProductModal(false);
+      showToast("Produk tidak bisa ditambah saat live sedang aktif. Akhiri live dulu.");
+    }
+  }, [showAddProductModal, isLiveActive, setShowAddProductModal, showToast]);
+
+  if (!showAddProductModal || isLiveActive) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLiveActive) {
+      showToast("Produk tidak bisa ditambah saat live sedang aktif. Akhiri live dulu.");
+      return;
+    }
     setIsSubmitting(true);
     try {
       await createProduct();
       setShowAddProductModal(false);
-      showToast("Produk berhasil disimpan dan RAG Knowledge di-generate oleh AI!");
+      showToast("Produk tersimpan di perangkat ini. Script bank disiapkan untuk live.");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal menyimpan produk");
     } finally {
@@ -45,7 +59,7 @@ export const AddProductModal: React.FC = () => {
             <div>
               <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">Tambah Produk Baru</h3>
               <p className="text-[11px] text-slate-400">
-                Data produk otomatis diolah oleh LLM menjadi RAG Knowledge Base &amp; naskah copywriting
+                Data produk hanya di perangkat Anda (pay per use). LLM dipakai sekali untuk naskah host, tidak disimpan di server.
               </p>
             </div>
           </div>
@@ -179,17 +193,11 @@ export const AddProductModal: React.FC = () => {
                   onChange={(e) => setNewProductForm({ tag: e.target.value })}
                   className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] px-3 py-2.5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 text-xs cursor-pointer transition font-medium"
                 >
-                  <option value="Skincare"> Skincare</option>
-                  <option value="Beauty & Makeup"> Beauty & Makeup</option>
-                  <option value="Fashion & Pakaian"> Fashion & Pakaian</option>
-                  <option value="Hijab & Muslim"> Hijab & Muslim</option>
-                  <option value="Kesehatan & Herbal"> Kesehatan & Herbal</option>
-                  <option value="Elektronik & Gadget"> Elektronik & Gadget</option>
-                  <option value="Makanan & Minuman"> Makanan & Minuman</option>
-                  <option value="Ibu & Bayi"> Ibu & Bayi</option>
-                  <option value="Perlengkapan Rumah"> Perlengkapan Rumah</option>
-                  <option value="Aksesoris & Sepatu"> Aksesoris & Sepatu</option>
-                  <option value="General"> General / Lainnya</option>
+                  {PRODUCT_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -245,13 +253,14 @@ export const AddProductModal: React.FC = () => {
             
             <div>
               <label className="block text-slate-200 font-bold text-[11px] mb-1">
-                9. Keunggulan &amp; Manfaat Utama <span className="text-slate-400 font-normal">(Opsional)</span>
+                9. Keunggulan &amp; Manfaat Utama{" "}
+                <span className="text-slate-400 font-normal">(Opsional — kosong = diisi AI)</span>
               </label>
               <textarea
                 rows={2}
                 value={newProductForm.benefits}
                 onChange={(e) => setNewProductForm({ benefits: e.target.value })}
-                placeholder="Contoh: Mencerahkan noda hitam dalam 14 hari, merawat skin barrier..."
+                placeholder="Kosongkan jika ingin AI melengkapi dari deskripsi..."
                 className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] p-2.5 text-slate-200 text-xs placeholder-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 font-sans transition"
               />
             </div>
@@ -259,13 +268,27 @@ export const AddProductModal: React.FC = () => {
             
             <div>
               <label className="block text-slate-200 font-bold text-[11px] mb-1">
-                10. Petunjuk &amp; Cara Pemakaian <span className="text-slate-400 font-normal">(Opsional)</span>
+                10. Petunjuk &amp; Cara Pemakaian{" "}
+                <span className="text-slate-400 font-normal">(Opsional — kosong = diisi AI)</span>
               </label>
               <textarea
                 rows={2}
                 value={newProductForm.usage}
                 onChange={(e) => setNewProductForm({ usage: e.target.value })}
-                placeholder="Contoh: Gunakan 2-3 tetes pada wajah bersih setiap pagi & malam..."
+                placeholder="Kosongkan jika ingin AI melengkapi dari deskripsi..."
+                className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] p-2.5 text-slate-200 text-xs placeholder-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 font-sans transition"
+              />
+            </div>
+
+            <div>
+              <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                10b. FAQ singkat <span className="text-slate-400 font-normal">(Opsional — kosong = diisi AI)</span>
+              </label>
+              <textarea
+                rows={2}
+                value={newProductForm.faq}
+                onChange={(e) => setNewProductForm({ faq: e.target.value })}
+                placeholder="Contoh: Aman untuk kulit sensitif? Boleh dipakai pagi-malam?"
                 className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] p-2.5 text-slate-200 text-xs placeholder-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 font-sans transition"
               />
             </div>
@@ -275,7 +298,7 @@ export const AddProductModal: React.FC = () => {
               <div className="flex items-center justify-between mb-2">
                 <label className="text-slate-200 font-bold text-[11px] flex items-center gap-1">
                   <span>11. Gambar Banner Promosi</span>
-                  <span className="text-slate-400 font-normal">(Opsional)</span>
+                  <span className="text-slate-400 font-normal">(Opsional — overlay atas &amp; bawah host)</span>
                 </label>
                 {newProductForm.bannerImage ? (
                   <div className="flex items-center gap-2">
@@ -361,7 +384,7 @@ export const AddProductModal: React.FC = () => {
                 disabled={isSubmitting}
                 className="rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 font-bold text-white hover:brightness-110 shadow-lg shadow-blue-600/30 transition active:scale-95 cursor-pointer disabled:opacity-70 whitespace-nowrap"
               >
-                {isSubmitting ? "Menyimpan..." : "Simpan Produk & Generate RAG"}
+                {isSubmitting ? "Menyiapkan naskah host..." : "Simpan & siapkan script bank"}
               </button>
             </div>
           </div>

@@ -20,7 +20,7 @@ import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { useProductStore } from "@/stores/useProductStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
-import { liveSessionService } from "@/services/liveSessionService";
+import { liveSessionService, toLiveProductSnapshot } from "@/services/liveSessionService";
 import { oauthService } from "@/services/oauthService";
 import { copyToClipboard } from "@/utils/clipboard";
 import { formatTime } from "@/utils/formatters";
@@ -60,6 +60,7 @@ export const LiveControlBar: React.FC = () => {
   const metrics = useLiveSessionStore((state) => state.metrics);
   const connectingStageText = useLiveSessionStore((state) => state.connectingStageText);
   const addChatMessage = useLiveSessionStore((state) => state.addChatMessage);
+  const currentLiveSessionId = useLiveSessionStore((state) => state.currentLiveSessionId);
 
   const connectingAbortRef = useRef<AbortController | null>(null);
 
@@ -69,8 +70,10 @@ export const LiveControlBar: React.FC = () => {
   };
 
   const handleSwitchNextProduct = async () => {
+    if (products.length === 0) return;
     const nextIdx = (products.findIndex((p) => p.id === activeFeaturedProduct.id) + 1) % products.length;
     const nextProd = products[nextIdx];
+    if (!nextProd) return;
     setActiveFeaturedProduct(nextProd);
     showToast(`Produk aktif siaran diubah ke: ${nextProd.name}`);
 
@@ -87,11 +90,24 @@ export const LiveControlBar: React.FC = () => {
     };
     addChatMessage(switchMsg);
 
-    await liveSessionService.switchProduct(nextProd.id || "1", nextProd.name);
+    await liveSessionService.switchProduct(
+      nextProd.id || "1",
+      nextProd.name,
+      toLiveProductSnapshot(nextProd, true),
+      currentLiveSessionId || undefined,
+    );
   };
 
   const handleStartLive = async () => {
     if (useLiveSessionStore.getState().isConnectingLive) return;
+    if (!activeFeaturedProduct?.name || activeFeaturedProduct.id === "loading") {
+      showToast("Tambah produk dulu (minimal nama + deskripsi) sebelum Go Live.");
+      return;
+    }
+    if (!activeFeaturedProduct.description?.trim()) {
+      showToast("Isi deskripsi produk dulu. Manfaat/cara pakai/FAQ bisa dilengkapi AI saat simpan.");
+      return;
+    }
 
     const attemptId = Date.now();
     const controller = new AbortController();
@@ -135,6 +151,10 @@ export const LiveControlBar: React.FC = () => {
           accessToken: connectedAccount?.accessToken,
           liveChatId: connectedAccount?.liveChatId,
           liveVideoId: connectedAccount?.liveVideoId,
+          product: toLiveProductSnapshot(activeFeaturedProduct, true),
+          products: products.map((item) =>
+            toLiveProductSnapshot(item, item.id === activeFeaturedProduct.id),
+          ),
         },
         controller.signal,
       );

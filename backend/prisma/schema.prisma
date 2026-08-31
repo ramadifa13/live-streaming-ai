@@ -7,26 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Product {
-  id             String   @id @default(cuid())
-  name           String
-  description    String?
-  price          Int
-  stock          Int      @default(0)
-  sku            String?
-  category       String?
-  image          String?
-  bannerImage    String?
-  link           String?
-  benefits       String?
-  usage          String?
-  faq            String?
-  targetAudience String?
-  copywriting    String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-}
-
 model Avatar {
   id          String   @id @default(cuid())
   name        String

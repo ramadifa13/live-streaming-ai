@@ -42,6 +42,22 @@ if [ ! -f "$WORKER_DIR/api_server.py" ]; then
 	exit 1
 fi
 
+# Load worker .env (BROADCAST_MODE / MuseTalk flags) bila ada
+if [ -f "$WORKER_DIR/.env" ]; then
+	echo "[INFO] Memuat $WORKER_DIR/.env ..."
+	set -a
+	# shellcheck disable=SC1091
+	source "$WORKER_DIR/.env"
+	set +a
+elif [ -f "/workspace/live-streaming-ai/deploy/.env" ]; then
+	echo "[INFO] Memuat deploy/.env ke worker ..."
+	cp -f /workspace/live-streaming-ai/deploy/.env "$WORKER_DIR/.env"
+	set -a
+	# shellcheck disable=SC1091
+	source "$WORKER_DIR/.env"
+	set +a
+fi
+
 if [ -f "$WORKER_DIR/env/bin/python" ]; then
     PYTHON_BIN="$WORKER_DIR/env/bin/python"
     export PATH="$WORKER_DIR/env/bin:$PATH"

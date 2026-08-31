@@ -94,39 +94,6 @@ function SectionBadge({ children }: { children: React.ReactNode }) {
   );
 }
 
-function PhoneMockup({
-  className,
-  image,
-  rotate = 0,
-  scale = 1,
-  animDelay = "livio-phone-delay-1",
-}: {
-  className?: string;
-  image: string;
-  rotate?: number;
-  scale?: number;
-  animDelay?: string;
-}) {
-  return (
-    <div
-      className={`livio-phone ${animDelay} absolute overflow-hidden rounded-[28px] border-[3px] border-[#2a2a2a] bg-black shadow-2xl shadow-pink-500/20 transition-shadow duration-500 hover:shadow-pink-500/40 hover:border-[#ff006b]/30 ${className ?? ""}`}
-      style={
-        {
-          "--phone-rotate": `${rotate}deg`,
-          "--phone-scale": scale,
-        } as React.CSSProperties
-      }
-    >
-      <div className="relative h-full w-full bg-[#111]">
-        <Image src={image} alt="Livio app preview" fill unoptimized className="object-cover" />
-        <div className="absolute inset-x-0 top-0 h-6 bg-black/60 flex items-center justify-center">
-          <div className="h-1 w-10 rounded-full bg-white/30" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function FeatureIcon({ id }: { id: string }) {
   const icons: Record<string, React.ReactNode> = {
     studio: <Monitor className="h-5 w-5 text-[#ff006b]" />,
@@ -137,42 +104,6 @@ function FeatureIcon({ id }: { id: string }) {
   return (
     <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-[#ff006b]/10 border border-[#ff006b]/20">
       {icons[id]}
-    </div>
-  );
-}
-
-function StudioPreview() {
-  return (
-    <div className="overflow-hidden rounded-xl bg-[#0a0a0a]">
-      <div className="flex border-b border-[#222] px-3 py-2 gap-1.5">
-        <span className="h-2.5 w-2.5 rounded-full bg-red-500/80" />
-        <span className="h-2.5 w-2.5 rounded-full bg-yellow-500/80" />
-        <span className="h-2.5 w-2.5 rounded-full bg-green-500/80" />
-      </div>
-      <div className="grid grid-cols-3 gap-2 p-4">
-        <div className="col-span-2 space-y-2">
-          <div className="h-24 rounded-lg bg-[#1a1a1a] border border-[#333] p-2">
-            <p className="text-[9px] text-slate-500 mb-1">Live Preview</p>
-            <div className="relative h-14 w-full overflow-hidden rounded">
-              <Image src="/avatars/namira.jpg" alt="" fill unoptimized className="object-cover object-top" />
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-1.5">
-            {[1, 2, 3].map((n) => (
-              <div key={n} className="h-8 rounded bg-[#1a1a1a] border border-[#333]" />
-            ))}
-          </div>
-        </div>
-        <div className="space-y-2">
-          <div className="h-16 rounded-lg bg-[#ff006b]/10 border border-[#ff006b]/20 p-2">
-            <p className="text-[8px] font-bold text-[#ff6eb4] livio-live-badge">LIVE</p>
-            <p className="text-[10px] text-white mt-1">1,238</p>
-          </div>
-          <div className="h-20 rounded-lg bg-[#1a1a1a] border border-[#333] p-2">
-            <p className="text-[8px] text-slate-500">Chat AI</p>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -319,46 +250,20 @@ export function LandingPage() {
           </div>
         </div>
 
-        {/* Phone collage */}
-        <div className="livio-hero-enter livio-hero-enter-d4 relative mx-auto mt-14 h-[340px] max-w-5xl sm:h-[400px]">
-          <PhoneMockup
-            className="left-[8%] top-8 h-[280px] w-[140px] sm:h-[320px] sm:w-[160px]"
-            image="https://images.unsplash.com/photo-1580489944761-15a19d654956?w=400&h=700&fit=crop&q=80"
-            rotate={-12}
-            animDelay="livio-phone-delay-1"
-          />
-          <PhoneMockup
-            className="left-1/2 top-0 z-10 h-[300px] w-[150px] -translate-x-1/2 sm:h-[360px] sm:w-[175px]"
-            image="/avatars/namira.jpg"
-            rotate={0}
-            scale={1.05}
-            animDelay="livio-phone-delay-2"
-          />
-          <PhoneMockup
-            className="right-[8%] top-12 h-[270px] w-[135px] sm:h-[310px] sm:w-[155px]"
-            image="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=400&h=700&fit=crop&q=80"
-            rotate={10}
-            animDelay="livio-phone-delay-3"
-          />
-          <PhoneMockup
-            className="left-[22%] bottom-0 h-[200px] w-[100px] opacity-80 sm:h-[230px] sm:w-[115px]"
-            image="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300&h=500&fit=crop&q=80"
-            rotate={-6}
-            scale={0.9}
-            animDelay="livio-phone-delay-4"
-          />
-          <PhoneMockup
-            className="right-[20%] bottom-2 h-[210px] w-[105px] opacity-80 sm:h-[240px] sm:w-[120px]"
-            image="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&h=500&fit=crop&q=80"
-            rotate={8}
-            scale={0.9}
-            animDelay="livio-phone-delay-5"
-          />
+        {/* Hero visual — banner atas tengah */}
+        <div className="livio-hero-enter livio-hero-enter-d4 relative mx-auto mt-14 max-w-5xl px-4 sm:px-6">
+          <div className="relative aspect-[16/10] w-full overflow-hidden rounded-2xl border border-white/10 bg-[#0a0a0a] shadow-2xl shadow-pink-500/15 sm:aspect-[2/1]">
+            <Image
+              src="/banner_atas_tengah.png"
+              alt="Saksikan evolusi live commerce secara real-time"
+              fill
+              priority
+              unoptimized
+              className="object-cover object-center"
+              sizes="(max-width: 1024px) 100vw, 1024px"
+            />
+          </div>
         </div>
-
-        <p className="livio-hero-enter livio-hero-enter-d4 livio-body relative mt-6 text-center text-sm text-slate-500">
-          Saksikan evolusi &apos;live commerce&apos; secara real-time.
-        </p>
       </section>
 
       {/* Platforms */}
@@ -388,7 +293,27 @@ export function LandingPage() {
           </Reveal>
 
           <div className="mt-14 space-y-16">
-            {featureBlocks.map((block, idx) => (
+            {featureBlocks.map((block, idx) => {
+              if (block.id === "studio") {
+                return (
+                  <Reveal key={block.id} delay={idx * 100} direction="up">
+                    <div className="livio-card-hover overflow-hidden rounded-2xl border border-[#2a2a2a] bg-[#0a0a0a] shadow-xl">
+                      <div className="relative aspect-21/6 w-full min-h-45 sm:min-h-55">
+                        <Image
+                          src="/banner_studio_live_streaming.jpg"
+                          alt={block.title}
+                          fill
+                          unoptimized
+                          className="object-contain object-center"
+                          sizes="(max-width: 1152px) 100vw, 1152px"
+                        />
+                      </div>
+                    </div>
+                  </Reveal>
+                );
+              }
+
+              return (
               <Reveal
                 key={block.id}
                 delay={idx * 100}
@@ -399,7 +324,6 @@ export function LandingPage() {
               >
                 <div className={`${block.reverse ? "lg:[direction:ltr]" : ""}`}>
                   <div className="livio-card-hover overflow-hidden rounded-2xl border border-[#2a2a2a] bg-[#111] p-1 shadow-xl">
-                    {block.id === "studio" && <StudioPreview />}
                     {block.id === "avatars" && (
                       <div className="grid grid-cols-5 gap-2 p-4">
                         {avatarGridImages.map((src) => (
@@ -412,7 +336,13 @@ export function LandingPage() {
                     {block.id === "comments" && (
                       <div className="flex gap-3 p-4">
                         <div className="relative h-48 w-36 shrink-0 overflow-hidden rounded-xl">
-                          <Image src="/avatars/namira.jpg" alt="" fill unoptimized className="object-cover" />
+                          <Image
+                            src="/after_livio.jpg"
+                            alt="Live chat AI"
+                            fill
+                            unoptimized
+                            className="object-cover object-top"
+                          />
                         </div>
                         <div className="flex-1 space-y-2 pt-2">
                           {[
@@ -433,29 +363,98 @@ export function LandingPage() {
                       </div>
                     )}
                     {block.id === "multi" && (
-                      <div className="space-y-3 p-5">
-                        {[
-                          { name: "TikTok Live", platform: "TikTok" as PlatformKey, on: true },
-                          { name: "Shopee Live", platform: "Shopee" as PlatformKey, on: true },
-                          { name: "Instagram Live", platform: "Instagram" as PlatformKey, on: false },
-                          { name: "YouTube Live", platform: "YouTube" as PlatformKey, on: false },
-                          { name: "Facebook Live", platform: "Facebook" as PlatformKey, on: false },
-                        ].map((p) => (
-                          <div
-                            key={p.name}
-                            className="flex items-center justify-between rounded-lg border border-[#2a2a2a] bg-[#0a0a0a] px-4 py-3"
-                          >
-                            <div className="flex items-center gap-3">
-                              <PlatformIcon name={p.platform} size="sm" />
-                              <span className="text-sm font-medium text-white">{p.name}</span>
-                            </div>
-                            <span
-                              className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${p.on ? "bg-emerald-500/20 text-emerald-400" : "bg-slate-700/50 text-slate-500"}`}
+                      <div className="p-4 sm:p-5">
+                        <div className="space-y-2.5">
+                          {[
+                            {
+                              name: "TikTok Live",
+                              platform: "TikTok" as PlatformKey,
+                              on: true,
+                              viewers: "8.6K",
+                              accent: "from-[#00f2ea]/15 to-transparent",
+                              ring: "border-[#00f2ea]/35",
+                              iconBg: "bg-[#111] ring-1 ring-[#00f2ea]/40",
+                            },
+                            {
+                              name: "Shopee Live",
+                              platform: "Shopee" as PlatformKey,
+                              on: true,
+                              viewers: "3.2K",
+                              accent: "from-[#ee4d2d]/20 to-transparent",
+                              ring: "border-[#ee4d2d]/40",
+                              iconBg: "bg-[#ee4d2d]/10 ring-1 ring-[#ee4d2d]/35",
+                            },
+                            {
+                              name: "Instagram Live",
+                              platform: "Instagram" as PlatformKey,
+                              on: false,
+                              viewers: null,
+                              accent: "from-[#e1306c]/10 to-transparent",
+                              ring: "border-[#2a2a2a]",
+                              iconBg: "bg-[#1a1a1a] ring-1 ring-white/10",
+                            },
+                            {
+                              name: "YouTube Live",
+                              platform: "YouTube" as PlatformKey,
+                              on: false,
+                              viewers: null,
+                              accent: "from-[#ff0000]/10 to-transparent",
+                              ring: "border-[#2a2a2a]",
+                              iconBg: "bg-[#1a1a1a] ring-1 ring-white/10",
+                            },
+                            {
+                              name: "Facebook Live",
+                              platform: "Facebook" as PlatformKey,
+                              on: false,
+                              viewers: null,
+                              accent: "from-[#1877f2]/10 to-transparent",
+                              ring: "border-[#2a2a2a]",
+                              iconBg: "bg-[#1a1a1a] ring-1 ring-white/10",
+                            },
+                          ].map((p, i) => (
+                            <div
+                              key={p.name}
+                              className={`group relative overflow-hidden rounded-xl border bg-gradient-to-r ${p.accent} ${p.ring} ${
+                                p.on ? "bg-[#0c0c0c] shadow-sm shadow-black/40" : "bg-[#0a0a0a] opacity-80"
+                              } px-3.5 py-3 transition-all duration-300 hover:opacity-100 hover:border-white/20`}
+                              style={{ animationDelay: `${i * 0.06}s` }}
                             >
-                              {p.on ? "Live" : "Off"}
-                            </span>
-                          </div>
-                        ))}
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div
+                                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${p.iconBg} transition-transform duration-300 group-hover:scale-105`}
+                                  >
+                                    <PlatformIcon name={p.platform} size="md" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-white truncate">{p.name}</p>
+                                    <p className="text-[10px] text-slate-500 truncate">
+                                      {p.on ? `RTMP aktif · ${p.viewers} penonton` : "Siap dihubungkan via RTMP"}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                {p.on ? (
+                                  <div className="flex flex-col items-end gap-1 shrink-0">
+                                    <span className="inline-flex items-center gap-1.5 rounded-full bg-red-600/90 px-2.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-white shadow-lg shadow-red-600/30">
+                                      <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+                                      Live
+                                    </span>
+                                    <span className="text-[10px] font-mono text-slate-400">{p.viewers}</span>
+                                  </div>
+                                ) : (
+                                  <span className="shrink-0 rounded-full border border-[#333] bg-[#151515] px-2.5 py-1 text-[9px] font-bold uppercase tracking-wide text-slate-500">
+                                    Standby
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <p className="mt-3 text-center text-[10px] text-slate-500">
+                          + Custom RTMP untuk platform lain
+                        </p>
                       </div>
                     )}
                   </div>
@@ -470,7 +469,8 @@ export function LandingPage() {
                 </div>
               </div>
               </Reveal>
-            ))}
+              );
+            })}
           </div>
         </div>
       </section>
@@ -532,13 +532,13 @@ export function LandingPage() {
               <p className="mb-4 text-center text-xs font-bold uppercase tracking-widest text-slate-500">
                 Tanpa Livio
               </p>
-              <div className="relative mb-5 aspect-video overflow-hidden rounded-xl grayscale">
+              <div className="relative mx-auto mb-5 aspect-[9/16] max-h-[320px] w-full max-w-[180px] overflow-hidden rounded-[24px] border-[3px] border-[#333] grayscale">
                 <Image
-                  src="https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=600&h=400&fit=crop&q=80"
-                  alt="Stressed host"
+                  src="/before_livio.jpg"
+                  alt="Live tanpa Livio — penonton sepi"
                   fill
                   unoptimized
-                  className="object-cover"
+                  className="object-cover object-top"
                 />
               </div>
               <ul className="space-y-3">
@@ -565,8 +565,14 @@ export function LandingPage() {
               <p className="mb-4 text-center text-xs font-bold uppercase tracking-widest text-[#ff6eb4]">
                 Dengan Livio
               </p>
-              <div className="relative mx-auto mb-5 h-[200px] w-[120px] overflow-hidden rounded-[24px] border-[3px] border-[#333]">
-                <Image src="/avatars/namira.jpg" alt="Livio app" fill unoptimized className="object-cover" />
+              <div className="relative mx-auto mb-5 aspect-[9/16] max-h-[320px] w-full max-w-[180px] overflow-hidden rounded-[24px] border-[3px] border-[#ff006b]/40 shadow-lg shadow-pink-500/20">
+                <Image
+                  src="/after_livio.jpg"
+                  alt="Live dengan Livio — engagement tinggi"
+                  fill
+                  unoptimized
+                  className="object-cover object-top"
+                />
               </div>
               <ul className="space-y-3">
                 {withLivio.map((item) => (

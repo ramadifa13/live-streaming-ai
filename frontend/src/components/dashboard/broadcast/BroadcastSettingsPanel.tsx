@@ -9,6 +9,7 @@ import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { dashboardPlatforms } from "@/lib/brand-assets";
 import { PlatformIcon } from "@/components/shared/PlatformIcon";
+import { normalizeProductCategory } from "@/lib/product-categories";
 
 // Preset otomatisasi ikut di sini supaya menambah paket baru tidak menuntut
 // perubahan pada logika tombol. Nilainya harus konsisten dengan `minHours`
@@ -380,7 +381,7 @@ export const BroadcastSettingsPanel: React.FC = () => {
             </p>
             <p className="text-[9px] text-slate-400 truncate mt-0.5">
               Sumber data: <strong className="text-blue-300">{activeFeaturedProduct.name}</strong> (
-              {activeFeaturedProduct.tag || "General"})
+              {normalizeProductCategory(activeFeaturedProduct.tag)})
             </p>
           </div>
           <button

@@ -1,4 +1,5 @@
 import { CsvRawItem } from "@/app/dashboard/types";
+import { normalizeProductCategory } from "@/lib/product-categories";
 
 export function parseProductCsv(csvText: string): CsvRawItem[] {
   if (!csvText.trim()) return [];
@@ -20,7 +21,7 @@ export function parseProductCsv(csvText: string): CsvRawItem[] {
       const name = parts[0];
       const priceNum = parseInt(parts[1].replace(/[^0-9]/g, ""), 10) || 0;
       const stock = parseInt(parts[2], 10) || 0;
-      const category = parts[3] || "General";
+      const category = normalizeProductCategory(parts[3]);
       const description = parts[4] || `Produk ${name}`;
       const link = parts[5] || "";
 
@@ -31,8 +32,7 @@ export function parseProductCsv(csvText: string): CsvRawItem[] {
         category,
         description,
         link,
-        image:
-          "",
+        image: "",
         bannerImage: "",
         benefits: "",
         usage: "",

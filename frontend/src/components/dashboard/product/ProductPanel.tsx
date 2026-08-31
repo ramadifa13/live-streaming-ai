@@ -1,9 +1,10 @@
 "use client";
 
 import React from "react";
-import { Upload, Plus, FileSpreadsheet, Lightbulb } from "lucide-react";
+import { Upload, Plus, FileSpreadsheet, Lightbulb, Lock } from "lucide-react";
 import { useProductStore } from "@/stores/useProductStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
+import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { ProductFilter } from "./ProductFilter";
 import { ProductList } from "./ProductList";
 
@@ -12,11 +13,16 @@ export const ProductPanel: React.FC = () => {
   const setShowCsvModal = useDashboardUIStore((state) => state.setShowCsvModal);
   const setShowAddProductModal = useDashboardUIStore((state) => state.setShowAddProductModal);
   const showToast = useDashboardUIStore((state) => state.showToast);
+  const isLiveActive = useLiveSessionStore((state) => state.isLiveActive);
 
   const products = useProductStore((state) => state.products);
   const activeFeaturedProduct = useProductStore((state) => state.activeFeaturedProduct);
   const setActiveFeaturedProduct = useProductStore((state) => state.setActiveFeaturedProduct);
   const setProducts = useProductStore((state) => state.setProducts);
+
+  const blockAddWhileLive = () => {
+    showToast("Produk tidak bisa ditambah saat live sedang aktif. Akhiri live dulu.");
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -73,18 +79,46 @@ export const ProductPanel: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {isLiveActive && (
+            <span className="hidden sm:inline-flex items-center gap-1 text-[8.5px] text-amber-400 font-medium bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
+              <Lock className="w-2.5 h-2.5" />
+              Terkunci saat Live
+            </span>
+          )}
           <button
             type="button"
-            onClick={() => setShowCsvModal(true)}
-            className="flex items-center gap-1.5 rounded-lg border border-[#232c42] bg-[#111827] px-3 py-1.5 text-xs font-medium text-slate-300 hover:border-blue-500 hover:text-white transition active:scale-95 shadow-sm cursor-pointer"
+            disabled={isLiveActive}
+            onClick={() => {
+              if (isLiveActive) {
+                blockAddWhileLive();
+                return;
+              }
+              setShowCsvModal(true);
+            }}
+            className={`flex items-center gap-1.5 rounded-lg border border-[#232c42] bg-[#111827] px-3 py-1.5 text-xs font-medium text-slate-300 transition shadow-sm ${
+              isLiveActive
+                ? "cursor-not-allowed opacity-50"
+                : "hover:border-blue-500 hover:text-white active:scale-95 cursor-pointer"
+            }`}
           >
             <FileSpreadsheet className="w-3.5 h-3.5" />
             <span>Import CSV</span>
           </button>
           <button
             type="button"
-            onClick={() => setShowAddProductModal(true)}
-            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white hover:brightness-110 transition active:scale-95 shadow-md shadow-blue-600/30 cursor-pointer"
+            disabled={isLiveActive}
+            onClick={() => {
+              if (isLiveActive) {
+                blockAddWhileLive();
+                return;
+              }
+              setShowAddProductModal(true);
+            }}
+            className={`flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-md shadow-blue-600/30 transition ${
+              isLiveActive
+                ? "cursor-not-allowed opacity-50"
+                : "hover:brightness-110 active:scale-95 cursor-pointer"
+            }`}
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Tambah Produk</span>

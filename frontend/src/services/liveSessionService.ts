@@ -1,4 +1,31 @@
-import { SessionSummaryData } from "@/app/dashboard/types";
+import { Product, SessionSummaryData } from "@/app/dashboard/types";
+
+function isHttpUrl(value?: string): boolean {
+  return Boolean(value && /^https?:\/\//i.test(value));
+}
+
+/** Snapshot untuk RAM backend: fakta + script bank. Foto data-URL hanya untuk produk aktif. */
+export function toLiveProductSnapshot(product: Product, includeMedia = false) {
+  return {
+    id: product.id,
+    name: product.name,
+    price: product.price,
+    stock: product.stock,
+    tag: product.tag,
+    sku: product.sku,
+    description: product.description,
+    benefits: product.benefits,
+    usage: product.usage,
+    faq: product.faq,
+    copywriting: product.copywriting,
+    targetAudience: product.targetAudience,
+    link: product.link,
+    scriptBank: product.scriptBank,
+    faqPack: product.faqPack,
+    image: includeMedia || isHttpUrl(product.image) ? product.image : undefined,
+    bannerImage: includeMedia || isHttpUrl(product.bannerImage) ? product.bannerImage : undefined,
+  };
+}
 
 export interface StartSessionParams {
   productId: string;
@@ -14,6 +41,8 @@ export interface StartSessionParams {
   accessToken?: string;
   liveChatId?: string;
   liveVideoId?: string;
+  product?: unknown;
+  products?: unknown[];
 }
 
 export interface BroadcastParams {
@@ -145,11 +174,11 @@ export const liveSessionService = {
     return json;
   },
 
-  async switchProduct(productId: string, productName: string) {
+  async switchProduct(productId: string, productName: string, product?: unknown, sessionId?: string) {
     const res = await fetch("/api/live-session/switch-product", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ productId, productName }),
+      body: JSON.stringify({ productId, productName, product, sessionId }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

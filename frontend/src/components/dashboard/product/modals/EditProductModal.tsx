@@ -5,6 +5,7 @@ import Image from "next/image";
 import { X, Upload, Image as ImageIcon, Pencil, Link2 } from "lucide-react";
 import { useProductStore } from "@/stores/useProductStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
+import { PRODUCT_CATEGORIES } from "@/lib/product-categories";
 
 export const EditProductModal: React.FC = () => {
   const showEditProductModal = useDashboardUIStore((state) => state.showEditProductModal);
@@ -25,7 +26,7 @@ export const EditProductModal: React.FC = () => {
     try {
       await saveEditedProduct();
       setShowEditProductModal(false);
-      showToast(" Produk berhasil diperbarui di database!");
+      showToast("Produk diperbarui di perangkat ini. Script bank disiapkan ulang.");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal memperbarui produk");
     } finally {
@@ -43,7 +44,9 @@ export const EditProductModal: React.FC = () => {
             </div>
             <div>
               <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">Edit Data Produk</h3>
-              <p className="text-[11px] text-slate-400">ID: {selectedProductForEdit.id || "N/A"}</p>
+              <p className="text-[11px] text-slate-400">
+                Data tetap di perangkat Anda. Menyimpan akan menyiapkan ulang script bank host.
+              </p>
             </div>
           </div>
           <button
@@ -187,7 +190,7 @@ export const EditProductModal: React.FC = () => {
                   5. Kategori <span className="text-red-400">*</span>
                 </label>
                 <select
-                  value={selectedProductForEdit.tag || "General"}
+                  value={selectedProductForEdit.tag || "Skincare"}
                   onChange={(e) =>
                     setSelectedProductForEdit({
                       ...selectedProductForEdit,
@@ -196,17 +199,11 @@ export const EditProductModal: React.FC = () => {
                   }
                   className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] px-3 py-2.5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 text-xs cursor-pointer transition font-medium"
                 >
-                  <option value="Skincare"> Skincare</option>
-                  <option value="Beauty & Makeup"> Beauty & Makeup</option>
-                  <option value="Fashion & Pakaian"> Fashion & Pakaian</option>
-                  <option value="Hijab & Muslim"> Hijab & Muslim</option>
-                  <option value="Kesehatan & Herbal"> Kesehatan & Herbal</option>
-                  <option value="Elektronik & Gadget"> Elektronik & Gadget</option>
-                  <option value="Makanan & Minuman"> Makanan & Minuman</option>
-                  <option value="Ibu & Bayi"> Ibu & Bayi</option>
-                  <option value="Perlengkapan Rumah"> Perlengkapan Rumah</option>
-                  <option value="Aksesoris & Sepatu"> Aksesoris & Sepatu</option>
-                  <option value="General"> General / Lainnya</option>
+                  {PRODUCT_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -274,7 +271,8 @@ export const EditProductModal: React.FC = () => {
 
             <div>
               <label className="block text-slate-200 font-bold text-[11px] mb-1">
-                9. Keunggulan &amp; Manfaat Utama <span className="text-slate-400 font-normal">(Opsional)</span>
+                9. Keunggulan &amp; Manfaat Utama{" "}
+                <span className="text-slate-400 font-normal">(Opsional — kosong = diisi AI)</span>
               </label>
               <textarea
                 rows={2}
@@ -285,14 +283,15 @@ export const EditProductModal: React.FC = () => {
                     benefits: e.target.value,
                   })
                 }
-                placeholder="Contoh: Mencerahkan noda hitam, merawat skin barrier alami..."
+                placeholder="Kosongkan jika ingin AI melengkapi dari deskripsi..."
                 className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] p-2.5 text-slate-200 text-xs outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 font-sans transition"
               />
             </div>
 
             <div>
               <label className="block text-slate-200 font-bold text-[11px] mb-1">
-                10. Petunjuk &amp; Cara Pemakaian <span className="text-slate-400 font-normal">(Opsional)</span>
+                10. Petunjuk &amp; Cara Pemakaian{" "}
+                <span className="text-slate-400 font-normal">(Opsional — kosong = diisi AI)</span>
               </label>
               <textarea
                 rows={2}
@@ -303,7 +302,25 @@ export const EditProductModal: React.FC = () => {
                     usage: e.target.value,
                   })
                 }
-                placeholder="Contoh: Oleskan 2-3 tetes pada wajah bersih setiap pagi dan malam..."
+                placeholder="Kosongkan jika ingin AI melengkapi dari deskripsi..."
+                className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] p-2.5 text-slate-200 text-xs outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 font-sans transition"
+              />
+            </div>
+
+            <div>
+              <label className="block text-slate-200 font-bold text-[11px] mb-1">
+                10b. FAQ singkat <span className="text-slate-400 font-normal">(Opsional — kosong = diisi AI)</span>
+              </label>
+              <textarea
+                rows={2}
+                value={selectedProductForEdit.faq || ""}
+                onChange={(e) =>
+                  setSelectedProductForEdit({
+                    ...selectedProductForEdit,
+                    faq: e.target.value,
+                  })
+                }
+                placeholder="Kosongkan jika ingin AI melengkapi dari manfaat/deskripsi/cara pakai"
                 className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] p-2.5 text-slate-200 text-xs outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 font-sans transition"
               />
             </div>
@@ -312,7 +329,7 @@ export const EditProductModal: React.FC = () => {
               <div className="flex items-center justify-between mb-2">
                 <label className="text-slate-200 font-bold text-[11px] flex items-center gap-1">
                   <span>11. Gambar Banner Promosi</span>
-                  <span className="text-slate-400 font-normal">(Opsional)</span>
+                  <span className="text-slate-400 font-normal">(Opsional — overlay atas &amp; bawah host)</span>
                 </label>
                 {selectedProductForEdit.bannerImage ? (
                   <div className="flex items-center gap-2">
@@ -400,7 +417,7 @@ export const EditProductModal: React.FC = () => {
               disabled={isSubmitting}
               className="rounded-xl bg-blue-600 hover:bg-blue-500 px-5 py-2 font-bold text-white shadow-lg shadow-blue-600/30 transition active:scale-95 cursor-pointer disabled:opacity-70"
             >
-              {isSubmitting ? "Menyimpan..." : "Simpan Perubahan"}
+              {isSubmitting ? "Menyiapkan naskah host..." : "Simpan Perubahan"}
             </button>
           </div>
         </form>

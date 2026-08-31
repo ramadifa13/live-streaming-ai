@@ -5,6 +5,7 @@ import asyncio
 import torch
 import threading
 import sys
+import shutil
 from argparse import Namespace
 
 
@@ -251,26 +252,21 @@ class AILiveWorker:
         return None
 
     def _resolve_action_clip(self, host_type, host_name, action_tag):
-        """Pilih clip sumber — pose konsisten untuk lipsync natural."""
-        host = (host_name or "namira").lower().strip()
-        action = (action_tag or "talk_expressive").lower().strip()
+        """Selalu pakai talk_expressive — pose tubuh konsisten antar segmen.
 
-        # Hanya gesture besar yang ganti clip sumber (pose tubuh berbeda).
-        # NOD/THINK/POINT kecil → talk_expressive agar transisi antar segmen halus.
-        gesture_only = frozenset(
-            {"wave", "raise_hand", "laugh", "point_up", "point_down"}
-        )
-        if action not in gesture_only:
-            action = "talk_expressive"
+        Gesture WAVE/RAISE_HAND/dll ganti clip sumber dari frame-0 pose berbeda,
+        sehingga tangan terlihat loncat saat pindah video. Lipsync tetap natural
+        di wajah; tubuh mengikuti satu clip bicara yang sama.
+        """
+        host = (host_name or "namira").lower().strip()
+        # Abaikan action_tag untuk kontinuitas pose (kecuali idle eksplisit).
+        action = "talk_expressive"
+        if (action_tag or "").lower().strip() == "idle":
+            action = "idle"
 
         aliases = {
             "talk_expressive": ["talk_expressive", "expressive"],
             "idle": ["idle"],
-            "laugh": ["laugh"],
-            "wave": ["wave", "raise_hand"],
-            "point_up": ["point_up"],
-            "point_down": ["point_down"],
-            "raise_hand": ["wave"],
         }
         variants = aliases.get(action, [action])
         candidates = []
@@ -282,7 +278,7 @@ class AILiveWorker:
                     f"namira_{variant}",
                 ]
             )
-        if action not in ("idle",):
+        if action != "idle":
             candidates.append(f"{host}_talk_expressive")
             candidates.append("namira_talk_expressive")
         candidates.append(f"{host}_idle")
@@ -464,6 +460,10 @@ class AILiveWorker:
                 original_cwd = os.getcwd()
                 os.chdir(musetalk_dir)
                 try:
+                    # Pose continuity antar clip — indeks cycle disimpan di output_dir.
+                    os.environ["MUSETALK_CYCLE_STATE"] = os.path.join(
+                        self.output_dir, "cycle_state.json"
+                    )
                     from scripts.inference import main as musetalk_main
 
                     args = Namespace(
@@ -496,12 +496,23 @@ class AILiveWorker:
                 finally:
                     os.chdir(original_cwd)
 
-                expected_output = os.path.join(
-                    self.output_dir, f"{task_id}.mp4"
-                )
+                # Prefer raw .ffseg (frame_feed) — atomic rename ke output_dir.
+                expected_ffseg = os.path.join(self.output_dir, f"{task_id}.ffseg")
+                ffseg_candidates = []
+                for root, dirs, _files in os.walk(self.temp_dir):
+                    for d in dirs:
+                        if d.endswith(".ffseg") and task_id in d and not d.endswith(".partial"):
+                            ffseg_candidates.append(os.path.join(root, d))
+                if ffseg_candidates:
+                    latest_ffseg = max(ffseg_candidates, key=os.path.getctime)
+                    if os.path.exists(expected_ffseg):
+                        shutil.rmtree(expected_ffseg, ignore_errors=True)
+                    os.replace(latest_ffseg, expected_ffseg)
+                    print(f"[MuseTalk] Handoff ffseg → {expected_ffseg}")
+                    return expected_ffseg
 
+                expected_output = os.path.join(self.output_dir, f"{task_id}.mp4")
                 list_of_files = []
-                # CARI FILE DI TEMP_DIR KARENA KITA MENGUBAH RESULT_DIR
                 for root, dirs, files in os.walk(self.temp_dir):
                     for file in files:
                         if file.endswith(".mp4") and task_id in file:
@@ -509,14 +520,11 @@ class AILiveWorker:
 
                 if not list_of_files:
                     raise FileNotFoundError(
-                        f"Output video MuseTalk untuk {task_id} tidak ditemukan di temp_dir."
+                        f"Output MuseTalk untuk {task_id} tidak ditemukan (ffseg/mp4) di temp_dir."
                     )
 
                 latest_file = max(list_of_files, key=os.path.getctime)
-                
-                # PINDAHKAN FILE SECARA ATOMIK KE OUTPUT_DIR AGAR BROADCASTER HANYA MELIHAT FILE YANG SUDAH 100% SELESAI
                 os.replace(latest_file, expected_output)
-
                 return expected_output
 
             except torch.cuda.OutOfMemoryError as oom:

@@ -19,7 +19,6 @@ import { ttsRoutes } from "./routes/tts.js";
 import { avatarVideoRoutes } from "./routes/avatar-video.js";
 import { chatStreamRoutes } from "./routes/chat-stream.js";
 import { oauthRoutes } from "./routes/oauth.js";
-import { productsRoutes } from "./routes/products.js";
 
 dotenv.config();
 
@@ -74,7 +73,6 @@ await ttsRoutes(server);
 await avatarVideoRoutes(server);
 await chatStreamRoutes(server);
 await oauthRoutes(server);
-await productsRoutes(server);
 
 async function seedDatabase() {
   const avatarCount = await prisma.avatar.count();
@@ -115,29 +113,6 @@ try {
 
   // Piper-TTS dipakai offline — tidak perlu warmup network seperti Edge-TTS.
   // Model akan di-load otomatis pada request TTS pertama.
-
-  // Warm up Ollama AI Brain in background
-  setTimeout(() => {
-    import("./services/groq-brain.js")
-      .then((m) => m.checkOllamaHealth())
-      .then((health) => {
-        if (health.online) {
-          console.log(
-            `[Ollama-Brain] 🧠 Local Ollama AI Brain connected & ready (Model: ${health.model}) - 100% Free`,
-          );
-        } else {
-          console.warn(
-            "[Ollama-Brain] ⚠️ Ollama tidak terdeteksi di localhost:11434. Pastikan aplikasi Ollama aktif.",
-          );
-        }
-      })
-      .catch((err) =>
-        console.warn(
-          "[Ollama-Brain] Ollama warmup notice:",
-          err?.message || err,
-        ),
-      );
-  }, 2000);
 } catch (error) {
   server.log.error(error);
   process.exit(1);

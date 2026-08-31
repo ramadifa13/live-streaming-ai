@@ -3,6 +3,7 @@
 import React, { useMemo } from "react";
 import { Search, X } from "lucide-react";
 import { useProductStore } from "@/stores/useProductStore";
+import { normalizeProductCategory } from "@/lib/product-categories";
 
 export const ProductFilter: React.FC = () => {
   const products = useProductStore((state) => state.products);
@@ -15,7 +16,7 @@ export const ProductFilter: React.FC = () => {
     const counts: Record<string, number> = { ALL: products.length };
     const uniqueTags = new Set<string>();
     products.forEach((p) => {
-      const tag = p.tag || "General";
+      const tag = normalizeProductCategory(p.tag);
       uniqueTags.add(tag);
       counts[tag] = (counts[tag] || 0) + 1;
     });

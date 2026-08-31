@@ -69,7 +69,7 @@ export const ConnectingOverlay: React.FC = () => {
           <h3 className="text-base sm:text-lg font-extrabold text-white tracking-wide mb-0.5">
             {canGoLive ? "Siap Go Live!" : "Menyiapkan Sesi Live AI"}
           </h3>
-          <p className="text-[11px] text-slate-400 mb-3 flex items-center justify-center gap-2 flex-wrap">
+          <p className="text-[11px] text-slate-400 mb-2 flex items-center justify-center gap-2 flex-wrap">
             Host AI{" "}
             <span className="text-indigo-300 font-semibold">{selectedAvatar.name}</span> di{" "}
             <span className="inline-flex items-center gap-1.5 text-indigo-300 font-semibold">
@@ -77,6 +77,15 @@ export const ConnectingOverlay: React.FC = () => {
               {selectedPlatform}
             </span>
           </p>
+
+          {!canGoLive && (
+            <p className="text-[12px] text-slate-300 leading-relaxed mb-3 px-1">
+              Sistem sedang menyiapkan infrastruktur siaran (GPU, avatar, dan buffer video).
+              Estimasi waktu persiapan{" "}
+              <span className="text-amber-300 font-semibold">sekitar 5 menit</span>.
+              Harap tetap di halaman ini hingga proses selesai.
+            </p>
+          )}
 
           <div className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-3 py-1 text-[11px] font-semibold text-indigo-300 mb-3.5">
             <span className="relative flex h-2 w-2">
@@ -153,9 +162,14 @@ export const ConnectingOverlay: React.FC = () => {
               )}
             </button>
           ) : (
-            <div className="mb-2 flex items-center justify-center gap-2 py-2.5 text-[11px] text-slate-400">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-              Menunggu pipeline siap ({pipelineStatus?.videosQueued ?? 0}/2 video)...
+            <div className="mb-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-center">
+              <div className="flex items-center justify-center gap-2 text-[11px] text-amber-200/90 font-medium">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400 shrink-0" />
+                Pipeline sedang diproses ({pipelineStatus?.videosQueued ?? 0}/2 video siap)
+              </div>
+              <p className="mt-1 text-[10px] text-slate-400 leading-snug">
+                Estimasi waktu: sekitar 5 menit. Durasi dapat lebih singkat jika GPU sudah aktif.
+              </p>
             </div>
           )}
 

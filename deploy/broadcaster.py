@@ -27,10 +27,9 @@ class AIBroadcaster:
         # Smooth transitions — tunable via env on RunPod
         self.crossfade_seconds = float(os.environ.get("BROADCAST_CROSSFADE_SECONDS", "0.5"))
         self.fade_seconds = float(os.environ.get("BROADCAST_FADE_SECONDS", "0.4"))
-        # Chunk idle pendek = jeda lebih singkat sebelum segmen AI berikutnya bisa
-        # masuk. Batas bawah praktis adalah biaya spawn FFmpeg per chunk.
-        self.idle_chunk_seconds = float(os.environ.get("BROADCAST_IDLE_CHUNK_SECONDS", "3.0"))
-        self.max_onair_idle_seconds = float(os.environ.get("BROADCAST_MAX_IDLE_SECONDS", "10.0"))
+        # Chunk idle pendek = jeda senyap lebih singkat sebelum segmen AI berikutnya.
+        self.idle_chunk_seconds = float(os.environ.get("BROADCAST_IDLE_CHUNK_SECONDS", "1.5"))
+        self.max_onair_idle_seconds = float(os.environ.get("BROADCAST_MAX_IDLE_SECONDS", "6.0"))
         self.idle_streak_started_at = None
         self.master_process = None
         self._duration_cache = {}

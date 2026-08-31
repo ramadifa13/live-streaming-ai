@@ -7,6 +7,7 @@ import glob
 import shutil
 import pickle
 import argparse
+import json
 import numpy as np
 import subprocess
 import threading
@@ -96,6 +97,66 @@ if torch.cuda.is_available():
 _lock = threading.Lock()
 _models_cache = {}
 _avatar_assets_cache = {}
+
+
+def _want_raw_feed() -> bool:
+    flag = (os.environ.get("MUSETALK_RAW_FEED") or "").strip().lower()
+    if flag in ("1", "true", "yes", "on"):
+        return True
+    if flag in ("0", "false", "no", "off"):
+        return False
+    mode = (os.environ.get("BROADCAST_MODE") or "").strip().lower()
+    return mode in ("frame_feed", "frame-feed", "continuous")
+
+
+def _want_skip_mp4(raw_feed: bool) -> bool:
+    """Di mode frame_feed, skip H264 — hemat waktu & hindari double-encode."""
+    if not raw_feed:
+        return False
+    flag = (os.environ.get("MUSETALK_SKIP_MP4") or "1").strip().lower()
+    return flag not in ("0", "false", "no", "off")
+
+
+def _cycle_state_path(args) -> str:
+    explicit = os.environ.get("MUSETALK_CYCLE_STATE", "").strip()
+    if explicit:
+        return explicit
+    return os.path.join(getattr(args, "result_dir", "./results") or "./results", "cycle_state.json")
+
+
+def _load_cycle_offset(video_path: str, args) -> int:
+    """Lanjutkan indeks cycle antar clip supaya pose tubuh tidak reset ke frame-0."""
+    path = _cycle_state_path(args)
+    try:
+        if not os.path.exists(path):
+            return 0
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        key = os.path.abspath(video_path)
+        return int(data.get(key, data.get("last_offset", 0)) or 0)
+    except Exception:
+        return 0
+
+
+def _save_cycle_offset(video_path: str, offset: int, args) -> None:
+    path = _cycle_state_path(args)
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        data = {}
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh) or {}
+            except Exception:
+                data = {}
+        key = os.path.abspath(video_path)
+        data[key] = int(offset)
+        data["last_offset"] = int(offset)
+        data["last_video"] = key
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except Exception as err:
+        print(f"[MuseTalk] cycle state notice: {err}")
 
 
 def fast_check_ffmpeg():
@@ -376,13 +437,15 @@ def main(args):
             )
 
             # 5. Fast Batch Inference (~1-2s with batch_size >= 16)
+            # delay_frame = offset cycle dari clip sebelumnya → tubuh tidak loncat ke frame-0.
             video_num = len(whisper_chunks)
             batch_size = max(1, args.batch_size)
+            delay_frame = _load_cycle_offset(video_path, args) % max(1, len(input_latent_list_cycle))
             gen = datagen(
                 whisper_chunks=whisper_chunks,
                 vae_encode_latents=input_latent_list_cycle,
                 batch_size=batch_size,
-                delay_frame=0,
+                delay_frame=delay_frame,
                 device=device,
             )
 
@@ -395,38 +458,79 @@ def main(args):
                 for res_frame in recon:
                     res_frame_list.append(res_frame)
 
-            # 6. Stream directly into Single-Pass FFmpeg Pipe (ZERO PNG DISK I/O)
-            ffmpeg_cmd = [
-                "ffmpeg",
-                "-y",
-                "-v", "error",
-                "-f", "rawvideo",
-                "-pix_fmt", "bgr24",
-                "-s", f"{vid_w}x{vid_h}",
-                "-r", str(fps),
-                "-i", "pipe:0",
-                "-i", audio_path,
-                "-c:v", "libx264",
-                "-preset", "veryfast",
-                "-b:v", "2500k",
-                "-maxrate", "3000k",
-                "-bufsize", "6000k",
-                "-g", "50",
-                "-keyint_min", "50",
-                "-sc_threshold", "0",
-                "-pix_fmt", "yuv420p",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-ar", "44100",
-                "-shortest",
-                final_output_path
-            ]
-
-            ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
+            # 6. Blend + handoff: raw .ffseg (frame_feed) dan/atau MP4 (segment)
+            raw_feed = _want_raw_feed()
+            skip_mp4 = _want_skip_mp4(raw_feed)
             num_cycles = len(frame_list_cycle)
+            stem = os.path.splitext(os.path.basename(output_vid_name))[0]
+            ffseg_dir = os.path.join(temp_dir, f"{stem}.ffseg")
+
+            ffmpeg_proc = None
+            if not skip_mp4:
+                ffmpeg_cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-v", "error",
+                    "-f", "rawvideo",
+                    "-pix_fmt", "bgr24",
+                    "-s", f"{vid_w}x{vid_h}",
+                    "-r", str(fps),
+                    "-i", "pipe:0",
+                    "-i", audio_path,
+                    "-c:v", "libx264",
+                    "-preset", "veryfast",
+                    "-b:v", "2500k",
+                    "-maxrate", "3000k",
+                    "-bufsize", "6000k",
+                    "-g", "50",
+                    "-keyint_min", "50",
+                    "-sc_threshold", "0",
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac",
+                    "-b:a", "128k",
+                    "-ar", "44100",
+                    "-shortest",
+                    final_output_path
+                ]
+                ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
+
+            # Import lokal agar path MuseTalk/worker tetap valid saat chdir.
+            write_ffseg = None
+            audio_to_pcm_s16le = None
+            FfsegWriter = None
+            try:
+                from ffseg import audio_to_pcm_s16le, write_ffseg, FfsegWriter
+            except ImportError:
+                worker_root = os.environ.get("WORKER_ROOT", "/workspace/ai_live_worker")
+                for p in (
+                    worker_root,
+                    os.path.dirname(os.path.abspath(__file__)),
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                ):
+                    if p and p not in sys.path:
+                        sys.path.insert(0, p)
+                try:
+                    from ffseg import audio_to_pcm_s16le, write_ffseg, FfsegWriter
+                except ImportError:
+                    pass
+
+            ffseg_writer = None
+            if raw_feed and FfsegWriter is not None:
+                try:
+                    ffseg_writer = FfsegWriter(
+                        ffseg_dir,
+                        width=int(vid_w),
+                        height=int(vid_h),
+                        fps=float(fps),
+                        sample_rate=44100,
+                        channels=2,
+                    )
+                except Exception as open_err:
+                    print(f"[MuseTalk-Fast] ffseg writer notice: {open_err}")
+                    ffseg_writer = None
 
             for i, res_frame in enumerate(res_frame_list):
-                cycle_idx = i % num_cycles
+                cycle_idx = (delay_frame + i) % num_cycles
                 ori_frame = frame_list_cycle[cycle_idx]
                 mat = mask_materials_cycle[cycle_idx]
 
@@ -449,19 +553,46 @@ def main(args):
                     except Exception:
                         combine_frame = ori_frame
 
-                try:
-                    ffmpeg_proc.stdin.write(combine_frame.tobytes())
-                except (BrokenPipeError, IOError):
-                    break
+                if ffseg_writer is not None:
+                    ffseg_writer.write_frame(combine_frame)
 
-            if ffmpeg_proc.stdin:
-                try:
-                    ffmpeg_proc.stdin.close()
-                except Exception:
-                    pass
-            ffmpeg_proc.wait()
+                if ffmpeg_proc is not None and ffmpeg_proc.stdin is not None:
+                    try:
+                        ffmpeg_proc.stdin.write(combine_frame.tobytes())
+                    except (BrokenPipeError, IOError):
+                        pass
 
-            print(f"[MuseTalk-Fast] 🚀 Video generated in high speed: {final_output_path}")
+            if ffmpeg_proc is not None:
+                if ffmpeg_proc.stdin:
+                    try:
+                        ffmpeg_proc.stdin.close()
+                    except Exception:
+                        pass
+                ffmpeg_proc.wait()
+
+            if ffseg_writer is not None:
+                pcm = b""
+                if audio_to_pcm_s16le is not None:
+                    pcm = audio_to_pcm_s16le(audio_path, sample_rate=44100, channels=2)
+                try:
+                    written = ffseg_writer.finalize(pcm)
+                    print(f"[MuseTalk-Fast] 📦 Raw ffseg siap: {written} ({ffseg_writer.frame_count} frames)")
+                except Exception as ffseg_err:
+                    print(f"[MuseTalk-Fast] ffseg notice: {ffseg_err}")
+                    try:
+                        ffseg_writer.abort()
+                    except Exception:
+                        pass
+                    if skip_mp4:
+                        raise
+
+            next_offset = (delay_frame + len(res_frame_list)) % max(1, num_cycles)
+            _save_cycle_offset(video_path, next_offset, args)
+            out_label = ffseg_dir if (raw_feed and skip_mp4) else final_output_path
+            print(
+                f"[MuseTalk-Fast] 🚀 Generated: {out_label} "
+                f"(cycle {delay_frame}→{next_offset}, raw={raw_feed}, skip_mp4={skip_mp4})"
+            )
 
         except Exception as e:
             print(f"[MuseTalk-Fast ERROR] Failed processing {task_id}: {e}")
