@@ -193,6 +193,17 @@ import path from "path";
 import { randomBytes } from "crypto";
 import fs from "fs";
 
+/** PM2 sering di-start sebelum ffmpeg terpasang; PATH proses tidak ikut update. */
+function resolveFfmpegBinary(): string {
+  if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH;
+  for (const candidate of ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"]) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return "ffmpeg";
+}
+
+const FFMPEG_BIN = resolveFfmpegBinary();
+
 async function convertMp3ToWav(mp3Buffer: Buffer): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     // PENTING: Kita tidak boleh menggunakan "pipe:1" untuk output WAV.
@@ -205,7 +216,7 @@ async function convertMp3ToWav(mp3Buffer: Buffer): Promise<Buffer> {
       `tts_${randomBytes(4).toString("hex")}.wav`,
     );
 
-    const proc = spawn("ffmpeg", [
+    const proc = spawn(FFMPEG_BIN, [
       "-hide_banner",
       "-loglevel",
       "error",
