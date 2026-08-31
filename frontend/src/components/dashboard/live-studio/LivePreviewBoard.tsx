@@ -2,7 +2,8 @@
 
 import React from "react";
 import Image from "next/image";
-import { ClipboardList, ShoppingBag, Smartphone, User, Users, Package, Coins } from "lucide-react";
+import { ClipboardList, ShoppingBag, User, Users, Package, Coins } from "lucide-react";
+import { PlatformIcon } from "@/components/shared/PlatformIcon";
 import RealtimeLivePortraitView from "@/components/avatar/RealtimeLivePortraitView";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
@@ -190,10 +191,12 @@ export const LivePreviewBoard: React.FC = () => {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-400 flex items-center gap-1.5">
-                  <Smartphone className="w-3.5 h-3.5 text-cyan-400" />
+                  <PlatformIcon platformName={selectedPlatform} size="sm" />
                   <span>Platform</span>
                 </span>
-                <span className="font-semibold text-blue-400">{selectedPlatform}</span>
+                <span className="font-semibold text-blue-400 flex items-center gap-1.5">
+                  {selectedPlatform}
+                </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-400 flex items-center gap-1.5">

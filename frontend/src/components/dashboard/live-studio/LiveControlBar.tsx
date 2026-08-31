@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useEffect } from "react";
+import React, { useRef } from "react";
 import Image from "next/image";
 import {
   Radio,
@@ -8,15 +8,14 @@ import {
   Play,
   RotateCw,
   Copy,
-  CheckCircle2,
   Loader2,
   BookOpen,
   User,
   Clock,
   ShoppingBag,
-  Smartphone,
   Tag,
 } from "lucide-react";
+import { PlatformIcon } from "@/components/shared/PlatformIcon";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { useProductStore } from "@/stores/useProductStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
@@ -45,8 +44,6 @@ export const LiveControlBar: React.FC = () => {
   const isLivePaused = useLiveSessionStore((state) => state.isLivePaused);
   const setIsLivePaused = useLiveSessionStore((state) => state.setIsLivePaused);
   const isConnectingLive = useLiveSessionStore((state) => state.isConnectingLive);
-  const isWaitingForGoLive = useLiveSessionStore((state) => state.isWaitingForGoLive);
-  const isSubmittingGoLive = useLiveSessionStore((state) => state.isSubmittingGoLive);
   const liveSeconds = useLiveSessionStore((state) => state.liveSeconds);
   const selectedDuration = useLiveSessionStore((state) => state.selectedDuration);
   const selectedPlatform = useLiveSessionStore((state) => state.selectedPlatform);
@@ -61,9 +58,8 @@ export const LiveControlBar: React.FC = () => {
   const oauthConfigStatus = useLiveSessionStore((state) => state.oauthConfigStatus);
   const automations = useLiveSessionStore((state) => state.automations);
   const metrics = useLiveSessionStore((state) => state.metrics);
-  const pipelineStatus = useLiveSessionStore((state) => state.pipelineStatus);
+  const connectingStageText = useLiveSessionStore((state) => state.connectingStageText);
   const addChatMessage = useLiveSessionStore((state) => state.addChatMessage);
-  const cancelInitialization = useLiveSessionStore((state) => state.cancelInitialization);
 
   const connectingAbortRef = useRef<AbortController | null>(null);
 
@@ -95,7 +91,17 @@ export const LiveControlBar: React.FC = () => {
   };
 
   const handleStartLive = async () => {
-    useLiveSessionStore.setState({ isConnectingLive: true, hasConfirmedBroadcast: false });
+    if (useLiveSessionStore.getState().isConnectingLive) return;
+
+    const attemptId = Date.now();
+    const controller = new AbortController();
+
+    useLiveSessionStore.setState({
+      isConnectingLive: true,
+      hasConfirmedBroadcast: false,
+      connectAttemptId: attemptId,
+      connectAbortController: controller,
+    });
     showToast(`Menghubungkan ke server ${selectedPlatform}... Memverifikasi RTMP Ingest Handshake...`);
 
     const activeTargetRtmp =
@@ -112,7 +118,6 @@ export const LiveControlBar: React.FC = () => {
                 : "rtmp://live.livestreamer.ai/live";
 
     try {
-      const controller = new AbortController();
       connectingAbortRef.current = controller;
 
       const sessionJson = await liveSessionService.startSession(
@@ -120,7 +125,7 @@ export const LiveControlBar: React.FC = () => {
           productId: activeFeaturedProduct.id || "1",
           avatarId: selectedAvatar.id || "1",
           platform: selectedPlatform,
-          durationHours: 1,
+          durationHours: selectedDuration,
           autoReply: automations.autoReply,
           autoPin: automations.autoPin,
           autoPromotion: automations.autoPromo,
@@ -133,6 +138,12 @@ export const LiveControlBar: React.FC = () => {
         },
         controller.signal,
       );
+
+      if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
+
+      if (sessionJson.data?.id) {
+        useLiveSessionStore.setState({ currentLiveSessionId: sessionJson.data.id });
+      }
 
       const bcastJson = await liveSessionService.startBroadcast(
         {
@@ -152,11 +163,13 @@ export const LiveControlBar: React.FC = () => {
         controller.signal,
       );
 
+      if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
+
       if (bcastJson.success) {
         if (bcastJson.waitingForGoLive) {
           useLiveSessionStore.setState({
-            isWaitingForGoLive: true,
             currentLiveSessionId: sessionJson.data?.id,
+            liveSessionPhase: "pending",
           });
           showToast(bcastJson.message || "RTMP terhubung! Sedang menggenerate Video AI...");
         } else {
@@ -179,6 +192,7 @@ export const LiveControlBar: React.FC = () => {
         showToast(`Gagal terhubung ke ${selectedPlatform}: ${bcastJson.error || "Server RTMP menolak koneksi."}`);
       }
     } catch {
+      if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
       if (connectingAbortRef.current?.signal.aborted) return;
       useLiveSessionStore.setState({
         isConnectingLive: false,
@@ -186,33 +200,6 @@ export const LiveControlBar: React.FC = () => {
         currentLiveSessionId: null,
       });
       showToast("Error koneksi: Pastikan server backend online dan Stream Key valid.");
-    }
-  };
-
-  const handleConfirmGoLive = async () => {
-    const sid = useLiveSessionStore.getState().currentLiveSessionId;
-    if (!sid || isSubmittingGoLive) return;
-
-    useLiveSessionStore.setState({ isSubmittingGoLive: true });
-    try {
-      const json = await liveSessionService.confirmGoLive(sid);
-      if (json.success) {
-        useLiveSessionStore.setState({
-          isConnectingLive: false,
-          isWaitingForGoLive: false,
-          isLiveActive: true,
-          isLivePaused: false,
-          liveSessionPhase: "live",
-          liveSeconds: 0,
-        });
-        showToast("AI Host aktif! Siaran live dimulai.");
-      } else {
-        showToast(`Gagal konfirmasi: ${json.error}`);
-      }
-    } catch {
-      showToast("Error koneksi saat konfirmasi.");
-    } finally {
-      useLiveSessionStore.setState({ isSubmittingGoLive: false });
     }
   };
 
@@ -232,7 +219,7 @@ export const LiveControlBar: React.FC = () => {
     }
   };
 
-  if (!isLiveActive && !isWaitingForGoLive) {
+  if (!isLiveActive) {
     return (
       <div
         className={`flex flex-col rounded-xl border p-4 transition ${
@@ -286,9 +273,7 @@ export const LiveControlBar: React.FC = () => {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-cyan-400 w-4 flex justify-center">
-                  <Smartphone className="w-3.5 h-3.5" />
-                </span>
+                <PlatformIcon platformName={selectedPlatform} size="sm" className="shrink-0" />
                 <div>
                   <p className="text-slate-500 leading-none">Platform Target</p>
                   <p className="font-medium text-slate-200 mt-1">{selectedPlatform}</p>
@@ -435,7 +420,8 @@ export const LiveControlBar: React.FC = () => {
                   </div>
                   <div className="flex rounded border border-[#232c42] bg-[#111827]">
                     <input
-                      type="text"
+                      type="password"
+                      autoComplete="off"
                       value={streamKey}
                       onChange={(e) => setStreamKey(e.target.value)}
                       placeholder={`Tempel Stream Key dari ${selectedPlatform}...`}
@@ -482,7 +468,7 @@ export const LiveControlBar: React.FC = () => {
           {isConnectingLive ? (
             <div className="flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Memverifikasi Ingest Stream ke {selectedPlatform}...</span>
+              <span>{connectingStageText}</span>
             </div>
           ) : (
             <>
@@ -495,73 +481,6 @@ export const LiveControlBar: React.FC = () => {
               </span>
             </>
           )}
-        </button>
-      </div>
-    );
-  }
-
-  if (isWaitingForGoLive) {
-    return (
-      <div className="flex flex-col rounded-xl border border-yellow-500/40 bg-[#0e1222] p-5 shadow-2xl shadow-yellow-900/10">
-        <div className="mb-4 flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-yellow-500 animate-pulse" />
-          <p className="text-[11px] font-black uppercase tracking-widest text-yellow-400">Menunggu Siaran</p>
-        </div>
-        <h3 className="text-sm font-bold text-white mb-2">Tindakan Diperlukan:</h3>
-        <ol className="list-decimal pl-4 text-xs text-slate-300 space-y-2 mb-6">
-          <li>
-            Buka aplikasi <strong>{selectedPlatform}</strong> di HP/Web Anda.
-          </li>
-          <li>Pastikan preview kamera menampilkan video idle Avatar.</li>
-          <li>
-            Klik tombol <strong>Siarkan Langsung / Go Live</strong> di aplikasi tersebut.
-          </li>
-          <li>Setelah siaran berjalan, tekan tombol konfirmasi di bawah ini.</li>
-        </ol>
-
-        <div className="mb-6 rounded-xl bg-black/40 p-4 border border-white/10">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              {pipelineStatus?.ready ? (
-                <span className="text-emerald-400 text-xs font-semibold flex items-center gap-1.5 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/30">
-                  <CheckCircle2 className="w-4 h-4" />
-                  Video AI Siap ({pipelineStatus.generationCount || 1}/2)
-                </span>
-              ) : (
-                <span className="text-amber-400 text-xs font-semibold flex items-center gap-2 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/30">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  Merender Video AI di GPU ({pipelineStatus?.generationCount || 0}/2)...
-                </span>
-              )}
-            </div>
-            <span className="text-[11px] text-slate-400">Antrean: {pipelineStatus?.pendingCount ?? 0}</span>
-          </div>
-        </div>
-
-        {pipelineStatus?.ready ? (
-          <button
-            type="button"
-            onClick={handleConfirmGoLive}
-            disabled={isSubmittingGoLive}
-            className="w-full py-3.5 rounded-lg text-sm font-bold text-white bg-green-600 hover:bg-green-500 active:scale-95 shadow-[0_0_20px_rgba(34,197,94,0.45)] cursor-pointer"
-          >
-            {isSubmittingGoLive ? "Menyambungkan..." : "[OK] Konfirmasi Siaran Dimulai"}
-          </button>
-        ) : (
-          <div className="w-full py-3 px-4 rounded-lg bg-slate-800/80 border border-slate-700/50 text-center flex items-center justify-center gap-2">
-            <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
-            <span className="text-xs text-slate-300 font-medium">
-              Menunggu Render Video AI ({pipelineStatus?.generationCount || 0}/2)...
-            </span>
-          </div>
-        )}
-
-        <button
-          type="button"
-          onClick={cancelInitialization}
-          className="mt-3 w-full py-2 text-xs font-semibold text-slate-400 hover:text-white transition cursor-pointer"
-        >
-          Batal
         </button>
       </div>
     );
@@ -583,7 +502,8 @@ export const LiveControlBar: React.FC = () => {
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
             GPU Active
           </span>
-          <span className="text-[9px] font-bold text-cyan-300 bg-cyan-950/60 px-2.5 py-0.5 rounded-full border border-cyan-500/30">
+          <span className="text-[9px] font-bold text-cyan-300 bg-cyan-950/60 px-2.5 py-0.5 rounded-full border border-cyan-500/30 flex items-center gap-1.5">
+            <PlatformIcon platformName={selectedPlatform} size="sm" />
             {selectedPlatform}
           </span>
         </div>

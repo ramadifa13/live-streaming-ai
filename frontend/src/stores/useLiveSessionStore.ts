@@ -20,6 +20,7 @@ export interface PipelineStatus {
   pendingCount: number;
   isLive?: boolean;
   isBroadcasting?: boolean;
+  isRtmpConnected?: boolean;
   stageIndex?: number;
   stageText?: string;
 }
@@ -34,6 +35,8 @@ interface LiveSessionState {
   isWaitingForGoLive: boolean;
   isSubmittingGoLive: boolean;
   hasConfirmedBroadcast: boolean;
+  connectAttemptId: number;
+  connectAbortController: AbortController | null;
   connectingStageIndex: number;
   connectingStageText: string;
 
@@ -100,7 +103,7 @@ interface LiveSessionState {
   setIsLivePaused: (paused: boolean) => void;
   setLiveSessionPhase: (phase: "idle" | "pending" | "live" | "ended") => void;
   handlePlatformSelect: (platName: string) => void;
-  cancelInitialization: () => void;
+  cancelInitialization: () => Promise<void>;
   endLiveSession: () => Promise<SessionSummaryData>;
 }
 
@@ -115,6 +118,8 @@ export const useLiveSessionStore = create<LiveSessionState>()(
       isWaitingForGoLive: false,
       isSubmittingGoLive: false,
       hasConfirmedBroadcast: false,
+      connectAttemptId: 0,
+      connectAbortController: null,
       connectingStageIndex: 0,
       connectingStageText: "Mengalokasikan Cloud GPU RTX 4090...",
       selectedDuration: 1,
@@ -175,7 +180,12 @@ export const useLiveSessionStore = create<LiveSessionState>()(
             typeof secs === "function" ? secs(state.liveSeconds) : secs,
         })),
       setSessionSummary: (sum) => set({ sessionSummary: sum }),
-      setPipelineStatus: (status) => set({ pipelineStatus: status }),
+      setPipelineStatus: (status) =>
+        set((state) => ({
+          pipelineStatus: status,
+          connectingStageIndex: status?.stageIndex ?? state.connectingStageIndex,
+          connectingStageText: status?.stageText ?? state.connectingStageText,
+        })),
       setIsLiveActive: (active) => set({ isLiveActive: active }),
       setIsLivePaused: (paused) => set({ isLivePaused: paused }),
       setLiveSessionPhase: (phase) => set({ liveSessionPhase: phase }),
@@ -199,25 +209,44 @@ export const useLiveSessionStore = create<LiveSessionState>()(
         }
       },
 
-      cancelInitialization: () => {
-        const sid = get().currentLiveSessionId;
+      cancelInitialization: async () => {
+        const state = get();
+        const sid = state.currentLiveSessionId;
+        const attemptId = state.connectAttemptId;
+
+        state.connectAbortController?.abort();
         set({
+          connectAttemptId: attemptId + 1,
+          connectAbortController: null,
           isConnectingLive: false,
           isWaitingForGoLive: false,
+          isSubmittingGoLive: false,
           currentLiveSessionId: null,
           pipelineStatus: null,
           hasConfirmedBroadcast: false,
+          liveSessionPhase: "idle",
+          connectingStageIndex: 0,
+          connectingStageText: "Mengalokasikan Cloud GPU RTX 4090...",
         });
 
         if (sid) {
-          liveSessionService.stopBroadcast(sid);
-          liveSessionService.stopSession({ sessionId: sid });
+          await liveSessionService.stopBroadcast(sid);
+          await liveSessionService.stopSession({ sessionId: sid });
         }
       },
 
       endLiveSession: async () => {
         const state = get();
-        set({ isLiveActive: false, isLivePaused: false, liveSessionPhase: "ended" });
+        set({
+          isLiveActive: false,
+          isLivePaused: false,
+          isConnectingLive: false,
+          isWaitingForGoLive: false,
+          isSubmittingGoLive: false,
+          liveSessionPhase: "ended",
+          connectAbortController: null,
+          pipelineStatus: null,
+        });
 
         await liveSessionService.stopBroadcast(state.currentLiveSessionId);
 
@@ -273,7 +302,6 @@ export const useLiveSessionStore = create<LiveSessionState>()(
         selectedDuration: state.selectedDuration,
         selectedPlatform: state.selectedPlatform,
         customRtmpUrl: state.customRtmpUrl,
-        streamKey: state.streamKey,
         automations: state.automations,
         metrics: state.metrics,
       }),

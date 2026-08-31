@@ -186,13 +186,15 @@ class AILiveWorker:
 
         clean_name = host_name.lower().replace(".png", "").replace(".jpg", "").replace(".mp4", "").strip()
 
-        # 1. Cek nama persis (namira.mp4, namira_idle.mp4)
+        # Prefer exact clip names first — jangan jatuh ke namira.mp4 sebelum clip gesture dicek.
+        exact_names = [f"{clean_name}.mp4", f"{clean_name}_idle.mp4"]
         for d in candidate_dirs:
-            if os.path.exists(d):
-                for target_file in [f"{clean_name}.mp4", f"{clean_name}_idle.mp4", "namira.mp4", "namira_idle.mp4"]:
-                    p = os.path.join(d, target_file)
-                    if os.path.exists(p):
-                        return p
+            if not os.path.exists(d):
+                continue
+            for target_file in exact_names:
+                p = os.path.join(d, target_file)
+                if os.path.exists(p):
+                    return p
 
         # 2. Cek variasi nama / substring
         for d in candidate_dirs:
@@ -200,7 +202,6 @@ class AILiveWorker:
                 for f in os.listdir(d):
                     if f.endswith(".mp4") and not f.startswith("temp_") and (
                         clean_name in f.lower()
-                        or f.lower().replace(".mp4", "") in clean_name
                     ):
                         return os.path.join(d, f)
 
@@ -209,7 +210,19 @@ class AILiveWorker:
         if env_idle and os.path.exists(env_idle):
             return env_idle
 
-        # 4. Fallback sembarang file mp4 pertama di semua candidate directories
+        # 4. Fallback: clip gerak natural, baru ke namira.mp4
+        for d in candidate_dirs:
+            if not os.path.exists(d):
+                continue
+            for fallback in (
+                "namira_talk_expressive.mp4",
+                "namira_idle.mp4",
+                "namira.mp4",
+            ):
+                p = os.path.join(d, fallback)
+                if os.path.exists(p):
+                    return p
+
         for d in candidate_dirs:
             if os.path.exists(d):
                 mp4s = [
@@ -219,8 +232,123 @@ class AILiveWorker:
                 ]
                 if mp4s:
                     return os.path.join(d, mp4s[0])
-
         return None
+
+    def _resolve_action_clip(self, host_type, host_name, action_tag):
+        """Pilih clip gerak yang sesuai action dari brain, bukan selalu namira.mp4."""
+        host = (host_name or "namira").lower().strip()
+        action = (action_tag or "talk_expressive").lower().strip()
+        aliases = {
+            "talk_expressive": ["talk_expressive", "expressive"],
+            "idle": ["idle"],
+            "nod": ["nod"],
+            "laugh": ["laugh"],
+            "wave": ["wave", "raise_hand"],
+            "point_up": ["point_up"],
+            "point_down": ["point_down"],
+            "think": ["nod", "idle"],
+            "raise_hand": ["wave"],
+            "smile": ["nod"],
+            "excited": ["talk_expressive"],
+        }
+        variants = aliases.get(action, [action])
+        candidates = []
+        for variant in variants:
+            candidates.extend(
+                [
+                    f"{host}_{variant}",
+                    variant,
+                    f"namira_{variant}",
+                ]
+            )
+        if action not in ("idle",):
+            candidates.append(f"{host}_talk_expressive")
+            candidates.append("namira_talk_expressive")
+        candidates.append(f"{host}_idle")
+        candidates.append("namira_idle")
+        candidates.append(host)
+        candidates.append("namira")
+
+        seen = set()
+        for name in candidates:
+            if name in seen:
+                continue
+            seen.add(name)
+            found = self._get_idle_video(host_type, name)
+            if found:
+                return found
+        return self._get_idle_video(host_type, host)
+
+    async def run_pipeline(
+        self,
+        host_type,
+        host_name,
+        text_answer,
+        task_id,
+        audio_path=None,
+        tone="Casual",
+        action=None,
+    ):
+        """Fungsi Pemicu Utama — Zero-Latency High Speed Pipeline"""
+        pipeline_start = time.time()
+
+        # 1. Parse Action Tags (e.g. [WAVE], [NOD]) — juga terima field action dari backend
+        import re
+
+        action_tag = (action or "").strip().lower()
+        match = re.search(r"\[([A-Z_]+)\]", text_answer or "")
+        if match:
+            action_tag = match.group(1).lower()
+            text_answer = re.sub(r"\[[A-Z_]+\]", "", text_answer).strip()
+        if not action_tag or action_tag in ("none", "null"):
+            action_tag = "talk_expressive"
+
+        print(
+            f"\n[MEMPROSES] {task_id} | Host: {host_name} ({host_type.upper()}) | Action: {action_tag}"
+        )
+
+        idle_video = self._resolve_action_clip(host_type, host_name, action_tag)
+
+        if not idle_video:
+            print(
+                f"[ERROR] Video '{host_name}.mp4' tidak ada di folder assets/{host_type}"
+            )
+            return None
+
+        print(f"[CLIP] Using source video: {idle_video}")
+
+        if audio_path and os.path.exists(audio_path):
+            audio_file = audio_path
+        else:
+            print(
+                f"[ERROR] Audio dari backend tidak tersedia untuk {task_id}."
+            )
+            return None
+
+        # 3. Fast Lipsync Video Generation (< 3-5 detik)
+        lipsync_start = time.time()
+        final_video = await self._sync_lips_async(
+            idle_video, audio_file, task_id
+        )
+        lipsync_elapsed = round((time.time() - lipsync_start) * 1000)
+
+        if (
+            audio_file
+            and os.path.exists(audio_file)
+            and audio_file.startswith(self.temp_dir)
+        ):
+            try:
+                os.remove(audio_file)
+            except Exception:
+                pass
+
+        total_elapsed = round((time.time() - pipeline_start) * 1000)
+        if final_video:
+            print(
+                f"[⚡ SUKSES KILAT] Video selesai: {final_video} | "
+                f"lipsync={lipsync_elapsed}ms total={total_elapsed}ms action={action_tag}"
+            )
+        return final_video
 
     async def _sync_lips_async(self, idle_video, audio_path, task_id):
         loop = asyncio.get_running_loop()
@@ -391,76 +519,3 @@ class AILiveWorker:
                         os.remove(norm_audio_path)
                     except Exception:
                         pass
-
-    async def run_pipeline(
-        self,
-        host_type,
-        host_name,
-        text_answer,
-        task_id,
-        audio_path=None,
-        tone="Casual",
-    ):
-        """Fungsi Pemicu Utama — Zero-Latency High Speed Pipeline"""
-        pipeline_start = time.time()
-
-        # 1. Parse Action Tags (e.g. [RAISE_HAND])
-        import re
-
-        action_tag = "idle"
-        match = re.search(r"\[([A-Z_]+)\]", text_answer)
-        if match:
-            action_tag = match.group(1).lower()
-            text_answer = re.sub(r"\[[A-Z_]+\]", "", text_answer).strip()
-
-        print(
-            f"\n[MEMPROSES] {task_id} | Host: {host_name} ({host_type.upper()}) | Action: {action_tag}"
-        )
-
-        # 2. Modify host_name dynamically
-        dynamic_host_name = host_name
-        if action_tag != "idle":
-            dynamic_host_name = f"{host_name}_{action_tag}"
-
-        idle_video = self._get_idle_video(host_type, dynamic_host_name)
-        if not idle_video and dynamic_host_name != host_name:
-            idle_video = self._get_idle_video(host_type, host_name)
-
-        if not idle_video:
-            print(
-                f"[ERROR] Video '{host_name}.mp4' tidak ada di folder assets/{host_type}"
-            )
-            return None
-
-        if audio_path and os.path.exists(audio_path):
-            audio_file = audio_path
-        else:
-            print(
-                f"[ERROR] Audio dari backend tidak tersedia untuk {task_id}."
-            )
-            return None
-
-        # 3. Fast Lipsync Video Generation (< 3-5 detik)
-        lipsync_start = time.time()
-        final_video = await self._sync_lips_async(
-            idle_video, audio_file, task_id
-        )
-        lipsync_elapsed = round((time.time() - lipsync_start) * 1000)
-
-        if (
-            audio_file
-            and os.path.exists(audio_file)
-            and audio_file.startswith(self.temp_dir)
-        ):
-            try:
-                os.remove(audio_file)
-            except Exception:
-                pass
-
-        total_elapsed = round((time.time() - pipeline_start) * 1000)
-        if final_video:
-            print(
-                f"[⚡ SUKSES KILAT] Video selesai: {final_video} | "
-                f"lipsync={lipsync_elapsed}ms total={total_elapsed}ms"
-            )
-        return final_video

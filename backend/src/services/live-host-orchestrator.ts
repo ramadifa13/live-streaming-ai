@@ -5,6 +5,7 @@ import {
 } from "./runpod-bridge.js";
 import {
   generateHostResponse,
+  getBrainBackoffMs,
   type HostIntent,
   type HostMode,
   type HostResponse,
@@ -159,10 +160,10 @@ interface PlanPolicy {
 const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   "2H": {
     durationMs: 2 * 60 * 60 * 1000,
-    minBufferSeconds: 35,
-    targetBufferSeconds: 75,
-    maxBufferSeconds: 120,
-    commentTtlMs: 30_000,
+    minBufferSeconds: 10,
+    targetBufferSeconds: 22,
+    maxBufferSeconds: 40,
+    commentTtlMs: 25_000,
     maxPendingComments: 8,
     memoryUtterances: 30,
     memoryTopics: 18,
@@ -173,10 +174,10 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   },
   "8H": {
     durationMs: 8 * 60 * 60 * 1000,
-    minBufferSeconds: 50,
-    targetBufferSeconds: 105,
-    maxBufferSeconds: 165,
-    commentTtlMs: 45_000,
+    minBufferSeconds: 14,
+    targetBufferSeconds: 30,
+    maxBufferSeconds: 55,
+    commentTtlMs: 35_000,
     maxPendingComments: 10,
     memoryUtterances: 55,
     memoryTopics: 28,
@@ -187,10 +188,10 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   },
   "24H": {
     durationMs: 24 * 60 * 60 * 1000,
-    minBufferSeconds: 70,
-    targetBufferSeconds: 135,
-    maxBufferSeconds: 210,
-    commentTtlMs: 60_000,
+    minBufferSeconds: 18,
+    targetBufferSeconds: 38,
+    maxBufferSeconds: 70,
+    commentTtlMs: 45_000,
     maxPendingComments: 14,
     memoryUtterances: 90,
     memoryTopics: 45,
@@ -201,11 +202,20 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   },
 };
 
-const FALLBACK_SPEECH_SECONDS = 17;
+/** Estimasi durasi clip pendek (speech 20–35 kata ≈ 8–14 detik). */
+const FALLBACK_SPEECH_SECONDS = 12;
+const IN_FLIGHT_RENDER_SECONDS = 10;
 const PRODUCT_CACHE_TTL_MS = 30_000;
-const QUEUE_POLL_MS = 1_000;
-const COMMENT_SCAN_MS = 750;
-const GENERATION_BACKOFF_MS = 1_500;
+const QUEUE_POLL_MS = 800;
+const COMMENT_SCAN_MS = 400;
+const GENERATION_BACKOFF_MS = 800;
+/** Batas idle di siaran sebelum orchestrator boost generate (detik). */
+export const MAX_ONAIR_IDLE_SECONDS = 5;
+
+async function awaitBrainReady(): Promise<void> {
+  const waitMs = getBrainBackoffMs();
+  if (waitMs > 0) await sleep(waitMs);
+}
 
 const AUTONOMOUS_TOPIC_BANK: Array<{
   topic: string;
@@ -407,11 +417,16 @@ function parsePlan(value?: StreamPlan): StreamPlan {
   return value && PLAN_POLICIES[value] ? value : "2H";
 }
 
+export function durationHoursToPlan(hours: number): StreamPlan {
+  if (hours >= 24) return "24H";
+  if (hours >= 8) return "8H";
+  return "2H";
+}
+
 function estimateDurationSeconds(text: string): number {
   const clean = text.replace(/\s+/g, " ").trim();
   const words = clean ? clean.split(" ").length : 1;
-  // Indonesian conversational speech ~ 2.7 words/s sebagai estimator saja.
-  return Math.max(6, Math.min(55, Math.round(words / 2.7)));
+  return Math.max(5, Math.min(18, Math.round(words / 2.8)));
 }
 
 class LiveHostOrchestrator {
@@ -419,9 +434,9 @@ class LiveHostOrchestrator {
 
   constructor() {
     livePlatformConnector.setSpeechCallback(
-      (text: string, sessionId?: string, authorName?: string) => {
+      (text: string, sessionId?: string, authorName?: string, platformCommentId?: string) => {
         if (sessionId && text?.trim()) {
-          this.enqueue(sessionId, text, authorName);
+          this.enqueue(sessionId, text, authorName, platformCommentId);
         }
       },
     );
@@ -602,18 +617,22 @@ class LiveHostOrchestrator {
 
         const queue = await this.refreshQueueMetrics(sessionId);
         if (queue.workerOffline) {
-          await sleep(3000);
+          await sleep(2000);
           continue;
         }
 
-        if (queue.readyVideos + queue.queuedVideos >= 2) {
-          await sleep(2000);
+        const policy = this.getPolicy(s);
+        if (
+          queue.bufferSeconds >= policy.minBufferSeconds &&
+          queue.queuedVideos >= 2
+        ) {
+          await sleep(1200);
           continue;
         }
 
         try {
           await this.generateAndQueueNext(sessionId, "prelive");
-          await sleep(800);
+          await sleep(450);
         } catch (err: any) {
           const current = this.sessions.get(sessionId);
           if (!current || current.abortController.signal.aborted) break;
@@ -648,29 +667,37 @@ class LiveHostOrchestrator {
         await this.refreshQueueMetrics(sessionId);
         const policy = this.getPolicy(s);
 
-        // Buang komentar stale dan collapse duplicate.
         this.pruneCommentQueue(s);
 
-        // Jangan mengisi queue di atas MAX: mengurangi latency komentar.
-        if (s.lastQueue.bufferSeconds > policy.maxBufferSeconds) {
-          await sleep(1500);
-          continue;
-        }
-
-        // Prioritas pertama: komentar high-intent yang masih fresh.
         const comment = this.takeBestComment(s);
-        if (comment) {
+        const urgentComment =
+          comment &&
+          (comment.priority >= 45 ||
+            s.lastQueue.bufferSeconds <= MAX_ONAIR_IDLE_SECONDS);
+
+        if (comment && (urgentComment || s.lastQueue.bufferSeconds < policy.maxBufferSeconds)) {
           await this.generateAndQueueCommentResponse(sessionId, comment);
           continue;
         }
 
-        // Jika buffer di bawah target, generate speech autonomous.
-        if (s.lastQueue.bufferSeconds < policy.targetBufferSeconds) {
+        if (
+          s.lastQueue.bufferSeconds > policy.maxBufferSeconds &&
+          s.lastQueue.bufferSeconds >= policy.minBufferSeconds
+        ) {
+          await sleep(COMMENT_SCAN_MS);
+          continue;
+        }
+
+        const needsRefill =
+          s.lastQueue.bufferSeconds < policy.targetBufferSeconds ||
+          s.lastQueue.bufferSeconds < policy.minBufferSeconds ||
+          s.lastQueue.queuedVideos === 0;
+
+        if (needsRefill) {
           await this.generateAndQueueNext(sessionId, "live");
           continue;
         }
 
-        // Buffer cukup tetapi jangan idle scheduler: tunggu pendek dan cek event baru.
         await sleep(COMMENT_SCAN_MS);
       }
     } catch (err: any) {
@@ -705,32 +732,41 @@ class LiveHostOrchestrator {
     const topic = this.chooseAutonomousTopic(state);
     const requestedMode = this.resolveModeForTopic(state, topic.modes);
 
-    const hostResponse = await generateHostResponse({
-      userQuestion: `Buat satu segmen bicara otonom untuk live. Topic: ${topic.topic}. Tujuan segmen: ${topic.prompt}. Jangan terdengar seperti membaca skrip.`,
-      avatarName: state.config.avatarName,
-      tone: state.config.tone,
-      productName: product.name,
-      productPrice: `Rp${Number(product.price).toLocaleString("id-ID")}`,
-      productDescription: product.description,
-      productCategory: product.category,
-      productBenefits: product.benefits,
-      productUsage: product.usage,
-      productFaq: product.faq,
-      productStock: product.stock,
-      allProducts: state.catalog,
-      recentUtterances: state.memory.utterances.slice(-18),
-      recentTopics: state.memory.topics.slice(-12),
-      recentCTAs: state.memory.ctas.slice(-8),
-      recentClaims: state.memory.claims.slice(-20),
-      avoidPhrases: this.buildAvoidPhrases(state),
-      avoidTopics: state.memory.topics.slice(-10),
-      mode: requestedMode,
-      requestedMode,
-      requestedIntent: "SELL",
-      elapsedMinutes: Math.round(this.elapsedMs(state) / 60_000),
-      audienceCount: undefined,
-      plan: parsePlan(state.config.plan),
-    });
+    await awaitBrainReady();
+    let hostResponse: HostResponse;
+    try {
+      hostResponse = await generateHostResponse({
+        userQuestion: `Buat satu segmen bicara otonom untuk live. Topic: ${topic.topic}. Tujuan segmen: ${topic.prompt}. Jangan terdengar seperti membaca skrip.`,
+        avatarName: state.config.avatarName,
+        tone: state.config.tone,
+        productName: product.name,
+        productPrice: `Rp${Number(product.price).toLocaleString("id-ID")}`,
+        productDescription: product.description,
+        productCategory: product.category,
+        productBenefits: product.benefits,
+        productUsage: product.usage,
+        productFaq: product.faq,
+        productStock: product.stock,
+        allProducts: state.catalog,
+        recentUtterances: state.memory.utterances.slice(-18),
+        recentTopics: state.memory.topics.slice(-12),
+        recentCTAs: state.memory.ctas.slice(-8),
+        recentClaims: state.memory.claims.slice(-20),
+        avoidPhrases: this.buildAvoidPhrases(state),
+        avoidTopics: state.memory.topics.slice(-10),
+        mode: requestedMode,
+        requestedMode,
+        requestedIntent: "SELL",
+        elapsedMinutes: Math.round(this.elapsedMs(state) / 60_000),
+        audienceCount: undefined,
+        plan: parsePlan(state.config.plan),
+      });
+    } catch (err: any) {
+      state.counters.failed++;
+      console.warn(`[LiveHost] Autonomous generation error: ${err?.message || err}`);
+      await sleep(GENERATION_BACKOFF_MS);
+      return;
+    }
 
     const accepted = await this.processHostResponse(
       sessionId,
@@ -766,32 +802,44 @@ class LiveHostOrchestrator {
       "Jawab kebutuhan penonton terlebih dahulu; CTA hanya jika benar-benar relevan.",
     ].join(" ");
 
-    const response = await generateHostResponse({
-      userQuestion,
-      authorName: author,
-      avatarName: state.config.avatarName,
-      tone: state.config.tone,
-      productName: product.name,
-      productPrice: `Rp${Number(product.price).toLocaleString("id-ID")}`,
-      productDescription: product.description,
-      productCategory: product.category,
-      productBenefits: product.benefits,
-      productUsage: product.usage,
-      productFaq: product.faq,
-      productStock: product.stock,
-      allProducts: state.catalog,
-      recentUtterances: state.memory.utterances.slice(-24),
-      recentTopics: state.memory.topics.slice(-15),
-      recentCTAs: state.memory.ctas.slice(-8),
-      recentClaims: state.memory.claims.slice(-20),
-      avoidPhrases: this.buildAvoidPhrases(state),
-      avoidTopics: state.memory.topics.slice(-10),
-      mode: "QNA",
-      requestedMode: "QNA",
-      requestedIntent: comment.intent,
-      elapsedMinutes: Math.round(this.elapsedMs(state) / 60_000),
-      plan: parsePlan(state.config.plan),
-    });
+    const response = await (async () => {
+      await awaitBrainReady();
+      try {
+        return await generateHostResponse({
+          userQuestion,
+          authorName: author,
+          avatarName: state.config.avatarName,
+          tone: state.config.tone,
+          productName: product.name,
+          productPrice: `Rp${Number(product.price).toLocaleString("id-ID")}`,
+          productDescription: product.description,
+          productCategory: product.category,
+          productBenefits: product.benefits,
+          productUsage: product.usage,
+          productFaq: product.faq,
+          productStock: product.stock,
+          allProducts: state.catalog,
+          recentUtterances: state.memory.utterances.slice(-24),
+          recentTopics: state.memory.topics.slice(-15),
+          recentCTAs: state.memory.ctas.slice(-8),
+          recentClaims: state.memory.claims.slice(-20),
+          avoidPhrases: this.buildAvoidPhrases(state),
+          avoidTopics: state.memory.topics.slice(-10),
+          mode: "QNA",
+          requestedMode: "QNA",
+          requestedIntent: comment.intent,
+          elapsedMinutes: Math.round(this.elapsedMs(state) / 60_000),
+          plan: parsePlan(state.config.plan),
+        });
+      } catch (err: any) {
+        state.counters.failed++;
+        console.warn(`[LiveHost] Comment generation error: ${err?.message || err}`);
+        await sleep(GENERATION_BACKOFF_MS);
+        return null;
+      }
+    })();
+
+    if (!response) return;
 
     const accepted = await this.processHostResponse(
       sessionId,
@@ -803,6 +851,7 @@ class LiveHostOrchestrator {
     if (accepted) {
       state.counters.commentsAnswered++;
       state.memory.lastCommentResponseAt = Date.now();
+      livePlatformConnector.recordCommentReply(sessionId, comment.id, response.speech);
     }
   }
 
@@ -854,6 +903,7 @@ class LiveHostOrchestrator {
         voice: state.config.voice || "id-ID-GadisNeural",
         avatarName: state.config.avatarName,
         tone: state.config.tone,
+        emotion: response.emotion,
       });
       if (ttsResult.success && ttsResult.audioBuffer) {
         audioBase64 = ttsResult.audioBuffer.toString("base64");
@@ -864,7 +914,7 @@ class LiveHostOrchestrator {
 
     // Bila TTS gagal, submit tetap dilakukan bila worker mampu menghasilkan audio/video
     // dari text; ini mempertahankan jalur fallback lama.
-    await this.submitToGPU(sessionId, finalText, audioBase64);
+    await this.submitToGPU(sessionId, finalText, audioBase64, response.action);
 
     state.counters.generated++;
     state.lastActivityAt = Date.now();
@@ -999,7 +1049,12 @@ class LiveHostOrchestrator {
    * - queue tetap kecil agar komentar tidak basi;
    * - pertanyaan mirip disatukan dengan drop duplicate.
    */
-  public enqueue(sessionId: string, text: string, authorName?: string): void {
+  public enqueue(
+    sessionId: string,
+    text: string,
+    authorName?: string,
+    platformCommentId?: string,
+  ): void {
     const state = this.sessions.get(sessionId);
     if (!state || !state.isLive) return;
 
@@ -1030,7 +1085,7 @@ class LiveHostOrchestrator {
     }
 
     const comment: PendingComment = {
-      id: `${now}-${Math.random().toString(36).slice(2, 9)}`,
+      id: platformCommentId || `${now}-${Math.random().toString(36).slice(2, 9)}`,
       text: clean.slice(0, 500),
       authorName: authorName?.trim().slice(0, 80),
       createdAt: now,
@@ -1186,23 +1241,35 @@ class LiveHostOrchestrator {
         return state.lastQueue;
       }
 
-      const readyVideos = Number(raw.ready_videos_count || 0);
-      const queuedVideos = Number(raw.queued_videos_count || 0);
+      const readyVideos = Number(raw.queued_videos_count || 0);
+      const queuedVideos = readyVideos;
       const activeProcessing = Number(raw.active_processing_count || 0);
 
-      // Prioritaskan duration telemetry dari worker bila sudah tersedia.
-      const explicitBuffer = Number(
-        raw.ready_videos_duration_seconds ??
+      const playableSeconds = Number(
+        raw.playable_buffer_seconds ??
           raw.queued_videos_duration_seconds ??
-          raw.buffer_seconds ??
           NaN,
       );
+      const inFlightSeconds = Number(raw.in_flight_buffer_seconds ?? NaN);
 
-      const countBasedEstimate =
-        (readyVideos + queuedVideos) * FALLBACK_SPEECH_SECONDS;
-      const bufferSeconds = Number.isFinite(explicitBuffer)
-        ? Math.max(0, explicitBuffer)
-        : Math.max(0, countBasedEstimate);
+      const explicitTotal = Number(raw.buffer_seconds ?? NaN);
+
+      let bufferSeconds: number;
+      if (Number.isFinite(explicitTotal)) {
+        bufferSeconds = Math.max(0, explicitTotal);
+      } else if (Number.isFinite(playableSeconds)) {
+        bufferSeconds = Math.max(
+          0,
+          playableSeconds +
+            (Number.isFinite(inFlightSeconds) ? inFlightSeconds : activeProcessing * IN_FLIGHT_RENDER_SECONDS),
+        );
+      } else {
+        bufferSeconds = Math.max(
+          0,
+          queuedVideos * FALLBACK_SPEECH_SECONDS +
+            activeProcessing * IN_FLIGHT_RENDER_SECONDS,
+        );
+      }
 
       state.estimatedBufferSeconds = bufferSeconds;
       state.lastQueue = {
@@ -1213,7 +1280,7 @@ class LiveHostOrchestrator {
         workerOffline: false,
         broadcasting: Boolean(raw.broadcasting),
         rtmpConnected: Boolean(raw.rtmp_connected),
-        warmedUp: Boolean(raw.warmed_up || bufferSeconds > 0),
+        warmedUp: Boolean(raw.warmed_up || bufferSeconds > 0 || queuedVideos > 0),
       };
 
       if (
@@ -1238,6 +1305,7 @@ class LiveHostOrchestrator {
     sessionId: string,
     text: string,
     audioBase64?: string,
+    action?: string,
   ): Promise<void> {
     const state = this.sessions.get(sessionId);
     if (!state) return;
@@ -1246,10 +1314,15 @@ class LiveHostOrchestrator {
       ? `${state.config.avatarName.toLowerCase().trim()}.png`
       : "namira.png";
 
+    const gesture = (action || "TALK_EXPRESSIVE").toUpperCase().replace(/[^A-Z_]/g, "");
+    const taggedText = /^\s*\[[A-Z_]+\]/.test(text)
+      ? text
+      : `[${gesture || "TALK_EXPRESSIVE"}] ${text}`.trim();
+
     try {
       await forwardToRunPodGPU(state.config.podId || process.env.RUNPOD_POD_ID, {
         avatarImagePath: `avatars/${avatarFileName}`,
-        text,
+        text: taggedText,
         voice: state.config.voice || "id-ID-GadisNeural",
         tone: state.config.tone,
         audioBase64,
@@ -1257,6 +1330,7 @@ class LiveHostOrchestrator {
         streamKey: state.config.streamKey,
         requireWorker: true,
         wait: false,
+        action: gesture || "TALK_EXPRESSIVE",
       });
 
       state.counters.submitted++;
@@ -1306,8 +1380,10 @@ class LiveHostOrchestrator {
     }
 
     const queue = await this.refreshQueueMetrics(sessionId);
+    const policy = this.getPolicy(state);
     const ready =
-      (queue.readyVideos + queue.queuedVideos >= 2) &&
+      queue.bufferSeconds >= policy.minBufferSeconds &&
+      queue.queuedVideos >= 1 &&
       (queue.rtmpConnected || queue.broadcasting || !state.config.rtmpUrl);
 
     if (ready) state.pipelineReady = true;
@@ -1315,12 +1391,12 @@ class LiveHostOrchestrator {
     let stageIndex = 0;
     let stageText = "Menyiapkan AI Host...";
 
-    if (!queue.warmedUp && queue.readyVideos === 0 && state.counters.submitted === 0) {
+    if (!queue.warmedUp && queue.queuedVideos === 0 && state.counters.submitted === 0) {
       stageIndex = 1;
       stageText = "Memuat model AI Host ke Cloud GPU...";
-    } else if (queue.readyVideos + queue.queuedVideos < 2) {
+    } else if (queue.bufferSeconds < policy.minBufferSeconds || queue.queuedVideos < 2) {
       stageIndex = 2;
-      stageText = "Menyiapkan dua segmen pembuka AI Host...";
+      stageText = "Menyiapkan segmen pembuka AI Host...";
     } else if (!queue.rtmpConnected && !queue.broadcasting && state.config.rtmpUrl) {
       stageIndex = 3;
       stageText = "Menunggu koneksi RTMP...";
@@ -1335,7 +1411,7 @@ class LiveHostOrchestrator {
     return {
       ready,
       generationCount: state.counters.generated,
-      videosQueued: queue.readyVideos + queue.queuedVideos,
+      videosQueued: queue.queuedVideos,
       pendingCount: 0,
       pendingCommentCount: state.pendingComments.length,
       isLive: state.isLive,

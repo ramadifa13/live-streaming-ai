@@ -7,6 +7,8 @@ import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { useProductStore } from "@/stores/useProductStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
+import { dashboardPlatforms } from "@/lib/brand-assets";
+import { PlatformIcon } from "@/components/shared/PlatformIcon";
 
 const DURATIONS = [
   { hours: 2, label: "2 Jam", tag: "Express", price: "Rp99.000 (Express)" },
@@ -98,7 +100,8 @@ export const BroadcastSettingsPanel: React.FC = () => {
             Auto-Config Sync
           </span>
         </div>
-        <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+        <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 flex items-center gap-1.5">
+          <PlatformIcon platformName={selectedPlatform} size="sm" />
           {selectedPlatform} • {selectedDuration} Jam
         </span>
       </div>
@@ -233,22 +236,35 @@ export const BroadcastSettingsPanel: React.FC = () => {
         </div>
 
         <div>
-          <label className="mb-1 block text-[10.5px] font-semibold text-slate-300">Platform Siaran</label>
-          <select
-            value={selectedPlatform}
-            disabled={isLiveActive}
-            onChange={(e) => handlePlatformSelect(e.target.value)}
-            className={`w-full rounded-lg border border-[#232c42] bg-[#111827] px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-500 font-medium ${
-              isLiveActive ? "cursor-not-allowed opacity-70" : "cursor-pointer"
-            }`}
-          >
-            <option value="Instagram Live">Instagram Live</option>
-            <option value="Facebook Live">Facebook Live</option>
-            <option value="TikTok LIVE">TikTok LIVE</option>
-            <option value="Shopee Live">Shopee Live</option>
-            <option value="YouTube">YouTube Live</option>
-            <option value="Custom RTMP">Custom RTMP Server</option>
-          </select>
+          <label className="mb-1.5 block text-[10.5px] font-semibold text-slate-300">Platform Siaran</label>
+          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+            {dashboardPlatforms.map((platform) => {
+              const isSelected = selectedPlatform === platform.value;
+              const label = "label" in platform ? platform.label : platform.value;
+              return (
+                <button
+                  key={platform.value}
+                  type="button"
+                  disabled={isLiveActive}
+                  onClick={() => handlePlatformSelect(platform.value)}
+                  className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-left text-[10px] font-semibold transition active:scale-95 ${
+                    isSelected
+                      ? "border-blue-500 bg-blue-500/20 text-white ring-1 ring-blue-500/40"
+                      : "border-[#232c42] bg-[#111827] text-slate-400 hover:border-slate-600 hover:text-slate-200"
+                  } ${isLiveActive ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
+                >
+                  {platform.key ? (
+                    <PlatformIcon name={platform.key} size="sm" />
+                  ) : (
+                    <span className="flex h-5 w-5 items-center justify-center rounded bg-slate-700 text-[8px] font-bold">
+                      RTMP
+                    </span>
+                  )}
+                  <span className="truncate">{label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 

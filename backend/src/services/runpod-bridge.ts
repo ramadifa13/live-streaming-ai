@@ -15,6 +15,11 @@ export interface RunPod2DStreamParams {
   audioUrl?: string;
   requireWorker?: boolean;
   wait?: boolean;
+  action?: string;
+}
+
+function stripActionTagsForTts(text: string): string {
+  return text.replace(/^\s*\[[A-Z_]+\]\s*/i, "").replace(/\[[A-Z_]+\]/g, "").trim();
 }
 
 export interface RunPod2DStreamResult {
@@ -35,6 +40,10 @@ export interface RunPodQueueStatus {
   ready_videos_count: number;
   queued_videos_count?: number;
   ready_videos?: string[];
+  playable_buffer_seconds?: number;
+  queued_videos_duration_seconds?: number;
+  in_flight_buffer_seconds?: number;
+  buffer_seconds?: number;
   active_processing_count?: number;
   broadcasting?: boolean;
   rtmp_connected?: boolean;
@@ -276,7 +285,7 @@ export async function forwardToRunPodGPU(
       try {
         const { synthesizeSpeech } = await import("./tts.js");
         const ttsRes = await synthesizeSpeech({
-          text: params.text,
+          text: stripActionTagsForTts(params.text),
           voice: params.voice,
           avatarName,
           tone: params.tone,
@@ -308,6 +317,7 @@ export async function forwardToRunPodGPU(
           stream_key: params.streamKey || "",
           audio_base64: audioBase64 || "",
           audio_url: params.audioUrl || "",
+          action: params.action || "",
           wait: false, // Gunakan polling agar tidak terkena HTTP timeout
           idle_video_loop: true, // Worker memutar idle video saat antrian kosong → tidak ada freeze
         }),

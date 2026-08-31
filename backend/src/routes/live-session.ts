@@ -12,13 +12,12 @@ import {
   startRunPodBroadcast,
   updateRunPodBroadcastProduct,
   stopRunPodBroadcast,
-  triggerWorkerPlayback,
   warmupWorker,
 } from "../services/runpod-bridge.js";
 import { livePlatformConnector } from "../services/live-platform-connector.js";
 import { setLiveSessionActive, stopPod } from "../services/runpod-manager.js";
 import { liveSessionManager } from "../services/live-session-manager.js";
-import { liveHostOrchestrator } from "../services/live-host-orchestrator.js";
+import { liveHostOrchestrator, durationHoursToPlan } from "../services/live-host-orchestrator.js";
 
 const liveSessionSchema = z.object({
   productId: z.string().min(1),
@@ -298,6 +297,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         sessionId: parsed.data.sessionId!,
         rtmpUrl,
         streamKey,
+        plan: durationHoursToPlan(managedSession.durationHours ?? 2),
       };
       liveHostOrchestrator.startPipelineBackground(hostConfig);
     }
@@ -365,13 +365,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         };
       }
 
-      // Sinyal ke worker: stop idle loop, mulai putar dari queue
-      await triggerWorkerPlayback(managedSession.podId);
-
-      // Flush pending videos ke GPU queue → AI langsung bicara
-      await liveHostOrchestrator.startLivePipeline(sessionId);
-
-      // Tandai session sebagai live di DB
+      // markBroadcastLive handles worker playback + startLivePipeline + DB update
       await liveSessionManager.markBroadcastLive(sessionId);
 
       console.log(
@@ -385,8 +379,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         pipelineStatus: await liveHostOrchestrator.getPipelineStatus(sessionId),
       };
     } catch (error) {
-      liveHostOrchestrator.stop(sessionId);
-      await liveSessionManager.stopSession(sessionId).catch(() => {});
       reply.code(502);
       return {
         success: false,

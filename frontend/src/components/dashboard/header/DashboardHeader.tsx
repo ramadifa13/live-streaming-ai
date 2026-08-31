@@ -1,13 +1,12 @@
 "use client";
 
 import React from "react";
-import Link from "next/link";
 import { Radio, Clapperboard, Sparkles } from "lucide-react";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useProductStore } from "@/stores/useProductStore";
-import Image from "next/image";
+import { LivioLogo } from "@/components/shared/LivioLogo";
 
 const STEPS = [
   { num: 1, label: "Data Produk" },
@@ -35,15 +34,7 @@ export const DashboardHeader: React.FC = () => {
   return (
     <header className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-[#1f2638] pb-3">
       <div className="flex items-center gap-4">
-        <Link href="/" className="text-xl font-black tracking-tight text-white hover:opacity-90 transition">
-          <Image
-            src="/logo-horizontal.png"
-            alt="livio.id"
-            width={150}
-            height={60}
-            priority
-          />
-        </Link>
+        <LivioLogo variant="primary" className="hover:opacity-90 transition" />
 
         <div className="flex items-center rounded-lg bg-[#111827] p-0.5 border border-[#232c42] shadow-inner">
           <button

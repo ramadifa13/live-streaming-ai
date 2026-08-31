@@ -24,6 +24,55 @@ worker = AILiveWorker()
 jobs: Dict[str, Dict[str, Any]] = {}
 MAX_JOBS_STORE = 200
 JOB_TTL_SECONDS = 3600  # 1 hour TTL
+AVG_RENDER_SECONDS = 10.0
+IDLE_CLIP_BASENAMES = {"namira_idle.mp4", "namira.mp4", "idle.mp4"}
+
+def _probe_duration_seconds(path: str) -> float:
+    """Durasi file video (detik) untuk perhitungan buffer playable."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return max(0.5, float(result.stdout.strip()))
+    except Exception:
+        pass
+    try:
+        size = os.path.getsize(path)
+        return max(4.0, min(22.0, size / 160_000.0))
+    except Exception:
+        return 12.0
+
+def _collect_playable_videos(output_folder: str, idle_abs: str = ""):
+    search_pattern = os.path.join(output_folder, "**", "*.mp4")
+    playable = []
+    for path in glob.glob(search_pattern, recursive=True):
+        base = os.path.basename(path)
+        if base.startswith("temp_") or base.endswith(".tmp"):
+            continue
+        if idle_abs and os.path.abspath(path) == idle_abs:
+            continue
+        if base in IDLE_CLIP_BASENAMES:
+            continue
+        try:
+            if os.path.getsize(path) < 1024:
+                continue
+        except Exception:
+            continue
+        playable.append(path)
+    return playable
 
 # Monotonic counter: total video yang sudah selesai di-render (tidak pernah berkurang).
 # Dipakai oleh frontend/orchestrator untuk cek pipelineReady tanpa race condition delete.
@@ -132,6 +181,7 @@ class GenerateVideoRequest(BaseModel):
     audio_url: Optional[str] = None
     audioUrl: Optional[str] = None
     wait: Optional[bool] = False
+    action: Optional[str] = None
 
 # Mount output folder to serve the generated video files
 output_dir = worker.output_dir
@@ -205,6 +255,7 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                 task_id=task_id,
                 audio_path=audio_path,
                 tone=req.tone,
+                action=req.action,
             ),
             timeout=300.0,
         )
@@ -282,16 +333,17 @@ async def generate_neural_video(req: GenerateVideoRequest, wait: bool = False):
 
 @app.get("/stream/queue-status")
 async def get_queue_status():
-    import glob
-    video_files = [
-        os.path.basename(f)
-        for f in glob.glob(os.path.join(output_dir, "**", "*.mp4"), recursive=True)
-    ]
+    playable_paths = _collect_playable_videos(output_dir)
+    video_files = [os.path.basename(p) for p in playable_paths]
     active_processing = [
         jid for jid, info in jobs.items() if info.get("status") == "processing"
     ]
     is_broadcasting = broadcaster_process is not None and broadcaster_process.poll() is None
-    
+
+    playable_seconds = sum(_probe_duration_seconds(p) for p in playable_paths)
+    in_flight_seconds = len(active_processing) * AVG_RENDER_SECONDS
+    buffer_seconds = round(playable_seconds + in_flight_seconds, 2)
+
     rtmp_connected = False
     if is_broadcasting:
         status_file = os.path.join(output_dir, "rtmp_status.txt")
@@ -304,12 +356,14 @@ async def get_queue_status():
 
     return {
         "success": True,
-        # Monotonic counter — tidak pernah berkurang saat file dihapus broadcaster.
-        # Digunakan oleh orchestrator untuk cek pipelineReady (Bug 4 fix).
+        # Legacy counter — hanya untuk statistik render, BUKAN buffer playable.
         "ready_videos_count": total_videos_rendered,
-        # File .mp4 yang masih ada di disk dan belum diputar broadcaster.
         "queued_videos_count": len(video_files),
         "ready_videos": video_files,
+        "playable_buffer_seconds": round(playable_seconds, 2),
+        "queued_videos_duration_seconds": round(playable_seconds, 2),
+        "in_flight_buffer_seconds": round(in_flight_seconds, 2),
+        "buffer_seconds": buffer_seconds,
         "active_processing_count": len(active_processing),
         "broadcasting": is_broadcasting,
         "rtmp_connected": rtmp_connected,

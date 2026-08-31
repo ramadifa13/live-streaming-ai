@@ -1,22 +1,18 @@
 "use client";
 
 import React, { useState } from "react";
-import { X, BookOpen, AlertTriangle, Music2, ShoppingBag, Camera, PlaySquare, Globe } from "lucide-react";
+import { X, BookOpen, AlertTriangle } from "lucide-react";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
+import { dashboardPlatforms } from "@/lib/brand-assets";
+import { PlatformIcon } from "@/components/shared/PlatformIcon";
 
-const PLATFORM_TABS = [
-  { name: "TikTok LIVE", icon: Music2 },
-  { name: "Shopee Live", icon: ShoppingBag },
-  { name: "Instagram Live", icon: Camera },
-  { name: "YouTube Live", icon: PlaySquare },
-  { name: "Facebook Live", icon: Globe },
-];
+const PLATFORM_TABS = dashboardPlatforms.filter((p) => p.key !== null);
 
 export const TutorialModal: React.FC = () => {
   const showTutorialModal = useDashboardUIStore((state) => state.showTutorialModal);
   const setShowTutorialModal = useDashboardUIStore((state) => state.setShowTutorialModal);
 
-  const [tutorialPlatformTab, setTutorialPlatformTab] = useState("TikTok LIVE");
+  const [tutorialPlatformTab, setTutorialPlatformTab] = useState(PLATFORM_TABS[0]?.value ?? "TikTok LIVE");
 
   if (!showTutorialModal) return null;
 
@@ -42,24 +38,21 @@ export const TutorialModal: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap gap-1.5 mb-4 p-1 rounded-xl bg-[#111827] border border-[#232c42]">
-          {PLATFORM_TABS.map((p) => {
-            const IconComponent = p.icon;
-            return (
+          {PLATFORM_TABS.map((p) => (
               <button
-                key={p.name}
+                key={p.value}
                 type="button"
-                onClick={() => setTutorialPlatformTab(p.name)}
+                onClick={() => setTutorialPlatformTab(p.value)}
                 className={`flex-1 min-w-[100px] flex items-center justify-center gap-1.5 rounded-lg py-1.5 px-2 text-[10px] font-bold transition cursor-pointer ${
-                  tutorialPlatformTab === p.name
+                  tutorialPlatformTab === p.value
                     ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow"
                     : "text-slate-400 hover:text-white hover:bg-white/5"
                 }`}
               >
-                <IconComponent className="w-3.5 h-3.5" />
-                <span>{p.name}</span>
+                {p.key && <PlatformIcon name={p.key} size="sm" />}
+                <span>{"label" in p ? p.label : p.value}</span>
               </button>
-            );
-          })}
+            ))}
         </div>
 
         <div className="space-y-3.5 text-xs text-slate-200">
@@ -155,7 +148,7 @@ export const TutorialModal: React.FC = () => {
             </div>
           )}
 
-          {tutorialPlatformTab === "YouTube Live" && (
+          {tutorialPlatformTab === "YouTube" && (
             <div className="space-y-3 animate-fadeIn">
               <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-3">
                 <p className="text-[11px] font-bold text-red-400 mb-1 flex items-center gap-1.5">

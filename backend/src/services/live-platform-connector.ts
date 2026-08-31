@@ -1,6 +1,3 @@
-import prisma from "../lib/prisma.js";
-import { generateDynamicSalesResponse } from "./groq-brain.js";
-
 export interface LiveMetricsSnapshot {
   viewers: number;
   peakViewers: number;
@@ -38,6 +35,7 @@ type SpeechCallback = (
   text: string,
   sessionId?: string,
   authorName?: string,
+  platformCommentId?: string,
 ) => void;
 
 interface SessionState {
@@ -360,39 +358,6 @@ class LivePlatformConnector {
     if (!state) return;
 
     state.metrics.comments += 1;
-    let aiResponseText: string | undefined = undefined;
-
-    if (state.config.autoReply !== false && text.trim().length > 0) {
-      try {
-        const product = state.config.productId
-          ? await prisma.product.findUnique({
-              where: { id: state.config.productId },
-            })
-          : null;
-        const response: any = await generateDynamicSalesResponse({
-          userQuestion: text,
-          productName: product?.name || "Produk",
-          productPrice: product?.price ? `Rp${product.price}` : "",
-          productDescription: product?.description || "",
-          productCategory: product?.category || "",
-          productBenefits: product?.benefits || "",
-          productUsage: product?.usage || "",
-          productFaq: product?.faq || "",
-          productStock: product?.stock || 0,
-          avatarName: state.config.avatarName || "Namira",
-          tone: state.config.tone || "Persuasif",
-        });
-
-        aiResponseText = response.replyText;
-        state.metrics.aiReplies += 1;
-        this.globalSpeechCallback?.(text, sessionId, sender);
-      } catch (err) {
-        console.warn(
-          `[LivePlatformConnector] Failed to generate AI reply for comment:`,
-          err,
-        );
-      }
-    }
 
     const timeStr = new Date().toLocaleTimeString("id-ID", {
       hour: "2-digit",
@@ -403,12 +368,25 @@ class LivePlatformConnector {
       sender,
       text,
       time: timeStr,
-      aiReply: aiResponseText,
     });
 
     if (state.metrics.recentComments.length > 100) {
       state.metrics.recentComments.shift();
     }
+
+    // Single LLM path: orchestrator generates speech via enqueue callback.
+    if (state.config.autoReply !== false && text.trim().length > 0) {
+      this.globalSpeechCallback?.(text, sessionId, sender, commentId);
+    }
+  }
+
+  public recordCommentReply(sessionId: string, commentId: string, aiReply: string): void {
+    const state = this.sessions.get(sessionId);
+    if (!state) return;
+
+    state.metrics.aiReplies += 1;
+    const entry = state.metrics.recentComments.find((c) => c.id === commentId);
+    if (entry) entry.aiReply = aiReply;
   }
 
   public getMetricsSnapshot(sessionId: string): LiveMetricsSnapshot {

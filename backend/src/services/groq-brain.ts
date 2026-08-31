@@ -10,6 +10,42 @@ const GROQ_MODEL = process.env.GROQ_MODEL || process.env.LIVE_BRAIN_MODEL || "op
 
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
 
+const CIRCUIT_BREAKER_MS = Number(process.env.LIVE_BRAIN_CIRCUIT_MS || 45_000);
+const VALIDATION_RETRY_COOLDOWN_MS = Number(process.env.LIVE_BRAIN_RETRY_COOLDOWN_MS || 30_000);
+
+let groqBlockedUntil = 0;
+let geminiBlockedUntil = 0;
+let globalBrainBackoffUntil = 0;
+let lastValidationRetryAt = 0;
+let geminiClient: GoogleGenAI | null = null;
+
+function isRateLimitError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /429|rate.?limit|resource_exhausted|quota|too many requests/i.test(msg);
+}
+
+function tripCircuit(provider: "groq" | "gemini", ms = CIRCUIT_BREAKER_MS): void {
+  const until = Date.now() + ms;
+  if (provider === "groq") groqBlockedUntil = until;
+  else geminiBlockedUntil = until;
+  globalBrainBackoffUntil = Math.max(globalBrainBackoffUntil, until);
+}
+
+/** Remaining ms to wait before next LLM call (0 = ready). Used by live orchestrator. */
+export function getBrainBackoffMs(): number {
+  return Math.max(0, globalBrainBackoffUntil - Date.now());
+}
+
+function canValidationRetry(): boolean {
+  return Date.now() - lastValidationRetryAt >= VALIDATION_RETRY_COOLDOWN_MS;
+}
+
+function getGeminiClient(): GoogleGenAI {
+  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY tidak tersedia");
+  if (!geminiClient) geminiClient = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+  return geminiClient;
+}
+
 export type HostMode =
   | "ENGAGE"
   | "SELL"
@@ -307,7 +343,7 @@ function cleanForTts(text: string): string {
 function buildCatalogContext(allProducts: SalesBrainInput["allProducts"]): string {
   if (!allProducts?.length) return "Tidak ada katalog tambahan.";
   return allProducts
-    .slice(0, 8)
+    .slice(0, 5)
     .map((p, i) => {
       const price = typeof p.price === "number" ? `Rp${p.price.toLocaleString("id-ID")}` : p.price;
       return `${i + 1}. ${p.name} | ${price} | ${p.category || "General"} | ${p.benefits || ""}`;
@@ -321,10 +357,10 @@ function buildHostSystemPrompt(input: SalesBrainInput): string {
   const mode = input.requestedMode || input.mode || "ENGAGE";
   const plan = input.plan || "2H";
   const elapsed = Math.max(0, Math.round(input.elapsedMinutes || 0));
-  const recentUtterances = (input.recentUtterances || []).slice(-12);
-  const recentTopics = (input.recentTopics || []).slice(-10);
-  const recentCTAs = (input.recentCTAs || []).slice(-6);
-  const recentClaims = (input.recentClaims || []).slice(-12);
+  const recentUtterances = (input.recentUtterances || []).slice(-5);
+  const recentTopics = (input.recentTopics || []).slice(-5);
+  const recentCTAs = (input.recentCTAs || []).slice(-4);
+  const recentClaims = (input.recentClaims || []).slice(-5);
 
   return `Kamu adalah ${host}, AI Live Host e-commerce Indonesia yang sedang benar-benar siaran langsung.
 
@@ -370,9 +406,9 @@ ${recentCTAs.join(" | ") || "-"}
 CLAIMS TERAKHIR:
 ${recentClaims.join(" | ") || "-"}
 PHRASES YANG DIHINDARI:
-${(input.avoidPhrases || []).slice(-12).join(" | ") || "-"}
+${(input.avoidPhrases || []).slice(-6).join(" | ") || "-"}
 TOPIK YANG DIHINDARI:
-${(input.avoidTopics || []).slice(-8).join(" | ") || "-"}
+${(input.avoidTopics || []).slice(-5).join(" | ") || "-"}
 
 ATURAN FAKTA:
 - Hanya nyatakan fakta yang ada di data produk/konteks.
@@ -395,6 +431,17 @@ ANTI-LOOP:
 - Jangan menyebut benefit yang baru saja disebut kecuali komentar memang menanyakannya lagi.
 - Jangan menggunakan struktur kalimat yang sama seperti 1–2 respons terakhir.
 
+GERAKAN AVATAR (action) — wajib bervariasi, jangan selalu TALK_EXPRESSIVE:
+- WAVE: sapaan, welcome, "halo kak", orang baru masuk.
+- NOD: setuju, "benar", "betul", konfirmasi.
+- LAUGH: candaan, komentar lucu, reaksi hangat.
+- POINT_UP: highlight promo, "ini penting", "perhatikan".
+- POINT_DOWN: sebut harga, "cek keranjang", arahkan ke produk.
+- THINK: pertanyaan, "hmm", sedang mempertimbangkan.
+- TALK_EXPRESSIVE: penjelasan produk default (kepala/tangan bergerak natural).
+- IDLE: jeda singkat, transisi, tidak sedang hard-sell.
+Pilih action yang MATCH isi speech. Jangan WAVE setiap kalimat.
+
 OUTPUT:
 Kembalikan SATU JSON murni, tanpa markdown, dengan schema:
 {
@@ -410,30 +457,41 @@ Kembalikan SATU JSON murni, tanpa markdown, dengan schema:
   "claims": []
 }
 
-Panjang speech: umumnya 25–55 kata untuk speech normal; komentar singkat bisa lebih pendek. Jangan menambahkan salam pembuka robotik.`;
+Panjang speech: MAKSIMAL 20–35 kata (≈8–14 detik audio). Komentar balasan 8–18 kata. Speech pendek = render lebih cepat & siaran lebih hidup. Jangan menambahkan salam pembuka robotik.`;
 }
 
 async function callGemini(prompt: string): Promise<ProviderResult> {
-  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY tidak tersedia");
-  const client = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-  const response = await client.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      temperature: Number(process.env.LIVE_BRAIN_TEMPERATURE || 0.85),
-      maxOutputTokens: Number(process.env.LIVE_BRAIN_MAX_TOKENS || 450),
-    },
-  });
-  return {
-    text: response.text || "",
-    provider: "gemini",
-    model: GEMINI_MODEL,
-  };
+  if (Date.now() < geminiBlockedUntil) {
+    throw new Error("Gemini circuit open — rate limit cooldown aktif");
+  }
+
+  try {
+    const client = getGeminiClient();
+    const response = await client.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        temperature: Number(process.env.LIVE_BRAIN_TEMPERATURE || 0.85),
+        maxOutputTokens: Number(process.env.LIVE_BRAIN_MAX_TOKENS || 320),
+      },
+    });
+    return {
+      text: response.text || "",
+      provider: "gemini",
+      model: GEMINI_MODEL,
+    };
+  } catch (err) {
+    if (isRateLimitError(err)) tripCircuit("gemini");
+    throw err;
+  }
 }
 
 async function callGroq(prompt: string): Promise<ProviderResult> {
   if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY tidak tersedia");
+  if (Date.now() < groqBlockedUntil) {
+    throw new Error("Groq circuit open — rate limit cooldown aktif");
+  }
 
   const response = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
     method: "POST",
@@ -451,13 +509,14 @@ async function callGroq(prompt: string): Promise<ProviderResult> {
         { role: "user", content: prompt },
       ],
       temperature: Number(process.env.LIVE_BRAIN_TEMPERATURE || 0.85),
-      max_tokens: Number(process.env.LIVE_BRAIN_MAX_TOKENS || 450),
+      max_tokens: Number(process.env.LIVE_BRAIN_MAX_TOKENS || 320),
       response_format: { type: "json_object" },
     }),
   });
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
+    if (response.status === 429) tripCircuit("groq");
     throw new Error(`Groq ${response.status}: ${body.slice(0, 500)}`);
   }
 
@@ -475,15 +534,22 @@ async function callBrain(prompt: string): Promise<ProviderResult> {
   if (provider === "gemini") return callGemini(prompt);
   if (provider === "groq") return callGroq(prompt);
 
-
-  if (GROQ_API_KEY) {
+  // auto: prefer Groq when circuit open skip failed provider immediately
+  if (GROQ_API_KEY && Date.now() >= groqBlockedUntil) {
     try {
       return await callGroq(prompt);
     } catch (err) {
-      console.warn("[LiveBrain] Groq gagal, fallback ke Gemini:", err);
+      if (!isRateLimitError(err)) {
+        console.warn("[LiveBrain] Groq gagal, fallback ke Gemini:", err);
+      }
     }
   }
-  return callGemini(prompt);
+
+  if (GEMINI_API_KEY && Date.now() >= geminiBlockedUntil) {
+    return callGemini(prompt);
+  }
+
+  throw new Error("Semua provider LLM sedang cooldown atau tidak tersedia");
 }
 
 function inferIntentFromText(text: string): HostIntent {
@@ -593,6 +659,28 @@ function selectSafeParsedResponse(parsed: unknown, input: SalesBrainInput): Host
   };
 }
 
+async function generateValidatedHostResponse(
+  hostInput: SalesBrainInput,
+  userQuestion: string,
+  userPromptSuffix: string,
+): Promise<HostResponse | null> {
+  const systemPrompt = buildHostSystemPrompt(hostInput);
+  const userPrompt = `EVENT LIVE TERKINI:\n${userQuestion}\n\n${userPromptSuffix}`;
+
+  const provider = await callBrain(`${systemPrompt}\n\n${userPrompt}`);
+  const parsed = cleanAndExtractJson(provider.text);
+  const response = selectSafeParsedResponse(parsed, hostInput);
+  if (response) return response;
+
+  if (!canValidationRetry()) return null;
+
+  lastValidationRetryAt = Date.now();
+  const retryPrompt = `${systemPrompt}\n\nREGENERATE. RESPONS SEBELUMNYA TIDAK LOLOS VALIDASI.\nEVENT: ${userQuestion}\nBuat pendekatan yang berbeda secara nyata dari memori terakhir.`;
+  const retry = await callBrain(retryPrompt);
+  const retryParsed = cleanAndExtractJson(retry.text);
+  return selectSafeParsedResponse(retryParsed, hostInput);
+}
+
 /**
  * Main live response generator. Backward-compatible with old callers.
  */
@@ -603,20 +691,13 @@ export async function generateHostResponse(input: SalesBrainInput): Promise<Host
     requestedMode: input.requestedMode || input.mode || "ENGAGE",
   };
 
-  const systemPrompt = buildHostSystemPrompt(hostInput);
-  const userPrompt = `EVENT LIVE TERKINI:\n${input.userQuestion}\n\nPilih respons yang paling relevan terhadap event ini. Jangan mengarang fakta.`;
-
   try {
-    const provider = await callBrain(`${systemPrompt}\n\n${userPrompt}`);
-    const parsed = cleanAndExtractJson(provider.text);
-    const response = selectSafeParsedResponse(parsed, hostInput);
+    const response = await generateValidatedHostResponse(
+      hostInput,
+      input.userQuestion,
+      "Pilih respons yang paling relevan terhadap event ini. Jangan mengarang fakta.",
+    );
     if (response) return response;
-
-    const retryPrompt = `${systemPrompt}\n\nREGENERATE. RESPONS SEBELUMNYA TIDAK LOLOS VALIDASI.\nEVENT: ${input.userQuestion}\nBuat pendekatan yang berbeda secara nyata dari memori terakhir.`;
-    const retry = await callBrain(retryPrompt);
-    const retryParsed = cleanAndExtractJson(retry.text);
-    const retryResponse = selectSafeParsedResponse(retryParsed, hostInput);
-    if (retryResponse) return retryResponse;
   } catch (err: any) {
     console.warn(`[LiveBrain] generateHostResponse error: ${err?.message || err}`);
   }
@@ -631,34 +712,18 @@ export async function generateDynamicSalesResponse(input: SalesBrainInput): Prom
     requestedMode: input.requestedMode || input.mode || "ENGAGE",
   };
 
-  const systemPrompt = buildHostSystemPrompt(hostInput);
-  const userPrompt = `EVENT LIVE TERKINI:\n${input.userQuestion}\n\nJangan mengulang respons lama. Jawab berdasarkan fakta yang tersedia dan suasana live saat ini.`;
-
   try {
-    const provider = await callBrain(`${systemPrompt}\n\n${userPrompt}`);
-    const parsed = cleanAndExtractJson(provider.text);
-    const response = selectSafeParsedResponse(parsed, hostInput);
-
+    const response = await generateValidatedHostResponse(
+      hostInput,
+      input.userQuestion,
+      "Jangan mengulang respons lama. Jawab berdasarkan fakta yang tersedia dan suasana live saat ini.",
+    );
     if (response) {
       return {
         replyText: response.speech,
-        engineUsed: `${provider.provider}:${provider.model}`,
+        engineUsed: "live-brain",
         intent: response.intent,
         action: response.action,
-      };
-    }
-
-    // One controlled regeneration with stronger anti-repeat instruction.
-    const retryPrompt = `${systemPrompt}\n\nREGENERATE DENGAN PERBEDAAN NYATA.\nEVENT: ${input.userQuestion}\nJangan memakai struktur kalimat, opening, CTA, atau topik yang sama dengan memori terakhir.`;
-    const retry = await callBrain(retryPrompt);
-    const retryParsed = cleanAndExtractJson(retry.text);
-    const retryResponse = selectSafeParsedResponse(retryParsed, hostInput);
-    if (retryResponse) {
-      return {
-        replyText: retryResponse.speech,
-        engineUsed: `${retry.provider}:${retry.model}:retry`,
-        intent: retryResponse.intent,
-        action: retryResponse.action,
       };
     }
   } catch (err: any) {
@@ -710,13 +775,8 @@ export async function checkGroqHealth(): Promise<{
     }
 
     if (GEMINI_API_KEY) {
-      const client = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-      // Small real request so health really means reachable + authorized.
-      await client.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: "Balas satu kata: OK",
-        config: { maxOutputTokens: 4, temperature: 0 },
-      });
+      // Lightweight check — no full generation on boot (saves quota).
+      getGeminiClient();
       return {
         online: true,
         model: GEMINI_MODEL,

@@ -39,7 +39,6 @@ export default function Dashboard() {
   const setSelectedPlatform = useLiveSessionStore((state) => state.setSelectedPlatform);
   const automations = useLiveSessionStore((state) => state.automations);
   const currentLiveSessionId = useLiveSessionStore((state) => state.currentLiveSessionId);
-  const isWaitingForGoLive = useLiveSessionStore((state) => state.isWaitingForGoLive);
   const isConnectingLive = useLiveSessionStore((state) => state.isConnectingLive);
   const liveSessionPhase = useLiveSessionStore((state) => state.liveSessionPhase);
   const setLiveSessionPhase = useLiveSessionStore((state) => state.setLiveSessionPhase);
@@ -57,6 +56,27 @@ export default function Dashboard() {
   useEffect(() => {
     loadProducts();
   }, [loadProducts]);
+
+  // Reconcile persisted session state with backend after reload.
+  useEffect(() => {
+    const sid = useLiveSessionStore.getState().currentLiveSessionId;
+    const phase = useLiveSessionStore.getState().liveSessionPhase;
+    if (!sid || phase === "idle" || phase === "ended") return;
+
+    void liveSessionService.fetchMetrics().then((json) => {
+      const sessionStatus = json?.data?.sessionStatus;
+      if (!sessionStatus) {
+        useLiveSessionStore.setState({
+          isLiveActive: false,
+          isConnectingLive: false,
+          isWaitingForGoLive: false,
+          liveSessionPhase: "ended",
+          currentLiveSessionId: null,
+          pipelineStatus: null,
+        });
+      }
+    });
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -258,17 +278,18 @@ export default function Dashboard() {
   }, [isLiveActive, isLivePaused, liveSessionPhase, setIsLiveActive, setIsLivePaused, setLiveSessionPhase, setMetrics]);
 
   useEffect(() => {
-    if ((!isWaitingForGoLive && !isConnectingLive) || !currentLiveSessionId) return;
+    if (!isConnectingLive || !currentLiveSessionId) return;
 
-    const interval = setInterval(async () => {
+    const pollPipeline = async () => {
       const json = await liveSessionService.fetchPipelineStatus(currentLiveSessionId);
-      if (json) {
-        setPipelineStatus(json);
-      }
-    }, 2000);
+      if (!json) return;
+      setPipelineStatus(json);
+    };
 
+    void pollPipeline();
+    const interval = setInterval(pollPipeline, 2000);
     return () => clearInterval(interval);
-  }, [isWaitingForGoLive, isConnectingLive, currentLiveSessionId, setPipelineStatus]);
+  }, [isConnectingLive, currentLiveSessionId, setPipelineStatus]);
 
   return (
     <div className="min-h-screen bg-[#060a14] text-white p-4 font-sans selection:bg-blue-500/30">

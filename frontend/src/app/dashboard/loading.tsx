@@ -2,6 +2,7 @@
 
 import React from "react";
 import { Loader2, Video, Bot, Package } from "lucide-react";
+import { LivioLogo } from "@/components/shared/LivioLogo";
 
 export default function DashboardLoading() {
   return (
@@ -9,9 +10,7 @@ export default function DashboardLoading() {
       <div className="mx-auto w-full max-w-[1600px] space-y-8">
         <div className="flex items-center justify-between border-b border-[#1f2638] pb-4">
           <div className="flex items-center gap-4">
-            <span className="text-2xl font-black tracking-tight text-white">
-              LiveStreamer<span className="text-blue-500">AI</span>
-            </span>
+            <LivioLogo variant="primary" />
             <div className="flex items-center rounded-xl bg-[#111827] p-1 border border-[#232c42] shadow-inner">
               <div className="flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-bold bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md">
                 <Loader2 className="w-3 h-3 animate-spin" />

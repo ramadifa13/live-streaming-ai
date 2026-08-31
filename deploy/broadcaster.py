@@ -22,6 +22,9 @@ class AIBroadcaster:
         self.banner_image_url = banner_image_url
         self.silence_threshold = 90
         self.last_new_video_time = time.time()
+        self.idle_chunk_seconds = 3.5
+        self.max_onair_idle_seconds = 5.0
+        self.idle_streak_started_at = None
         self.master_process = None
 
         self.local_product_img = None
@@ -322,23 +325,28 @@ class AIBroadcaster:
                 print(f"[BROADCASTER ERROR] Gagal memulai master FFmpeg: {e}")
                 self.master_process = None
 
-    def _build_worker_command(self, video_path):
+    def _build_worker_command(self, video_path, max_duration=None):
         if not self.overlay_png_path or not os.path.exists(self.overlay_png_path):
-            return [
+            cmd = [
                 "ffmpeg",
                 "-re",
                 "-i", video_path,
+            ]
+            if max_duration:
+                cmd.extend(["-t", str(max_duration)])
+            cmd.extend([
                 "-c:v", "copy",
                 "-c:a", "aac",
                 "-b:a", "128k",
                 "-ar", "44100",
                 "-max_muxing_queue_size", "2048",
                 "-f", "mpegts",
-                "pipe:1"
-            ]
+                "pipe:1",
+            ])
+            return cmd
 
         # Overlay PIL PNG directly onto video with zero FFmpeg filter latency
-        return [
+        cmd = [
             "ffmpeg",
             "-re",
             "-i", video_path,
@@ -347,6 +355,10 @@ class AIBroadcaster:
             "-filter_complex", "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280[base];[base][1:v]overlay=0:0:shortest=1[v]",
             "-map", "[v]",
             "-map", "0:a?",
+        ]
+        if max_duration:
+            cmd.extend(["-t", str(max_duration)])
+        cmd.extend([
             "-c:v", "libx264",
             "-preset", "ultrafast",
             "-tune", "zerolatency",
@@ -355,10 +367,11 @@ class AIBroadcaster:
             "-ar", "44100",
             "-max_muxing_queue_size", "2048",
             "-f", "mpegts",
-            "pipe:1"
-        ]
+            "pipe:1",
+        ])
+        return cmd
 
-    def _stream_file_async(self, video_path):
+    def _stream_file_async(self, video_path, max_duration=None):
         """Memutar file video secara non-blocking agar bisa diinterupsi oleh respon AI."""
         if not video_path or not os.path.exists(video_path):
             print(f"[ERROR] File video tidak ditemukan: {video_path}")
@@ -369,7 +382,7 @@ class AIBroadcaster:
             print("[BROADCASTER ERROR] Master FFmpeg pipe tidak tersedia.")
             return None
         
-        worker_command = self._build_worker_command(video_path)
+        worker_command = self._build_worker_command(video_path, max_duration)
         try:
             worker_process = subprocess.Popen(
                 worker_command,
@@ -457,6 +470,7 @@ class AIBroadcaster:
                             except Exception as e:
                                 print(f"[CLEANUP ERROR] Gagal menghapus {last_spoken_video}: {e}")
                         is_playing_idle = False
+                        self.idle_streak_started_at = None
 
                 # Putar video jika tidak ada yang sedang diputar
                 if current_worker is None:
@@ -467,11 +481,24 @@ class AIBroadcaster:
                             last_spoken_video = video_to_play
                             self.last_new_video_time = time.time()
                             is_playing_idle = False
+                            self.idle_streak_started_at = None
                         else:
-                            time.sleep(0.5)
+                            time.sleep(0.2)
                     else:
                         if os.path.exists(self.idle_video):
-                            current_worker = self._stream_file_async(self.idle_video)
+                            if self.idle_streak_started_at is None:
+                                self.idle_streak_started_at = time.time()
+                            elif (
+                                time.time() - self.idle_streak_started_at
+                                > self.max_onair_idle_seconds
+                            ):
+                                print(
+                                    f"[BROADCASTER] ⚠️ Idle > {self.max_onair_idle_seconds}s — menunggu segmen AI..."
+                                )
+                            current_worker = self._stream_file_async(
+                                self.idle_video,
+                                max_duration=self.idle_chunk_seconds,
+                            )
                             if current_worker:
                                 is_playing_idle = True
                                 consecutive_idle_errors = 0
@@ -480,9 +507,9 @@ class AIBroadcaster:
                                 if consecutive_idle_errors > 3:
                                     self._ensure_master_process()
                                     consecutive_idle_errors = 0
-                                time.sleep(1)
+                                time.sleep(0.3)
                         else:
-                            time.sleep(2)
+                            time.sleep(0.5)
 
                 # UPDATE STATUS RTMP
                 if self.master_process and self.master_process.poll() is None:

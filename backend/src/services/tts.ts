@@ -48,6 +48,7 @@ export interface SynthesizeRequest {
   speed?: number;
   pitch?: number;
   tone?: string;
+  emotion?: string;
 }
 
 export interface SynthesizeResponse {
@@ -120,15 +121,47 @@ export function sanitizeForLiveTTS(text: string): string {
 export function getProsodyOptions(
   tone?: string,
   baseSpeed = 1.0,
+  emotion?: string,
 ): { rate: string; pitch: string; volume: string } {
   const t = (tone || "").toLowerCase();
+  const e = (emotion || "neutral").toLowerCase();
+
+  let rateOffset = 0;
+  let pitchHz = 2;
+  let volume = "+8%";
+
+  if (e === "excited") {
+    rateOffset = 12;
+    pitchHz = 5;
+    volume = "+14%";
+  } else if (e === "happy") {
+    rateOffset = 8;
+    pitchHz = 3;
+    volume = "+10%";
+  } else if (e === "warm") {
+    rateOffset = 4;
+    pitchHz = 1;
+    volume = "+8%";
+  } else if (e === "empathetic") {
+    rateOffset = -4;
+    pitchHz = -1;
+    volume = "+6%";
+  } else if (e === "thinking") {
+    rateOffset = -6;
+    pitchHz = -2;
+    volume = "+5%";
+  } else if (e === "surprised") {
+    rateOffset = 10;
+    pitchHz = 6;
+    volume = "+12%";
+  }
 
   // FOMO / Flash Sale: Cepat & mendesak, pitch naik
   if (t.includes("fomo") || t.includes("flash") || t.includes("promo")) {
-    const calculatedRate = Math.round((Math.max(baseSpeed, 1.15) - 1.0) * 100);
+    const calculatedRate = Math.round((Math.max(baseSpeed, 1.12) - 1.0) * 100) + rateOffset;
     return {
       rate: `${calculatedRate >= 0 ? "+" : ""}${calculatedRate}%`,
-      pitch: "+4Hz",
+      pitch: `+${Math.max(3, pitchHz + 2)}Hz`,
       volume: "+15%",
     };
   }
@@ -139,19 +172,19 @@ export function getProsodyOptions(
     t.includes("professional") ||
     t.includes("edukatif")
   ) {
-    const calculatedRate = Math.round((baseSpeed - 1.0) * 100);
+    const calculatedRate = Math.round((baseSpeed - 1.0) * 100) + Math.min(rateOffset, 2);
     return {
       rate: `${calculatedRate >= 0 ? "+" : ""}${calculatedRate}%`,
-      pitch: "+0Hz",
+      pitch: `${pitchHz >= 0 ? "+" : ""}${pitchHz}Hz`,
       volume: "+6%",
     };
   }
 
-  const calculatedRate = Math.round((baseSpeed * 1.08 - 1.0) * 100);
+  const calculatedRate = Math.round((baseSpeed * 1.06 - 1.0) * 100) + rateOffset;
   return {
     rate: `${calculatedRate >= 0 ? "+" : ""}${calculatedRate}%`,
-    pitch: "+2Hz",
-    volume: "+8%",
+    pitch: `${pitchHz >= 0 ? "+" : ""}${pitchHz}Hz`,
+    volume,
   };
 }
 
@@ -240,13 +273,14 @@ async function synthesizeWithEdgeTTS(
   voice: string,
   tone?: string,
   speed = 1.0,
+  emotion?: string,
 ): Promise<Buffer> {
   const cleanText = sanitizeForLiveTTS(text);
   if (!cleanText) {
     throw new Error("Teks kosong setelah sanitasi");
   }
 
-  const prosody = getProsodyOptions(tone, speed);
+  const prosody = getProsodyOptions(tone, speed, emotion);
   const tts = new MsEdgeTTS();
   await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
 
@@ -345,7 +379,7 @@ export function resolveEdgeVoiceId(
 export async function synthesizeSpeech(
   req: SynthesizeRequest,
 ): Promise<SynthesizeResponse> {
-  const { text, avatarName = "Namira", speed = 1.0, tone } = req;
+  const { text, avatarName = "Namira", speed = 1.0, tone, emotion } = req;
 
   // Pilih suara Microsoft Edge Neural TTS gratis terbaik
   const selectedVoice = resolveEdgeVoiceId(req.voice, avatarName);
@@ -361,7 +395,7 @@ export async function synthesizeSpeech(
 
   // ─── TIER 1: Microsoft Edge Neural TTS (Gratis, Natural, 24kHz MP3) ───────
   try {
-    audioBuffer = await synthesizeWithEdgeTTS(text, selectedVoice, tone, speed);
+    audioBuffer = await synthesizeWithEdgeTTS(text, selectedVoice, tone, speed, emotion);
   } catch (primaryErr) {
     console.warn(
       `[TTS] ⚠️ Edge-TTS primer (${selectedVoice}) notice: ${(primaryErr as Error).message}. Mencoba fallback ke SitiNeural / Google TTS...`,
@@ -378,6 +412,7 @@ export async function synthesizeSpeech(
         fallbackVoice,
         tone,
         speed,
+        emotion,
       );
     } catch (tier2Err) {
       console.warn(
