@@ -33,6 +33,44 @@ bootstrap_worker_env() {
 	echo "[WARN] Tidak ada deploy/.env atau .env.example — worker memakai default env."
 }
 
+# Pulihkan pip di venv worker jika hilang/rusak.
+ensure_venv_pip() {
+	local py="${1:-}"
+	if [ -z "$py" ]; then
+		py="$WORKER_DIR/env/bin/python"
+	fi
+
+	if "$py" -m pip --version >/dev/null 2>&1; then
+		return 0
+	fi
+
+	echo "[DEPS] pip tidak ada di venv — memulihkan ..."
+	if "$py" -m ensurepip --upgrade >/dev/null 2>&1; then
+		:
+	else
+		local tmp
+		tmp="$(mktemp /tmp/get-pip.XXXXXX.py)"
+		if command -v curl >/dev/null 2>&1; then
+			curl -fsSL https://bootstrap.pypa.io/get-pip.py -o "$tmp"
+		elif command -v wget >/dev/null 2>&1; then
+			wget -q -O "$tmp" https://bootstrap.pypa.io/get-pip.py
+		else
+			echo "[ERROR] curl/wget tidak tersedia untuk bootstrap pip."
+			return 1
+		fi
+		"$py" "$tmp"
+		rm -f "$tmp"
+	fi
+
+	if ! "$py" -m pip --version >/dev/null 2>&1; then
+		echo "[ERROR] Gagal memulihkan pip di $py"
+		echo "        Coba setup penuh: cd $DEPLOY_DIR && export HF_TOKEN=hf_... && bash setup-safe.sh"
+		return 1
+	fi
+
+	echo "[DEPS] pip OK."
+}
+
 # Pastikan fastapi/uvicorn terpasang di venv worker (ringan, idempotent).
 ensure_worker_python_deps() {
 	local py="${1:-}"
@@ -50,6 +88,8 @@ ensure_worker_python_deps() {
 	if "$py" -c "import fastapi, uvicorn" 2>/dev/null; then
 		return 0
 	fi
+
+	ensure_venv_pip "$py"
 
 	echo "[DEPS] fastapi/uvicorn belum terpasang — menginstall requirements worker ..."
 	local req="$WORKER_DIR/requirements-worker.txt"

@@ -58,6 +58,15 @@ export HF_TOKEN="hf_YourToken"
 bash setup-safe.sh
 ```
 
+- `No module named pip` di venv — pip hilang/rusak. Redeploy otomatis memulihkan via `ensurepip` atau `get-pip.py`. Manual:
+
+```bash
+/workspace/ai_live_worker/env/bin/python -m ensurepip --upgrade
+# jika gagal:
+curl -sS https://bootstrap.pypa.io/get-pip.py | /workspace/ai_live_worker/env/bin/python
+/workspace/ai_live_worker/env/bin/python -m pip install --no-cache-dir -r /workspace/live-streaming-ai/deploy/requirements-worker.txt
+```
+
 ### 2.5b Aktifkan frame-feed (opsional, lebih natural)
 
 Di `/workspace/ai_live_worker/.env` (atau `env`):
