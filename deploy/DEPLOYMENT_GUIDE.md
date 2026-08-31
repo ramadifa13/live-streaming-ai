@@ -47,6 +47,17 @@ curl -s http://localhost:8000/health
 tail -f /workspace/ai_live_worker/api_server.log
 ```
 
+**Troubleshooting redeploy**
+
+- `cp: cannot stat deploy/.env` — normal; `deploy/.env` tidak di-commit ke git. Redeploy terbaru otomatis membuat `/workspace/ai_live_worker/.env` dari `deploy/.env.example`.
+- `ModuleNotFoundError: No module named 'fastapi'` — venv belum punya API deps. Redeploy otomatis menjalankan `pip install -r requirements-worker.txt`. Jika venv (`/workspace/ai_live_worker/env`) tidak ada sama sekali, jalankan setup penuh:
+
+```bash
+cd /workspace/live-streaming-ai/deploy
+export HF_TOKEN="hf_YourToken"
+bash setup-safe.sh
+```
+
 ### 2.5b Aktifkan frame-feed (opsional, lebih natural)
 
 Di `/workspace/ai_live_worker/.env` (atau `env`):

@@ -28,7 +28,7 @@ if [ ! -d "$REPO_DIR/.git" ]; then
 fi
 
 cd "$REPO_DIR"
-echo "[1/4] Mengambil kode terbaru dari origin/main ..."
+echo "[1/5] Mengambil kode terbaru dari origin/main ..."
 git fetch origin main
 
 if [ "$FORCE_GIT_RESET" = "1" ]; then
