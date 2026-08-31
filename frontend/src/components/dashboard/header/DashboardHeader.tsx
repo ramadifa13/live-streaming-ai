@@ -7,6 +7,7 @@ import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useProductStore } from "@/stores/useProductStore";
+import Image from "next/image";
 
 const STEPS = [
   { num: 1, label: "Data Produk" },
@@ -34,11 +35,14 @@ export const DashboardHeader: React.FC = () => {
   return (
     <header className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-[#1f2638] pb-3">
       <div className="flex items-center gap-4">
-        <Link
-          href="/"
-          className="text-xl font-black tracking-tight text-white hover:opacity-90 transition"
-        >
-          LiveStreamer<span className="text-blue-500">AI</span>
+        <Link href="/" className="text-xl font-black tracking-tight text-white hover:opacity-90 transition">
+          <Image
+            src="/logo-horizontal.png"
+            alt="livio.id"
+            width={150}
+            height={60}
+            priority
+          />
         </Link>
 
         <div className="flex items-center rounded-lg bg-[#111827] p-0.5 border border-[#232c42] shadow-inner">
@@ -51,9 +55,7 @@ export const DashboardHeader: React.FC = () => {
                 : "text-slate-400 hover:text-white"
             }`}
           >
-            <Radio
-              className={`w-3 h-3 ${isLiveActive ? "text-red-400 animate-pulse" : "text-blue-400"}`}
-            />
+            <Radio className={`w-3 h-3 ${isLiveActive ? "text-red-400 animate-pulse" : "text-blue-400"}`} />
             <span>24/7 Live Stream Studio</span>
           </button>
           <button
@@ -94,17 +96,13 @@ export const DashboardHeader: React.FC = () => {
                 </span>
                 <span
                   className={`${
-                    currentStep === step.num
-                      ? "text-blue-400 font-bold"
-                      : "text-slate-400 group-hover:text-slate-200"
+                    currentStep === step.num ? "text-blue-400 font-bold" : "text-slate-400 group-hover:text-slate-200"
                   }`}
                 >
                   {step.label}
                 </span>
               </button>
-              {idx < STEPS.length - 1 && (
-                <span className="h-px w-4 sm:w-8 bg-white/10" />
-              )}
+              {idx < STEPS.length - 1 && <span className="h-px w-4 sm:w-8 bg-white/10" />}
             </React.Fragment>
           ))}
         </div>
@@ -112,10 +110,7 @@ export const DashboardHeader: React.FC = () => {
         <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
           <span>
-            Format:{" "}
-            <strong className="text-white">
-              Vertical 9:16 (TikTok / Reels / Shorts)
-            </strong>
+            Format: <strong className="text-white">Vertical 9:16 (TikTok / Reels / Shorts)</strong>
           </span>
         </div>
       )}

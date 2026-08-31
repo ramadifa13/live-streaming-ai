@@ -94,9 +94,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           </h4>
 
           <div className="flex items-center justify-between gap-2 mt-1">
-            <span className="text-[10px] font-medium text-slate-400 bg-[#141e33] px-2 py-0.5 rounded-md border border-[#22314e] truncate max-w-[130px]">
-              {product.tag || "General"}
-            </span>
             <span className="text-xs font-bold text-emerald-400 font-mono tracking-tight shrink-0">
               {typeof product.price === "number" ? `Rp${product.price.toLocaleString("id-ID")}` : product.price}
             </span>

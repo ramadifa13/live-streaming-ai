@@ -109,25 +109,10 @@ const workflowSteps = [
 
 const livePlans = [
   {
-    name: "Demo Live",
-    duration: "1 Jam",
-    price: "Rp49.000",
-    features: [
-      "1 sesi demo (1 jam)",
-      "Uji coba AI Host & Chat",
-      "Setup presentasi klien",
-    ],
-    popular: false,
-  },
-  {
     name: "Express Live",
     duration: "2 Jam",
     price: "Rp99.000",
-    features: [
-      "1 sesi live (2 jam nonstop)",
-      "Auto-reply chat",
-      "Auto pin produk",
-    ],
+    features: ["1 sesi live (2 jam nonstop)", "Auto-reply chat", "Auto pin produk"],
     popular: false,
   },
   {
@@ -141,11 +126,7 @@ const livePlans = [
     name: "Marathon 24/7",
     duration: "24 Jam",
     price: "Rp699.000",
-    features: [
-      "Live 24 jam nonstop",
-      "Full catalog rotation",
-      "Priority queue",
-    ],
+    features: ["Live 24 jam nonstop", "Full catalog rotation", "Priority queue"],
     popular: false,
   },
 ];
@@ -162,22 +143,14 @@ const promoPlans = [
     name: "Standard Showcase",
     duration: "30 Detik",
     price: "Rp35.000",
-    features: [
-      "30s video showcase",
-      "Benefit breakdown + CTA",
-      "2x revisi",
-    ],
+    features: ["30s video showcase", "Benefit breakdown + CTA", "2x revisi"],
     popular: true,
   },
   {
     name: "Deep Review",
     duration: "60 Detik",
     price: "Rp59.000",
-    features: [
-      "60s full review video",
-      "Unboxing / storytelling script",
-      "Unlimited revisi",
-    ],
+    features: ["60s full review video", "Unboxing / storytelling script", "Unlimited revisi"],
     popular: false,
   },
 ];
@@ -199,20 +172,13 @@ export default function HomeLanding() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <header className="py-6">
           <nav className="flex items-center justify-between border-b border-[#1f2638] pb-6">
-            <Link
-              href="/"
-              className="text-2xl font-black tracking-tight text-white hover:opacity-90 transition"
-            >
-              LiveStreamer<span className="text-blue-500">AI</span>
+            <Link href="/" className="flex items-center gap-2 hover:opacity-90 transition">
+              <Image src="/logo-horizontal.png" alt="livio logo" width={150} height={60} className="h-auto" />
             </Link>
 
             <div className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-300">
               {navItems.map((item) => (
-                <a
-                  key={item.name}
-                  href={item.href}
-                  className="hover:text-blue-400 transition"
-                >
+                <a key={item.name} href={item.href} className="hover:text-blue-400 transition">
                   {item.name}
                 </a>
               ))}
@@ -231,23 +197,18 @@ export default function HomeLanding() {
         </header>
 
         <main className="pt-4">
-            <section className="mb-12">
+          <section className="mb-12">
             <div className="grid items-center gap-10 lg:grid-cols-[1fr_1.1fr]">
               <div className="space-y-6 pt-8">
                 <AccentBadge title="AI LIVE SELLING OTONOM & VIDEO PROMO OTOMATIS" />
 
                 <h1 className="max-w-xl text-[3.5rem] font-bold leading-[1.1] tracking-tight text-white">
-                  Live Selling &amp; Video{" "}
-                  <span className="block text-blue-400">
-                    Promosi, 100% Otonom
-                  </span>{" "}
-                  oleh AI
+                  Live Selling &amp; Video <span className="block text-blue-400">Promosi, 100% Otonom</span> oleh AI
                 </h1>
 
                 <p className="max-w-xl text-[1.05rem] leading-7 text-slate-300">
-                  Platform AI yang menjalankan live streaming interaktif,
-                  membalas chat, dan membuat video promosi produk otomatis –
-                  tanpa perlu host manusia.
+                  Platform AI yang menjalankan live streaming interaktif, membalas chat, dan membuat video promosi
+                  produk otomatis – tanpa perlu host manusia.
                 </p>
 
                 <div className="flex flex-wrap gap-4 pt-2">
@@ -273,9 +234,7 @@ export default function HomeLanding() {
                     Self-Hosted Open-Source
                   </div>
                   <span className="text-slate-600">•</span>
-                  <div className="inline-flex items-center">
-                    Hemat hingga 90% biaya operasional
-                  </div>
+                  <div className="inline-flex items-center">Hemat hingga 90% biaya operasional</div>
                 </div>
               </div>
 
@@ -293,8 +252,7 @@ export default function HomeLanding() {
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
                 <div className="absolute left-4 top-4 flex items-center gap-3 rounded bg-black/50 px-2 py-1 backdrop-blur-sm border border-white/10">
                   <span className="flex items-center gap-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                    <div className="h-1.5 w-1.5 rounded-full bg-white animate-ping" />{" "}
-                    LIVE
+                    <div className="h-1.5 w-1.5 rounded-full bg-white animate-ping" /> LIVE
                   </span>
                   <span className="text-[11px] font-bold text-white flex items-center gap-1">
                     <Eye className="w-3 h-3" /> 1.238
@@ -328,9 +286,7 @@ export default function HomeLanding() {
                       </p>
                       <span className="text-[8px] text-slate-400">10:21</span>
                     </div>
-                    <p className="text-[10px] text-slate-200">
-                      Manfaat produk ini apa?
-                    </p>
+                    <p className="text-[10px] text-slate-200">Manfaat produk ini apa?</p>
                   </div>
                   <div className="max-w-[200px] rounded-lg border border-white/10 bg-black/40 p-2.5 backdrop-blur-md shadow-lg">
                     <div className="flex items-center justify-between mb-1">
@@ -343,8 +299,7 @@ export default function HomeLanding() {
                       <span className="text-[8px] text-slate-400">10:22</span>
                     </div>
                     <p className="text-[10px] text-slate-200">
-                      Produk ini membantu melembapkan kulit dan mencerahkan
-                      wajah
+                      Produk ini membantu melembapkan kulit dan mencerahkan wajah
                     </p>
                   </div>
                 </div>
@@ -368,29 +323,19 @@ export default function HomeLanding() {
                       alt="Serum Brightening Premium"
                       width={48}
                       height={56}
-                      unoptimized
                       className="h-14 w-12 rounded object-cover border border-white/10 shadow"
                     />
                     <div className="pr-12">
-                      <p className="text-[11px] font-bold text-white mb-0.5">
-                        Serum Brightening Premium
-                      </p>
+                      <p className="text-[11px] font-bold text-white mb-0.5">Serum Brightening Premium</p>
                       <div className="flex items-baseline gap-1.5">
-                        <p className="text-[13px] font-bold text-white">
-                          Rp99.000
-                        </p>
-                        <p className="text-[9px] text-slate-400 line-through">
-                          Rp149.000
-                        </p>
+                        <p className="text-[13px] font-bold text-white">Rp99.000</p>
+                        <p className="text-[9px] text-slate-400 line-through">Rp149.000</p>
                       </div>
                     </div>
                   </div>
                   <span className="rounded-lg bg-blue-600 px-4 py-2 text-[10px] font-bold text-white group-hover:bg-blue-500">
                     Beli Sekarang
                   </span>
-                  <div className="absolute right-3 top-3 text-slate-400">
-                    <Heart className="w-3 h-3" />
-                  </div>
                 </div>
               </Link>
             </div>
@@ -433,8 +378,7 @@ export default function HomeLanding() {
               SEMUA DALAM SATU PLATFORM AI
             </p>
             <h2 className="text-3xl font-bold text-white md:text-4xl">
-              Fitur Unggulan{" "}
-              <span className="text-blue-500">LiveStreamerAI</span>
+              Fitur Unggulan <span className="text-blue-500">livio.id</span>
             </h2>
 
             <div className="mt-12 grid gap-4 text-left md:grid-cols-2 xl:grid-cols-3">
@@ -446,12 +390,8 @@ export default function HomeLanding() {
                   <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-[#1a233a]">
                     {card.icon}
                   </div>
-                  <h3 className="mb-2 text-base font-bold text-white">
-                    {card.title}
-                  </h3>
-                  <p className="text-[13px] leading-relaxed text-slate-400">
-                    {card.text}
-                  </p>
+                  <h3 className="mb-2 text-base font-bold text-white">{card.title}</h3>
+                  <p className="text-[13px] leading-relaxed text-slate-400">{card.text}</p>
                 </article>
               ))}
             </div>
@@ -459,21 +399,15 @@ export default function HomeLanding() {
 
           <section id="workflow" className="py-16 scroll-mt-10">
             <div className="text-center mb-12">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-blue-500 mb-2">
-                ALUR KERJA SEDERHANA
-              </p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-blue-500 mb-2">ALUR KERJA SEDERHANA</p>
               <h2 className="text-3xl font-bold text-white">
-                Bagaimana <span className="text-blue-500">LiveStreamerAI</span>{" "}
-                Bekerja
+                Bagaimana <span className="text-blue-500">livio.id</span> Bekerja
               </h2>
             </div>
 
             <div className="flex flex-col items-center justify-between gap-4 xl:flex-row xl:items-stretch">
               {workflowSteps.map((step, idx) => (
-                <div
-                  key={step.id}
-                  className="flex flex-1 items-center relative w-full xl:w-auto"
-                >
+                <div key={step.id} className="flex flex-1 items-center relative w-full xl:w-auto">
                   <div className="z-10 flex h-full flex-col items-center rounded-xl border border-[#1f2638] bg-[#0c1221] p-6 text-center w-full transition hover:border-blue-500/40">
                     <div className="relative mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-[#1a233a] text-blue-400">
                       <div className="absolute -left-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white">
@@ -481,12 +415,8 @@ export default function HomeLanding() {
                       </div>
                       {step.icon}
                     </div>
-                    <h3 className="mb-2 text-sm font-bold text-white">
-                      {step.title}
-                    </h3>
-                    <p className="text-[11px] leading-relaxed text-slate-400 px-2">
-                      {step.text}
-                    </p>
+                    <h3 className="mb-2 text-sm font-bold text-white">{step.title}</h3>
+                    <p className="text-[11px] leading-relaxed text-slate-400 px-2">{step.text}</p>
                   </div>
                   {idx < 4 && (
                     <div className="hidden xl:flex items-center justify-center w-8 text-slate-500 font-bold -mr-8 z-0">
@@ -503,9 +433,7 @@ export default function HomeLanding() {
               <p className="text-[10px] font-bold uppercase tracking-widest text-blue-500 mb-2">
                 PILIH SESUAI KEBUTUHAN ANDA
               </p>
-              <h2 className="text-3xl font-bold text-white">
-                Paket Live Streaming &amp; Video Promo
-              </h2>
+              <h2 className="text-3xl font-bold text-white">Paket Live Streaming &amp; Video Promo</h2>
             </div>
 
             <div className="grid gap-6 xl:grid-cols-2">
@@ -513,34 +441,25 @@ export default function HomeLanding() {
                 <h3 className="mb-6 text-center text-[10px] font-bold text-slate-500 uppercase tracking-widest">
                   AI LIVE STREAMING (OTONOM &amp; INTERAKTIF)
                 </h3>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   {livePlans.map((plan) => (
                     <article
                       key={plan.name}
                       className={`flex flex-col rounded-xl border p-4 ${plan.popular ? "border-blue-500/50 bg-[#162038]" : "border-[#1f2638] bg-[#0f1525]"}`}
                     >
                       <div className="mb-2 flex items-center justify-between">
-                        <h3 className="text-sm font-bold text-white">
-                          {plan.name}
-                        </h3>
+                        <h3 className="text-sm font-bold text-white">{plan.name}</h3>
                       </div>
-                      <p className="mb-3 text-[10px] text-slate-400">
-                        {plan.duration}
-                      </p>
+                      <p className="mb-3 text-[10px] text-slate-400">{plan.duration}</p>
                       {plan.popular && (
                         <span className="mb-3 inline-block self-start rounded bg-blue-600 px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest text-white">
                           POPULAR
                         </span>
                       )}
-                      <p className="mb-4 text-xl font-bold text-white">
-                        {plan.price}
-                      </p>
+                      <p className="mb-4 text-xl font-bold text-white">{plan.price}</p>
                       <ul className="mb-6 space-y-2 text-[10px] text-slate-400 flex-1">
                         {plan.features.map((feature) => (
-                          <li
-                            key={feature}
-                            className="flex items-start gap-1.5"
-                          >
+                          <li key={feature} className="flex items-start gap-1.5">
                             <Check className="mt-0.5 h-3 w-3 shrink-0 text-blue-400" />
                             <span>{feature}</span>
                           </li>
@@ -568,27 +487,18 @@ export default function HomeLanding() {
                       className={`flex flex-col rounded-xl border p-4 ${plan.popular ? "border-purple-500/50 bg-[#1e1738]" : "border-[#1f2638] bg-[#0f1525]"}`}
                     >
                       <div className="mb-2 flex items-center justify-between">
-                        <h3 className="text-sm font-bold text-white">
-                          {plan.name}
-                        </h3>
+                        <h3 className="text-sm font-bold text-white">{plan.name}</h3>
                       </div>
-                      <p className="mb-3 text-[10px] text-slate-400">
-                        {plan.duration}
-                      </p>
+                      <p className="mb-3 text-[10px] text-slate-400">{plan.duration}</p>
                       {plan.popular && (
                         <span className="mb-3 inline-block self-start rounded bg-purple-600 px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest text-white">
                           POPULAR
                         </span>
                       )}
-                      <p className="mb-4 text-xl font-bold text-white">
-                        {plan.price}
-                      </p>
+                      <p className="mb-4 text-xl font-bold text-white">{plan.price}</p>
                       <ul className="mb-6 space-y-2 text-[10px] text-slate-400 flex-1">
                         {plan.features.map((feature) => (
-                          <li
-                            key={feature}
-                            className="flex items-start gap-1.5"
-                          >
+                          <li key={feature} className="flex items-start gap-1.5">
                             <Check className="mt-0.5 h-3 w-3 shrink-0 text-purple-400" />
                             <span>{feature}</span>
                           </li>
@@ -607,10 +517,7 @@ export default function HomeLanding() {
             </div>
 
             <div className="mt-8 text-center">
-              <Link
-                href="/dashboard"
-                className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors"
-              >
+              <Link href="/dashboard" className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors">
                 Lihat semua paket &amp; detail lengkap →
               </Link>
             </div>
@@ -621,9 +528,7 @@ export default function HomeLanding() {
             className="mt-4 rounded-2xl bg-gradient-to-r from-[#170936] to-[#071638] p-8 md:flex md:items-center md:justify-between border border-blue-500/20 scroll-mt-10"
           >
             <div>
-              <h3 className="text-2xl font-bold text-white">
-                Siap Otomatiskan Live Selling &amp; Promosi Anda?
-              </h3>
+              <h3 className="text-2xl font-bold text-white">Siap Otomatiskan Live Selling &amp; Promosi Anda?</h3>
               <p className="mt-2 text-[13px] text-slate-300">
                 Hemat waktu, kurangi biaya, dan tingkatkan penjualan dengan AI.
               </p>
@@ -648,9 +553,7 @@ export default function HomeLanding() {
               </div>
               <div>
                 <p className="text-[13px] font-bold text-white">Open Source</p>
-                <p className="text-[11px] text-slate-400">
-                  Transparan &amp; Bisa Custom
-                </p>
+                <p className="text-[11px] text-slate-400">Transparan &amp; Bisa Custom</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -659,9 +562,7 @@ export default function HomeLanding() {
               </div>
               <div>
                 <p className="text-[13px] font-bold text-white">Self-Hosted</p>
-                <p className="text-[11px] text-slate-400">
-                  Data Aman &amp; Terkontrol
-                </p>
+                <p className="text-[11px] text-slate-400">Data Aman &amp; Terkontrol</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -669,12 +570,8 @@ export default function HomeLanding() {
                 <Coins className="w-6 h-6" />
               </div>
               <div>
-                <p className="text-[13px] font-bold text-white">
-                  Hemat 90% Biaya
-                </p>
-                <p className="text-[11px] text-slate-400">
-                  Dibanding Platform Lain
-                </p>
+                <p className="text-[13px] font-bold text-white">Hemat 90% Biaya</p>
+                <p className="text-[11px] text-slate-400">Dibanding Platform Lain</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -682,12 +579,8 @@ export default function HomeLanding() {
                 <MessageSquare className="w-6 h-6" />
               </div>
               <div>
-                <p className="text-[13px] font-bold text-white">
-                  Support Komunitas
-                </p>
-                <p className="text-[11px] text-slate-400">
-                  Aktif &amp; Responsif
-                </p>
+                <p className="text-[13px] font-bold text-white">Support Komunitas</p>
+                <p className="text-[11px] text-slate-400">Aktif &amp; Responsif</p>
               </div>
             </div>
           </section>
@@ -709,18 +602,13 @@ export default function HomeLanding() {
                 <Sparkles className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-white">
-                  Live Demo Simulation
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Jalankan live streaming AI otonom langsung di Dashboard
-                </p>
+                <h3 className="text-lg font-bold text-white">Live Demo Simulation</h3>
+                <p className="text-xs text-slate-400">Jalankan live streaming AI otonom langsung di Dashboard</p>
               </div>
             </div>
             <p className="mb-6 text-xs leading-relaxed text-slate-300">
-              Anda dapat mencoba langsung alur 5 langkah setup live streaming:
-              upload produk, pilih avatar 2D/3D (Nana, Namira), atur durasi, uji
-              preview chat respons AI, dan lihat Control Center real-time.
+              Anda dapat mencoba langsung alur 5 langkah setup live streaming: upload produk, pilih avatar 2D/3D (Nana,
+              Namira), atur durasi, uji preview chat respons AI, dan lihat Control Center real-time.
             </p>
             <div className="flex justify-end gap-3">
               <button
