@@ -154,9 +154,8 @@ export async function getPodStatus(podId: string): Promise<PodStatus | null> {
 }
 
 /**
-/**
- * Daftar GPU hemat biaya yang diizinkan untuk live streaming lipsync.
- * Mencegah sistem memilih GPU mahal (A100 / H100 / Enterprise cluster).
+ * GPU compatible dengan MuseTalk worker (PyTorch 2.1 + CUDA 11.8).
+ * Blackwell (RTX PRO 4500/4000) sengaja DIEXCLUDE — butuh PyTorch CUDA 12.4+.
  */
 const BUDGET_GPU_TIERS = [
   {
@@ -164,24 +163,20 @@ const BUDGET_GPU_TIERS = [
     label: "RTX 4090 (Utama, Fast Lipsync)",
   },
   {
-    id: "NVIDIA RTX 4500 Ada Generation",
-    label: "RTX PRO 4500 (32GB VRAM)",
-  },
-  {
-    id: "NVIDIA RTX 4000 Ada Generation",
-    label: "RTX 4000 Ada (20GB VRAM)",
-  },
-  {
-    id: "NVIDIA RTX 4000 SFF Ada Generation",
-    label: "RTX PRO 4000 (24GB VRAM)",
-  },
-  {
     id: "NVIDIA GeForce RTX 3090",
     label: "RTX 3090 (24GB VRAM)",
   },
   {
+    id: "NVIDIA L4",
+    label: "L4 (24GB, Datacenter)",
+  },
+  {
     id: "NVIDIA RTX A5000",
     label: "RTX A5000 (24GB VRAM)",
+  },
+  {
+    id: "NVIDIA RTX 4000 Ada Generation",
+    label: "RTX 4000 Ada (20GB VRAM)",
   },
   {
     id: "NVIDIA RTX A4000",
