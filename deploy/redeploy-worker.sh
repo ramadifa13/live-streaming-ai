@@ -42,19 +42,23 @@ else
 	fi
 fi
 
-echo "[2/4] Menyinkronkan semua skrip & assets ke worker ..."
+echo "[2/5] Menyinkronkan semua skrip & assets ke worker ..."
 export REPO_DIR WORKER_DIR DEPLOY_DIR="$REPO_DIR/deploy" FORCE_ASSETS=1
 # shellcheck source=sync-worker.sh
 source "$SCRIPT_DIR/sync-worker.sh"
 sync_worker_files
+bootstrap_worker_env
 
-echo "[3/4] Menghentikan proses worker lama ..."
+echo "[3/5] Memastikan dependensi Python API (fastapi) ..."
+ensure_worker_python_deps
+
+echo "[4/5] Menghentikan proses worker lama ..."
 pkill -9 -f "api_server.py" 2>/dev/null || true
 pkill -9 -f "broadcaster.py" 2>/dev/null || true
 pkill -9 -f "live_worker.py" 2>/dev/null || true
 sleep 1
 
-echo "[4/4] Memulai worker ..."
+echo "[5/5] Memulai worker ..."
 cd "$WORKER_DIR"
 bash start.sh
 

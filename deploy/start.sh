@@ -42,16 +42,18 @@ if [ ! -f "$WORKER_DIR/api_server.py" ]; then
 	exit 1
 fi
 
-# Load worker .env (BROADCAST_MODE / MuseTalk flags) bila ada
+REPO_DIR="${REPO_DIR:-/workspace/live-streaming-ai}"
+DEPLOY_DIR="${DEPLOY_DIR:-$REPO_DIR/deploy}"
+SYNC_SCRIPT="${SYNC_SCRIPT:-$DEPLOY_DIR/sync-worker.sh}"
+if [ -f "$SYNC_SCRIPT" ]; then
+	# shellcheck source=sync-worker.sh
+	source "$SYNC_SCRIPT"
+	bootstrap_worker_env
+fi
+
+# Load worker .env (BROADCAST_MODE / MuseTalk flags)
 if [ -f "$WORKER_DIR/.env" ]; then
 	echo "[INFO] Memuat $WORKER_DIR/.env ..."
-	set -a
-	# shellcheck disable=SC1091
-	source "$WORKER_DIR/.env"
-	set +a
-elif [ -f "/workspace/live-streaming-ai/deploy/.env" ]; then
-	echo "[INFO] Memuat deploy/.env ke worker ..."
-	cp -f /workspace/live-streaming-ai/deploy/.env "$WORKER_DIR/.env"
 	set -a
 	# shellcheck disable=SC1091
 	source "$WORKER_DIR/.env"
@@ -59,11 +61,19 @@ elif [ -f "/workspace/live-streaming-ai/deploy/.env" ]; then
 fi
 
 if [ -f "$WORKER_DIR/env/bin/python" ]; then
-    PYTHON_BIN="$WORKER_DIR/env/bin/python"
-    export PATH="$WORKER_DIR/env/bin:$PATH"
-    source "$WORKER_DIR/env/bin/activate" || true
+	PYTHON_BIN="$WORKER_DIR/env/bin/python"
+	export PATH="$WORKER_DIR/env/bin:$PATH"
+	# shellcheck disable=SC1091
+	source "$WORKER_DIR/env/bin/activate" || true
 else
-    PYTHON_BIN="python"
+	echo "[ERROR] Python venv tidak ditemukan di $WORKER_DIR/env"
+	echo "        Jalankan setup terlebih dahulu:"
+	echo "          cd $DEPLOY_DIR && export HF_TOKEN=hf_... && bash setup-safe.sh"
+	exit 1
+fi
+
+if [ -f "$SYNC_SCRIPT" ]; then
+	ensure_worker_python_deps "$PYTHON_BIN"
 fi
 
 export COQUI_TOS_AGREED=1
@@ -75,10 +85,7 @@ ln -sfn "$WORKER_DIR/MuseTalk/musetalk" "$WORKER_DIR/musetalk"
 ln -sfn "$WORKER_DIR/MuseTalk/models" "$WORKER_DIR/models"
 
 echo "Menyinkronkan skrip worker dari repo ..."
-SYNC_SCRIPT="/workspace/live-streaming-ai/deploy/sync-worker.sh"
 if [ -f "$SYNC_SCRIPT" ]; then
-	# shellcheck source=sync-worker.sh
-	source "$SYNC_SCRIPT"
 	sync_worker_files
 elif [ -d "/workspace/live-streaming-ai/deploy" ]; then
 	cp -f /workspace/live-streaming-ai/deploy/*.py "$WORKER_DIR/" 2>/dev/null || true

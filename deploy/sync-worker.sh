@@ -10,6 +10,67 @@ DEPLOY_DIR="${DEPLOY_DIR:-$REPO_DIR/deploy}"
 # 0 = jangan timpa asset yang sudah ada (start biasa), 1 = timpa semua asset (redeploy)
 FORCE_ASSETS="${FORCE_ASSETS:-0}"
 
+# Buat worker .env dari deploy/.env (jika ada) atau .env.example.
+bootstrap_worker_env() {
+	if [ -f "$WORKER_DIR/.env" ]; then
+		return 0
+	fi
+
+	mkdir -p "$WORKER_DIR"
+
+	if [ -f "$DEPLOY_DIR/.env" ]; then
+		echo "[ENV] Membuat $WORKER_DIR/.env dari deploy/.env ..."
+		cp -f "$DEPLOY_DIR/.env" "$WORKER_DIR/.env"
+		return 0
+	fi
+
+	if [ -f "$DEPLOY_DIR/.env.example" ]; then
+		echo "[ENV] deploy/.env tidak ada — membuat $WORKER_DIR/.env dari .env.example ..."
+		cp -f "$DEPLOY_DIR/.env.example" "$WORKER_DIR/.env"
+		return 0
+	fi
+
+	echo "[WARN] Tidak ada deploy/.env atau .env.example — worker memakai default env."
+}
+
+# Pastikan fastapi/uvicorn terpasang di venv worker (ringan, idempotent).
+ensure_worker_python_deps() {
+	local py="${1:-}"
+	if [ -z "$py" ]; then
+		if [ -f "$WORKER_DIR/env/bin/python" ]; then
+			py="$WORKER_DIR/env/bin/python"
+		else
+			echo "[ERROR] Venv tidak ditemukan di $WORKER_DIR/env"
+			echo "        Jalankan setup penuh:"
+			echo "          cd $REPO_DIR/deploy && export HF_TOKEN=hf_... && bash setup-safe.sh"
+			return 1
+		fi
+	fi
+
+	if "$py" -c "import fastapi, uvicorn" 2>/dev/null; then
+		return 0
+	fi
+
+	echo "[DEPS] fastapi/uvicorn belum terpasang — menginstall requirements worker ..."
+	local req="$WORKER_DIR/requirements-worker.txt"
+	if [ ! -f "$req" ] && [ -f "$DEPLOY_DIR/requirements-worker.txt" ]; then
+		cp -f "$DEPLOY_DIR/requirements-worker.txt" "$req"
+	fi
+
+	if [ -f "$req" ]; then
+		"$py" -m pip install --no-cache-dir -r "$req"
+	else
+		"$py" -m pip install --no-cache-dir "fastapi>=0.104.0" "uvicorn>=0.24.0" "pydantic>=2.0.0"
+	fi
+
+	if ! "$py" -c "import fastapi, uvicorn" 2>/dev/null; then
+		echo "[ERROR] Gagal menginstall fastapi. Coba setup penuh: bash $DEPLOY_DIR/setup-safe.sh"
+		return 1
+	fi
+
+	echo "[DEPS] Python API dependencies OK."
+}
+
 sync_worker_files() {
 	if [ ! -d "$DEPLOY_DIR" ]; then
 		echo "[ERROR] Folder deploy tidak ditemukan: $DEPLOY_DIR"
