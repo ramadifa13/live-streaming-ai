@@ -10,10 +10,62 @@ import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { dashboardPlatforms } from "@/lib/brand-assets";
 import { PlatformIcon } from "@/components/shared/PlatformIcon";
 
+// Preset otomatisasi ikut di sini supaya menambah paket baru tidak menuntut
+// perubahan pada logika tombol. Nilainya harus konsisten dengan `minHours`
+// pada automationItems di bawah.
 const DURATIONS = [
-  { hours: 2, label: "2 Jam", tag: "Express", price: "Rp99.000 (Express)" },
-  { hours: 8, label: "8 Jam", tag: "Shift", price: "Rp299.000 (Shift)" },
-  { hours: 24, label: "24 Jam", tag: "24/7", price: "Rp699.000 (Marathon)" },
+  {
+    hours: 1,
+    label: "1 Jam",
+    tag: "Trial",
+    price: "Rp59.000 (Trial)",
+    automations: {
+      autoReply: true,
+      autoPin: true,
+      autoPromo: true,
+      autoModeration: true,
+    },
+    toast: "Paket Trial (1 Jam): Auto-Reply aktif",
+  },
+  {
+    hours: 2,
+    label: "2 Jam",
+    tag: "Express",
+    price: "Rp99.000 (Express)",
+    automations: {
+      autoReply: true,
+      autoPin: true,
+      autoPromo: false,
+      autoModeration: false,
+    },
+    toast: "Paket Express (2 Jam): Auto-Reply & Auto-Pin aktif",
+  },
+  {
+    hours: 8,
+    label: "8 Jam",
+    tag: "Shift",
+    price: "Rp299.000 (Shift)",
+    automations: {
+      autoReply: true,
+      autoPin: true,
+      autoPromo: true,
+      autoModeration: true,
+    },
+    toast: "Paket Shift (8 Jam): Semua otomatisasi aktif",
+  },
+  {
+    hours: 24,
+    label: "24 Jam",
+    tag: "24/7",
+    price: "Rp699.000 (Marathon)",
+    automations: {
+      autoReply: true,
+      autoPin: true,
+      autoPromo: true,
+      autoModeration: true,
+    },
+    toast: "Paket Marathon (24 Jam): Semua otomatisasi aktif",
+  },
 ];
 
 export const BroadcastSettingsPanel: React.FC = () => {
@@ -190,7 +242,7 @@ export const BroadcastSettingsPanel: React.FC = () => {
               {DURATIONS.find((d) => d.hours === selectedDuration)?.price}
             </span>
           </div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {DURATIONS.map((item) => (
               <button
                 key={item.hours}
@@ -202,25 +254,8 @@ export const BroadcastSettingsPanel: React.FC = () => {
                     return;
                   }
                   setSelectedDuration(item.hours);
-                  if (item.hours === 2) {
-                    setAutomations({
-                      autoReply: true,
-                      autoPin: true,
-                      autoPromo: false,
-                      autoModeration: false,
-                    });
-                    showToast("Paket Express (2 Jam): Auto-Reply & Auto-Pin aktif");
-                  } else {
-                    setAutomations({
-                      autoReply: true,
-                      autoPin: true,
-                      autoPromo: true,
-                      autoModeration: true,
-                    });
-                    showToast(
-                      `Paket ${item.hours === 8 ? "Shift (8 Jam)" : "Marathon (24 Jam)"}: Semua otomatisasi aktif`,
-                    );
-                  }
+                  setAutomations(item.automations);
+                  showToast(item.toast);
                 }}
                 className={`rounded-lg py-1 text-[10px] font-semibold border transition active:scale-95 flex flex-col items-center justify-center cursor-pointer ${
                   selectedDuration === item.hours

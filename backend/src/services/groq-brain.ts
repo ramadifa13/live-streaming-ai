@@ -1,13 +1,12 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
+import type { StreamPlan } from "./live-host-orchestrator.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
 
 const GEMINI_MODEL_RAW =
   process.env.GEMINI_MODEL || process.env.LIVE_BRAIN_MODEL || "gemini-3.6-flash";
-
-/** Model Gemini retired / restricted → pengganti GA (Juli 2026+). */
 const DEPRECATED_GEMINI_MODELS: Record<string, string> = {
   "gemini-3.7-flash": "gemini-3.6-flash",
   "gemini-2.5-flash": "gemini-3.6-flash",
@@ -51,7 +50,6 @@ if (GEMINI_MODEL !== GEMINI_MODEL_RAW.trim()) {
 const GROQ_MODEL_RAW =
   process.env.GROQ_MODEL || process.env.LIVE_BRAIN_MODEL || "openai/gpt-oss-20b";
 
-/** Groq decommissioned several Llama IDs (Aug 2026). Map legacy env values to current IDs. */
 const DEPRECATED_GROQ_MODELS: Record<string, string> = {
   "llama-3.1-8b-instant": "openai/gpt-oss-20b",
   "llama3-8b-8192": "openai/gpt-oss-20b",
@@ -103,7 +101,6 @@ function tripCircuit(provider: "groq" | "gemini", ms = CIRCUIT_BREAKER_MS): void
   globalBrainBackoffUntil = Math.max(globalBrainBackoffUntil, until);
 }
 
-/** Remaining ms to wait before next LLM call (0 = ready). Used by live orchestrator. */
 export function getBrainBackoffMs(): number {
   return Math.max(0, globalBrainBackoffUntil - Date.now());
 }
@@ -261,7 +258,7 @@ export interface SalesBrainInput {
   requestedIntent?: HostIntent;
   requestedMode?: HostMode;
   audienceCount?: number;
-  plan?: "2H" | "8H" | "24H";
+  plan?: StreamPlan;
 }
 
 export interface LiveSalesPitchInput {

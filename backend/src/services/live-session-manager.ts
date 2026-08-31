@@ -37,14 +37,16 @@ const PENDING_TIMEOUT_MS = Math.max(
   60_000,
   Number(process.env.LIVE_PENDING_TIMEOUT_MS || "1800000"),
 );
+function pendingTimeoutFor(durationHours: number): number {
+  const quarterOfPlan = durationHours * 3600 * 1000 * 0.25;
+  return Math.max(5 * 60_000, Math.min(PENDING_TIMEOUT_MS, quarterOfPlan));
+}
 
 class LiveSessionManager {
   private activeSessions: Map<string, ManagedSession> = new Map();
   private pendingVoicePreference: string | null = null;
 
   constructor() {
-    // Saat durasi plan habis, orchestrator berhenti generate. Pod harus ikut
-    // dilepas, kalau tidak GPU menganggur tapi tetap tertagih.
     liveHostOrchestrator.setSessionExpiredHandler((sessionId) => {
       if (!this.activeSessions.has(sessionId)) return;
       console.log(
@@ -376,12 +378,13 @@ class LiveSessionManager {
     const session = this.activeSessions.get(sessionId);
     if (!session) return;
 
+    const timeoutMs = pendingTimeoutFor(session.durationHours);
     session.pendingTimer = setTimeout(() => {
       const s = this.activeSessions.get(sessionId);
       if (!s || s.state !== "pending") return;
       console.warn(
         `[LiveSessionManager] Sesi ${sessionId} masih "pending" setelah ` +
-          `${Math.round(PENDING_TIMEOUT_MS / 60_000)} menit tanpa Go Live. ` +
+          `${Math.round(timeoutMs / 60_000)} menit tanpa Go Live. ` +
           `Menghentikan sesi agar GPU tidak terus ditagih.`,
       );
       void this.stopSession(sessionId).catch((err) =>
@@ -390,7 +393,7 @@ class LiveSessionManager {
           err,
         ),
       );
-    }, PENDING_TIMEOUT_MS);
+    }, timeoutMs);
   }
 
   private clearPendingTimeout(sessionId: string): void {

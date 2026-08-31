@@ -6,6 +6,16 @@ Kedua sisi (backend VPS dan pod RunPod) melakukan `git pull`, jadi **perubahan
 harus di-push ke `origin/main` lebih dulu** — kalau tidak, keduanya akan tetap
 menjalankan kode lama.
 
+## Sisi mana yang perlu di-redeploy untuk apa
+
+| Perubahan | Pod RunPod | Backend VPS |
+| --- | --- | --- |
+| Perbaikan audio/video (aset, broadcaster, api_server, inference) | **Ya** | Tidak |
+| Perbaikan biaya GPU & lifecycle sesi (runpod-manager, session-manager) | Tidak | **Ya** |
+| Paket durasi 1 Jam (orchestrator, panel frontend) | Tidak | **Ya** |
+
+Kalau belum pernah menerapkan perbaikan audit, jalankan **keduanya**.
+
 ---
 
 ## 0. Push perubahan
@@ -14,12 +24,12 @@ Dari mesin development:
 
 ```bash
 git add -A
-git commit -m "fix(live): normalisasi aset, encoder konsisten, cegah FFmpeg yatim, hentikan tagihan pod statis"
+git commit -m "feat(live): tambah paket 1 jam; fix: smoke test worker + runbook deploy"
 git push origin main
 ```
 
-Perubahan mencakup 8 file MP4 aset yang sudah dinormalisasi, jadi push-nya
-membawa sekitar 6 MB data biner.
+Jika push perbaikan audit (normalisasi aset) belum dilakukan, push-nya juga
+membawa 8 file MP4 sekitar 6 MB data biner.
 
 ---
 
@@ -118,6 +128,62 @@ lewat `podResume` di `startPodAndWait` — tetapi start pertama akan lebih lamba
 karena harus resume. Kalau untuk sesi uji Anda ingin pod tetap panas, set
 `RUNPOD_KEEP_POD_WARM=true` sementara, lalu **kembalikan ke `false`** sebelum
 produksi.
+
+---
+
+## 2b. Paket durasi 1 Jam
+
+Sebelumnya hanya ada 2, 8, dan 24 jam. Paket 1 jam berjalan seluruhnya di
+backend dan frontend, jadi **pod tidak perlu di-redeploy** untuk fitur ini.
+
+Yang berubah:
+
+- `StreamPlan` di `live-host-orchestrator.ts` kini mencakup `"1H"`, lengkap
+  dengan `PLAN_POLICIES["1H"]`
+- `durationHoursToPlan` memetakan durasi di bawah 2 jam ke `"1H"`, sebelumnya
+  semuanya jatuh ke `"2H"`
+- `DURATIONS` di `BroadcastSettingsPanel.tsx` menambahkan tombol 1 Jam, dan grid
+  berubah dari 3 kolom menjadi 2 kolom di mobile serta 4 kolom di desktop
+
+Buffer paket 1H sengaja disamakan dengan 2H (`minBuffer` 10 detik,
+`targetBuffer` 22 detik). Ukuran buffer melindungi syarat "tanpa idle" dan tidak
+bergantung pada panjang sesi. Yang diperkecil hanya kapasitas memori host dan
+rentang rotasi mode, karena sesi satu jam tidak sempat mengulang topik sebanyak
+sesi panjang.
+
+### Dua hal yang perlu Anda putuskan
+
+**Harga.** Saya isi `Rp59.000 (Trial)` agar tangga diskon volume tetap konsisten
+(per jam: 59rb, 49,5rb, 37,4rb, 29,1rb). Ubah di `DURATIONS` bila angka bisnisnya
+berbeda. Biaya GPU tetap sekitar Rp12.500 per jam, masih di bawah batas Rp50.000
+dari klien.
+
+**Waktu tunggu Go Live memakan kuota.** `deadlineAt` dihitung sejak sesi dibuat,
+bukan sejak siaran benar-benar mulai, sehingga menunggu operator menekan Go Live
+ikut memotong durasi berbayar. Ini perilaku lama, tapi jauh lebih terasa di paket
+1 jam. Sebagai penahan, batas status `pending` sekarang diskalakan ke seperempat
+panjang paket dengan lantai 5 menit:
+
+| Paket | Batas pending |
+| --- | --- |
+| 1 Jam | 15 menit |
+| 2 Jam | 30 menit |
+| 8 dan 24 Jam | 30 menit (batas `LIVE_PENDING_TIMEOUT_MS`) |
+
+Kalau Anda ingin durasi berbayar dihitung sejak Go Live dan bukan sejak sesi
+dibuat, itu perubahan terpisah pada `deadlineAt` di `live-session-manager.ts` —
+beri tahu saya bila mau dikerjakan.
+
+### Uji cepat setelah deploy
+
+Di dashboard, pilih 1 Jam lalu mulai sesi. Verifikasi di log backend bahwa plan
+yang terpakai benar:
+
+```bash
+pm2 logs api --lines 50 | grep -i "plan="
+```
+
+Harus muncul `plan=1H`, bukan `plan=2H`.
 
 ---
 

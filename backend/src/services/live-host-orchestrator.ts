@@ -13,24 +13,8 @@ import {
 import { livePlatformConnector } from "./live-platform-connector.js";
 import { synthesizeSpeech } from "./tts.js";
 
-/**
- * Live Host Runtime V2
- *
- * Fokus:
- * - content tidak mengulang secara semantik;
- * - komentar diprioritaskan berdasarkan intent/recency/novelty;
- * - buffer dihitung dalam DETIK, bukan jumlah video;
- * - session memiliki memory + show-mode + elapsed time;
- * - product knowledge dicache, bukan query DB setiap utterance;
- * - fallback berlapis untuk mencegah audio queue kosong;
- * - kontrak lama start/stop/enqueue/status tetap dipertahankan.
- *
- * Catatan penting:
- * Orchestrator ini mengatur dan mengisi queue GPU. Benar-benar zero-idle tetap
- * bergantung pada worker/player RunPod yang dapat memainkan item queue tanpa gap.
- */
 
-export type StreamPlan = "2H" | "8H" | "24H";
+export type StreamPlan = "1H" | "2H" | "8H" | "24H";
 
 export interface HostConfig {
   productId: string;
@@ -43,7 +27,7 @@ export interface HostConfig {
   sessionId: string;
   plan?: StreamPlan;
   /**
-   * Durasi sesi sebenarnya dalam ms. Plan hanya bucket (2H/8H/24H), sehingga
+   * Durasi sesi sebenarnya dalam ms. Plan hanya bucket (1H/2H/8H/24H), sehingga
    * sesi 3 jam ter-map ke plan "2H" dan loop generasi berhenti satu jam lebih
    * awal — GPU menganggur tetapi tetap ditagih. Nilai ini dipakai bila ada.
    */
@@ -164,6 +148,24 @@ interface PlanPolicy {
 }
 
 const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
+  // Buffer 1H disamakan dengan 2H, bukan diperkecil. Ukuran buffer melindungi
+  // syarat "tanpa idle" dan tidak bergantung pada panjang sesi; yang diperkecil
+  // hanya kapasitas memori dan rotasi mode, karena sesi sependek ini tidak
+  // pernah mengulang topik sebanyak sesi panjang.
+  "1H": {
+    durationMs: 60 * 60 * 1000,
+    minBufferSeconds: 10,
+    targetBufferSeconds: 22,
+    maxBufferSeconds: 40,
+    commentTtlMs: 20_000,
+    maxPendingComments: 6,
+    memoryUtterances: 20,
+    memoryTopics: 12,
+    memoryCtas: 6,
+    memoryClaims: 14,
+    modeMinMs: 60_000,
+    modeMaxMs: 180_000,
+  },
   "2H": {
     durationMs: 2 * 60 * 60 * 1000,
     minBufferSeconds: 10,
@@ -426,7 +428,8 @@ function parsePlan(value?: StreamPlan): StreamPlan {
 export function durationHoursToPlan(hours: number): StreamPlan {
   if (hours >= 24) return "24H";
   if (hours >= 8) return "8H";
-  return "2H";
+  if (hours >= 2) return "2H";
+  return "1H";
 }
 
 function estimateDurationSeconds(text: string): number {
