@@ -119,14 +119,15 @@ class AIBroadcaster:
             self.overlay_png_path = None
             return
 
-        # A. Top Banner (Lebih Besar & Dinaikkan ke atas agar tidak menutupi kepala avatar - OPTIONAL)
+        # A. Top Banner — synced with LivePreviewBoard (w-[75%], h-20, top-1) on 720×1280
         if has_banner:
             try:
+                banner_max_w, banner_max_h, banner_y = 540, 245, 12
                 banner = Image.open(self.local_banner_img).convert("RGBA")
-                banner.thumbnail((620, 145), Image.Resampling.LANCZOS)
+                banner.thumbnail((banner_max_w, banner_max_h), Image.Resampling.LANCZOS)
                 bw, bh = banner.size
                 bx = (canvas_w - bw) // 2
-                by = 42
+                by = banner_y
 
                 # Soft drop shadow behind banner
                 shadow_banner = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))

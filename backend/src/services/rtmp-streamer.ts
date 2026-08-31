@@ -303,6 +303,11 @@ export async function startInstagramBroadcast(
   const W = 720;
   const H = 1280;
 
+  // Banner — synced with LivePreviewBoard (w-[75%], h-20, top-1) scaled to 720×1280
+  const BANNER_W = 540;
+  const BANNER_H = 245;
+  const BANNER_Y = 12;
+
   // Ultra-Modern Floating Pill Card (Universal Safe Area 220px di atas komentar)
   const cardW = 630;
   const cardH = 136;
@@ -327,14 +332,15 @@ export async function startInstagramBroadcast(
     mediaToUse,
   ];
 
-  // 1. Top Center Banner Overlay (Lebih Besar & Dinaikkan ke atas agar aman dari kepala avatar)
+  // 1. Top Center Banner Overlay — matches Step 4 preview proportions
   if (bannerImagePath) {
     inputsBeforeAudio.push("-loop", "1", "-i", bannerImagePath);
     const bannerInputPad = nextInputIdx++;
+    const bannerShadowX = Math.round((W - BANNER_W - 8) / 2);
     filterStages.push(
-      `[v${padIdx}]drawbox=x=46:y=42:w=628:h=153:color=0x000000@0.35:t=fill[v${padIdx + 1}]`,
-      `[${bannerInputPad}:v]scale=620:145:force_original_aspect_ratio=decrease[banner]`,
-      `[v${padIdx + 1}][banner]overlay=x=(W-w)/2:y=42[v${padIdx + 2}]`,
+      `[v${padIdx}]drawbox=x=${bannerShadowX}:y=${BANNER_Y}:w=${BANNER_W + 8}:h=${BANNER_H + 8}:color=0x000000@0.35:t=fill[v${padIdx + 1}]`,
+      `[${bannerInputPad}:v]scale=${BANNER_W}:${BANNER_H}:force_original_aspect_ratio=decrease[banner]`,
+      `[v${padIdx + 1}][banner]overlay=x=(W-w)/2:y=${BANNER_Y}[v${padIdx + 2}]`,
     );
     padIdx += 2;
   }
