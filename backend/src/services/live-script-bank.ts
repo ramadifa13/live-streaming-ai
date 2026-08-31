@@ -609,18 +609,22 @@ export function takeScriptLine(
   const recentTopics = new Set(
     (options.recentTopics || []).slice(-3).map((t) => normalize(t)).filter(Boolean),
   );
+  const primaryTopic = options.preferTopic
+    ? normalize(String(options.preferTopic))
+    : "";
   const preferTopics = new Set(
-    [...(options.preferTopics || []), options.preferTopic]
-      .filter(Boolean)
-      .map((t) => normalize(String(t))),
+    (options.preferTopics || [])
+      .map((t) => normalize(String(t)))
+      .filter((t) => Boolean(t) && t !== primaryTopic),
   );
 
   const rank = (item: HostResponse): number => {
     let score = 0;
     const topicKey = normalize(item.topic || "");
     if (options.preferFiller && FILLER_TOPICS.has(item.topic)) score += 8;
-    if (preferTopics.has(topicKey)) score += 5;
-    if (options.preferTopic && topicKey === normalize(options.preferTopic)) score += 4;
+    // Slot ritme (+9) di atas topik fase (+5) — tanpa double-count preferTopic.
+    if (primaryTopic && topicKey === primaryTopic) score += 9;
+    else if (preferTopics.has(topicKey)) score += 5;
     if (options.preferMode && item.mode === options.preferMode) score += 2;
     if (!similarToAny(item.speech, recent)) score += 4;
     if (avoidTopics.has(topicKey) || recentTopics.has(topicKey)) score -= 6;
