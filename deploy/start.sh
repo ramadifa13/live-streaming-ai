@@ -27,6 +27,16 @@ if [ ! -f "$WORKER_DIR/.setup_complete" ]; then
 	fi
 fi
 
+# Install ffmpeg if not present
+if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "[INFO] Menginstall ffmpeg..."
+    apt-get update -qq && apt-get install -y -qq ffmpeg 2>/dev/null || \
+    apk add --no-cache ffmpeg 2>/dev/null || \
+    yum install -y -q ffmpeg 2>/dev/null || \
+    conda install -y -q ffmpeg 2>/dev/null || \
+    echo "[WARNING] Gagal menginstall ffmpeg secara otomatis"
+fi
+
 if [ ! -f "$WORKER_DIR/api_server.py" ]; then
 	echo "[ERROR] api_server.py tidak ditemukan di $WORKER_DIR"
 	exit 1

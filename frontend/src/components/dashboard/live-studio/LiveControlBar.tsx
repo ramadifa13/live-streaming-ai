@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useRef, useEffect } from "react";
 import Image from "next/image";
 import {
   Radio,
@@ -155,7 +155,7 @@ export const LiveControlBar: React.FC = () => {
       if (bcastJson.success) {
         if (bcastJson.waitingForGoLive) {
           useLiveSessionStore.setState({
-            isWaitingForGoLive: false,
+            isWaitingForGoLive: true,
             currentLiveSessionId: sessionJson.data?.id,
           });
           showToast(bcastJson.message || "RTMP terhubung! Sedang menggenerate Video AI...");
@@ -176,9 +176,7 @@ export const LiveControlBar: React.FC = () => {
           isWaitingForGoLive: false,
           currentLiveSessionId: null,
         });
-        showToast(
-          `Gagal terhubung ke ${selectedPlatform}: ${bcastJson.error || "Server RTMP menolak koneksi."}`,
-        );
+        showToast(`Gagal terhubung ke ${selectedPlatform}: ${bcastJson.error || "Server RTMP menolak koneksi."}`);
       }
     } catch {
       if (connectingAbortRef.current?.signal.aborted) return;
@@ -740,4 +738,3 @@ export const LiveControlBar: React.FC = () => {
     </div>
   );
 };
-

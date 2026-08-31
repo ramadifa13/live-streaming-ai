@@ -472,8 +472,9 @@ async function callGroq(prompt: string): Promise<ProviderResult> {
 async function callBrain(prompt: string): Promise<ProviderResult> {
   const provider = (process.env.LIVE_BRAIN_PROVIDER || "auto").toLowerCase();
 
-  if (provider === "groq") return callGroq(prompt);
   if (provider === "gemini") return callGemini(prompt);
+  if (provider === "groq") return callGroq(prompt);
+
 
   if (GROQ_API_KEY) {
     try {
