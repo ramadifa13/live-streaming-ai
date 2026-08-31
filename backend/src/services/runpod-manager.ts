@@ -214,12 +214,29 @@ export async function createPod(): Promise<string> {
     : BUDGET_GPU_TIERS;
 
   const cloudType = process.env.RUNPOD_CLOUD_TYPE || "ALL";
+  const strictGpu = process.env.RUNPOD_GPU_STRICT === "1";
+  const gpuRetries = Math.max(1, Number(process.env.RUNPOD_GPU_RETRY || "3"));
+  const dataCenterHint = process.env.RUNPOD_DATACENTER_ID?.trim();
+
+  if (dataCenterHint) {
+    console.log(
+      `[RunPodManager] Preferred datacenter: ${dataCenterHint} (harus match network volume DC)`,
+    );
+  }
 
   for (const gpuTier of tiersToTry) {
-    try {
-      console.log(`[RunPodManager] Mencoba alokasi GPU: ${gpuTier.label}...`);
-      const data = await runpodGraphQL(mutation, {
-        input: {
+    for (let attempt = 1; attempt <= gpuRetries; attempt++) {
+      try {
+        if (attempt > 1) {
+          console.log(
+            `[RunPodManager] Retry ${attempt}/${gpuRetries} untuk ${gpuTier.label} (stock Low — coba lagi)...`,
+          );
+          await new Promise((r) => setTimeout(r, 2000));
+        } else {
+          console.log(`[RunPodManager] Mencoba alokasi GPU: ${gpuTier.label}...`);
+        }
+
+        const input: Record<string, unknown> = {
           cloudType: cloudType,
           gpuCount: 1,
           volumeInGb: 0,
@@ -234,35 +251,43 @@ export async function createPod(): Promise<string> {
           ports: "8000/http",
           networkVolumeId: volumeId,
           volumeMountPath: "/workspace",
-        },
-      });
+        };
+        if (dataCenterHint) input.dataCenterId = dataCenterHint;
 
-      if (data?.podFindAndDeployOnDemand?.id) {
-        const createdPodId = data.podFindAndDeployOnDemand.id;
-        console.log(
-          `[RunPodManager] Sukses membuat Pod ${createdPodId} dengan ${gpuTier.label}!`,
-        );
-        return createdPodId;
-      }
-    } catch (error: any) {
-      lastGpuError = error;
-      const errMsg = (error?.message || "").toLowerCase();
-      const isFull =
-        errMsg.includes("not enough free gpus") ||
-        errMsg.includes("no available") ||
-        errMsg.includes("out of stock") ||
-        errMsg.includes("supply_constraint") ||
-        errMsg.includes("no longer any instances available") ||
-        errMsg.includes("specifications");
+        const data = await runpodGraphQL(mutation, { input });
 
-      if (isFull) {
-        console.warn(
-          `[RunPodManager] ${gpuTier.id} sedang penuh (${cloudType}). Beralih ke tier hemat berikutnya...`,
-        );
-        continue;
+        if (data?.podFindAndDeployOnDemand?.id) {
+          const createdPodId = data.podFindAndDeployOnDemand.id;
+          console.log(
+            `[RunPodManager] Sukses membuat Pod ${createdPodId} dengan ${gpuTier.label}!`,
+          );
+          return createdPodId;
+        }
+      } catch (error: any) {
+        lastGpuError = error;
+        const errMsg = (error?.message || "").toLowerCase();
+        const isFull =
+          errMsg.includes("not enough free gpus") ||
+          errMsg.includes("no available") ||
+          errMsg.includes("out of stock") ||
+          errMsg.includes("supply_constraint") ||
+          errMsg.includes("no longer any instances available") ||
+          errMsg.includes("specifications");
+
+        if (isFull && attempt < gpuRetries) {
+          continue;
+        }
+
+        if (isFull) {
+          console.warn(
+            `[RunPodManager] ${gpuTier.id} sedang penuh (${cloudType}). Beralih ke tier berikutnya...`,
+          );
+          break;
+        }
+        throw error;
       }
-      throw error;
     }
+    if (strictGpu) break;
   }
 
   console.warn(`[RunPodManager] Semua GPU dalam daftar hemat sedang penuh.`);
