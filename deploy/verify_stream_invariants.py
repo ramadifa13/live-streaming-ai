@@ -4,6 +4,7 @@ Builds each command variant the broadcast loop can emit and actually runs it,
 so an invalid filter graph fails here instead of mid-stream on the pod.
 """
 import os
+import shutil
 import subprocess
 import sys
 
@@ -108,4 +109,7 @@ for label, cmd in cases:
     print(f"OK    {label}\n      {meta}")
 
 print(f"\n{len(cases) - failures}/{len(cases)} command variants valid")
+
+shutil.rmtree(b.output_folder, ignore_errors=True)
+
 sys.exit(1 if (failures or not order_ok) else 0)

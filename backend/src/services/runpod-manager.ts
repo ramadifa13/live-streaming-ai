@@ -533,6 +533,14 @@ export async function pausePod(podId: string): Promise<boolean> {
   `;
   try {
     const data = await runpodGraphQL(mutation, { input: { podId } });
+    if (data === null) {
+      // runpodGraphQL mengembalikan null bila RUNPOD_API_KEY tidak diset.
+      console.warn(
+        `[RunPodManager] Pod ${podId} TIDAK di-STOP: RUNPOD_API_KEY tidak diset. ` +
+          `Bila pod ini nyata, tagihan GPU masih berjalan.`,
+      );
+      return false;
+    }
     console.log(
       `[RunPodManager] Pod ${podId} di-STOP (status: ${data?.podStop?.desiredStatus || "SENT"}). Tagihan GPU berhenti.`,
     );
