@@ -23,6 +23,9 @@ export interface PipelineStatus {
   isRtmpConnected?: boolean;
   stageIndex?: number;
   stageText?: string;
+  podReady?: boolean;
+  podBooting?: boolean;
+  podFailed?: boolean;
 }
 
 interface LiveSessionState {

@@ -121,6 +121,28 @@ async function attachScriptBank(product: Product): Promise<Product> {
   }
 }
 
+function applyProductUpdate(
+  set: (partial: Partial<ProductState> | ((s: ProductState) => Partial<ProductState>)) => void,
+  updated: Product,
+) {
+  set((state) => ({
+    products: state.products.map((p) => (p.id === updated.id ? updated : p)),
+    activeFeaturedProduct:
+      state.activeFeaturedProduct.id === updated.id ? updated : state.activeFeaturedProduct,
+    selectedProductForEdit:
+      state.selectedProductForEdit?.id === updated.id ? updated : state.selectedProductForEdit,
+  }));
+}
+
+function scheduleScriptBankEnrichment(
+  set: (partial: Partial<ProductState> | ((s: ProductState) => Partial<ProductState>)) => void,
+  product: Product,
+) {
+  void attachScriptBank(product).then((enriched) => {
+    applyProductUpdate(set, enriched);
+  });
+}
+
 export const useProductStore = create<ProductState>()(
   persist(
     (set, get) => ({
@@ -178,7 +200,7 @@ export const useProductStore = create<ProductState>()(
         }
         if (!form.description.trim()) throw new Error("Deskripsi lengkap produk wajib diisi.");
 
-        let newProd: Product = {
+        const newProd: Product = {
           id: newLocalId(),
           name: form.name.trim(),
           price: formatPrice(numPrice),
@@ -193,13 +215,13 @@ export const useProductStore = create<ProductState>()(
           usage: form.usage.trim() || undefined,
           faq: form.faq.trim() || undefined,
         };
-        newProd = await attachScriptBank(newProd);
-
         set((state) => ({
           products: [newProd, ...state.products],
           activeFeaturedProduct: newProd,
           newProductForm: initialProductForm,
         }));
+
+        scheduleScriptBankEnrichment(set, newProd);
 
         return newProd;
       },
@@ -220,7 +242,7 @@ export const useProductStore = create<ProductState>()(
         }
         if (!editProd.description?.trim()) throw new Error("Deskripsi lengkap produk wajib diisi.");
 
-        let formattedProduct: Product = {
+        const formattedProduct: Product = {
           ...editProd,
           name: editProd.name.trim(),
           price: formatPrice(numPrice),
@@ -232,8 +254,6 @@ export const useProductStore = create<ProductState>()(
           usage: editProd.usage?.trim() || undefined,
           faq: editProd.faq?.trim() || undefined,
         };
-        formattedProduct = await attachScriptBank(formattedProduct);
-
         set((state) => ({
           products: state.products.map((p) =>
             p.id === editProd.id ? formattedProduct : p,
@@ -242,8 +262,10 @@ export const useProductStore = create<ProductState>()(
             state.activeFeaturedProduct.id === editProd.id
               ? formattedProduct
               : state.activeFeaturedProduct,
-          selectedProductForEdit: null,
+          selectedProductForEdit: formattedProduct,
         }));
+
+        scheduleScriptBankEnrichment(set, formattedProduct);
 
         return formattedProduct;
       },

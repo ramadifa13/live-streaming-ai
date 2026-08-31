@@ -68,11 +68,25 @@ export const aiService = {
     engine: string;
     count: number;
   }> {
-    const res = await fetch("/api/ai/prepare-product", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
-    });
+    const controller = new AbortController();
+    const timeoutMs = 25_000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let res: Response;
+    try {
+      res = await fetch("/api/ai/prepare-product", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new Error("Timeout menyiapkan script bank (LLM terlalu lama)");
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
     const json = await res.json().catch(() => null);
     if (!res.ok || !json?.success) {
       throw new Error(json?.error || "Gagal menyiapkan script bank");

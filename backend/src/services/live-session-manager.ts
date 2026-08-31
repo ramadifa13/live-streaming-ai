@@ -24,6 +24,8 @@ export interface ManagedSession {
   voice?: string;
   tone: string;
   podId?: string | null;
+  podBootStatus?: "pending" | "booting" | "ready" | "failed";
+  podBootMessage?: string;
   watchdogTimer?: NodeJS.Timeout;
   livePollTimer?: NodeJS.Timeout;
   pendingTimer?: NodeJS.Timeout;
@@ -84,8 +86,6 @@ class LiveSessionManager {
     product?: ProductSnapshot;
     catalog?: ProductSnapshot[];
   }): Promise<{ sessionId: string; state: SessionState }> {
-    const podIdStr = await startPodAndWait();
-    const podId = typeof podIdStr === "string" ? podIdStr : null;
     setLiveSessionActive(true);
 
     const session = await prisma.liveSession.create({
@@ -124,7 +124,9 @@ class LiveSessionManager {
       avatarName: params.avatarName || "Namira",
       voice: params.voice || this.pendingVoicePreference || undefined,
       tone: params.tone || "Persuasif",
-      podId: typeof podId === "string" ? podId : null,
+      podId: null,
+      podBootStatus: "booting",
+      podBootMessage: "Mengalokasikan Cloud GPU RTX 4090...",
       liveDetectionAttempts: 0,
       onStateChange: undefined,
       product,
@@ -133,23 +135,8 @@ class LiveSessionManager {
 
     this.activeSessions.set(session.id, managedSession);
 
-    livePlatformConnector.startSession({
-      sessionId: session.id,
-      podId: typeof podId === "string" ? podId : null,
-      platform: params.platform,
-      accessToken: params.accessToken,
-      liveChatId: params.liveChatId,
-      liveVideoId: params.liveVideoId,
-      autoReply: params.autoReply ?? true,
-      productId: params.productId,
-      avatarName: params.avatarName,
-      voice: params.voice || this.pendingVoicePreference || undefined,
-      tone: params.tone || "Persuasif",
-    });
-
     livePlatformConnector.setLiveDetectedCallback(
       async (triggerSessionId?: string) => {
-        // The callback will need to know which session triggered it, or we rely on connector to pass it
         const sId = triggerSessionId || session.id;
         const currentSession = this.activeSessions.get(sId);
         if (currentSession?.state === "pending") {
@@ -161,16 +148,122 @@ class LiveSessionManager {
       },
     );
 
-    await this.transitionState("pending", session.id);
-    this.startPlatformLivePoll(
-      session.id,
-      params.liveVideoId,
-      params.accessToken,
-    );
+    void this.bootstrapPodForSession(session.id, {
+      productId: params.productId,
+      platform: params.platform,
+      accessToken: params.accessToken,
+      liveChatId: params.liveChatId,
+      liveVideoId: params.liveVideoId,
+      autoReply: params.autoReply,
+      avatarName: params.avatarName,
+      voice: params.voice || this.pendingVoicePreference || undefined,
+      tone: params.tone || "Persuasif",
+    });
 
     return {
       sessionId: session.id,
       state: managedSession.state,
+    };
+  }
+
+  private async bootstrapPodForSession(
+    sessionId: string,
+    connectorParams: {
+      productId: string;
+      platform: string;
+      accessToken?: string;
+      liveChatId?: string;
+      liveVideoId?: string;
+      autoReply?: boolean;
+      avatarName?: string;
+      voice?: string;
+      tone?: string;
+    },
+  ): Promise<void> {
+    const managed = this.activeSessions.get(sessionId);
+    if (!managed) return;
+
+    try {
+      managed.podBootStatus = "booting";
+      managed.podBootMessage = "Mengalokasikan Cloud GPU RTX 4090...";
+      const podIdStr = await startPodAndWait(360_000, (message) => {
+        const current = this.activeSessions.get(sessionId);
+        if (current) current.podBootMessage = message;
+      });
+      const podId = typeof podIdStr === "string" ? podIdStr : null;
+      if (!managed) return;
+
+      managed.podId = podId;
+      managed.podBootStatus = "ready";
+      managed.podBootMessage = "GPU siap — menghubungkan ke worker...";
+
+      livePlatformConnector.startSession({
+        sessionId,
+        podId,
+        platform: connectorParams.platform,
+        accessToken: connectorParams.accessToken,
+        liveChatId: connectorParams.liveChatId,
+        liveVideoId: connectorParams.liveVideoId,
+        autoReply: connectorParams.autoReply ?? true,
+        productId: connectorParams.productId,
+        avatarName: connectorParams.avatarName,
+        voice: connectorParams.voice,
+        tone: connectorParams.tone || "Persuasif",
+      });
+
+      await this.transitionState("pending", sessionId);
+      this.startPlatformLivePoll(
+        sessionId,
+        connectorParams.liveVideoId,
+        connectorParams.accessToken,
+      );
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Gagal menghidupkan GPU RunPod";
+      console.error(`[LiveSessionManager] Pod bootstrap gagal (${sessionId}):`, err);
+      const current = this.activeSessions.get(sessionId);
+      if (current) {
+        current.podBootStatus = "failed";
+        current.podBootMessage = message;
+        await this.transitionState("error", sessionId);
+      }
+    }
+  }
+
+  public getSessionBootStatus(sessionId: string): {
+    podReady: boolean;
+    podBooting: boolean;
+    podFailed: boolean;
+    stageText: string;
+    podId: string | null;
+    state: SessionState;
+  } | null {
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return null;
+
+    const podFailed = session.podBootStatus === "failed";
+    const podReady =
+      session.podBootStatus === "ready" && Boolean(session.podId);
+    const podBooting =
+      !podFailed &&
+      !podReady &&
+      (session.podBootStatus === "booting" ||
+        session.podBootStatus === "pending" ||
+        session.state === "starting");
+
+    return {
+      podReady,
+      podBooting,
+      podFailed,
+      stageText:
+        session.podBootMessage ||
+        (podBooting
+          ? "Memuat PyTorch CUDA ke GPU..."
+          : podReady
+            ? "GPU siap"
+            : "Menyiapkan sesi..."),
+      podId: session.podId ?? null,
+      state: session.state,
     };
   }
 

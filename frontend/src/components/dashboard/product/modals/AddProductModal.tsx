@@ -38,12 +38,12 @@ export const AddProductModal: React.FC = () => {
     setIsSubmitting(true);
     try {
       await createProduct();
-      setShowAddProductModal(false);
-      showToast("Produk tersimpan di perangkat ini. Script bank disiapkan untuk live.");
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Gagal menyimpan produk");
-    } finally {
       setIsSubmitting(false);
+      setShowAddProductModal(false);
+      showToast("Produk tersimpan. Script bank disiapkan di background untuk live.");
+    } catch (err) {
+      setIsSubmitting(false);
+      showToast(err instanceof Error ? err.message : "Gagal menyimpan produk");
     }
   };
 

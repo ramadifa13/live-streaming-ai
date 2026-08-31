@@ -23,7 +23,10 @@ export const ConnectingOverlay: React.FC = () => {
 
   const stageIndex = pipelineStatus?.stageIndex ?? connectingStageIndex;
   const videosReady = (pipelineStatus?.videosQueued ?? 0) >= 2;
+  const podBooting = pipelineStatus?.podBooting === true;
   const canGoLive =
+    !podBooting &&
+    pipelineStatus?.podReady !== false &&
     pipelineStatus?.ready === true &&
     videosReady &&
     stageIndex >= 4;
@@ -80,10 +83,16 @@ export const ConnectingOverlay: React.FC = () => {
 
           {!canGoLive && (
             <p className="text-[12px] text-slate-300 leading-relaxed mb-3 px-1">
-              Sistem sedang menyiapkan infrastruktur siaran (GPU, avatar, dan buffer video).
-              Estimasi waktu persiapan{" "}
-              <span className="text-amber-300 font-semibold">sekitar 5 menit</span>.
-              Harap tetap di halaman ini hingga proses selesai.
+              {podBooting
+                ? connectingStageText ||
+                  "GPU RunPod sedang boot (PyTorch CUDA). Estimasi 2–6 menit — jangan tutup halaman ini."
+                : "Sistem sedang menyiapkan infrastruktur siaran (GPU, avatar, dan buffer video). Estimasi waktu persiapan "}
+              {!podBooting && (
+                <>
+                  <span className="text-amber-300 font-semibold">sekitar 5 menit</span>.
+                  Harap tetap di halaman ini hingga proses selesai.
+                </>
+              )}
             </p>
           )}
 

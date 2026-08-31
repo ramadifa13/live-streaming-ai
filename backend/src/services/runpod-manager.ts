@@ -335,7 +335,8 @@ export async function resumePod(podId: string): Promise<boolean> {
  */
 async function waitForWorkerHealth(
   currentPodId: string,
-  healthTimeout = 180000,
+  healthTimeout = 300000,
+  onProgress?: (message: string) => void,
 ): Promise<string> {
   const workerUrl = getWorkerUrl(currentPodId);
   const healthStart = Date.now();
@@ -356,19 +357,27 @@ async function waitForWorkerHealth(
         );
         return currentPodId;
       } else if (res.status === 502) {
+        const msg = `Memuat PyTorch CUDA ke GPU... (${elapsed}s)`;
+        onProgress?.(msg);
         console.log(
           `[RunPodManager] [Pod ${currentPodId}] ⏳ Booting (${elapsed}s): Container sedang memuat PyTorch CUDA ke GPU...`,
         );
       } else if (res.status === 404) {
+        const msg = `Menghubungkan RunPod Proxy Port 8000... (${elapsed}s)`;
+        onProgress?.(msg);
         console.log(
           `[RunPodManager] [Pod ${currentPodId}] ⏳ Routing (${elapsed}s): Menghubungkan RunPod Proxy Port 8000...`,
         );
       } else {
+        const msg = `Menunggu worker HTTP ${res.status}... (${elapsed}s)`;
+        onProgress?.(msg);
         console.log(
           `[RunPodManager] [Pod ${currentPodId}] ⏳ Status HTTP ${res.status} (${elapsed}s)...`,
         );
       }
     } catch (fetchErr: any) {
+      const msg = `Menunggu port 8000 terbuka... (${elapsed}s)`;
+      onProgress?.(msg);
       console.log(
         `[RunPodManager] [Pod ${currentPodId}] ⏳ Menunggu port 8000 terbuka (${elapsed}s): ${fetchErr.message || "Connecting..."}`,
       );
@@ -386,6 +395,7 @@ async function waitForWorkerHealth(
  */
 export async function startPodAndWait(
   timeoutMs = 120000,
+  onProgress?: (message: string) => void,
 ): Promise<string | null> {
   updateGpuActivity();
 
@@ -422,8 +432,8 @@ export async function startPodAndWait(
         );
       }
 
-      // Tunggu hingga AI Worker (port 8000) aktif dan merespon 200 OK
-      return await waitForWorkerHealth(staticPodId);
+      onProgress?.("Menghidupkan pod GPU...");
+      return await waitForWorkerHealth(staticPodId, timeoutMs, onProgress);
     }
   }
 
@@ -511,7 +521,8 @@ export async function startPodAndWait(
     );
   }
 
-  return await waitForWorkerHealth(currentPodId);
+  onProgress?.("Pod RUNNING — menunggu AI Worker siap...");
+  return await waitForWorkerHealth(currentPodId, timeoutMs, onProgress);
 }
 /**
  * Menghentikan pod tanpa menghapusnya (GPU dilepas, disk & volume tetap ada).

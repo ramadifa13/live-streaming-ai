@@ -161,12 +161,29 @@ export const LiveControlBar: React.FC = () => {
 
       if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
 
-      if (sessionJson.data?.id) {
-        useLiveSessionStore.setState({
-          currentLiveSessionId: sessionJson.data.id,
-          connectingStageText: "Menghubungkan RTMP ke platform...",
-        });
+      const sessionId = sessionJson.data?.id;
+      if (!sessionId) {
+        throw new Error("Sesi live tidak dibuat oleh server");
       }
+
+      useLiveSessionStore.setState({
+        currentLiveSessionId: sessionId,
+        connectingStageText: "Mengalokasikan Cloud GPU RTX 4090...",
+      });
+
+      await liveSessionService.waitForPodReady(sessionId, {
+        signal: controller.signal,
+        onProgress: (text) => {
+          if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
+          useLiveSessionStore.setState({ connectingStageText: text });
+        },
+      });
+
+      if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
+
+      useLiveSessionStore.setState({
+        connectingStageText: "Menghubungkan RTMP ke platform...",
+      });
 
       const bcastJson = await liveSessionService.startBroadcast(
         {
@@ -189,26 +206,27 @@ export const LiveControlBar: React.FC = () => {
       if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
 
       if (bcastJson.success) {
-        if (bcastJson.waitingForGoLive) {
-          useLiveSessionStore.setState({
-            currentLiveSessionId: sessionJson.data?.id,
-            liveSessionPhase: "pending",
-            hasConfirmedBroadcast: true,
-            connectingStageText: "Memuat model AI Host ke Cloud GPU...",
-          });
-          showToast(bcastJson.message || "RTMP terhubung! Sedang menggenerate Video AI...");
-        } else {
-          useLiveSessionStore.setState({
-            isConnectingLive: false,
-            isLiveActive: true,
-            isLivePaused: false,
-            liveSessionPhase: "pending",
-            liveSeconds: 0,
-            currentLiveSessionId: sessionJson.data?.id,
-            hasConfirmedBroadcast: true,
-          });
-          showToast(`RTMP terhubung! Menunggu ${selectedPlatform} memulai live...`);
-        }
+        useLiveSessionStore.setState({
+          currentLiveSessionId: sessionId,
+          liveSessionPhase: "pending",
+          hasConfirmedBroadcast: true,
+          isWaitingForGoLive: Boolean(bcastJson.waitingForGoLive),
+          connectingStageText:
+            bcastJson.waitingForGoLive !== false
+              ? "Memuat model AI Host ke Cloud GPU..."
+              : "Menunggu platform memulai live...",
+          // Tetap buka overlay sampai user konfirmasi Go Live atau pipeline siap.
+          isConnectingLive: bcastJson.waitingForGoLive !== false,
+          isLiveActive: bcastJson.waitingForGoLive === false,
+          isLivePaused: false,
+          liveSeconds: 0,
+        });
+        showToast(
+          bcastJson.message ||
+            (bcastJson.waitingForGoLive !== false
+              ? "RTMP terhubung! Sedang menggenerate Video AI..."
+              : `RTMP terhubung! Menunggu ${selectedPlatform} memulai live...`),
+        );
       } else {
         useLiveSessionStore.setState({
           isConnectingLive: false,
@@ -217,15 +235,17 @@ export const LiveControlBar: React.FC = () => {
         });
         showToast(`Gagal terhubung ke ${selectedPlatform}: ${bcastJson.error || "Server RTMP menolak koneksi."}`);
       }
-    } catch {
+    } catch (err) {
       if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
       if (connectingAbortRef.current?.signal.aborted) return;
+      const message =
+        err instanceof Error ? err.message : "Error koneksi: Pastikan server backend online.";
       useLiveSessionStore.setState({
         isConnectingLive: false,
         isWaitingForGoLive: false,
         currentLiveSessionId: null,
       });
-      showToast("Error koneksi: Pastikan server backend online dan Stream Key valid.");
+      showToast(message);
     }
   };
 

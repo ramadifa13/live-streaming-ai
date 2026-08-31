@@ -169,11 +169,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         catalog,
       });
 
+      // Balas segera — boot GPU RunPod berjalan async di background.
+      reply.code(201);
       return {
         success: true,
         data: {
           id: result.sessionId,
           status: result.state,
+          podBooting: true,
           platform: parsed.data.platform,
           voice: parsed.data.voice || avatar.voice || null,
           durationHours: parsed.data.durationHours,
@@ -437,6 +440,42 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     const status = await liveHostOrchestrator.getPipelineStatus(sessionId);
+    const boot = liveSessionManager.getSessionBootStatus(sessionId);
+
+    if (boot && !boot.podReady && boot.podBooting) {
+      return {
+        ready: false,
+        generationCount: 0,
+        videosQueued: 0,
+        pendingCount: 0,
+        isLive: false,
+        isBroadcasting: false,
+        isRtmpConnected: false,
+        stageIndex: 0,
+        stageText: boot.stageText,
+        podReady: false,
+        podBooting: true,
+        podFailed: false,
+      };
+    }
+
+    if (boot?.podFailed) {
+      return {
+        ready: false,
+        generationCount: 0,
+        videosQueued: 0,
+        pendingCount: 0,
+        isLive: false,
+        isBroadcasting: false,
+        isRtmpConnected: false,
+        stageIndex: 0,
+        stageText: boot.stageText,
+        podReady: false,
+        podBooting: false,
+        podFailed: true,
+      };
+    }
+
     if (
       status.stageText === "Session tidak ditemukan." &&
       liveSessionManager.getSession(sessionId)
@@ -444,10 +483,20 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return {
         ...status,
         stageIndex: 1,
-        stageText: "Menghubungkan RTMP ke platform...",
+        stageText: boot?.podReady
+          ? "Menghubungkan RTMP ke platform..."
+          : boot?.stageText || "Menghubungkan RTMP ke platform...",
+        podReady: boot?.podReady ?? false,
+        podBooting: boot?.podBooting ?? false,
+        podFailed: boot?.podFailed ?? false,
       };
     }
-    return status;
+    return {
+      ...status,
+      podReady: boot?.podReady ?? true,
+      podBooting: boot?.podBooting ?? false,
+      podFailed: boot?.podFailed ?? false,
+    };
   });
 
   // POST /api/live-stream/stop-broadcast

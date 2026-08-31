@@ -25,12 +25,13 @@ export const EditProductModal: React.FC = () => {
     setIsSubmitting(true);
     try {
       await saveEditedProduct();
-      setShowEditProductModal(false);
-      showToast("Produk diperbarui di perangkat ini. Script bank disiapkan ulang.");
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Gagal memperbarui produk");
-    } finally {
       setIsSubmitting(false);
+      setShowEditProductModal(false);
+      setSelectedProductForEdit(null);
+      showToast("Produk diperbarui. Script bank disiapkan ulang di background.");
+    } catch (err) {
+      setIsSubmitting(false);
+      showToast(err instanceof Error ? err.message : "Gagal memperbarui produk");
     }
   };
 

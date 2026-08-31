@@ -62,8 +62,7 @@ export interface BroadcastParams {
 
 export const liveSessionService = {
   async startSession(params: StartSessionParams, signal?: AbortSignal) {
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "";
-    const res = await fetch(`${backendUrl}/api/live-session/start`, {
+    const res = await fetch("/api/live-session/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal,
@@ -72,14 +71,18 @@ export const liveSessionService = {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || "Gagal membuat sesi live");
+      if (res.status === 504 || res.status === 502) {
+        throw new Error(
+          "Server timeout saat memulai sesi. Deploy backend terbaru diperlukan — start session harus langsung balas, boot GPU dipolling terpisah.",
+        );
+      }
+      throw new Error(err.error || `Gagal membuat sesi live (HTTP ${res.status})`);
     }
     return await res.json();
   },
 
   async startBroadcast(params: BroadcastParams, signal?: AbortSignal) {
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "";
-    const res = await fetch(`${backendUrl}/api/live-stream/broadcast`, {
+    const res = await fetch("/api/live-stream/broadcast", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal,
@@ -159,6 +162,39 @@ export const liveSessionService = {
       return null;
     }
     return await res.json();
+  },
+
+  async waitForPodReady(
+    sessionId: string,
+    options?: {
+      signal?: AbortSignal;
+      onProgress?: (stageText: string) => void;
+      maxWaitMs?: number;
+    },
+  ): Promise<void> {
+    const maxWaitMs = options?.maxWaitMs ?? 380_000;
+    const started = Date.now();
+
+    while (Date.now() - started < maxWaitMs) {
+      if (options?.signal?.aborted) {
+        throw new DOMException("Inisialisasi dibatalkan", "AbortError");
+      }
+
+      const status = await this.fetchPipelineStatus(sessionId);
+      if (status?.stageText && options?.onProgress) {
+        options.onProgress(String(status.stageText));
+      }
+      if (status?.podFailed) {
+        throw new Error(status.stageText || "GPU RunPod gagal dihidupkan");
+      }
+      if (status?.podReady) return;
+
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+
+    throw new Error(
+      "Timeout menunggu GPU RunPod siap (lebih dari 6 menit). Coba lagi atau cek worker di RunPod.",
+    );
   },
 
   async confirmGoLive(sessionId: string) {
