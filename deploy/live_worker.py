@@ -251,21 +251,26 @@ class AILiveWorker:
         return None
 
     def _resolve_action_clip(self, host_type, host_name, action_tag):
-        """Pilih clip gerak yang sesuai action dari brain, bukan selalu namira.mp4."""
+        """Pilih clip sumber — pose konsisten untuk lipsync natural."""
         host = (host_name or "namira").lower().strip()
         action = (action_tag or "talk_expressive").lower().strip()
+
+        # Hanya gesture besar yang ganti clip sumber (pose tubuh berbeda).
+        # NOD/THINK/POINT kecil → talk_expressive agar transisi antar segmen halus.
+        gesture_only = frozenset(
+            {"wave", "raise_hand", "laugh", "point_up", "point_down"}
+        )
+        if action not in gesture_only:
+            action = "talk_expressive"
+
         aliases = {
             "talk_expressive": ["talk_expressive", "expressive"],
             "idle": ["idle"],
-            "nod": ["nod"],
             "laugh": ["laugh"],
             "wave": ["wave", "raise_hand"],
             "point_up": ["point_up"],
             "point_down": ["point_down"],
-            "think": ["nod", "idle"],
             "raise_hand": ["wave"],
-            "smile": ["nod"],
-            "excited": ["talk_expressive"],
         }
         variants = aliases.get(action, [action])
         candidates = []

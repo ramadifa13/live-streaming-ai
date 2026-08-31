@@ -403,6 +403,16 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     const status = await liveHostOrchestrator.getPipelineStatus(sessionId);
+    if (
+      status.stageText === "Session tidak ditemukan." &&
+      liveSessionManager.getSession(sessionId)
+    ) {
+      return {
+        ...status,
+        stageIndex: 1,
+        stageText: "Menghubungkan RTMP ke platform...",
+      };
+    }
     return status;
   });
 

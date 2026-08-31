@@ -142,7 +142,10 @@ export const LiveControlBar: React.FC = () => {
       if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
 
       if (sessionJson.data?.id) {
-        useLiveSessionStore.setState({ currentLiveSessionId: sessionJson.data.id });
+        useLiveSessionStore.setState({
+          currentLiveSessionId: sessionJson.data.id,
+          connectingStageText: "Menghubungkan RTMP ke platform...",
+        });
       }
 
       const bcastJson = await liveSessionService.startBroadcast(
@@ -170,6 +173,8 @@ export const LiveControlBar: React.FC = () => {
           useLiveSessionStore.setState({
             currentLiveSessionId: sessionJson.data?.id,
             liveSessionPhase: "pending",
+            hasConfirmedBroadcast: true,
+            connectingStageText: "Memuat model AI Host ke Cloud GPU...",
           });
           showToast(bcastJson.message || "RTMP terhubung! Sedang menggenerate Video AI...");
         } else {
@@ -180,6 +185,7 @@ export const LiveControlBar: React.FC = () => {
             liveSessionPhase: "pending",
             liveSeconds: 0,
             currentLiveSessionId: sessionJson.data?.id,
+            hasConfirmedBroadcast: true,
           });
           showToast(`RTMP terhubung! Menunggu ${selectedPlatform} memulai live...`);
         }

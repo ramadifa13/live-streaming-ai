@@ -8,6 +8,7 @@ import urllib.request
 import math
 import re
 import traceback
+from collections import deque
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 class AIBroadcaster:
@@ -22,10 +23,16 @@ class AIBroadcaster:
         self.banner_image_url = banner_image_url
         self.silence_threshold = 90
         self.last_new_video_time = time.time()
-        self.idle_chunk_seconds = 3.5
-        self.max_onair_idle_seconds = 5.0
+        # Smooth transitions — tunable via env on RunPod
+        self.crossfade_seconds = float(os.environ.get("BROADCAST_CROSSFADE_SECONDS", "0.5"))
+        self.fade_seconds = float(os.environ.get("BROADCAST_FADE_SECONDS", "0.4"))
+        self.idle_chunk_seconds = float(os.environ.get("BROADCAST_IDLE_CHUNK_SECONDS", "8.0"))
+        self.max_onair_idle_seconds = float(os.environ.get("BROADCAST_MAX_IDLE_SECONDS", "10.0"))
         self.idle_streak_started_at = None
         self.master_process = None
+        self.output_width = 720
+        self.output_height = 1280
+        self.output_fps = 25
 
         self.local_product_img = None
         self.local_banner_img = None
@@ -326,13 +333,95 @@ class AIBroadcaster:
                 print(f"[BROADCASTER ERROR] Gagal memulai master FFmpeg: {e}")
                 self.master_process = None
 
-    def _build_worker_command(self, video_path, max_duration=None):
-        if not self.overlay_png_path or not os.path.exists(self.overlay_png_path):
-            cmd = [
-                "ffmpeg",
-                "-re",
-                "-i", video_path,
-            ]
+    def _probe_duration(self, video_path):
+        """Durasi media dalam detik (fallback aman jika ffprobe gagal)."""
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    video_path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return max(0.5, float(result.stdout.strip()))
+        except Exception:
+            pass
+        try:
+            size = os.path.getsize(video_path)
+            return max(4.0, min(22.0, size / 160_000.0))
+        except Exception:
+            return 12.0
+
+    def _encode_output_args(self):
+        return [
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-tune", "zerolatency",
+            "-pix_fmt", "yuv420p",
+            "-r", str(self.output_fps),
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-ar", "44100",
+            "-max_muxing_queue_size", "2048",
+            "-f", "mpegts",
+            "pipe:1",
+        ]
+
+    def _video_fade_chain(self, fade_in=0.0, fade_out=0.0, fade_out_start=None):
+        scale = (
+            f"scale={self.output_width}:{self.output_height}:"
+            "force_original_aspect_ratio=increase,"
+            f"crop={self.output_width}:{self.output_height}"
+        )
+        parts = [scale]
+        if fade_in > 0:
+            parts.append(f"fade=t=in:st=0:d={fade_in}")
+        if fade_out > 0 and fade_out_start is not None:
+            parts.append(f"fade=t=out:st={fade_out_start}:d={fade_out}")
+        parts.append(f"fps={self.output_fps}")
+        return ",".join(parts)
+
+    def _audio_fade_filters(self, fade_in=0.0, fade_out=0.0, fade_out_start=None):
+        """Return (filter_complex_fragment, audio_map_label)."""
+        if fade_in <= 0 and fade_out <= 0:
+            return None, "0:a?"
+        parts = []
+        if fade_in > 0:
+            parts.append(f"afade=t=in:st=0:d={fade_in}")
+        if fade_out > 0 and fade_out_start is not None:
+            parts.append(f"afade=t=out:st={fade_out_start}:d={fade_out}")
+        if not parts:
+            return None, "0:a?"
+        chain = "[0:a]" + ",".join(parts) + "[aout]"
+        return chain, "[aout]"
+
+    def _build_worker_command(
+        self,
+        video_path,
+        max_duration=None,
+        fade_in=0.0,
+        fade_out=0.0,
+    ):
+        duration = self._probe_duration(video_path)
+        effective_duration = max_duration if max_duration else duration
+        fade_out_start = None
+        if fade_out > 0 and effective_duration > fade_out + 0.08:
+            fade_out_start = round(effective_duration - fade_out, 3)
+
+        use_fade = fade_in > 0 or fade_out_start is not None
+        has_overlay = bool(
+            self.overlay_png_path and os.path.exists(self.overlay_png_path)
+        )
+
+        # Tanpa overlay & tanpa fade → stream copy (hemat CPU untuk path sederhana)
+        if not has_overlay and not use_fade:
+            cmd = ["ffmpeg", "-y", "-re", "-i", video_path]
             if max_duration:
                 cmd.extend(["-t", str(max_duration)])
             cmd.extend([
@@ -346,66 +435,232 @@ class AIBroadcaster:
             ])
             return cmd
 
-        # Overlay PIL PNG directly onto video with zero FFmpeg filter latency
-        cmd = [
-            "ffmpeg",
-            "-re",
-            "-i", video_path,
-            "-loop", "1",
-            "-i", self.overlay_png_path,
-            "-filter_complex", "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280[base];[base][1:v]overlay=0:0:shortest=1[v]",
-            "-map", "[v]",
-            "-map", "0:a?",
-        ]
+        vchain = self._video_fade_chain(fade_in, fade_out, fade_out_start)
+        afilter, amap = self._audio_fade_filters(fade_in, fade_out, fade_out_start)
+
+        if has_overlay:
+            if afilter:
+                fc = (
+                    f"[0:v]{vchain}[vbase];"
+                    f"[vbase][1:v]overlay=0:0:shortest=1[vout];"
+                    f"{afilter}"
+                )
+            else:
+                fc = f"[0:v]{vchain}[vbase];[vbase][1:v]overlay=0:0:shortest=1[vout]"
+            cmd = [
+                "ffmpeg", "-y", "-re", "-i", video_path,
+                "-loop", "1", "-i", self.overlay_png_path,
+                "-filter_complex", fc,
+                "-map", "[vout]",
+                "-map", amap,
+            ]
+        else:
+            if afilter:
+                fc = f"[0:v]{vchain}[vout];{afilter}"
+                cmd = [
+                    "ffmpeg", "-y", "-re", "-i", video_path,
+                    "-filter_complex", fc,
+                    "-map", "[vout]",
+                    "-map", amap,
+                ]
+            else:
+                fc = f"[0:v]{vchain}[vout]"
+                cmd = [
+                    "ffmpeg", "-y", "-re", "-i", video_path,
+                    "-filter_complex", fc,
+                    "-map", "[vout]",
+                    "-map", "0:a?",
+                ]
+
         if max_duration:
             cmd.extend(["-t", str(max_duration)])
-        cmd.extend([
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-tune", "zerolatency",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-ar", "44100",
-            "-max_muxing_queue_size", "2048",
-            "-f", "mpegts",
-            "pipe:1",
-        ])
+        cmd.extend(self._encode_output_args())
         return cmd
 
-    def _stream_file_async(self, video_path, max_duration=None):
-        """Memutar file video secara non-blocking agar bisa diinterupsi oleh respon AI."""
-        if not video_path or not os.path.exists(video_path):
-            print(f"[ERROR] File video tidak ditemukan: {video_path}")
-            return None
-        
+    def _build_crossfade_command(self, from_path, to_path):
+        """FFmpeg xfade + acrossfade untuk transisi natural antar clip."""
+        fade = self.crossfade_seconds
+        from_dur = self._probe_duration(from_path)
+        offset = max(0.08, from_dur - fade)
+        scale = (
+            f"scale={self.output_width}:{self.output_height}:"
+            "force_original_aspect_ratio=increase,"
+            f"crop={self.output_width}:{self.output_height},fps={self.output_fps}"
+        )
+        has_overlay = bool(
+            self.overlay_png_path and os.path.exists(self.overlay_png_path)
+        )
+
+        if has_overlay:
+            fc = (
+                f"[0:v]{scale}[v0];"
+                f"[1:v]{scale}[v1];"
+                f"[v0][v1]xfade=transition=fade:duration={fade}:offset={offset}[vx];"
+                f"[vx][2:v]overlay=0:0:shortest=1[vout];"
+                f"[0:a][1:a]acrossfade=d={fade}:c1=tri:c2=tri[aout]"
+            )
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", from_path,
+                "-i", to_path,
+                "-loop", "1", "-i", self.overlay_png_path,
+                "-filter_complex", fc,
+                "-map", "[vout]",
+                "-map", "[aout]",
+            ]
+        else:
+            fc = (
+                f"[0:v]{scale}[v0];"
+                f"[1:v]{scale}[v1];"
+                f"[v0][v1]xfade=transition=fade:duration={fade}:offset={offset}[vout];"
+                f"[0:a][1:a]acrossfade=d={fade}:c1=tri:c2=tri[aout]"
+            )
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", from_path,
+                "-i", to_path,
+                "-filter_complex", fc,
+                "-map", "[vout]",
+                "-map", "[aout]",
+            ]
+
+        cmd.extend(self._encode_output_args())
+        return cmd
+
+    def _spawn_worker(self, command):
         self._ensure_master_process()
         if self.master_process is None or self.master_process.stdin is None:
             print("[BROADCASTER ERROR] Master FFmpeg pipe tidak tersedia.")
             return None
-        
-        worker_command = self._build_worker_command(video_path, max_duration)
         try:
-            worker_process = subprocess.Popen(
-                worker_command,
+            return subprocess.Popen(
+                command,
                 stdout=self.master_process.stdin,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
             )
-            return worker_process
         except Exception as e:
-            print(f"[ERROR] Gagal memutar {video_path}: {e}")
+            print(f"[BROADCASTER ERROR] Gagal spawn worker FFmpeg: {e}")
             return None
 
+    def _stream_file_async(
+        self,
+        video_path,
+        max_duration=None,
+        fade_in=0.0,
+        fade_out=0.0,
+    ):
+        """Putar satu clip dengan optional fade in/out di awal/akhir."""
+        if not video_path or not os.path.exists(video_path):
+            print(f"[ERROR] File video tidak ditemukan: {video_path}")
+            return None
+        worker_command = self._build_worker_command(
+            video_path,
+            max_duration=max_duration,
+            fade_in=fade_in,
+            fade_out=fade_out,
+        )
+        return self._spawn_worker(worker_command)
+
+    def _stream_crossfade_async(self, from_path, to_path):
+        """Crossfade halus antar dua clip (visual + audio)."""
+        if not from_path or not os.path.exists(from_path):
+            return self._stream_file_async(to_path, fade_in=self.fade_seconds)
+        if not to_path or not os.path.exists(to_path):
+            return self._stream_file_async(from_path, fade_out=self.fade_seconds)
+        label_from = os.path.basename(from_path)
+        label_to = os.path.basename(to_path)
+        print(
+            f"[BROADCASTER] ✨ Crossfade {self.crossfade_seconds}s: "
+            f"{label_from} → {label_to}"
+        )
+        return self._spawn_worker(self._build_crossfade_command(from_path, to_path))
+
+    def _stream_idle_chunk(self):
+        """Idle loop dengan fade in/out — tidak restart FFmpeg secara kasar."""
+        return self._stream_file_async(
+            self.idle_video,
+            max_duration=self.idle_chunk_seconds,
+            fade_in=self.fade_seconds,
+            fade_out=self.fade_seconds,
+        )
+
+    def _collect_ai_queue(self, last_spoken_video, idle_abs):
+        search_pattern = os.path.join(self.output_folder, "**", "*.mp4")
+        return sorted(
+            [
+                path
+                for path in glob.glob(search_pattern, recursive=True)
+                if path != last_spoken_video
+                and os.path.abspath(path) != idle_abs
+                and not os.path.basename(path).startswith("temp_")
+                and not os.path.basename(path).endswith(".tmp")
+                and os.path.getsize(path) >= 1024
+            ],
+            key=os.path.getctime,
+        )
+
+    def _cleanup_played_ai(self, video_path, idle_abs):
+        if not video_path:
+            return
+        try:
+            if (
+                os.path.exists(video_path)
+                and os.path.abspath(video_path) != idle_abs
+            ):
+                os.remove(video_path)
+                print(
+                    f"[CLEANUP] Video dihapus setelah tayang: "
+                    f"{os.path.basename(video_path)}"
+                )
+        except Exception as e:
+            print(f"[CLEANUP ERROR] Gagal menghapus {video_path}: {e}")
+
+    def _start_next_segment(
+        self,
+        *,
+        from_path,
+        to_path,
+        is_idle=False,
+        fade_in=0.0,
+        use_crossfade=True,
+    ):
+        """Mulai segmen berikutnya — crossfade jika ada clip sebelumnya."""
+        if (
+            use_crossfade
+            and from_path
+            and to_path
+            and os.path.exists(from_path)
+            and os.path.exists(to_path)
+            and os.path.abspath(from_path) != os.path.abspath(to_path)
+        ):
+            return self._stream_crossfade_async(from_path, to_path), to_path, is_idle
+
+        if to_path and os.path.exists(to_path):
+            worker = self._stream_file_async(
+                to_path,
+                fade_in=fade_in if not is_idle else self.fade_seconds,
+                fade_out=self.fade_seconds if is_idle else 0.0,
+                max_duration=self.idle_chunk_seconds if is_idle else None,
+            )
+            return worker, to_path, is_idle
+        return None, from_path, is_idle
+
     def start_loop(self):
-        print(f"\n[BROADCASTER] Menyiarkan secara Live (Tekan Ctrl+C untuk berhenti)...\n")
+        print(
+            f"\n[BROADCASTER] Siaran live — crossfade={self.crossfade_seconds}s, "
+            f"fade={self.fade_seconds}s, idle_chunk={self.idle_chunk_seconds}s\n"
+        )
         last_spoken_video = None
         consecutive_idle_errors = 0
-        
+
         current_worker = None
         is_playing_idle = False
+        current_path = None
+        pending_ai_queue = deque()
 
         while True:
             try:
-                # 0. Hot-Swap Video Overlay check (Update card & banner in-place during live broadcast)
+                # 0. Hot-Swap Video Overlay
                 update_file = os.path.join(self.output_folder, "update_overlay.json")
                 if os.path.exists(update_file):
                     try:
@@ -413,118 +668,175 @@ class AIBroadcaster:
                             data = json.load(f)
                         self.product_name = data.get("product_name", self.product_name)
                         self.product_price = data.get("product_price", self.product_price)
-                        self.product_image_url = data.get("product_image_url", self.product_image_url)
-                        self.banner_image_url = data.get("banner_image_url", self.banner_image_url)
+                        self.product_image_url = data.get(
+                            "product_image_url", self.product_image_url
+                        )
+                        self.banner_image_url = data.get(
+                            "banner_image_url", self.banner_image_url
+                        )
                         self._prepare_overlay_assets()
-                        print(f"[BROADCASTER] 🔄 Live Video Overlay diperbarui secara Hot-Swap: {self.product_name} ({self.product_price})")
+                        print(
+                            f"[BROADCASTER] 🔄 Overlay diperbarui: "
+                            f"{self.product_name} ({self.product_price})"
+                        )
                         os.remove(update_file)
                     except Exception as e:
-                        print(f"[BROADCASTER ERROR] Gagal update live overlay: {e}")
+                        print(f"[BROADCASTER ERROR] Gagal update overlay: {e}")
 
-                playback_flag = os.path.join(self.output_folder, "playback_active.flag")
+                playback_flag = os.path.join(
+                    self.output_folder, "playback_active.flag"
+                )
                 playback_active = os.path.exists(playback_flag)
-
-                search_pattern = os.path.join(self.output_folder, "**", "*.mp4")
-                idle_abs = os.path.abspath(self.idle_video) if self.idle_video else ""
-                new_videos = sorted(
-                    [path for path in glob.glob(search_pattern, recursive=True)
-                     if path != last_spoken_video 
-                     and os.path.abspath(path) != idle_abs
-                     and not os.path.basename(path).startswith("temp_")
-                     and not os.path.basename(path).endswith(".tmp")],
-                    key=os.path.getctime,
+                idle_abs = (
+                    os.path.abspath(self.idle_video) if self.idle_video else ""
                 )
 
-                video_to_play = None
+                # Kumpulkan video AI baru ke antrian (tanpa interrupt kasar)
+                if playback_active:
+                    for path in self._collect_ai_queue(last_spoken_video, idle_abs):
+                        if path not in pending_ai_queue:
+                            pending_ai_queue.append(path)
 
-                if playback_active and new_videos:
-                    video_to_play = new_videos[0]
-                    # Pastikan file selesai dirender
-                    try:
-                        fsize = os.path.getsize(video_to_play)
-                        if fsize < 1024:
-                            time.sleep(0.3)
-                            continue
-                    except Exception:
-                        time.sleep(0.3)
-                        continue
+                # Worker selesai → transisi halus ke segmen berikutnya
+                if current_worker and current_worker.poll() is not None:
+                    finished_path = current_path
+                    finished_idle = is_playing_idle
+                    finished_ai = last_spoken_video
 
-                    # Jika AI video siap dan kita sedang putar idle, hentikan idle sekarang juga!
-                    if current_worker and is_playing_idle:
-                        print("[BROADCASTER] 🚀 Menginterupsi idle video untuk merespon AI seketika...")
-                        try:
-                            current_worker.kill()
-                        except Exception:
-                            pass
-                        current_worker = None
+                    current_worker = None
+                    current_path = None
+                    is_playing_idle = False
 
-                # Cek apakah video saat ini sudah selesai
-                if current_worker:
-                    ret = current_worker.poll()
-                    if ret is not None:
-                        current_worker = None
-                        if not is_playing_idle and last_spoken_video:
-                            try:
-                                if os.path.exists(last_spoken_video) and os.path.abspath(last_spoken_video) != idle_abs:
-                                    os.remove(last_spoken_video)
-                                    print(f"[CLEANUP] Video dihapus setelah tayang: {os.path.basename(last_spoken_video)}")
-                            except Exception as e:
-                                print(f"[CLEANUP ERROR] Gagal menghapus {last_spoken_video}: {e}")
-                        is_playing_idle = False
-                        self.idle_streak_started_at = None
+                    if finished_ai and not finished_idle:
+                        self._cleanup_played_ai(finished_ai, idle_abs)
 
-                # Putar video jika tidak ada yang sedang diputar
-                if current_worker is None:
-                    if video_to_play:
-                        print(f"[>] MEMUTAR RESPON AI: {os.path.basename(video_to_play)}")
-                        current_worker = self._stream_file_async(video_to_play)
-                        if current_worker:
-                            last_spoken_video = video_to_play
+                    next_ai = (
+                        pending_ai_queue.popleft()
+                        if pending_ai_queue
+                        else None
+                    )
+
+                    if next_ai:
+                        print(
+                            f"[>] TRANSISI → AI: {os.path.basename(next_ai)}"
+                        )
+                        # Idle hanya diputar sebagai chunk — crossfade dari file
+                        # idle penuh akan salah offset; gunakan fade-in saja.
+                        worker, path, idle_flag = self._start_next_segment(
+                            from_path=(
+                                finished_path if not finished_idle else None
+                            ),
+                            to_path=next_ai,
+                            is_idle=False,
+                            use_crossfade=bool(
+                                finished_path
+                                and not finished_idle
+                                and os.path.exists(finished_path)
+                            ),
+                        )
+                        if worker:
+                            current_worker = worker
+                            current_path = path
+                            last_spoken_video = next_ai
                             self.last_new_video_time = time.time()
-                            is_playing_idle = False
                             self.idle_streak_started_at = None
                         else:
-                            time.sleep(0.2)
-                    else:
-                        if os.path.exists(self.idle_video):
+                            pending_ai_queue.appendleft(next_ai)
+                    elif playback_active and os.path.exists(self.idle_video):
+                        print("[>] TRANSISI → idle (menunggu segmen AI)")
+                        worker, path, idle_flag = self._start_next_segment(
+                            from_path=finished_path if not finished_idle else None,
+                            to_path=self.idle_video,
+                            is_idle=True,
+                            use_crossfade=bool(
+                                finished_path
+                                and not finished_idle
+                                and os.path.exists(finished_path)
+                            ),
+                        )
+                        if worker:
+                            current_worker = worker
+                            current_path = path
+                            is_playing_idle = True
                             if self.idle_streak_started_at is None:
                                 self.idle_streak_started_at = time.time()
-                            elif (
-                                time.time() - self.idle_streak_started_at
-                                > self.max_onair_idle_seconds
-                            ):
-                                print(
-                                    f"[BROADCASTER] ⚠️ Idle > {self.max_onair_idle_seconds}s — menunggu segmen AI..."
-                                )
-                            current_worker = self._stream_file_async(
-                                self.idle_video,
-                                max_duration=self.idle_chunk_seconds,
-                            )
-                            if current_worker:
-                                is_playing_idle = True
-                                consecutive_idle_errors = 0
-                            else:
-                                consecutive_idle_errors += 1
-                                if consecutive_idle_errors > 3:
-                                    self._ensure_master_process()
-                                    consecutive_idle_errors = 0
-                                time.sleep(0.3)
-                        else:
-                            time.sleep(0.5)
+                    else:
+                        self.idle_streak_started_at = None
 
-                # UPDATE STATUS RTMP
+                # Mulai segmen jika idle
+                if current_worker is None:
+                    next_ai = (
+                        pending_ai_queue.popleft()
+                        if pending_ai_queue
+                        else None
+                    )
+
+                    if next_ai:
+                        print(
+                            f"[>] MEMUTAR AI: {os.path.basename(next_ai)}"
+                        )
+                        worker, path, _ = self._start_next_segment(
+                            from_path=None,
+                            to_path=next_ai,
+                            is_idle=False,
+                            fade_in=self.fade_seconds,
+                            use_crossfade=False,
+                        )
+                        if worker:
+                            current_worker = worker
+                            current_path = path
+                            last_spoken_video = next_ai
+                            self.last_new_video_time = time.time()
+                            self.idle_streak_started_at = None
+                        else:
+                            pending_ai_queue.appendleft(next_ai)
+                    elif os.path.exists(self.idle_video):
+                        if self.idle_streak_started_at is None:
+                            self.idle_streak_started_at = time.time()
+                        elif (
+                            playback_active
+                            and time.time() - self.idle_streak_started_at
+                            > self.max_onair_idle_seconds
+                        ):
+                            print(
+                                f"[BROADCASTER] ⚠️ Idle > "
+                                f"{self.max_onair_idle_seconds}s — "
+                                "menunggu segmen AI..."
+                            )
+                        worker = self._stream_idle_chunk()
+                        if worker:
+                            current_worker = worker
+                            current_path = self.idle_video
+                            is_playing_idle = True
+                            consecutive_idle_errors = 0
+                        else:
+                            consecutive_idle_errors += 1
+                            if consecutive_idle_errors > 3:
+                                self._ensure_master_process()
+                                consecutive_idle_errors = 0
+                            time.sleep(0.3)
+                    else:
+                        time.sleep(0.5)
+
+                # Status RTMP
                 if self.master_process and self.master_process.poll() is None:
                     if time.time() - self.master_process_start_time > 3:
                         try:
-                            with open(os.path.join(self.output_folder, "rtmp_status.txt"), "w") as f:
+                            with open(
+                                os.path.join(
+                                    self.output_folder, "rtmp_status.txt"
+                                ),
+                                "w",
+                            ) as f:
                                 f.write("connected")
                         except Exception:
                             pass
 
-                time.sleep(0.05) # Loop responsif & hemat CPU (50ms)
+                time.sleep(0.05)
 
             except Exception as loop_err:
                 print(f"[BROADCASTER UNHANDLED EXCEPTION] {loop_err}")
+                traceback.print_exc()
                 time.sleep(1)
 
 # --- KONFIGURASI DAN EKSEKUSI ---

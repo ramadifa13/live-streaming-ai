@@ -49,6 +49,7 @@ export default function Dashboard() {
   const setStreamKey = useLiveSessionStore((state) => state.setStreamKey);
   const setOauthConfigStatus = useLiveSessionStore((state) => state.setOauthConfigStatus);
   const setPipelineStatus = useLiveSessionStore((state) => state.setPipelineStatus);
+  const hasConfirmedBroadcast = useLiveSessionStore((state) => state.hasConfirmedBroadcast);
   const setSessionSummary = useLiveSessionStore((state) => state.setSessionSummary);
 
   const isMountedRef = useRef(false);
@@ -278,7 +279,7 @@ export default function Dashboard() {
   }, [isLiveActive, isLivePaused, liveSessionPhase, setIsLiveActive, setIsLivePaused, setLiveSessionPhase, setMetrics]);
 
   useEffect(() => {
-    if (!isConnectingLive || !currentLiveSessionId) return;
+    if (!isConnectingLive || !currentLiveSessionId || !hasConfirmedBroadcast) return;
 
     const pollPipeline = async () => {
       const json = await liveSessionService.fetchPipelineStatus(currentLiveSessionId);
@@ -289,7 +290,7 @@ export default function Dashboard() {
     void pollPipeline();
     const interval = setInterval(pollPipeline, 2000);
     return () => clearInterval(interval);
-  }, [isConnectingLive, currentLiveSessionId, setPipelineStatus]);
+  }, [isConnectingLive, currentLiveSessionId, hasConfirmedBroadcast, setPipelineStatus]);
 
   return (
     <div className="min-h-screen bg-[#060a14] text-white p-4 font-sans selection:bg-blue-500/30">
