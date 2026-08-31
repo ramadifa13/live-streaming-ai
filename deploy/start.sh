@@ -58,21 +58,15 @@ echo "Menyiapkan symlink MuseTalk (./musetalk, ./models)..."
 ln -sfn "$WORKER_DIR/MuseTalk/musetalk" "$WORKER_DIR/musetalk"
 ln -sfn "$WORKER_DIR/MuseTalk/models" "$WORKER_DIR/models"
 
-echo "Menyinkronkan skrip inferensi & preprocessing MuseTalk terbaru..."
-if [ -d "/workspace/live-streaming-ai/deploy" ]; then
-	cp -f /workspace/live-streaming-ai/deploy/inference.py "$WORKER_DIR/MuseTalk/scripts/inference.py" 2>/dev/null || true
-	cp -f /workspace/live-streaming-ai/deploy/preprocessing.py "$WORKER_DIR/MuseTalk/musetalk/utils/preprocessing.py" 2>/dev/null || true
-	cp -f /workspace/live-streaming-ai/deploy/api_server.py "$WORKER_DIR/api_server.py" 2>/dev/null || true
-	cp -f /workspace/live-streaming-ai/deploy/live_worker.py "$WORKER_DIR/live_worker.py" 2>/dev/null || true
-	cp -f /workspace/live-streaming-ai/deploy/broadcaster.py "$WORKER_DIR/broadcaster.py" 2>/dev/null || true
-	if [ -f "/workspace/live-streaming-ai/MuseTalk/musetalk/utils/face_detection/detection/sfd/sfd_detector.py" ]; then
-		mkdir -p "$WORKER_DIR/MuseTalk/musetalk/utils/face_detection/detection/sfd"
-		cp -f /workspace/live-streaming-ai/MuseTalk/musetalk/utils/face_detection/detection/sfd/sfd_detector.py "$WORKER_DIR/MuseTalk/musetalk/utils/face_detection/detection/sfd/sfd_detector.py" 2>/dev/null || true
-	fi
-	mkdir -p "$WORKER_DIR/assets/2d" "$WORKER_DIR/assets/3d"
-	if [ -d "/workspace/live-streaming-ai/deploy/assets" ]; then
-		cp -rn /workspace/live-streaming-ai/deploy/assets/* "$WORKER_DIR/assets/" 2>/dev/null || true
-	fi
+echo "Menyinkronkan skrip worker dari repo ..."
+SYNC_SCRIPT="/workspace/live-streaming-ai/deploy/sync-worker.sh"
+if [ -f "$SYNC_SCRIPT" ]; then
+	# shellcheck source=sync-worker.sh
+	source "$SYNC_SCRIPT"
+	sync_worker_files
+elif [ -d "/workspace/live-streaming-ai/deploy" ]; then
+	cp -f /workspace/live-streaming-ai/deploy/*.py "$WORKER_DIR/" 2>/dev/null || true
+	cp -f /workspace/live-streaming-ai/deploy/*.sh "$WORKER_DIR/" 2>/dev/null || true
 fi
 
 # Ollama di RunPod bersifat opsional karena LLM diproses terpusat di Backend

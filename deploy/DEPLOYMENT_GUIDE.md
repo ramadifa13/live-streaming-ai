@@ -195,23 +195,39 @@
 
  Cukup jalankan langkah cepat di bawah ini langsung dari terminal RunPod:
 
- ### A. Perintah Cepat Update & Restart (1-Liner)
+ ### A. Redeploy Worker (Disarankan)
 
- Jalankan **satu baris perintah** ini di terminal RunPod:
-
- ```bash
- cd /workspace/live-streaming-ai && git pull origin main && cp -f deploy/*.py deploy/*.sh /workspace/ai_live_worker/ 2>/dev/null || true && cd /workspace/ai_live_worker && pkill -9 -f "api_server.py" 2>/dev/null || true && pkill -9 -f "broadcaster.py" 2>/dev/null || true && bash start.sh
- ```
-
- Atau jika ingin menjalankan di **background (daemon)** agar tetap aktif meskipun terminal ditutup:
+ Jalankan skrip redeploy di terminal RunPod — **menarik kode terbaru, menyalin semua file worker, menimpa assets gesture, lalu restart**:
 
  ```bash
- cd /workspace/live-streaming-ai && git pull origin main && cp -f deploy/*.py deploy/*.sh /workspace/ai_live_worker/ 2>/dev/null || true && cd /workspace/ai_live_worker && pkill -9 -f "api_server.py" 2>/dev/null || true && pkill -9 -f "broadcaster.py" 2>/dev/null || true && nohup bash start.sh > /workspace/ai_live_worker/start.log 2>&1 &
+ bash /workspace/live-streaming-ai/deploy/redeploy-worker.sh
  ```
+
+ Background (daemon):
+
+ ```bash
+ nohup bash /workspace/live-streaming-ai/deploy/redeploy-worker.sh > /workspace/ai_live_worker/redeploy.log 2>&1 &
+ ```
+
+ **Yang disinkronkan otomatis:**
+
+ | Sumber | Tujuan |
+ |--------|--------|
+ | `deploy/*.py` | `/workspace/ai_live_worker/` |
+ | `deploy/*.sh` | `/workspace/ai_live_worker/` |
+ | `deploy/inference.py` | `.../MuseTalk/scripts/inference.py` |
+ | `deploy/preprocessing.py` | `.../MuseTalk/musetalk/utils/preprocessing.py` |
+ | `deploy/assets/**` | `.../ai_live_worker/assets/` _(ditimpa)_ |
+ | `MuseTalk/.../sfd_detector.py` | patch face detection (jika ada) |
 
  > [!TIP]
- > **Cara Kerja Auto-Sync**: Perintah di atas akan menarik perubahan dari GitHub (`git pull`), menyinkronkan seluruh skrip deploy terbaru (`live_worker.py`, `broadcaster.py`, `api_server.py`, `inference.py`, `start.sh`) ke direktori worker, dan me-restart server dalam **< 1 detik**.
- > Anda **tidak perlu meng-copy file satu per satu**, karena `start.sh` secara otomatis menyinkronkan seluruh file yang dibutuhkan ke folder MuseTalk.
+ > **Backend & Frontend tidak ikut ter-update** oleh skrip ini — orchestrator/TTS/brain jalan di VPS. Setelah redeploy RunPod, jalankan juga: `ssh root@202.10.35.186 "/root/deploy.sh"`
+
+ ### A2. 1-Liner (alternatif, sama dengan skrip di atas)
+
+ ```bash
+ cd /workspace/live-streaming-ai && git pull origin main && FORCE_ASSETS=1 bash deploy/sync-worker.sh && cd /workspace/ai_live_worker && pkill -9 -f "api_server.py" 2>/dev/null || true && pkill -9 -f "broadcaster.py" 2>/dev/null || true && pkill -9 -f "live_worker.py" 2>/dev/null || true && bash start.sh
+ ```
 
  ---
 
@@ -251,12 +267,5 @@
  Jika perintah `git pull` gagal karena ada perubahan berkas lokal di dalam Pod:
 
  ```bash
- cd /workspace/live-streaming-ai
- # 1. Reset perubahan lokal dan paksa sinkronisasi dengan remote repository
- git fetch --all
- git reset --hard origin/main
- # 2. Salin skrip terbaru
- cp -f deploy/*.py deploy/*.sh /workspace/ai_live_worker/
- # 3. Restart worker
- cd /workspace/ai_live_worker && pkill -9 -f "api_server.py" 2>/dev/null || true && pkill -9 -f "broadcaster.py" 2>/dev/null || true && bash start.sh
+ FORCE_GIT_RESET=1 bash /workspace/live-streaming-ai/deploy/redeploy-worker.sh
  ```
