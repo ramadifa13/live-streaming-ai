@@ -90,7 +90,7 @@ const CIRCUIT_BREAKER_MS = Number(process.env.LIVE_BRAIN_CIRCUIT_MS || 45_000);
 const SELFHOST_CIRCUIT_MS = Number(process.env.LIVE_BRAIN_SELFHOST_CIRCUIT_MS || 5_000);
 const VALIDATION_RETRY_COOLDOWN_MS = Number(process.env.LIVE_BRAIN_RETRY_COOLDOWN_MS || 30_000);
 const MAX_INFLIGHT = Math.max(1, Number(process.env.LIVE_BRAIN_MAX_INFLIGHT || 12));
-const BANK_MAX_TOKENS = Number(process.env.LIVE_BRAIN_BANK_MAX_TOKENS || 1400);
+const BANK_MAX_TOKENS = Number(process.env.LIVE_BRAIN_BANK_MAX_TOKENS || 2400);
 
 let groqBlockedUntil = 0;
 let geminiBlockedUntil = 0;
@@ -189,6 +189,8 @@ function canValidationRetry(sessionId?: string): boolean {
 interface BrainCallOptions {
   sessionId?: string;
   maxTokens?: number;
+  /** Jangan fallback ke Gemini (mis. prepare-product — local bank sudah cukup). */
+  groqOnly?: boolean;
 }
 
 function getGeminiClient(): GoogleGenAI {
@@ -800,11 +802,12 @@ async function callBrain(prompt: string, options: BrainCallOptions = {}): Promis
     if (provider === "gemini") return callGemini(prompt, options);
     if (provider === "groq") return callGroq(prompt, options);
 
-    // auto: Groq dulu, Gemini cadangan
+    // auto: Groq dulu, Gemini cadangan (kecuali groqOnly)
     if (GROQ_API_KEY && Date.now() >= groqBlockedUntil) {
       try {
         return await callGroq(prompt, options);
       } catch (err) {
+        if (options.groqOnly) throw err;
         if (!isRateLimitError(err)) {
           console.warn("[LiveBrain] Groq gagal, fallback ke Gemini:", err);
         } else {
@@ -813,7 +816,7 @@ async function callBrain(prompt: string, options: BrainCallOptions = {}): Promis
       }
     }
 
-    if (GEMINI_API_KEY && Date.now() >= geminiBlockedUntil) {
+    if (!options.groqOnly && GEMINI_API_KEY && Date.now() >= geminiBlockedUntil) {
       return callGemini(prompt, options);
     }
 
@@ -1230,17 +1233,26 @@ Kembalikan JSON murni:
   "faqPack": [
     { "category": "harga|manfaat|cara_pakai|pengiriman", "triggers": ["7-10 sinonim"], "answers": ["3 jawaban natural"] }
   ],
-  "promoPitch": ["5 pitch Hook+USP+harga+CTA lembut"],
-  "filler": ["5 kalimat filler 3-5 detik"],
-  "productBridge": ["3 jembatan multi-produk"],
-  "fallback": { "outOfTopic": ["3"], "soldOut": ["3"], "troll": ["3"] },
+  "promoPitch": ["3 pitch Hook+USP+harga+CTA lembut"],
+  "filler": ["3 kalimat filler 3-5 detik"],
+  "productBridge": ["2 jembatan multi-produk"],
+  "fallback": { "outOfTopic": ["2"], "soldOut": ["2"], "troll": ["2"] },
   "lines": [{ "speech":"", "topic":"benefit|how_to_use|value|social_engagement|objection|faq|promo_pitch|filler|banner_callout", "mode":"ENGAGE|SELL|DEMO|QNA|SOCIAL|OBJECTION", "intent":"SELL|PRODUCT_INFO|SOCIAL|PRICE", "ctaType":"NONE|SOFT|PRICE" }]
 }
-Minimal 14 item di lines. ${needOptional ? "Isi enriched untuk field yang kosong." : "enriched boleh string kosong."}
-${factsBase.hasBanner ? 'Sertakan 2 baris topic "banner_callout" yang menunjuk banner atas/bawah secara natural.' : "Jangan sebut banner."}`;
+Minimal 8 item di lines. promoPitch 3, filler 3. ${needOptional ? "Isi enriched untuk field yang kosong." : "enriched boleh string kosong."}
+${factsBase.hasBanner ? 'Sertakan 1 baris topic "banner_callout".' : "Jangan sebut banner."}`;
+
+  const llmEnabled = process.env.LIVE_BRAIN_PREPARE_PRODUCT_LLM !== "0";
+  const brainReady = getBrainBackoffMs() === 0 && (GROQ_API_KEY || GEMINI_API_KEY);
 
   try {
-    const result = await callBrain(prompt, { maxTokens: Math.max(BANK_MAX_TOKENS, 1800) });
+    if (!llmEnabled || !brainReady) {
+      throw new Error("LLM prepare-product dilewati (cooldown atau LIVE_BRAIN_PREPARE_PRODUCT_LLM=0)");
+    }
+    const result = await callBrain(prompt, {
+      maxTokens: BANK_MAX_TOKENS,
+      groqOnly: true,
+    });
     const parsedRaw = cleanAndExtractJson(result.text);
     const parsed = StructuredBankSchema.safeParse(parsedRaw);
     if (parsed.success) {

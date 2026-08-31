@@ -125,20 +125,36 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
+    const avatarId = parsed.data.avatarId.trim();
+    const avatarName = parsed.data.avatarName?.trim();
+    const slugName =
+      avatarId && avatarId !== "1"
+        ? avatarId.charAt(0).toUpperCase() + avatarId.slice(1).toLowerCase()
+        : "";
+
     const avatarById = await prisma.avatar.findUnique({
-      where: { id: parsed.data.avatarId },
+      where: { id: avatarId },
     });
     const avatar =
       avatarById ||
-      (parsed.data.avatarName
+      (avatarName
         ? await prisma.avatar.findFirst({
-            where: { name: parsed.data.avatarName },
+            where: { name: avatarName },
           })
-        : null);
+        : null) ||
+      (slugName
+        ? await prisma.avatar.findFirst({
+            where: { name: slugName },
+          })
+        : null) ||
+      (await prisma.avatar.findFirst({ orderBy: { createdAt: "asc" } }));
 
     if (!avatar) {
       reply.code(404);
-      return { error: "avatar not found" };
+      return {
+        error:
+          "Avatar tidak ditemukan. Jalankan seed DB atau kirim avatarName (mis. Namira).",
+      };
     }
     try {
       const catalog = (parsed.data.products || [])

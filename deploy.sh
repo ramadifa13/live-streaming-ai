@@ -27,7 +27,8 @@ cd "$BACKEND_DIR"
 npm install --quiet
 echo "▶ Backend: npx prisma generate"
 npx prisma generate --quiet
-echo "▶ Backend: npm run build"
+echo "▶ Backend: clean dist + build"
+rm -rf "$BACKEND_DIR/dist"
 npm run build --quiet   # adjust if your build script differs
 
 # ---- 3. Frontend: install & build (Next.js) ----
