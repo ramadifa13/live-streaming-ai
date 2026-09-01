@@ -106,14 +106,14 @@ else
 	echo "[INFO] LLM dipusatkan di Backend (Ollama RunPod dinonaktifkan untuk menghemat VRAM GPU)."
 fi
 
-echo "Memulai AI Worker API (Port 8000)..."
+echo "Memulai AI Worker API (Port ${PORT:-8000})..."
 "$PYTHON_BIN" api_server.py > "$WORKER_DIR/api_server.log" 2>&1 &
 API_PID=$!
 
 
 
 for attempt in $(seq 1 120); do
-	if curl -fsS "http://127.0.0.1:8000/health" >/dev/null 2>&1 || curl -fsS "http://127.0.0.1:8000/" >/dev/null 2>&1; then
+	if curl -fsS "http://127.0.0.1:${PORT:-8000}/health" >/dev/null 2>&1 || curl -fsS "http://127.0.0.1:${PORT:-8000}/" >/dev/null 2>&1; then
 		echo "[OK] AI Worker API aktif dan merespon!"
 		break
 	fi
