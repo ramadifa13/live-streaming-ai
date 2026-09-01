@@ -10,6 +10,7 @@ import base64
 import signal
 import tempfile
 import time
+import threading
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, HTTPException
@@ -223,6 +224,9 @@ broadcaster_log_handle = None
 broadcaster_restarts = 0
 broadcaster_next_restart_at = 0.0
 MAX_BROADCASTER_RESTARTS = 8
+_broadcast_boot_task: Optional[asyncio.Task] = None
+_broadcast_boot_state = "idle"  # idle | starting | running | error
+_broadcast_boot_error = ""
 
 
 def _broadcaster_script_path(mode: Optional[str] = None) -> str:
@@ -679,13 +683,61 @@ async def start_playback(req: PlaybackRequest):
 
 @app.post("/stream/start-broadcast")
 async def start_broadcast(req: BroadcastRequest):
-    try:
-        return await asyncio.to_thread(_start_broadcast_sync, req)
-    except HTTPException:
-        raise
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Gagal memulai broadcast di pod: {str(e)}")
+    global _broadcast_boot_task, _broadcast_boot_state, _broadcast_boot_error
+
+    final_rtmp_url = (req.rtmp_url or req.rtmpUrl or "").strip()
+    final_stream_key = (
+        (req.stream_key or req.streamKey or "")
+        .replace("\r", "")
+        .replace("\n", "")
+        .strip()
+    )
+    if not final_rtmp_url or not final_stream_key:
+        raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
+
+    # Idempoten cepat — RTMP sudah connected dengan target yang sama.
+    if (
+        broadcaster_process is not None
+        and broadcaster_process.poll() is None
+        and current_broadcast_env is not None
+        and current_broadcast_env.get("RTMP_URL") == final_rtmp_url
+        and current_broadcast_env.get("STREAM_KEY") == final_stream_key
+    ):
+        rtmp_state = "disconnected"
+        if read_rtmp_status is not None:
+            rtmp_state, _ = read_rtmp_status(output_dir)
+        if rtmp_state == "connected":
+            print(
+                "[AI-Worker] start-broadcast diabaikan — siaran dengan target yang "
+                f"sama sudah aktif (PID: {broadcaster_process.pid})."
+            )
+            return {
+                "success": True,
+                "status": "already_running",
+                "pid": broadcaster_process.pid,
+            }
+
+    print(
+        "[AI-Worker] start-broadcast diterima (async) "
+        f"rtmp={final_rtmp_url[:60]}..."
+    )
+
+    async def _boot() -> None:
+        global _broadcast_boot_state, _broadcast_boot_error
+        _broadcast_boot_state = "starting"
+        _broadcast_boot_error = ""
+        try:
+            await asyncio.to_thread(_start_broadcast_sync, req)
+            _broadcast_boot_state = "running"
+        except Exception as exc:
+            _broadcast_boot_state = "error"
+            _broadcast_boot_error = str(exc)
+            traceback.print_exc()
+
+    if _broadcast_boot_task and not _broadcast_boot_task.done():
+        _broadcast_boot_task.cancel()
+    _broadcast_boot_task = asyncio.create_task(_boot())
+    return {"success": True, "status": "starting", "async": True}
 
 
 def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
@@ -700,7 +752,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         .strip()
     )
     if not final_rtmp_url or not final_stream_key:
-        raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
+        raise ValueError("rtmp_url dan stream_key wajib diisi")
 
     # Idempoten HANYA jika RTMP benar-benar connected. Proses Python yang
     # masih hidup setelah FFmpeg drop bukan alasan untuk menolak key baru
@@ -751,7 +803,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         resolved_idle = prefer_idle_clip(resolved_idle)
 
     # Hentikan broadcaster lama jika ada agar tidak bentrok RTMP URL
-    _terminate_broadcaster(timeout=5.0)
+    _terminate_broadcaster(timeout=2.0)
     if write_rtmp_status is not None:
         write_rtmp_status(output_dir, "connecting")
 
@@ -760,7 +812,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     broadcaster_restarts = 0
     broadcaster_next_restart_at = 0.0
 
-    # Bersihkan sisa video lama dan flag lama sebelum mulai siaran baru
+    # Bersihkan flag lama sebelum mulai siaran baru
     flag_path = os.path.join(output_dir, "playback_active.flag")
     if os.path.exists(flag_path):
         try:
@@ -768,7 +820,6 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         except Exception:
             pass
     idle_abs = os.path.abspath(resolved_idle) if resolved_idle else ""
-    _cleanup_playable_outputs(output_dir, idle_abs)
 
     config_path = os.path.join(output_dir, "broadcast_config.json")
     config_data = {
@@ -812,12 +863,29 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     current_broadcast_env = env
 
     broadcaster_process = _spawn_broadcaster(env)
+    print(
+        f"[AI-Worker] Broadcaster dipicu (PID: {broadcaster_process.pid}, "
+        f"mode={env.get('BROADCAST_MODE', 'segment')})"
+    )
+
+    def _deferred_cleanup() -> None:
+        try:
+            _cleanup_playable_outputs(output_dir, idle_abs)
+        except Exception as cleanup_err:
+            print(f"[AI-Worker] deferred cleanup notice: {cleanup_err}")
+
+    threading.Thread(target=_deferred_cleanup, daemon=True).start()
     return {"success": True, "status": "starting", "pid": broadcaster_process.pid}
 
 @app.post("/stream/stop-broadcast")
 async def stop_broadcast():
     global broadcaster_process, total_videos_rendered, current_broadcast_env
+    global _broadcast_boot_state, _broadcast_boot_error, _broadcast_boot_task
     current_broadcast_env = None
+    _broadcast_boot_state = "idle"
+    _broadcast_boot_error = ""
+    if _broadcast_boot_task and not _broadcast_boot_task.done():
+        _broadcast_boot_task.cancel()
     _terminate_broadcaster(timeout=10.0)
 
     # Reset monotonic counter saat siaran selesai
@@ -862,7 +930,18 @@ async def update_stream_product(req: UpdateProductRequest):
 @app.get("/stream/broadcast-status")
 async def broadcast_status():
     running = broadcaster_process is not None and broadcaster_process.poll() is None
-    return {"success": True, "status": "streaming" if running else "stopped"}
+    if _broadcast_boot_state == "error" and _broadcast_boot_error:
+        return {
+            "success": False,
+            "status": "error",
+            "boot_state": "error",
+            "error": _broadcast_boot_error,
+        }
+    if _broadcast_boot_state == "starting" and not running:
+        return {"success": True, "status": "starting", "boot_state": "starting"}
+    if running:
+        return {"success": True, "status": "streaming", "boot_state": "running"}
+    return {"success": True, "status": "stopped", "boot_state": _broadcast_boot_state}
 
 @app.get("/stream/status/{job_id}")
 async def get_job_status(job_id: str):

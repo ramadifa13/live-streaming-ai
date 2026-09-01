@@ -104,6 +104,7 @@ async function workerRequestWithRetry(
       lastError = err;
       const status = Number(err.message?.match(/\d{3}/)?.[0]);
       const isTransient =
+        status === 404 ||
         status === 502 ||
         status === 503 ||
         status === 504 ||
@@ -138,8 +139,8 @@ export async function startRunPodBroadcast(
     ctaLabel?: string;
   },
 ): Promise<RunPodBroadcastResult> {
-  // start-broadcast bisa memakan waktu (terminate FFmpeg lama + cleanup output).
-  return workerRequestWithRetry(
+  // ACK cepat dari worker — boot broadcaster berjalan async + polling status.
+  const kickoff = (await workerRequestWithRetry(
     podId,
     "/stream/start-broadcast",
     {
@@ -158,9 +159,53 @@ export async function startRunPodBroadcast(
         stock_count: params.stockCount,
         cta_label: params.ctaLabel,
       }),
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(20_000),
     },
-    4,
+    6,
+  )) as RunPodBroadcastResult;
+
+  if (!kickoff?.success) {
+    return {
+      success: false,
+      status: kickoff?.status || "error",
+      error: kickoff?.error || "Worker menolak start-broadcast",
+    };
+  }
+
+  if (kickoff.status === "already_running") {
+    return { success: true, status: "already_running" };
+  }
+
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    const status = (await workerRequestWithRetry(
+      podId,
+      "/stream/broadcast-status",
+      { signal: AbortSignal.timeout(10_000) },
+      2,
+    ).catch(() => null)) as RunPodBroadcastResult & {
+      boot_state?: string;
+    };
+
+    if (status?.status === "error" || status?.boot_state === "error") {
+      throw new Error(
+        status?.error || "Broadcast worker gagal start (cek broadcaster.log)",
+      );
+    }
+
+    const running =
+      status?.status === "streaming" ||
+      status?.status === "already_running" ||
+      status?.boot_state === "running";
+    if (running) {
+      return { success: true, status: status.status || "streaming" };
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+
+  throw new Error(
+    "Broadcast worker belum aktif setelah 60s — cek api_server.log dan broadcaster.log di pod",
   );
 }
 
