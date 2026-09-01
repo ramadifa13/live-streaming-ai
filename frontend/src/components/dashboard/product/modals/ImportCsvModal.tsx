@@ -36,7 +36,7 @@ export const ImportCsvModal: React.FC = () => {
     try {
       const count = await importCsvProducts();
       setShowCsvModal(false);
-      showToast(`${count} produk tersimpan di perangkat ini. Script bank lokal dipakai saat live (tanpa LLM massal).`);
+      showToast(`${count} produk tersimpan. Script bank disiapkan di background (satu per satu).`);
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal mengimpor produk CSV");
     } finally {

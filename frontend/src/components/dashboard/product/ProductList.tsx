@@ -72,7 +72,7 @@ export const ProductList: React.FC = () => {
   }
 
   return (
-    <div className="space-y-2.5 max-h-[290px] overflow-y-auto pr-1.5 custom-scrollbar">
+    <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-1.5 custom-scrollbar">
       {filteredProducts.map((p) => (
         <ProductCard key={p.id || p.name} product={p} />
       ))}

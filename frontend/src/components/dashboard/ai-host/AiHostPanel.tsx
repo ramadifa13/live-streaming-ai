@@ -12,7 +12,7 @@ export const AiHostPanel: React.FC = () => {
 
   return (
     <div
-      className={`flex flex-col rounded-xl border p-4 transition ${
+      className={`flex h-full min-h-0 flex-col rounded-xl border p-4 transition ${
         currentStep === 2
           ? "border-blue-500/60 bg-[#0c1428] ring-1 ring-blue-500/30 shadow-lg shadow-blue-900/10"
           : "border-[#232c42] bg-[#0c1221]"
@@ -42,7 +42,9 @@ export const AiHostPanel: React.FC = () => {
         </div>
       </div>
       <AvatarCarousel />
-      <VoiceToneSettings />
+      <div className="mt-auto">
+        <VoiceToneSettings />
+      </div>
     </div>
   );
 };

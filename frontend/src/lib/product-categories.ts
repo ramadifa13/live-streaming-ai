@@ -1,4 +1,5 @@
 export const PRODUCT_CATEGORIES = [
+  "Umum",
   "Skincare",
   "Beauty & Makeup",
   "Fashion & Pakaian",
@@ -19,5 +20,6 @@ const CATEGORY_SET = new Set<string>(PRODUCT_CATEGORIES);
 export function normalizeProductCategory(raw?: string | null): ProductCategory {
   const value = String(raw || "").trim();
   if (CATEGORY_SET.has(value)) return value as ProductCategory;
-  return "Skincare";
+  if (/^general$/i.test(value) || /^lainnya$/i.test(value)) return "Umum";
+  return "Umum";
 }

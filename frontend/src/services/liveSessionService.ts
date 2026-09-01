@@ -5,7 +5,18 @@ function isHttpUrl(value?: string): boolean {
 }
 
 /** Snapshot untuk RAM backend: fakta + script bank. Foto data-URL hanya untuk produk aktif. */
-export function toLiveProductSnapshot(product: Product, includeMedia = false) {
+export function toLiveProductSnapshot(
+  product: Product,
+  options: boolean | { includeMedia?: boolean; includeScriptBank?: boolean } = false,
+) {
+  const opts =
+    typeof options === "boolean"
+      ? { includeMedia: options, includeScriptBank: options }
+      : {
+          includeMedia: options.includeMedia ?? false,
+          includeScriptBank: options.includeScriptBank ?? options.includeMedia ?? false,
+        };
+
   return {
     id: product.id,
     name: product.name,
@@ -20,10 +31,11 @@ export function toLiveProductSnapshot(product: Product, includeMedia = false) {
     copywriting: product.copywriting,
     targetAudience: product.targetAudience,
     link: product.link,
-    scriptBank: product.scriptBank,
-    faqPack: product.faqPack,
-    image: includeMedia || isHttpUrl(product.image) ? product.image : undefined,
-    bannerImage: includeMedia || isHttpUrl(product.bannerImage) ? product.bannerImage : undefined,
+    scriptBank: opts.includeScriptBank ? product.scriptBank : undefined,
+    faqPack: opts.includeScriptBank ? product.faqPack : undefined,
+    image: opts.includeMedia || isHttpUrl(product.image) ? product.image : undefined,
+    bannerImage:
+      opts.includeMedia || isHttpUrl(product.bannerImage) ? product.bannerImage : undefined,
   };
 }
 

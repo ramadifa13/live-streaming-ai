@@ -4,7 +4,7 @@ import React from "react";
 import { AddProductModal } from "@/components/dashboard/product/modals/AddProductModal";
 import { EditProductModal } from "@/components/dashboard/product/modals/EditProductModal";
 import { ImportCsvModal } from "@/components/dashboard/product/modals/ImportCsvModal";
-import { LiveScriptModal } from "@/components/dashboard/product/modals/LiveScriptModal";
+import { ScriptBankPreviewModal } from "@/components/dashboard/product/modals/ScriptBankPreviewModal";
 import { EndLiveConfirmModal } from "@/components/dashboard/live-studio/modals/EndLiveConfirmModal";
 import { SessionSummaryModal } from "@/components/dashboard/live-studio/modals/SessionSummaryModal";
 import { SettingsModal } from "@/components/dashboard/live-studio/modals/SettingsModal";
@@ -17,7 +17,7 @@ export const DashboardModals: React.FC = () => {
       <AddProductModal />
       <EditProductModal />
       <ImportCsvModal />
-      <LiveScriptModal />
+      <ScriptBankPreviewModal />
       <EndLiveConfirmModal />
       <SessionSummaryModal />
       <SettingsModal />

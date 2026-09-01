@@ -12,7 +12,7 @@ interface DashboardUIState {
   showAddProductModal: boolean;
   showEditProductModal: boolean;
   showCsvModal: boolean;
-  showScriptModal: boolean;
+  showScriptBankModal: boolean;
   showTutorialModal: boolean;
   showSettingsModal: boolean;
   showEndLiveConfirm: boolean;
@@ -26,7 +26,7 @@ interface DashboardUIState {
   setShowAddProductModal: (show: boolean) => void;
   setShowEditProductModal: (show: boolean) => void;
   setShowCsvModal: (show: boolean) => void;
-  setShowScriptModal: (show: boolean) => void;
+  setShowScriptBankModal: (show: boolean) => void;
   setShowTutorialModal: (show: boolean) => void;
   setShowSettingsModal: (show: boolean) => void;
   setShowEndLiveConfirm: (show: boolean) => void;
@@ -43,7 +43,7 @@ export const useDashboardUIStore = create<DashboardUIState>((set, get) => ({
   showAddProductModal: false,
   showEditProductModal: false,
   showCsvModal: false,
-  showScriptModal: false,
+  showScriptBankModal: false,
   showTutorialModal: false,
   showSettingsModal: false,
   showEndLiveConfirm: false,
@@ -100,7 +100,7 @@ export const useDashboardUIStore = create<DashboardUIState>((set, get) => ({
   setShowAddProductModal: (show) => set({ showAddProductModal: show }),
   setShowEditProductModal: (show) => set({ showEditProductModal: show }),
   setShowCsvModal: (show) => set({ showCsvModal: show }),
-  setShowScriptModal: (show) => set({ showScriptModal: show }),
+  setShowScriptBankModal: (show) => set({ showScriptBankModal: show }),
   setShowTutorialModal: (show) => set({ showTutorialModal: show }),
   setShowSettingsModal: (show) => set({ showSettingsModal: show }),
   setShowEndLiveConfirm: (show) => set({ showEndLiveConfirm: show }),

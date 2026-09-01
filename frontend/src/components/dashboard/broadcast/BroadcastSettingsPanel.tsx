@@ -2,14 +2,13 @@
 
 import React from "react";
 import Image from "next/image";
-import { MessageSquare, Pin, Gift, Shield, Sparkles, Bot, Lock } from "lucide-react";
+import { MessageSquare, Pin, Gift, Shield, Lock, ScrollText, ChevronRight, Loader2 } from "lucide-react";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { useProductStore } from "@/stores/useProductStore";
-import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { dashboardPlatforms } from "@/lib/brand-assets";
 import { PlatformIcon } from "@/components/shared/PlatformIcon";
-import { normalizeProductCategory } from "@/lib/product-categories";
+import { getScriptBankMeta } from "@/lib/script-bank";
 
 // Preset otomatisasi ikut di sini supaya menambah paket baru tidak menuntut
 // perubahan pada logika tombol. Nilainya harus konsisten dengan `minHours`
@@ -71,8 +70,8 @@ const DURATIONS = [
 
 export const BroadcastSettingsPanel: React.FC = () => {
   const currentStep = useDashboardUIStore((state) => state.currentStep);
-  const setShowScriptModal = useDashboardUIStore((state) => state.setShowScriptModal);
   const showToast = useDashboardUIStore((state) => state.showToast);
+  const setShowScriptBankModal = useDashboardUIStore((state) => state.setShowScriptBankModal);
 
   const isLiveActive = useLiveSessionStore((state) => state.isLiveActive);
   const selectedDuration = useLiveSessionStore((state) => state.selectedDuration);
@@ -87,8 +86,13 @@ export const BroadcastSettingsPanel: React.FC = () => {
   const setPinnedProductIds = useProductStore((state) => state.setPinnedProductIds);
   const activeFeaturedProduct = useProductStore((state) => state.activeFeaturedProduct);
   const setActiveFeaturedProduct = useProductStore((state) => state.setActiveFeaturedProduct);
+  const scriptBankPreparingIds = useProductStore((state) => state.scriptBankPreparingIds);
 
-  const fetchLiveSalesScript = useAiHostStore((state) => state.fetchLiveSalesScript);
+  const bankMeta = getScriptBankMeta(activeFeaturedProduct, scriptBankPreparingIds);
+  const productLabel =
+    activeFeaturedProduct.id === "loading" || !activeFeaturedProduct.name
+      ? "Pilih produk dulu"
+      : activeFeaturedProduct.name;
 
   const automationItems = [
     {
@@ -125,19 +129,9 @@ export const BroadcastSettingsPanel: React.FC = () => {
     },
   ];
 
-  const handleFetchScript = async () => {
-    setShowScriptModal(true);
-    try {
-      await fetchLiveSalesScript(activeFeaturedProduct);
-      showToast("Naskah promosi AI Host berhasil dibuat!");
-    } catch (err) {
-      showToast(`Gagal: ${(err as Error)?.message || "AI Host tidak dapat dijangkau. Pastikan backend aktif."}`);
-    }
-  };
-
   return (
     <div
-      className={`flex flex-col rounded-xl border p-4 transition ${
+      className={`flex h-full min-h-0 flex-col rounded-xl border p-4 transition ${
         currentStep === 3
           ? "border-blue-500/60 bg-[#0c1428] ring-1 ring-blue-500/30 shadow-lg shadow-blue-900/10"
           : "border-[#232c42] bg-[#0c1221]"
@@ -372,28 +366,30 @@ export const BroadcastSettingsPanel: React.FC = () => {
         </div>
       </div>
 
-      <div className="mt-auto rounded-xl bg-[#0e1628] p-3 border border-blue-500/30 shadow-inner">
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5 truncate">
-              <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-              <span>AI Copywriting &amp; CTA Pitch</span>
-            </p>
-            <p className="text-[9px] text-slate-400 truncate mt-0.5">
-              Sumber data: <strong className="text-blue-300">{activeFeaturedProduct.name}</strong> (
-              {normalizeProductCategory(activeFeaturedProduct.tag)})
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={handleFetchScript}
-            className="flex items-center gap-1 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 px-3 py-1.5 text-[10px] font-bold text-white hover:brightness-110 transition active:scale-95 shrink-0 shadow-md shadow-blue-600/30 cursor-pointer"
-          >
-            <Bot className="w-3.5 h-3.5" />
-            <span>Generate from AI</span>
-          </button>
+      <button
+        type="button"
+        onClick={() => setShowScriptBankModal(true)}
+        className="mt-auto w-full rounded-xl border border-purple-500/30 bg-[#0e1628] px-3 py-2.5 flex items-center gap-2.5 hover:bg-purple-500/10 hover:border-purple-500/50 transition cursor-pointer group text-left shrink-0"
+      >
+        <ScrollText className="w-4 h-4 text-purple-400 shrink-0 group-hover:scale-110 transition-transform" />
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] font-bold text-slate-200">Preview Script Bank Host</p>
+          <p className="text-[9px] text-slate-400 truncate">
+            Ucapan otonom · <span className="text-purple-300">{productLabel}</span>
+          </p>
         </div>
-      </div>
+        <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${bankMeta.colorClass}`}>
+          {bankMeta.status === "preparing" ? (
+            <span className="inline-flex items-center gap-0.5">
+              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+              ...
+            </span>
+          ) : (
+            bankMeta.label
+          )}
+        </span>
+        <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-purple-300 shrink-0" />
+      </button>
     </div>
   );
 };

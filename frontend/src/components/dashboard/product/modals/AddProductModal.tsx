@@ -16,9 +16,16 @@ export const AddProductModal: React.FC = () => {
 
   const newProductForm = useProductStore((state) => state.newProductForm);
   const setNewProductForm = useProductStore((state) => state.setNewProductForm);
+  const resetNewProductForm = useProductStore((state) => state.resetNewProductForm);
   const createProduct = useProductStore((state) => state.createProduct);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleClose = () => {
+    if (isSubmitting) return;
+    setShowAddProductModal(false);
+    resetNewProductForm();
+  };
 
   useEffect(() => {
     if (showAddProductModal && isLiveActive) {
@@ -38,12 +45,13 @@ export const AddProductModal: React.FC = () => {
     setIsSubmitting(true);
     try {
       await createProduct();
-      setIsSubmitting(false);
       setShowAddProductModal(false);
-      showToast("Produk tersimpan. Script bank disiapkan di background untuk live.");
+      resetNewProductForm();
+      showToast("Produk tersimpan. Script bank disiapkan di background.");
     } catch (err) {
-      setIsSubmitting(false);
       showToast(err instanceof Error ? err.message : "Gagal menyimpan produk");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -65,8 +73,9 @@ export const AddProductModal: React.FC = () => {
           </div>
           <button
             type="button"
-            onClick={() => setShowAddProductModal(false)}
-            className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-white/10 transition active:scale-95 shrink-0 cursor-pointer"
+            onClick={handleClose}
+            disabled={isSubmitting}
+            className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-white/10 transition active:scale-95 shrink-0 cursor-pointer disabled:opacity-50"
           >
             <X className="w-4 h-4" />
           </button>
@@ -189,7 +198,7 @@ export const AddProductModal: React.FC = () => {
                   5. Kategori <span className="text-red-400">*</span>
                 </label>
 <select
-                  value={newProductForm.tag || "Skincare"}
+                  value={newProductForm.tag || "Umum"}
                   onChange={(e) => setNewProductForm({ tag: e.target.value })}
                   className="w-full rounded-xl bg-[#090e1a] border border-[#22314e] px-3 py-2.5 text-white outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 text-xs cursor-pointer transition font-medium"
                 >
@@ -374,8 +383,9 @@ export const AddProductModal: React.FC = () => {
             <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
               <button
                 type="button"
-                onClick={() => setShowAddProductModal(false)}
-                className="rounded-xl border border-[#22314e] bg-[#0f172a] px-4 py-2 text-slate-300 hover:bg-white/5 hover:text-white transition font-medium cursor-pointer"
+                onClick={handleClose}
+                disabled={isSubmitting}
+                className="rounded-xl border border-[#22314e] bg-[#0f172a] px-4 py-2 text-slate-300 hover:bg-white/5 hover:text-white transition font-medium cursor-pointer disabled:opacity-50"
               >
                 Batal
               </button>
@@ -384,7 +394,7 @@ export const AddProductModal: React.FC = () => {
                 disabled={isSubmitting}
                 className="rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 font-bold text-white hover:brightness-110 shadow-lg shadow-blue-600/30 transition active:scale-95 cursor-pointer disabled:opacity-70 whitespace-nowrap"
               >
-                {isSubmitting ? "Menyiapkan naskah host..." : "Simpan & siapkan script bank"}
+                {isSubmitting ? "Menyimpan..." : "Simpan Produk"}
               </button>
             </div>
           </div>

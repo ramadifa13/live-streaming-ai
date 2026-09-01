@@ -69,7 +69,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       avatarName = "Namira",
     } = parsed.data;
     let productDescription = "";
-    let productCategory = "Skincare";
+    let productCategory = "Umum";
     let productBenefits = "";
     let productUsage = "";
     let productFaq = "";
@@ -80,7 +80,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       productName = p.name || productName;
       productPrice = p.price || productPrice;
       productDescription = p.description || "";
-      productCategory = p.tag || p.category || "Skincare";
+      productCategory = p.tag || p.category || "Umum";
       productBenefits = p.benefits || "";
       productUsage = p.usage || "";
       productFaq = p.faq || "";

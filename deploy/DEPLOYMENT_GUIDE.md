@@ -189,11 +189,38 @@ certbot --nginx -d yourdomain.com -d www.yourdomain.com
 Di `.env` backend VPS:
 
 ```bash
-# Off = tidak LLM tiap clip/komentar (default jika tidak di-set)
+# Off = tidak LLM tiap clip otonom (default). Bank & komentar tetap bisa pakai LLM saat perlu.
 LIVE_BRAIN_DURING_LIVE=0
 
-# On = jika bank hampir habis, LLM isi ulang (throttled). Set 0 untuk lokal-only.
+# On = jika bank hampir habis, LLM isi ulang (throttled). Set 0 untuk lokal-only total.
 LIVE_BRAIN_REFILL_WHEN_LOW=1
+# On = LLM isi ulang saat variasi bank habis (bukan cuma count rendah)
+LIVE_BRAIN_REFILL_ON_EXHAUST=1
+# On = LLM jawab komentar yang belum ada di script bank / FAQ lokal
+LIVE_BRAIN_COMMENT_WHEN_NEEDED=1
+
+# Script bank: refill lebih awal (12), max refill LLM per sesi (16)
+LIVE_SCRIPT_BANK_LOW=12
+LIVE_SCRIPT_BANK_LLM_REFILL_MAX=16
+# Kapasitas bank lokal per produk (seed + recycle tanpa LLM live)
+LIVE_SCRIPT_BANK_CAP=520
+LIVE_SCRIPT_BANK_RECYCLE_BATCH=160
+LIVE_SCRIPT_BANK_RECYCLE_ROUNDS=3
+# Marathon: threshold per plan (lokal-first, LLM live minimal)
+LIVE_SCRIPT_BANK_LOW_8H=24
+LIVE_SCRIPT_BANK_LOW_24H=32
+LIVE_SCRIPT_BANK_LLM_REFILL_MAX_8H=8
+LIVE_SCRIPT_BANK_LLM_REFILL_MAX_24H=5
+LIVE_SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS_8H=180000
+LIVE_SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS_24H=240000
+LIVE_SCRIPT_BANK_FRESH_LOW=8
+LIVE_SCRIPT_BANK_LLM_EXHAUST_BONUS=6
+LIVE_BRAIN_REFILL_ON_EXHAUST=1
+LIVE_BRAIN_COMMENT_WHEN_NEEDED=1
+# Prep produk: lebih banyak variasi LLM saat save (bukan saat live)
+LIVE_SCRIPT_PREP_LINE_TARGET=28
+LIVE_BRAIN_PREP_EXTRA_PASS=1
+LIVE_BRAIN_BANK_MAX_TOKENS=3200
 
 # Provider: auto | groq | gemini  (ollama/vllm sudah dihapus)
 LIVE_BRAIN_PROVIDER=auto

@@ -27,6 +27,10 @@ export interface PipelineStatus {
   podReady?: boolean;
   podBooting?: boolean;
   podFailed?: boolean;
+  scriptBankRemaining?: number;
+  scriptBankLlmRefillCount?: number;
+  scriptBankSource?: "payload" | "local" | "mixed";
+  bufferSeconds?: number;
 }
 
 interface LiveSessionState {

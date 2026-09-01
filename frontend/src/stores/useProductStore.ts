@@ -4,6 +4,11 @@ import { Product } from "@/app/dashboard/types";
 import { parseProductCsv } from "@/utils/csvParser";
 import { aiService } from "@/services/aiService";
 import { normalizeProductCategory } from "@/lib/product-categories";
+import { mergeProductKnowledge } from "@/lib/product-knowledge";
+
+const BATCH_PREP_DELAY_MS = 2500;
+const scriptBankQueue: string[] = [];
+let scriptBankQueueRunning = false;
 
 export interface NewProductFormData {
   name: string;
@@ -24,7 +29,7 @@ const initialProductForm: NewProductFormData = {
   name: "",
   price: "",
   stock: 0,
-  tag: "Skincare",
+  tag: "Umum",
   sku: "",
   image: "",
   bannerImage: "",
@@ -55,6 +60,7 @@ interface ProductState {
   csvText: string;
   newProductForm: NewProductFormData;
   isLoadingProducts: boolean;
+  scriptBankPreparingIds: string[];
 
   setSearchQuery: (q: string) => void;
   setProductCategoryFilter: (cat: string) => void;
@@ -71,6 +77,7 @@ interface ProductState {
   saveEditedProduct: () => Promise<Product>;
   deleteProduct: (id?: string) => Promise<boolean>;
   importCsvProducts: () => Promise<number>;
+  regenerateScriptBank: (productId: string) => Promise<void>;
 }
 
 function newLocalId(): string {
@@ -83,15 +90,20 @@ function formatPrice(numPrice: number): string {
 }
 
 async function attachScriptBank(product: Product): Promise<Product> {
+  const knowledge = mergeProductKnowledge(product.description || "", {
+    benefits: product.benefits,
+    usage: product.usage,
+    faq: product.faq,
+  });
   try {
     const pack = await aiService.prepareProduct({
       name: product.name,
       price: product.price,
       category: product.tag,
       description: product.description,
-      benefits: product.benefits,
-      usage: product.usage,
-      faq: product.faq,
+      benefits: knowledge.benefits,
+      usage: knowledge.usage,
+      faq: knowledge.faq,
       stock: product.stock,
       sku: product.sku,
       link: product.link,
@@ -99,13 +111,18 @@ async function attachScriptBank(product: Product): Promise<Product> {
       copywriting: product.copywriting,
       bannerImage: product.bannerImage,
     });
+    const enrichedKnowledge = {
+      benefits: product.benefits?.trim() || pack.enriched.benefits || knowledge.benefits,
+      usage: product.usage?.trim() || pack.enriched.usage || knowledge.usage,
+      faq: product.faq?.trim() || pack.enriched.faq || knowledge.faq,
+    };
     return {
       ...product,
       scriptBank: pack.scriptBank,
       faqPack: pack.faqPack,
-      benefits: product.benefits?.trim() || pack.enriched.benefits || product.benefits,
-      usage: product.usage?.trim() || pack.enriched.usage || product.usage,
-      faq: product.faq?.trim() || pack.enriched.faq || product.faq,
+      benefits: enrichedKnowledge.benefits || product.benefits,
+      usage: enrichedKnowledge.usage || product.usage,
+      faq: enrichedKnowledge.faq || product.faq,
       targetAudience:
         product.targetAudience?.trim() ||
         pack.enriched.targetAudience ||
@@ -117,7 +134,12 @@ async function attachScriptBank(product: Product): Promise<Product> {
     };
   } catch (err) {
     console.warn("[ProductStore] Script bank LLM dilewati, pakai generator lokal saat live:", err);
-    return product;
+    return {
+      ...product,
+      benefits: knowledge.benefits || product.benefits,
+      usage: knowledge.usage || product.usage,
+      faq: knowledge.faq || product.faq,
+    };
   }
 }
 
@@ -134,13 +156,66 @@ function applyProductUpdate(
   }));
 }
 
+function markScriptBankPreparing(
+  set: (partial: Partial<ProductState> | ((s: ProductState) => Partial<ProductState>)) => void,
+  productId: string,
+  preparing: boolean,
+) {
+  set((state) => ({
+    scriptBankPreparingIds: preparing
+      ? [...new Set([...state.scriptBankPreparingIds, productId])]
+      : state.scriptBankPreparingIds.filter((id) => id !== productId),
+  }));
+}
+
 function scheduleScriptBankEnrichment(
   set: (partial: Partial<ProductState> | ((s: ProductState) => Partial<ProductState>)) => void,
+  get: () => ProductState,
   product: Product,
 ) {
-  void attachScriptBank(product).then((enriched) => {
-    applyProductUpdate(set, enriched);
-  });
+  if (!product.id) return;
+  markScriptBankPreparing(set, product.id, true);
+  void attachScriptBank(product)
+    .then((enriched) => {
+      applyProductUpdate(set, enriched);
+    })
+    .finally(() => {
+      markScriptBankPreparing(set, product.id!, false);
+    });
+}
+
+function enqueueScriptBankBatch(
+  set: (partial: Partial<ProductState> | ((s: ProductState) => Partial<ProductState>)) => void,
+  get: () => ProductState,
+  productIds: string[],
+) {
+  for (const id of productIds) {
+    if (!scriptBankQueue.includes(id)) scriptBankQueue.push(id);
+  }
+  void processScriptBankQueue(set, get);
+}
+
+async function processScriptBankQueue(
+  set: (partial: Partial<ProductState> | ((s: ProductState) => Partial<ProductState>)) => void,
+  get: () => ProductState,
+) {
+  if (scriptBankQueueRunning) return;
+  scriptBankQueueRunning = true;
+  while (scriptBankQueue.length > 0) {
+    const productId = scriptBankQueue.shift();
+    if (!productId) break;
+    const product = get().products.find((p) => p.id === productId);
+    if (!product?.description?.trim()) continue;
+    markScriptBankPreparing(set, productId, true);
+    try {
+      const enriched = await attachScriptBank(product);
+      applyProductUpdate(set, enriched);
+    } finally {
+      markScriptBankPreparing(set, productId, false);
+    }
+    await new Promise((r) => setTimeout(r, BATCH_PREP_DELAY_MS));
+  }
+  scriptBankQueueRunning = false;
 }
 
 export const useProductStore = create<ProductState>()(
@@ -155,6 +230,7 @@ export const useProductStore = create<ProductState>()(
       csvText: "",
       newProductForm: initialProductForm,
       isLoadingProducts: false,
+      scriptBankPreparingIds: [],
 
       setSearchQuery: (q) => set({ searchQuery: q }),
       setProductCategoryFilter: (cat) => set({ productCategoryFilter: cat }),
@@ -221,7 +297,7 @@ export const useProductStore = create<ProductState>()(
           newProductForm: initialProductForm,
         }));
 
-        scheduleScriptBankEnrichment(set, newProd);
+        scheduleScriptBankEnrichment(set, get, newProd);
 
         return newProd;
       },
@@ -262,10 +338,9 @@ export const useProductStore = create<ProductState>()(
             state.activeFeaturedProduct.id === editProd.id
               ? formattedProduct
               : state.activeFeaturedProduct,
-          selectedProductForEdit: formattedProduct,
         }));
 
-        scheduleScriptBankEnrichment(set, formattedProduct);
+        scheduleScriptBankEnrichment(set, get, formattedProduct);
 
         return formattedProduct;
       },
@@ -312,7 +387,28 @@ export const useProductStore = create<ProductState>()(
           csvText: "",
         }));
 
+        enqueueScriptBankBatch(
+          set,
+          get,
+          imported.filter((p) => p.description?.trim()).map((p) => p.id!),
+        );
+
         return imported.length;
+      },
+
+      regenerateScriptBank: async (productId: string) => {
+        const product = get().products.find((p) => p.id === productId);
+        if (!product) throw new Error("Produk tidak ditemukan.");
+        if (!product.description?.trim()) {
+          throw new Error("Isi deskripsi produk dulu sebelum menyiapkan script bank.");
+        }
+        markScriptBankPreparing(set, productId, true);
+        try {
+          const enriched = await attachScriptBank(product);
+          applyProductUpdate(set, enriched);
+        } finally {
+          markScriptBankPreparing(set, productId, false);
+        }
       },
     }),
     {

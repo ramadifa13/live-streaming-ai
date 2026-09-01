@@ -62,6 +62,7 @@ export const LiveControlBar: React.FC = () => {
   const connectingStageText = useLiveSessionStore((state) => state.connectingStageText);
   const addChatMessage = useLiveSessionStore((state) => state.addChatMessage);
   const currentLiveSessionId = useLiveSessionStore((state) => state.currentLiveSessionId);
+  const pipelineStatus = useLiveSessionStore((state) => state.pipelineStatus);
 
   const connectingAbortRef = useRef<AbortController | null>(null);
 
@@ -94,7 +95,7 @@ export const LiveControlBar: React.FC = () => {
     await liveSessionService.switchProduct(
       nextProd.id || "1",
       nextProd.name,
-      toLiveProductSnapshot(nextProd, true),
+      toLiveProductSnapshot(nextProd, { includeMedia: true, includeScriptBank: true }),
       currentLiveSessionId || undefined,
     );
   };
@@ -170,9 +171,15 @@ export const LiveControlBar: React.FC = () => {
           accessToken: connectedAccount?.accessToken,
           liveChatId: connectedAccount?.liveChatId,
           liveVideoId: connectedAccount?.liveVideoId,
-          product: toLiveProductSnapshot(activeFeaturedProduct, true),
+          product: toLiveProductSnapshot(activeFeaturedProduct, {
+            includeMedia: true,
+            includeScriptBank: true,
+          }),
           products: products.map((item) =>
-            toLiveProductSnapshot(item, item.id === activeFeaturedProduct.id),
+            toLiveProductSnapshot(item, {
+              includeMedia: item.id === activeFeaturedProduct.id,
+              includeScriptBank: item.id === activeFeaturedProduct.id,
+            }),
           ),
         },
         controller.signal,
@@ -638,6 +645,25 @@ export const LiveControlBar: React.FC = () => {
           sales={metrics.sales}
         />
       </div>
+
+      {isLiveActive && pipelineStatus && (
+        <div className="mb-3 rounded-xl border border-purple-500/20 bg-purple-950/20 px-2.5 py-2 flex items-center justify-between gap-2 text-[9px]">
+          <span className="text-purple-300 font-semibold">Script Bank</span>
+          <span className="text-slate-300">
+            {pipelineStatus.scriptBankRemaining ?? "—"} naskah tersisa
+          </span>
+          <span className="text-slate-500">
+            {pipelineStatus.scriptBankSource === "mixed"
+              ? "LLM+lokal"
+              : pipelineStatus.scriptBankSource === "payload"
+                ? "prepared"
+                : "lokal"}
+          </span>
+          {(pipelineStatus.scriptBankRemaining ?? 99) <= 8 && (
+            <span className="text-amber-400 font-bold">Refill...</span>
+          )}
+        </div>
+      )}
 
       <div className="mb-3 rounded-xl border border-blue-500/20 bg-[#111827] p-2.5">
         <div className="flex items-center justify-between mb-2">

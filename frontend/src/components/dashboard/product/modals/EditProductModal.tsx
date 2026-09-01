@@ -20,18 +20,24 @@ export const EditProductModal: React.FC = () => {
 
   if (!showEditProductModal || !selectedProductForEdit) return null;
 
+  const handleClose = () => {
+    if (isSubmitting) return;
+    setShowEditProductModal(false);
+    setSelectedProductForEdit(null);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
     try {
       await saveEditedProduct();
-      setIsSubmitting(false);
       setShowEditProductModal(false);
       setSelectedProductForEdit(null);
       showToast("Produk diperbarui. Script bank disiapkan ulang di background.");
     } catch (err) {
-      setIsSubmitting(false);
       showToast(err instanceof Error ? err.message : "Gagal memperbarui produk");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -52,8 +58,9 @@ export const EditProductModal: React.FC = () => {
           </div>
           <button
             type="button"
-            onClick={() => setShowEditProductModal(false)}
-            className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-white/10 transition active:scale-95 shrink-0 cursor-pointer"
+            onClick={handleClose}
+            disabled={isSubmitting}
+            className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-white/10 transition active:scale-95 shrink-0 cursor-pointer disabled:opacity-50"
           >
             <X className="w-4 h-4" />
           </button>
@@ -191,7 +198,7 @@ export const EditProductModal: React.FC = () => {
                   5. Kategori <span className="text-red-400">*</span>
                 </label>
                 <select
-                  value={selectedProductForEdit.tag || "Skincare"}
+                  value={selectedProductForEdit.tag || "Umum"}
                   onChange={(e) =>
                     setSelectedProductForEdit({
                       ...selectedProductForEdit,
@@ -408,8 +415,9 @@ export const EditProductModal: React.FC = () => {
           <div className="flex justify-end gap-2.5 px-5 sm:px-6 py-3.5 border-t border-[#1e293b] bg-[#090e1a]/95 backdrop-blur shrink-0">
             <button
               type="button"
-              onClick={() => setShowEditProductModal(false)}
-              className="rounded-xl border border-[#22314e] bg-[#0f172a] px-4 py-2 text-slate-300 hover:bg-white/5 hover:text-white transition font-medium cursor-pointer"
+              onClick={handleClose}
+              disabled={isSubmitting}
+              className="rounded-xl border border-[#22314e] bg-[#0f172a] px-4 py-2 text-slate-300 hover:bg-white/5 hover:text-white transition font-medium cursor-pointer disabled:opacity-50"
             >
               Batal
             </button>
@@ -418,7 +426,7 @@ export const EditProductModal: React.FC = () => {
               disabled={isSubmitting}
               className="rounded-xl bg-blue-600 hover:bg-blue-500 px-5 py-2 font-bold text-white shadow-lg shadow-blue-600/30 transition active:scale-95 cursor-pointer disabled:opacity-70"
             >
-              {isSubmitting ? "Menyiapkan naskah host..." : "Simpan Perubahan"}
+              {isSubmitting ? "Menyimpan..." : "Simpan Perubahan"}
             </button>
           </div>
         </form>

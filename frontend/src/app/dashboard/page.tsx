@@ -188,7 +188,7 @@ export default function Dashboard() {
           liveSessionService.switchProduct(
             nextProd.id || "1",
             nextProd.name,
-            toLiveProductSnapshot(nextProd, true),
+            toLiveProductSnapshot(nextProd, { includeMedia: true, includeScriptBank: true }),
             useLiveSessionStore.getState().currentLiveSessionId || undefined,
           );
 
@@ -327,6 +327,20 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [isConnectingLive, currentLiveSessionId, setPipelineStatus]);
 
+  useEffect(() => {
+    if (!isLiveActive || isLivePaused || !currentLiveSessionId) return;
+
+    const pollPipeline = async () => {
+      const json = await liveSessionService.fetchPipelineStatus(currentLiveSessionId);
+      if (!json) return;
+      setPipelineStatus(json);
+    };
+
+    void pollPipeline();
+    const interval = setInterval(pollPipeline, 5000);
+    return () => clearInterval(interval);
+  }, [isLiveActive, isLivePaused, currentLiveSessionId, setPipelineStatus]);
+
   return (
     <div className="min-h-screen bg-[#060a14] text-white p-4 font-sans selection:bg-blue-500/30">
       <ToastNotification />
@@ -335,7 +349,7 @@ export default function Dashboard() {
         <DashboardHeader />
         {appMode === "LIVE_STUDIO" ? (
           <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-3 xl:items-stretch">
               <ProductPanel />
               <AiHostPanel />
               <BroadcastSettingsPanel />

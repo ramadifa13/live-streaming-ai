@@ -90,7 +90,9 @@ const CIRCUIT_BREAKER_MS = Number(process.env.LIVE_BRAIN_CIRCUIT_MS || 45_000);
 const SELFHOST_CIRCUIT_MS = Number(process.env.LIVE_BRAIN_SELFHOST_CIRCUIT_MS || 5_000);
 const VALIDATION_RETRY_COOLDOWN_MS = Number(process.env.LIVE_BRAIN_RETRY_COOLDOWN_MS || 30_000);
 const MAX_INFLIGHT = Math.max(1, Number(process.env.LIVE_BRAIN_MAX_INFLIGHT || 12));
-const BANK_MAX_TOKENS = Number(process.env.LIVE_BRAIN_BANK_MAX_TOKENS || 2400);
+const BANK_MAX_TOKENS = Number(process.env.LIVE_BRAIN_BANK_MAX_TOKENS || 3200);
+const PREP_LINE_TARGET = Number(process.env.LIVE_SCRIPT_PREP_LINE_TARGET || 28);
+const PREP_EXTRA_PASS = process.env.LIVE_BRAIN_PREP_EXTRA_PASS !== "0";
 
 let groqBlockedUntil = 0;
 let geminiBlockedUntil = 0;
@@ -1027,10 +1029,11 @@ export async function generateScriptBankLines(input: SalesBrainInput): Promise<H
   const systemPrompt = buildHostSystemPrompt(input);
   const prompt = `${systemPrompt}
 
-TUGAS: buat 10–14 ucapan host otonom yang BERBEDA dan NATURAL (bukan robot).
+TUGAS: buat 20–24 ucapan host otonom yang BERBEDA dan NATURAL (bukan robot).
 Gaya TikTok/Shopee host: kasual, hidup, 12–32 kata.
 LARANG frasa kaku berulang: "dari data produk", "yang tertulis", "aku nggak nebak", "patokannya".
-Jangan mengarang fakta. Campur topik: benefit, how_to_use, value, social, objection, filler, promo_pitch.
+Jangan mengarang fakta. Campur topik: benefit, how_to_use, value, social, objection, micro_tip, reframe, use_case, promo_pitch, filler.
+Setiap baris harus beda angle/pembuka — jangan parafrase ulang baris sebelumnya.
 Kembalikan JSON murni:
 {"lines":[{ "speech":"", "action":"TALK_EXPRESSIVE", "emotion":"warm", "intent":"SELL", "mode":"ENGAGE", "topic":"", "ctaType":"NONE", "target_product_id":null, "interruptible":true, "claims":[] }]}`;
 
@@ -1063,8 +1066,18 @@ export function liveBrainDuringLive(): boolean {
   return process.env.LIVE_BRAIN_DURING_LIVE === "1";
 }
 
+/** LLM untuk komentar yang belum bisa dijawab bank/FAQ lokal (default on). */
+export function liveBrainCommentWhenNeeded(): boolean {
+  return process.env.LIVE_BRAIN_COMMENT_WHEN_NEEDED !== "0";
+}
+
 export function liveBrainRefillWhenLow(): boolean {
   return process.env.LIVE_BRAIN_REFILL_WHEN_LOW !== "0";
+}
+
+/** LLM isi ulang bank saat variasi habis, bukan hanya saat count rendah (default on). */
+export function liveBrainRefillOnExhaust(): boolean {
+  return process.env.LIVE_BRAIN_REFILL_ON_EXHAUST !== "0";
 }
 
 const StructuredBankSchema = z.object({
@@ -1166,21 +1179,29 @@ export async function prepareProductScriptPack(input: {
     mergeScriptLines,
     buildDefaultFaqPack,
     faqAnswerLines,
+    mergeProductKnowledge,
   } = await import("./live-script-bank.js");
 
-  const category = input.category && input.category !== "Lainnya" && input.category !== "General"
-    ? input.category
-    : "Skincare";
+  const category =
+    input.category && input.category !== "Lainnya" && input.category !== "General" && input.category !== "Umum"
+      ? input.category
+      : "Umum";
+
+  const knowledge = mergeProductKnowledge(input.description || "", {
+    benefits: input.benefits,
+    usage: input.usage,
+    faq: input.faq,
+  });
 
   const factsBase = {
     id: "prepare",
     name: input.name,
     price: priceDisplay,
     category,
-    benefits: input.benefits || "",
+    benefits: knowledge.benefits,
     description: input.description || "",
-    usage: input.usage || "",
-    faq: input.faq || "",
+    usage: knowledge.usage,
+    faq: knowledge.faq,
     stock: input.stock,
     copywriting: input.copywriting || "",
     targetAudience: input.targetAudience || "",
@@ -1211,7 +1232,7 @@ Wajib:
 - Speech 5–15 detik (12–32 kata), terdengar manusia, JANGAN kaku/robot.
 - LARANG frasa robotik berulang seperti "dari data produk", "yang tertulis", "aku nggak nebak", "patokannya".
 - JANGAN mengarang klaim medis/legal/garansi/testimoni palsu.
-- Field enriched HANYA diisi bila input kosong; paraphrase dari Nama+Deskripsi(+Manfaat/Cara pakai jika ada). Jangan menambah fakta baru di luar input.
+- Field enriched HANYA diisi bila input kosong; isi HANYA dengan memparafrase/mengekstrak dari Deskripsi (+Manfaat/Cara pakai jika ada). DILARANG menambah fakta baru di luar input.
 - Jika ada banner overlay di siaran, boleh sebutkan banner atas/bawah secara natural (1-2 baris), jangan berulang.`;
 
   const prompt = `${systemRules}
@@ -1235,13 +1256,13 @@ Kembalikan JSON murni:
   "faqPack": [
     { "category": "harga|manfaat|cara_pakai|pengiriman", "triggers": ["7-10 sinonim"], "answers": ["3 jawaban natural"] }
   ],
-  "promoPitch": ["3 pitch Hook+USP+harga+CTA lembut"],
-  "filler": ["3 kalimat filler 3-5 detik"],
-  "productBridge": ["2 jembatan multi-produk"],
+  "promoPitch": ["5 pitch Hook+USP+harga+CTA lembut — tiap pitch beda angle"],
+  "filler": ["5 kalimat filler 3-5 detik — beda nada"],
+  "productBridge": ["3 jembatan multi-produk"],
   "fallback": { "outOfTopic": ["2"], "soldOut": ["2"], "troll": ["2"] },
-  "lines": [{ "speech":"", "topic":"benefit|how_to_use|value|social_engagement|objection|faq|promo_pitch|filler|banner_callout", "mode":"ENGAGE|SELL|DEMO|QNA|SOCIAL|OBJECTION", "intent":"SELL|PRODUCT_INFO|SOCIAL|PRICE", "ctaType":"NONE|SOFT|PRICE" }]
+  "lines": [{ "speech":"", "topic":"benefit|how_to_use|value|social_engagement|objection|faq|promo_pitch|filler|banner_callout|micro_tip|use_case|reframe|mini_story|price_context", "mode":"ENGAGE|SELL|DEMO|QNA|SOCIAL|OBJECTION", "intent":"SELL|PRODUCT_INFO|SOCIAL|PRICE", "ctaType":"NONE|SOFT|PRICE" }]
 }
-Minimal 8 item di lines. promoPitch 3, filler 3. ${needOptional ? "Isi enriched untuk field yang kosong." : "enriched boleh string kosong."}
+Minimal ${PREP_LINE_TARGET} item di lines (variasi topik & pembuka, jangan mirip). promoPitch 5, filler 5, productBridge 3. ${needOptional ? "Isi enriched untuk field yang kosong." : "enriched boleh string kosong."}
 ${factsBase.hasBanner ? 'Sertakan 1 baris topic "banner_callout".' : "Jangan sebut banner."}`;
 
   const llmEnabled = process.env.LIVE_BRAIN_PREPARE_PRODUCT_LLM !== "0";
@@ -1326,6 +1347,46 @@ ${factsBase.hasBanner ? 'Sertakan 1 baris topic "banner_callout".' : "Jangan seb
           claims: [],
         });
       }
+
+      // Pass kedua: variasi tambahan agar bank prep cukup untuk marathon tanpa LLM live.
+      if (PREP_EXTRA_PASS && llmLines.length >= 10) {
+        const existingTopics = [...new Set(llmLines.map((l) => l.topic).filter(Boolean))].join(", ");
+        const extraPrompt = `${systemRules}
+
+PRODUK: ${input.name} (${category}) — ${priceDisplay}
+Sudah ada ${llmLines.length} baris dengan topik: ${existingTopics}.
+Buat 14–18 baris TAMBAHAN yang BEDA angle, pembuka, dan topik — jangan parafrase ulang.
+Fokus topik yang belum banyak: micro_tip, use_case, reframe, mini_story, price_context, comparison, buyer_fit.
+Kembalikan JSON murni: {"lines":[{ "speech":"", "topic":"", "mode":"ENGAGE|SELL|DEMO|QNA|SOCIAL|OBJECTION", "intent":"SELL|PRODUCT_INFO|SOCIAL|PRICE", "ctaType":"NONE|SOFT|PRICE" }]}`;
+
+        try {
+          const extraResult = await callBrain(extraPrompt, {
+            maxTokens: BANK_MAX_TOKENS,
+            groqOnly: true,
+          });
+          const extraRaw = cleanAndExtractJson(extraResult.text) as { lines?: unknown } | null;
+          const extraLines = Array.isArray(extraRaw?.lines) ? extraRaw.lines : [];
+          for (const item of extraLines) {
+            const row = item as { speech?: string; topic?: string; mode?: string; intent?: string; ctaType?: string; emotion?: string };
+            if (!row.speech || row.speech.length < 8) continue;
+            const meta = mapTopicMode(row.topic || "benefit");
+            llmLines.push({
+              speech: row.speech,
+              action: "TALK_EXPRESSIVE",
+              emotion: (row.emotion as any) || "warm",
+              intent: (row.intent as HostIntent) || meta.intent || "SELL",
+              mode: (row.mode as HostMode) || meta.mode,
+              topic: meta.topic,
+              ctaType: (row.ctaType as any) || meta.ctaType || "NONE",
+              target_product_id: null,
+              interruptible: true,
+              claims: [],
+            });
+          }
+        } catch (extraErr: any) {
+          console.warn(`[LiveBrain] prepareProductScriptPack extra pass: ${extraErr?.message || extraErr}`);
+        }
+      }
     }
   } catch (err: any) {
     console.warn(`[LiveBrain] prepareProductScriptPack LLM: ${err?.message || err}`);
@@ -1333,9 +1394,9 @@ ${factsBase.hasBanner ? 'Sertakan 1 baris topic "banner_callout".' : "Jangan seb
 
   const facts = {
     ...factsBase,
-    benefits: enriched.benefits || input.benefits || "",
-    usage: enriched.usage || input.usage || "",
-    faq: enriched.faq || input.faq || "",
+    benefits: enriched.benefits || knowledge.benefits || input.benefits || "",
+    usage: enriched.usage || knowledge.usage || input.usage || "",
+    faq: enriched.faq || knowledge.faq || input.faq || "",
     copywriting: enriched.copywriting || input.copywriting || "",
     targetAudience: enriched.targetAudience || input.targetAudience || "",
     faqPack,
@@ -1351,9 +1412,9 @@ ${factsBase.hasBanner ? 'Sertakan 1 baris topic "banner_callout".' : "Jangan seb
     engine: llmLines.length > 0 || engine === "live-brain" ? "live-brain" : "local",
     count: bank.lines.length,
     enriched: {
-      benefits: enriched.benefits || input.benefits || undefined,
-      usage: enriched.usage || input.usage || undefined,
-      faq: enriched.faq || input.faq || undefined,
+      benefits: enriched.benefits || knowledge.benefits || input.benefits || undefined,
+      usage: enriched.usage || knowledge.usage || input.usage || undefined,
+      faq: enriched.faq || knowledge.faq || input.faq || undefined,
       targetAudience: enriched.targetAudience || input.targetAudience || undefined,
       copywriting: enriched.copywriting || input.copywriting || undefined,
     },

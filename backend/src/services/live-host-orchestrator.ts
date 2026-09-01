@@ -6,7 +6,9 @@ import {
   generateHostResponse,
   generateScriptBankLines,
   getBrainBackoffMs,
+  liveBrainCommentWhenNeeded,
   liveBrainDuringLive,
+  liveBrainRefillOnExhaust,
   liveBrainRefillWhenLow,
   type HostIntent,
   type HostMode,
@@ -17,6 +19,7 @@ import {
   buildDefaultFaqPack,
   buildLocalCommentResponse,
   commentNeedsLlm,
+  countFreshScriptLines,
   emptyScriptBank,
   FILLER_TOPICS,
   mergeScriptLines,
@@ -26,7 +29,10 @@ import {
   remainingScriptLines,
   RHYTHM_SLOTS,
   seedLocalScriptBank,
+  mergeProductKnowledge,
+  pickScriptBankCommentLine,
   takeScriptLine,
+  shouldUseLlmForComment,
   type FaqPackEntry,
   type ScriptBankState,
   type ScriptProductFacts,
@@ -90,9 +96,9 @@ export function normalizeClientProduct(raw: unknown): ProductSnapshot | null {
     id: String(p.id || `local_${Date.now()}`),
     name,
     price: (p.price as string | number) ?? 0,
-    category: String(p.tag || p.category || "Skincare")
-      .replace(/^General$/i, "Skincare")
-      .replace(/^Lainnya$/i, "Skincare"),
+    category: String(p.tag || p.category || "Umum")
+      .replace(/^General$/i, "Umum")
+      .replace(/^Lainnya$/i, "Umum"),
     benefits: String(p.benefits || ""),
     description: String(p.description || ""),
     usage: String(p.usage || ""),
@@ -202,6 +208,11 @@ interface PlanPolicy {
   memoryClaims: number;
   modeMinMs: number;
   modeMaxMs: number;
+  /** Trigger recycle/refill lokal saat sisa baris di bawah ini. */
+  scriptBankLow: number;
+  /** Batas refill LLM live per sesi — marathon lebih rendah (lokal-first). */
+  scriptBankLlmRefillMax: number;
+  scriptBankLlmRefillCooldownMs: number;
 }
 
 const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
@@ -222,6 +233,9 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
     memoryClaims: 14,
     modeMinMs: 60_000,
     modeMaxMs: 180_000,
+    scriptBankLow: Number(process.env.LIVE_SCRIPT_BANK_LOW_1H || process.env.LIVE_SCRIPT_BANK_LOW || 12),
+    scriptBankLlmRefillMax: Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_MAX_1H || 14),
+    scriptBankLlmRefillCooldownMs: Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS || 90_000),
   },
   "2H": {
     durationMs: 2 * 60 * 60 * 1000,
@@ -236,6 +250,9 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
     memoryClaims: 20,
     modeMinMs: 90_000,
     modeMaxMs: 270_000,
+    scriptBankLow: Number(process.env.LIVE_SCRIPT_BANK_LOW_2H || 16),
+    scriptBankLlmRefillMax: Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_MAX_2H || 12),
+    scriptBankLlmRefillCooldownMs: Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS || 120_000),
   },
   "8H": {
     durationMs: 8 * 60 * 60 * 1000,
@@ -250,6 +267,9 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
     memoryClaims: 30,
     modeMinMs: 120_000,
     modeMaxMs: 360_000,
+    scriptBankLow: Number(process.env.LIVE_SCRIPT_BANK_LOW_8H || 24),
+    scriptBankLlmRefillMax: Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_MAX_8H || 8),
+    scriptBankLlmRefillCooldownMs: Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS_8H || 180_000),
   },
   "24H": {
     durationMs: 24 * 60 * 60 * 1000,
@@ -264,6 +284,9 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
     memoryClaims: 50,
     modeMinMs: 180_000,
     modeMaxMs: 600_000,
+    scriptBankLow: Number(process.env.LIVE_SCRIPT_BANK_LOW_24H || 32),
+    scriptBankLlmRefillMax: Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_MAX_24H || 5),
+    scriptBankLlmRefillCooldownMs: Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS_24H || 240_000),
   },
 };
 
@@ -276,11 +299,13 @@ const COMMENT_SCAN_MS = 400;
 const GENERATION_BACKOFF_MS = 800;
 /** Batas idle di siaran sebelum orchestrator boost generate (detik). */
 export const MAX_ONAIR_IDLE_SECONDS = 5;
-const SCRIPT_BANK_LOW = Number(process.env.LIVE_SCRIPT_BANK_LOW || 8);
 const SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS = Number(
   process.env.LIVE_SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS || 90_000,
 );
-const SCRIPT_BANK_LLM_REFILL_MAX = Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_MAX || 8);
+const SCRIPT_BANK_LLM_REFILL_MAX = Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_MAX || 16);
+const SCRIPT_BANK_LOW = Number(process.env.LIVE_SCRIPT_BANK_LOW || 12);
+const SCRIPT_BANK_LLM_EXHAUST_BONUS = Number(process.env.LIVE_SCRIPT_BANK_LLM_EXHAUST_BONUS || 6);
+const SCRIPT_BANK_FRESH_LOW = Number(process.env.LIVE_SCRIPT_BANK_FRESH_LOW || 8);
 const RHYTHM_SLOT_ATTEMPTS = RHYTHM_SLOTS.length;
 
 function topicModesFor(topic: string): HostMode[] {
@@ -471,6 +496,14 @@ function inferIntent(text: string): HostIntent {
   return "OTHER";
 }
 
+function personalizeCommentLine(line: HostResponse, authorName?: string): HostResponse {
+  const kak = authorName?.trim() ? `Kak ${authorName.trim().split(" ")[0]}, ` : "";
+  if (!kak || /^kak\s/i.test(line.speech.trim())) return { ...line, mode: "QNA", interruptible: true };
+  const body = line.speech.trim();
+  const speech = `${kak}${body.charAt(0).toLowerCase()}${body.slice(1)}`;
+  return { ...line, speech, mode: "QNA", interruptible: true };
+}
+
 function priorityForComment(text: string, intent: HostIntent): number {
   const q = normalizeText(text);
   let score = 20;
@@ -575,6 +608,8 @@ class LiveHostOrchestrator {
     state.scriptBank = emptyScriptBank(productId);
     if (found?.scriptBank?.length) {
       state.scriptBank.lines = found.scriptBank.slice();
+    } else if (state.product) {
+      this.seedScriptBank(state, state.product);
     }
     state.memory.topics.push("product_switch");
     state.currentMode = "ENGAGE";
@@ -862,15 +897,20 @@ class LiveHostOrchestrator {
   }
 
   private toScriptFacts(product: ProductSnapshot): ScriptProductFacts {
+    const knowledge = mergeProductKnowledge(product.description, {
+      benefits: product.benefits,
+      usage: product.usage,
+      faq: product.faq,
+    });
     return {
       id: product.id,
       name: product.name,
       price: this.formatProductPrice(product),
       category: product.category,
-      benefits: product.benefits,
+      benefits: knowledge.benefits,
       description: product.description,
-      usage: product.usage,
-      faq: product.faq,
+      usage: knowledge.usage,
+      faq: knowledge.faq,
       stock: product.stock,
       copywriting: product.copywriting,
       targetAudience: product.targetAudience,
@@ -879,10 +919,10 @@ class LiveHostOrchestrator {
         name: product.name,
         price: this.formatProductPrice(product),
         category: product.category,
-        benefits: product.benefits,
+        benefits: knowledge.benefits,
         description: product.description,
-        usage: product.usage,
-        faq: product.faq,
+        usage: knowledge.usage,
+        faq: knowledge.faq,
         stock: product.stock,
       }),
       hasBanner: Boolean(product.bannerImage),
@@ -947,20 +987,27 @@ class LiveHostOrchestrator {
     const state = this.sessions.get(sessionId);
     if (!state || !state.product || state.scriptBank.refillInFlight) return;
 
+    const policy = this.getPolicy(state);
+    const scriptBankLow = policy.scriptBankLow || SCRIPT_BANK_LOW;
+    const llmRefillMax = policy.scriptBankLlmRefillMax || SCRIPT_BANK_LLM_REFILL_MAX;
+    const llmRefillCooldownMs =
+      policy.scriptBankLlmRefillCooldownMs || SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS;
+
+    const recentWindow = policy.memoryUtterances >= 55 ? 36 : 24;
+    const recent = state.memory.utterances.slice(-recentWindow);
+
     const remaining = remainingScriptLines(state.scriptBank);
-    if (remaining > SCRIPT_BANK_LOW) return;
+    const freshCount = countFreshScriptLines(state.scriptBank, recent);
+    // Keluar awal hanya jika buffer cukup DAN masih ada variasi segar.
+    if (remaining > scriptBankLow && freshCount > SCRIPT_BANK_FRESH_LOW + 4) return;
 
     // 1) Selalu recycle lokal dulu — anti-idle tanpa rate limit.
     const recycled = recycleLocalScriptBank(
       this.toScriptFacts(state.product),
       state.catalog,
-      state.memory.utterances.slice(-24),
+      recent,
     );
-    const addedLocal = mergeScriptLines(
-      state.scriptBank,
-      recycled,
-      state.memory.utterances.slice(-24),
-    );
+    const addedLocal = mergeScriptLines(state.scriptBank, recycled, recent);
     state.scriptBank.lastRefillAt = Date.now();
     if (addedLocal > 0) {
       console.log(
@@ -970,16 +1017,22 @@ class LiveHostOrchestrator {
       this.seedScriptBank(state, state.product);
     }
 
-    const stillLow = remainingScriptLines(state.scriptBank) <= Math.max(4, Math.floor(SCRIPT_BANK_LOW / 2));
+    const stillLow =
+      remainingScriptLines(state.scriptBank) <= Math.max(4, Math.floor(scriptBankLow / 2));
+    const localExhausted =
+      freshCount <= SCRIPT_BANK_FRESH_LOW ||
+      (addedLocal === 0 && recycled.length === 0 && remaining <= scriptBankLow * 2);
     const allowLlm =
       liveBrainDuringLive() ||
-      (liveBrainRefillWhenLow() && stillLow);
+      (liveBrainRefillWhenLow() && stillLow) ||
+      (liveBrainRefillOnExhaust() && localExhausted);
     if (!allowLlm) return;
 
     const bank = state.scriptBank;
-    const cooled =
-      Date.now() - (bank.lastLlmRefillAt || 0) >= SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS;
-    const underCap = (bank.llmRefillCount || 0) < SCRIPT_BANK_LLM_REFILL_MAX;
+    const cooled = Date.now() - (bank.lastLlmRefillAt || 0) >= llmRefillCooldownMs;
+    const effectiveMax =
+      localExhausted ? llmRefillMax + SCRIPT_BANK_LLM_EXHAUST_BONUS : llmRefillMax;
+    const underCap = (bank.llmRefillCount || 0) < effectiveMax;
     if (!cooled || !underCap) return;
 
     state.scriptBank.refillInFlight = true;
@@ -995,15 +1048,26 @@ class LiveHostOrchestrator {
     const product = state.product || (await this.ensureProductSnapshot(state));
     if (!product) return;
 
+    const policy = this.getPolicy(state);
+    const scriptBankLow = policy.scriptBankLow || SCRIPT_BANK_LOW;
+    const recent = state.memory.utterances.slice(-24);
+    const freshCount = countFreshScriptLines(state.scriptBank, recent);
+    const remaining = remainingScriptLines(state.scriptBank);
+    const localExhausted =
+      freshCount <= SCRIPT_BANK_FRESH_LOW ||
+      remaining <= Math.max(4, Math.floor(scriptBankLow / 2));
+
     await awaitBrainReady(sessionId);
     const lines = await generateScriptBankLines(
       this.toBrainInput(state, product, {
-        userQuestion:
-          "Isi ulang bank ucapan otonom. Bahasa natural host live, jangan kaku/robot, jangan mengarang fakta.",
+        userQuestion: localExhausted
+          ? "Variasi bank ucapan hampir habis — buat baris BARU dengan angle/topik berbeda. Jangan ulang pembuka atau poin yang sama. Bahasa natural host live, jangan mengarang fakta."
+          : "Isi ulang bank ucapan otonom. Bahasa natural host live, jangan kaku/robot, jangan mengarang fakta.",
         requestedMode: state.currentMode,
         requestedIntent: "SELL",
         mode: state.currentMode,
         avoidTopics: state.memory.topics.slice(-8),
+        recentUtterances: state.memory.utterances.slice(-20),
       }),
     );
     const localBoost = recycleLocalScriptBank(
@@ -1023,7 +1087,7 @@ class LiveHostOrchestrator {
     }
     if (added > 0) {
       console.log(
-        `[LiveHost] Script bank refill +${added} llm=${lines.length} (now ${remainingScriptLines(state.scriptBank)}) session=${sessionId}`,
+        `[LiveHost] Script bank refill +${added} llm=${lines.length} exhausted=${localExhausted} (now ${remainingScriptLines(state.scriptBank)}) session=${sessionId}`,
       );
     }
   }
@@ -1043,8 +1107,11 @@ class LiveHostOrchestrator {
 
     const topic = this.chooseAutonomousTopic(state);
     const requestedMode = this.resolveModeForTopic(state, topic.modes);
-    const recent = state.memory.utterances.slice(-18);
-    const recentTopics = state.memory.topics.slice(-3);
+    const policy = this.getPolicy(state);
+    const recentWindow = policy.memoryUtterances >= 55 ? 30 : policy.memoryUtterances >= 30 ? 24 : 18;
+    const recentTopicWindow = policy.memoryTopics >= 45 ? 6 : policy.memoryTopics >= 28 ? 5 : 3;
+    const recent = state.memory.utterances.slice(-recentWindow);
+    const recentTopics = state.memory.topics.slice(-recentTopicWindow);
     const recentCtas = state.memory.ctas.slice(-3);
     const avoidCta = recentCtas.filter((c) => c && c !== "NONE").length >= 1;
     const bufferCritical =
@@ -1132,8 +1199,16 @@ class LiveHostOrchestrator {
     const author = comment.authorName?.trim();
     const facts = this.toScriptFacts(product);
     const recent = state.memory.utterances.slice(-24);
-    const useLlm = liveBrainDuringLive() && commentNeedsLlm(comment.intent, comment.text);
-    if (!useLlm) {
+    const llmDecision = shouldUseLlmForComment(facts, comment.text, comment.intent);
+    const useLlm = liveBrainDuringLive()
+      ? commentNeedsLlm(comment.intent, comment.text) || llmDecision.needed
+      : liveBrainCommentWhenNeeded() && llmDecision.needed;
+
+    if (useLlm) {
+      console.log(
+        `[LiveHost] comment LLM reason=${llmDecision.reason} intent=${comment.intent} from=${author || "Audience"}`,
+      );
+    } else {
       console.log(
         `[LiveHost] comment local intent=${comment.intent} from=${author || "Audience"}`,
       );
@@ -1141,13 +1216,21 @@ class LiveHostOrchestrator {
 
     let response: HostResponse | null = null;
     if (!useLlm) {
-      response = buildLocalCommentResponse(facts, comment.text, comment.intent, author, recent);
+      const bankHit = pickScriptBankCommentLine(state.scriptBank, comment.text, recent);
+      if (bankHit) {
+        const idx = state.scriptBank.lines.findIndex((item) => item === bankHit);
+        if (idx >= 0) state.scriptBank.lines.splice(idx, 1);
+        response = personalizeCommentLine(bankHit, author);
+      } else {
+        response = buildLocalCommentResponse(facts, comment.text, comment.intent, author, recent);
+      }
     } else {
       const userQuestion = [
         `Ada komentar baru dari ${author ? `Kak ${author}` : "penonton"}.`,
         `Komentar: "${comment.text}".`,
-        "Baca konteks komentar dengan wajar, jangan mengulang isi komentar panjang-panjang.",
-        "Jawab kebutuhan penonton terlebih dahulu; CTA hanya jika benar-benar relevan.",
+        "Jawab spesifik pertanyaan penonton — jangan mengulang isi komentar panjang-panjang.",
+        "Pakai fakta produk yang ada; jika tidak ada di data, jujur bilang cek detail di etalase.",
+        "CTA hanya jika benar-benar relevan.",
       ].join(" ");
 
       await awaitBrainReady(sessionId);
@@ -1812,6 +1895,13 @@ class LiveHostOrchestrator {
       commentsAnswered: state.counters.commentsAnswered,
       commentsDropped: state.counters.commentsDropped,
       duplicateResponsesPrevented: state.counters.duplicateResponsesPrevented,
+      scriptBankRemaining: remainingScriptLines(state.scriptBank),
+      scriptBankLlmRefillCount: state.scriptBank.llmRefillCount || 0,
+      scriptBankSource: state.product?.scriptBank?.length
+        ? state.scriptBank.llmRefillCount > 0
+          ? "mixed"
+          : "payload"
+        : "local",
       stageIndex,
       stageText,
     };
