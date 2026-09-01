@@ -247,12 +247,16 @@ class FrameFeedBroadcaster:
         self._rtmp_status_path = os.path.join(self.output_folder, "rtmp_status.txt")
         self._rtmp_fatal = False
         self._rtmp_fatal_hint = ""
+        self._rtmp_connected = False
         self._stderr_thread = None
+        self._playback_nudge_at = 0.0
         self._start_encoder()
 
     def _set_rtmp_status(self, connected: bool, error: str = "") -> None:
         if self._rtmp_fatal and connected:
             return
+        if connected:
+            self._rtmp_connected = True
         write_rtmp_status(
             self.output_folder,
             "connected" if connected else ("failed" if self._rtmp_fatal else "disconnected"),
@@ -265,14 +269,15 @@ class FrameFeedBroadcaster:
         write_rtmp_status(self.output_folder, "failed", hint)
         print(f"[FRAME-FEED] RTMP fatal: {hint}")
 
-    def _idle_display_frame(self):
-        """Idle tidak mengitari seluruh klip — itu menggeser pose menjauh dari
-        cycle MuseTalk. Ping-pong ~0.6 detik di sekitar frame terakhir bicara
-        supaya idle→bicara tidak ganti muka/framing.
+    def _idle_display_frame(self, full_loop: bool = False):
+        """Sebelum clip pertama: loop penuh talk_expressive agar host terlihat hidup.
+        Setelah bicara: ping-pong pendek di pose terakhir supaya muka tidak loncat.
         """
         n = len(self.idle_frames)
         if n <= 1:
             return self.idle_frames[0]
+        if full_loop:
+            return self.idle_frames[self.idle_idx % n]
         window = min(self.idle_hold, n)
         if window <= 1:
             return self.idle_frames[self.idle_anchor % n]
@@ -281,7 +286,11 @@ class FrameFeedBroadcaster:
         off = p if p < window else period - p
         return self.idle_frames[(self.idle_anchor + off) % n]
 
-    def _advance_idle_hold(self) -> None:
+    def _advance_idle_hold(self, full_loop: bool = False) -> None:
+        if full_loop:
+            n = max(1, len(self.idle_frames))
+            self.idle_idx = (self.idle_idx + 1) % n
+            return
         self._idle_ping += 1
 
     def _lock_idle_anchor(self, frames_played: int) -> None:
@@ -545,7 +554,7 @@ class FrameFeedBroadcaster:
             self._v_fh.write(frame.tobytes())
             self._a_fh.write(pcm)
             return True
-        except (BrokenPipeError, OSError) as err:
+        except (BrokenPipeError, OSError, ValueError) as err:
             print(f"[FRAME-FEED] Pipe putus: {err}")
             return False
 
@@ -595,8 +604,43 @@ class FrameFeedBroadcaster:
         except Exception as err:
             print(f"[FRAME-FEED] Cleanup error: {err}")
 
-    def _peek_next_ai(self, pending: deque, last_spoken, idle_abs, playback_active: bool):
-        if not playback_active:
+    def _playback_flag_path(self) -> str:
+        return os.path.join(self.output_folder, "playback_active.flag")
+
+    def _is_playback_active(self) -> bool:
+        return os.path.exists(self._playback_flag_path())
+
+    def _arm_playback(self, reason: str) -> bool:
+        path = self._playback_flag_path()
+        try:
+            os.makedirs(self.output_folder, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("1")
+            print(f"[FRAME-FEED] Playback aktif ({reason})")
+            return True
+        except Exception as err:
+            print(f"[FRAME-FEED] Gagal menulis playback flag: {err}")
+            return False
+
+    def _ensure_playback(self, last_spoken, idle_abs: str) -> bool:
+        """Jangan terkunci idle: cek flag setiap kali, auto-start jika RTMP sudah on-air."""
+        if self._is_playback_active():
+            return True
+        queued = self._collect_ai_queue(last_spoken, idle_abs)
+        if self._rtmp_connected and queued:
+            return self._arm_playback(f"RTMP connected, {len(queued)} clip mengantre")
+        now = time.time()
+        if now - self._playback_nudge_at >= 5:
+            self._playback_nudge_at = now
+            print(
+                "[FRAME-FEED] Idle — menunggu playback "
+                f"(rtmp={'on' if self._rtmp_connected else 'off'}, "
+                f"clip={len(queued)})"
+            )
+        return False
+
+    def _peek_next_ai(self, pending: deque, last_spoken, idle_abs) -> Optional[str]:
+        if not self._ensure_playback(last_spoken, idle_abs):
             return None
         for path in self._collect_ai_queue(last_spoken, idle_abs):
             if path not in pending:
@@ -607,22 +651,22 @@ class FrameFeedBroadcaster:
             pending.extend(reordered)
         return pending[0] if pending else None
 
-    def _feed_idle_until_ai(self, pending, last_spoken, idle_abs, playback_active):
-        """Kirim frame idle; cek antrian AI setiap frame — interrupt segera."""
+    def _feed_idle_until_ai(self, pending, last_spoken, idle_abs):
+        """Kirim frame idle; cek flag + antrian AI setiap frame."""
         silence = b"\x00" * self.bytes_per_audio_frame
         frame_period = 1.0 / float(self.fps)
         next_deadline = time.perf_counter()
+        full_loop = last_spoken is None
 
         while not self._shutting_down:
-            nxt = self._peek_next_ai(pending, last_spoken, idle_abs, playback_active)
+            nxt = self._peek_next_ai(pending, last_spoken, idle_abs)
             if nxt:
-                # Prefetch segera agar clip pertama setelah idle lebih cepat start.
                 self._prefetch.request(nxt)
                 self._av_deadline = next_deadline
                 return nxt
 
-            frame = self._idle_display_frame()
-            self._advance_idle_hold()
+            frame = self._idle_display_frame(full_loop=full_loop)
+            self._advance_idle_hold(full_loop=full_loop)
             if not self._write_av(frame, silence):
                 return None
 
@@ -786,19 +830,14 @@ class FrameFeedBroadcaster:
                     except Exception as err:
                         print(f"[FRAME-FEED] Overlay update notice: {err}")
 
-                playback_flag = os.path.join(self.output_folder, "playback_active.flag")
-                playback_active = os.path.exists(playback_flag)
-
-                nxt = self._peek_next_ai(pending, last_spoken, idle_abs, playback_active)
+                nxt = self._peek_next_ai(pending, last_spoken, idle_abs)
                 came_from_idle = False
                 if not nxt:
                     # Reset chain clock saat masuk idle — next AI soft-open lagi.
                     self._chain_from_ai = False
                     self._av_deadline = None
                     self._prefetch.clear()
-                    nxt = self._feed_idle_until_ai(
-                        pending, last_spoken, idle_abs, playback_active
-                    )
+                    nxt = self._feed_idle_until_ai(pending, last_spoken, idle_abs)
                     came_from_idle = True
                     if not nxt:
                         if self._shutting_down:
@@ -808,7 +847,7 @@ class FrameFeedBroadcaster:
 
                 path = pending.popleft()
                 # Prefetch calon berikutnya selagi clip ini diputar.
-                self._peek_next_ai(pending, path, idle_abs, playback_active)
+                self._peek_next_ai(pending, path, idle_abs)
                 if pending:
                     self._prefetch.request(pending[0])
 
