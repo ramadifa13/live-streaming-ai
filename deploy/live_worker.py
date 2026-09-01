@@ -3,6 +3,8 @@ import os
 import time
 import asyncio
 import json
+import re
+import random
 import torch
 import threading
 import sys
@@ -41,6 +43,10 @@ class AILiveWorker:
 
         # Lock untuk serialisasi inferensi GPU intra-process
         self._inference_lock = threading.Lock()
+
+        # Variasi klip per aksi (mis. namira_wave.mp4, namira_wave_2.mp4) —
+        # dipilih round-robin agar gestur yang sama tidak terlihat identik terus.
+        self._last_variant_by_action = {}
 
         if not os.path.exists(self.musetalk_checkpoint):
             print(
@@ -288,6 +294,38 @@ class AILiveWorker:
                     return os.path.join(d, mp4s[0])
         return None
 
+    def _list_action_variants(self, host_type, base_name):
+        """Cari semua file `base_name.mp4`, `base_name_2.mp4`, `base_name_3.mp4`,
+        dst. Memungkinkan beberapa rekaman berbeda untuk gestur yang sama tanpa
+        ubah kode — operator tinggal menambah file dengan pola penamaan ini."""
+        target_dir = (
+            self.assets_2d if str(host_type).lower() == "2d" else self.assets_3d
+        )
+        candidate_dirs = [target_dir, self.assets_3d, self.assets_2d]
+        pattern = re.compile(rf"^{re.escape(base_name)}(_\d+)?$")
+        found = []
+        seen_dirs = set()
+        for d in candidate_dirs:
+            if not d or d in seen_dirs or not os.path.exists(d):
+                continue
+            seen_dirs.add(d)
+            for f in os.listdir(d):
+                if not f.endswith(".mp4") or f.startswith("temp_"):
+                    continue
+                if pattern.match(f[:-4]):
+                    found.append(os.path.join(d, f))
+        return sorted(set(found))
+
+    def _pick_action_variant(self, action, variants):
+        """Round-robin acak: hindari memutar variant identik dua kali berturut."""
+        if len(variants) == 1:
+            return variants[0]
+        last = self._last_variant_by_action.get(action)
+        choices = [v for v in variants if v != last] or variants
+        picked = random.choice(choices)
+        self._last_variant_by_action[action] = picked
+        return picked
+
     def _resolve_action_clip(self, host_type, host_name, action_tag):
         """Pilih clip gesture sesuai action. Fallback ke talk_expressive bila file tidak ada.
 
@@ -318,7 +356,12 @@ class AILiveWorker:
             if name in seen:
                 continue
             seen.add(name)
-            found = self._get_idle_video(host_type, name)
+            clip_variants = self._list_action_variants(host_type, name)
+            found = (
+                self._pick_action_variant(action, clip_variants)
+                if clip_variants
+                else self._get_idle_video(host_type, name)
+            )
             if found:
                 print(f"[ACTION] {action} → {os.path.basename(found)}")
                 return found
@@ -338,8 +381,6 @@ class AILiveWorker:
         pipeline_start = time.time()
 
         # 1. Parse Action Tags (e.g. [WAVE], [NOD]) — juga terima field action dari backend
-        import re
-
         action_tag = (action or "").strip().lower()
         match = re.search(r"\[([A-Z_]+)\]", text_answer or "")
         if match:
