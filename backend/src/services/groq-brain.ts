@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import type { StreamPlan } from "./live-host-orchestrator.js";
+import { buildGesturePromptBlock } from "./avatar-actions.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.LIVE_BRAIN_API_KEY || "";
@@ -565,13 +566,7 @@ ANTI-LOOP:
 - Jangan menggunakan struktur kalimat yang sama seperti 1–2 respons terakhir.
 
 GERAKAN AVATAR (action) — pakai gesture supaya host terasa hidup:
-- TALK_EXPRESSIVE: default bicara (paling sering, ~50%).
-- WAVE: sapaan / welcome / "halo kak".
-- NOD: setuju, "betul kak", "iya benar".
-- LAUGH: candaan / ketawa.
-- POINT_UP / POINT_DOWN: tunjuk harga, promo, stok.
-- THINK: ragu, "hmm", sedang pikir.
-- IDLE: jangan untuk kalimat yang diucapkan.
+${buildGesturePromptBlock()}
 Variasikan. Jangan WAVE atau POINT setiap kalimat berturut-turut.
 
 OUTPUT:

@@ -38,6 +38,7 @@ import {
   type ScriptProductFacts,
 } from "./live-script-bank.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
+import { getAvatarActionSet, isGestureAction } from "./avatar-actions.js";
 import { synthesizeSpeech } from "./tts.js";
 
 
@@ -134,6 +135,7 @@ interface HostMemory {
   lastResponseAt: number;
   lastCommentResponseAt: number;
   lastSalesAt: number;
+  lastGestureAction: string;
 }
 
 interface QueueMetrics {
@@ -683,6 +685,7 @@ class LiveHostOrchestrator {
         lastResponseAt: 0,
         lastCommentResponseAt: 0,
         lastSalesAt: 0,
+        lastGestureAction: "",
       },
       pendingComments: [],
       processedCommentIds: new Set(),
@@ -1344,11 +1347,20 @@ class LiveHostOrchestrator {
     // Jawaban komentar ditandai prioritas agar broadcaster memutarnya sebelum
     // sisa buffer otonom. Tanpa ini jawaban harus mengantre di belakang
     // targetBufferSeconds penuh, sehingga terasa ~30 detik terlambat.
+    //
+    // Gestur yang sama persis dua kali berturut-turut terlihat kaku/robotik
+    // (mis. WAVE → WAVE); turunkan ke TALK_EXPRESSIVE bila itu terjadi.
+    let finalAction = response.action;
+    if (isGestureAction(finalAction) && state.memory.lastGestureAction === finalAction) {
+      finalAction = "TALK_EXPRESSIVE";
+    }
+    if (isGestureAction(finalAction)) state.memory.lastGestureAction = finalAction;
+
     await this.submitToGPU(
       sessionId,
       finalText,
       audioBase64,
-      response.action,
+      finalAction,
       source === "comment",
     );
 
@@ -1367,7 +1379,7 @@ class LiveHostOrchestrator {
     });
 
     console.log(
-      `[LiveHost] 🗣️ queued source=${source} mode=${response.mode} topic=${response.topic || fallbackTopic} action=${response.action}`,
+      `[LiveHost] 🗣️ queued source=${source} mode=${response.mode} topic=${response.topic || fallbackTopic} action=${finalAction}`,
     );
 
     return true;
@@ -1759,16 +1771,7 @@ class LiveHostOrchestrator {
       ? `${state.config.avatarName.toLowerCase().trim()}.png`
       : "namira.png";
 
-    const allowed = new Set([
-      "IDLE",
-      "TALK_EXPRESSIVE",
-      "NOD",
-      "LAUGH",
-      "POINT_UP",
-      "POINT_DOWN",
-      "WAVE",
-      "THINK",
-    ]);
+    const allowed = getAvatarActionSet();
     const raw = String(action || "TALK_EXPRESSIVE")
       .toUpperCase()
       .replace(/[^A-Z_]/g, "");

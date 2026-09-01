@@ -2,11 +2,18 @@ import subprocess
 import os
 import time
 import asyncio
+import json
 import torch
 import threading
 import sys
 import shutil
 from argparse import Namespace
+
+try:
+    from action_config import get_action_aliases, get_action_category, get_crossfade_seconds
+except ImportError:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from action_config import get_action_aliases, get_action_category, get_crossfade_seconds
 
 
 class AILiveWorker:
@@ -288,18 +295,7 @@ class AILiveWorker:
         """
         host = (host_name or "namira").lower().strip()
         action = (action_tag or "talk_expressive").lower().strip().replace("-", "_")
-        aliases = {
-            "talk_expressive": ["talk_expressive", "expressive"],
-            "idle": ["idle"],
-            "wave": ["wave", "raise_hand"],
-            "raise_hand": ["wave", "raise_hand"],
-            "nod": ["nod"],
-            "laugh": ["laugh"],
-            "point_up": ["point_up"],
-            "point_down": ["point_down"],
-            "think": ["think", "nod"],
-        }
-        variants = aliases.get(action, [action])
+        variants = get_action_aliases(action)
         candidates = []
         for variant in variants:
             candidates.extend(
@@ -309,7 +305,7 @@ class AILiveWorker:
                     f"namira_{variant}",
                 ]
             )
-        if action not in ("idle", "talk_expressive"):
+        if get_action_category(action) == "gesture":
             candidates.append(f"{host}_talk_expressive")
             candidates.append("namira_talk_expressive")
         candidates.append(f"{host}_idle")
@@ -393,11 +389,30 @@ class AILiveWorker:
 
         total_elapsed = round((time.time() - pipeline_start) * 1000)
         if final_video:
+            self._write_action_meta(final_video, action_tag)
             print(
                 f"[⚡ SUKSES KILAT] Video selesai: {final_video} | "
                 f"lipsync={lipsync_elapsed}ms total={total_elapsed}ms action={action_tag}"
             )
         return final_video
+
+    def _write_action_meta(self, video_path, action_tag):
+        """Sidecar `<video>.json` — dibaca broadcaster untuk crossfade per-aksi.
+
+        Tanpa ini broadcaster hanya tahu path video, bukan gestur apa yang
+        sedang diputar, sehingga tidak bisa memilih durasi transisi yang pas
+        (gestur pendek butuh crossfade lebih singkat daripada idle/talk).
+        """
+        meta = {
+            "action": action_tag,
+            "category": get_action_category(action_tag),
+            "crossfadeSeconds": get_crossfade_seconds(action_tag),
+        }
+        try:
+            with open(f"{video_path}.json", "w", encoding="utf-8") as f:
+                json.dump(meta, f)
+        except Exception as e:
+            print(f"[WARNING] Gagal tulis metadata aksi untuk {video_path}: {e}")
 
     async def _sync_lips_async(self, idle_video, audio_path, task_id):
         loop = asyncio.get_running_loop()

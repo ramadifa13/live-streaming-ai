@@ -55,6 +55,7 @@ class AIBroadcaster:
         self.master_process = None
         self._duration_cache = {}
         self._audio_cache = {}
+        self._action_meta_cache = {}
         self._shutting_down = False
         self._rtmp_fatal = False
         self._rtmp_fatal_hint = ""
@@ -619,9 +620,9 @@ class AIBroadcaster:
         cmd.extend(self._encode_output_args())
         return cmd
 
-    def _build_crossfade_command(self, from_path, to_path):
+    def _build_crossfade_command(self, from_path, to_path, fade=None):
         """FFmpeg xfade + acrossfade untuk transisi natural antar clip."""
-        fade = self.crossfade_seconds
+        fade = self.crossfade_seconds if fade is None else fade
         from_dur = self._probe_duration(from_path)
         offset = max(0.08, from_dur - fade)
         scale = (
@@ -748,6 +749,31 @@ class AIBroadcaster:
         )
         return self._spawn_worker(worker_command)
 
+    def _load_action_meta(self, video_path):
+        """Sidecar `<video>.json` ditulis live_worker.py — berisi aksi/kategori/
+        durasi crossfade yang cocok untuk clip ini. Di-cache karena dibaca
+        berkali-kali (sekali per polling loop sebelum worker selesai)."""
+        meta_path = f"{video_path}.json"
+        if meta_path in self._action_meta_cache:
+            return self._action_meta_cache[meta_path]
+        meta = None
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+            except Exception:
+                meta = None
+        self._action_meta_cache[meta_path] = meta
+        return meta
+
+    def _resolve_crossfade_seconds(self, video_path):
+        """Gestur pendek (NOD, LAUGH, dst) butuh crossfade lebih singkat
+        daripada idle/talk supaya perpindahan pose tidak terasa lambat/kaku."""
+        meta = self._load_action_meta(video_path)
+        if meta and isinstance(meta.get("crossfadeSeconds"), (int, float)):
+            return float(meta["crossfadeSeconds"])
+        return self.crossfade_seconds
+
     def _stream_crossfade_async(self, from_path, to_path):
         """Crossfade halus antar dua clip (visual + audio)."""
         if not from_path or not os.path.exists(from_path):
@@ -762,13 +788,14 @@ class AIBroadcaster:
                 f"atau {os.path.basename(to_path)} tidak punya stream audio."
             )
             return self._stream_file_async(to_path, fade_in=self.fade_seconds)
+        fade = self._resolve_crossfade_seconds(to_path)
         label_from = os.path.basename(from_path)
         label_to = os.path.basename(to_path)
         print(
-            f"[BROADCASTER] ✨ Crossfade {self.crossfade_seconds}s: "
+            f"[BROADCASTER] ✨ Crossfade {fade}s: "
             f"{label_from} → {label_to}"
         )
-        return self._spawn_worker(self._build_crossfade_command(from_path, to_path))
+        return self._spawn_worker(self._build_crossfade_command(from_path, to_path, fade=fade))
 
     def _stream_idle_chunk(self):
         """Idle chunk: input di-loop, audio senyap, tanpa fade.
@@ -836,6 +863,13 @@ class AIBroadcaster:
                 )
         except Exception as e:
             print(f"[CLEANUP ERROR] Gagal menghapus {video_path}: {e}")
+        meta_path = f"{video_path}.json"
+        self._action_meta_cache.pop(meta_path, None)
+        try:
+            if os.path.exists(meta_path):
+                os.remove(meta_path)
+        except Exception:
+            pass
 
     def _start_next_segment(
         self,
