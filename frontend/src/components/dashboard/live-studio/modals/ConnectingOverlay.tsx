@@ -22,16 +22,19 @@ export const ConnectingOverlay: React.FC = () => {
   const showToast = useDashboardUIStore((state) => state.showToast);
 
   const stageIndex = pipelineStatus?.stageIndex ?? connectingStageIndex;
-  const videosReady = (pipelineStatus?.videosQueued ?? 0) >= 2;
+  const videosReady =
+    (pipelineStatus?.videosQueued ?? 0) >= 2 ||
+    (pipelineStatus?.generationCount ?? 0) >= 2;
+  const rtmpConnected = pipelineStatus?.isRtmpConnected === true;
   const podBooting = pipelineStatus?.podBooting === true;
   const rtmpFailed = Boolean(pipelineStatus?.rtmpError);
   const canGoLive =
     !rtmpFailed &&
     !podBooting &&
     pipelineStatus?.podReady !== false &&
-    pipelineStatus?.ready === true &&
+    rtmpConnected &&
     videosReady &&
-    stageIndex >= 4;
+    (pipelineStatus?.ready === true || stageIndex >= 4);
 
   const handleConfirmGoLive = async () => {
     if (!currentLiveSessionId || isSubmittingGoLive || !canGoLive) return;
@@ -170,14 +173,18 @@ export const ConnectingOverlay: React.FC = () => {
           {canGoLive && (
             <div className="mb-4 rounded-xl border border-yellow-500/30 bg-yellow-500/5 p-3 text-left">
               <p className="text-[10px] font-bold text-yellow-400 mb-2 uppercase tracking-wide">
-                Langkah terakhir
+                Urutan yang benar
               </p>
               <ol className="list-decimal pl-4 text-[10px] text-slate-300 space-y-1">
                 <li>
-                  Buka <strong>{selectedPlatform}</strong> dan klik{" "}
-                  <strong>Siarkan Langsung / Go Live</strong>.
+                  Di Instagram, panel kiri adalah <strong>preview</strong> — belum
+                  tayang ke penonton sampai Anda tekan <strong>Siarkan</strong>.
                 </li>
-                <li>Setelah siaran aktif di platform, tekan tombol di bawah.</li>
+                <li>
+                  Setelah preview idle (host belum ngomong), klik{" "}
+                  <strong>Siarkan</strong> di Instagram.
+                </li>
+                <li>Kembali ke sini, tekan tombol hijau di bawah.</li>
               </ol>
             </div>
           )}
@@ -213,10 +220,14 @@ export const ConnectingOverlay: React.FC = () => {
             <div className="mb-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-center">
               <div className="flex items-center justify-center gap-2 text-[11px] text-amber-200/90 font-medium">
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400 shrink-0" />
-                Pipeline sedang diproses ({pipelineStatus?.videosQueued ?? 0}/2 video siap)
+                {rtmpConnected
+                  ? "Preview Instagram terhubung — menunggu buffer AI..."
+                  : `Pipeline sedang diproses (${pipelineStatus?.videosQueued ?? 0}/2 video siap)`}
               </div>
               <p className="mt-1 text-[10px] text-slate-400 leading-snug">
-                Estimasi waktu: sekitar 5 menit. Durasi dapat lebih singkat jika GPU sudah aktif.
+                {rtmpConnected
+                  ? "Jangan tekan Siarkan dulu. Host harus idle di preview. Setelah tombol hijau muncul, Siarkan di Instagram lalu konfirmasi di sini."
+                  : "Estimasi waktu: sekitar 5 menit. Durasi dapat lebih singkat jika GPU sudah aktif."}
               </p>
             </div>
           )}

@@ -1645,7 +1645,7 @@ class LiveHostOrchestrator {
     sessionId: string,
     text: string,
     audioBase64?: string,
-    action?: string, // diabaikan — pose dikunci TALK_EXPRESSIVE untuk kontinuitas
+    action?: string,
     priority = false,
   ): Promise<void> {
     const state = this.sessions.get(sessionId);
@@ -1655,14 +1655,23 @@ class LiveHostOrchestrator {
       ? `${state.config.avatarName.toLowerCase().trim()}.png`
       : "namira.png";
 
-    void action; // gesture besar sengaja tidak diteruskan ke worker
-
-    // Pose continuity: kunci TALK_EXPRESSIVE. Gesture WAVE/RAISE_HAND ganti clip
-    // sumber dan membuat tangan "loncat" antar segmen.
-    const gesture = "TALK_EXPRESSIVE";
+    const allowed = new Set([
+      "IDLE",
+      "TALK_EXPRESSIVE",
+      "NOD",
+      "LAUGH",
+      "POINT_UP",
+      "POINT_DOWN",
+      "WAVE",
+      "THINK",
+    ]);
+    const raw = String(action || "TALK_EXPRESSIVE")
+      .toUpperCase()
+      .replace(/[^A-Z_]/g, "");
+    const gesture = allowed.has(raw) ? raw : "TALK_EXPRESSIVE";
     const taggedText = /^\s*\[[A-Z_]+\]/.test(text)
-      ? text.replace(/^\s*\[[A-Z_]+\]/, "[TALK_EXPRESSIVE]")
-      : `[TALK_EXPRESSIVE] ${text}`.trim();
+      ? text.replace(/^\s*\[[A-Z_]+\]/, `[${gesture}]`)
+      : `[${gesture}] ${text}`.trim();
 
     try {
       await forwardToRunPodGPU(state.config.podId || process.env.RUNPOD_POD_ID, {
@@ -1730,10 +1739,13 @@ class LiveHostOrchestrator {
     const policy = this.getPolicy(state);
     const rtmpRequired = Boolean(state.config.rtmpUrl);
     const rtmpOk = !rtmpRequired || queue.rtmpConnected;
+    const bufferReady =
+      queue.bufferSeconds >= policy.minBufferSeconds && queue.queuedVideos >= 1;
+    if (bufferReady && rtmpOk) {
+      state.pipelineReady = true;
+    }
     const ready =
-      queue.bufferSeconds >= policy.minBufferSeconds &&
-      queue.queuedVideos >= 1 &&
-      rtmpOk;
+      Boolean(state.pipelineReady) && rtmpOk && !queue.rtmpError;
 
     if (queue.rtmpError) {
       if (!state.rtmpFailedAt) state.rtmpFailedAt = Date.now();
@@ -1750,10 +1762,6 @@ class LiveHostOrchestrator {
       }
     }
 
-    if (ready && (!rtmpRequired || queue.rtmpConnected)) {
-      state.pipelineReady = true;
-    }
-
     let stageIndex = 0;
     let stageText = "Menyiapkan AI Host...";
 
@@ -1763,7 +1771,12 @@ class LiveHostOrchestrator {
     } else if (!queue.warmedUp && queue.queuedVideos === 0 && state.counters.submitted === 0) {
       stageIndex = 1;
       stageText = "Memuat model AI Host ke Cloud GPU...";
-    } else if (queue.bufferSeconds < policy.minBufferSeconds || queue.queuedVideos < 2) {
+    } else if (
+      queue.bufferSeconds < policy.minBufferSeconds &&
+      queue.queuedVideos < 2 &&
+      state.counters.generated < 2 &&
+      !state.pipelineReady
+    ) {
       stageIndex = 2;
       stageText = "Menyiapkan segmen pembuka AI Host...";
     } else if (rtmpRequired && !queue.rtmpConnected) {

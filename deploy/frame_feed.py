@@ -228,7 +228,7 @@ class FrameFeedBroadcaster:
         self.idle_frames = _load_frames(visual_path, self.width, self.height)
         self.idle_idx = 0
         self.idle_anchor = 0
-        self.idle_hold = max(1, int(os.environ.get("IDLE_HOLD_FRAMES", "16")))
+        self.idle_hold = max(1, int(os.environ.get("IDLE_HOLD_FRAMES", "3")))
         self._idle_ping = 0
 
         self._shutting_down = False
@@ -237,6 +237,10 @@ class FrameFeedBroadcaster:
         self._a_fh = None
 
         self.overlay_png_path = None
+        self._overlay_rgb = None
+        self._overlay_alpha = None
+        self._queue_cache = []
+        self._queue_cache_at = 0.0
         self._prepare_overlay()
         self._prefetch = _PrefetchCache(self.width, self.height)
         # Clock bersama antar clip AI agar join tanpa lonjakan pacing.
@@ -270,16 +274,16 @@ class FrameFeedBroadcaster:
         print(f"[FRAME-FEED] RTMP fatal: {hint}")
 
     def _idle_display_frame(self, full_loop: bool = False):
-        """Sebelum clip pertama: loop penuh talk_expressive agar host terlihat hidup.
-        Setelah bicara: ping-pong pendek di pose terakhir supaya muka tidak loncat.
+        """Sebelum clip pertama: loop talk_expressive.
+        Setelah bicara: tahan pose terakhir (bukan ping-pong — itu kelihatan ngadat).
         """
         n = len(self.idle_frames)
         if n <= 1:
             return self.idle_frames[0]
         if full_loop:
             return self.idle_frames[self.idle_idx % n]
-        window = min(self.idle_hold, n)
-        if window <= 1:
+        window = min(max(1, self.idle_hold), n)
+        if window <= 2:
             return self.idle_frames[self.idle_anchor % n]
         period = window * 2 - 2
         p = self._idle_ping % period
@@ -313,6 +317,7 @@ class FrameFeedBroadcaster:
             )
             if path and os.path.exists(path):
                 self.overlay_png_path = path
+                self._cache_overlay(path)
                 return
         except Exception as err:
             print(f"[FRAME-FEED] Overlay generate notice: {err}")
@@ -322,25 +327,34 @@ class FrameFeedBroadcaster:
         ):
             if os.path.exists(candidate):
                 self.overlay_png_path = candidate
+                self._cache_overlay(candidate)
                 return
         self.overlay_png_path = None
+        self._overlay_rgb = None
+        self._overlay_alpha = None
+
+    def _cache_overlay(self, path: str) -> None:
+        overlay = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+        if overlay is None:
+            self._overlay_rgb = None
+            self._overlay_alpha = None
+            return
+        if overlay.shape[0] != self.height or overlay.shape[1] != self.width:
+            overlay = cv2.resize(overlay, (self.width, self.height))
+        if overlay.shape[2] == 4:
+            self._overlay_alpha = overlay[:, :, 3:4].astype(np.float32) / 255.0
+            self._overlay_rgb = overlay[:, :, :3].astype(np.float32)
+        else:
+            self._overlay_alpha = np.ones((self.height, self.width, 1), dtype=np.float32)
+            self._overlay_rgb = overlay[:, :, :3].astype(np.float32)
 
     def _apply_overlay(self, frame: np.ndarray) -> np.ndarray:
-        if not self.overlay_png_path or not os.path.exists(self.overlay_png_path):
+        if self._overlay_alpha is None or self._overlay_rgb is None:
             return frame
         try:
-            overlay = cv2.imread(self.overlay_png_path, cv2.IMREAD_UNCHANGED)
-            if overlay is None:
-                return frame
-            if overlay.shape[0] != self.height or overlay.shape[1] != self.width:
-                overlay = cv2.resize(overlay, (self.width, self.height))
-            if overlay.shape[2] == 4:
-                alpha = overlay[:, :, 3:4].astype(np.float32) / 255.0
-                rgb = overlay[:, :, :3].astype(np.float32)
-                base = frame.astype(np.float32)
-                out = base * (1.0 - alpha) + rgb * alpha
-                return out.astype(np.uint8)
-            return overlay[:, :, :3]
+            base = frame.astype(np.float32)
+            out = base * (1.0 - self._overlay_alpha) + self._overlay_rgb * self._overlay_alpha
+            return out.astype(np.uint8)
         except Exception:
             return frame
 
@@ -559,6 +573,9 @@ class FrameFeedBroadcaster:
             return False
 
     def _collect_ai_queue(self, last_spoken, idle_abs: str):
+        now = time.time()
+        if now - self._queue_cache_at < 0.2 and self._queue_cache:
+            return [p for p in self._queue_cache if p != last_spoken]
         items = []
         # Raw packs (prioritas) — tanpa decode H264
         for path in glob.glob(os.path.join(self.output_folder, "**", "*.ffseg"), recursive=True):
@@ -586,7 +603,10 @@ class FrameFeedBroadcaster:
             except OSError:
                 continue
             items.append(path)
-        return sorted(items, key=_sequence_key)
+        items = sorted(items, key=_sequence_key)
+        self._queue_cache = items
+        self._queue_cache_at = now
+        return items
 
     def _cleanup(self, path: str, idle_abs: str):
         try:
@@ -623,17 +643,19 @@ class FrameFeedBroadcaster:
             return False
 
     def _ensure_playback(self, last_spoken, idle_abs: str) -> bool:
-        """Jangan terkunci idle: cek flag setiap kali, auto-start jika RTMP sudah on-air."""
+        """Hanya bicara setelah flag dari dashboard (setelah user klik Siarkan di IG).
+
+        Preview Instagram Producer = feed RTMP yang sama. Auto-play di sini
+        membuat host ngomong sebelum siaran publik.
+        """
         if self._is_playback_active():
             return True
-        queued = self._collect_ai_queue(last_spoken, idle_abs)
-        if self._rtmp_connected and queued:
-            return self._arm_playback(f"RTMP connected, {len(queued)} clip mengantre")
         now = time.time()
         if now - self._playback_nudge_at >= 5:
             self._playback_nudge_at = now
+            queued = self._collect_ai_queue(last_spoken, idle_abs)
             print(
-                "[FRAME-FEED] Idle — menunggu playback "
+                "[FRAME-FEED] Preview idle — menunggu konfirmasi Go Live "
                 f"(rtmp={'on' if self._rtmp_connected else 'off'}, "
                 f"clip={len(queued)})"
             )
@@ -674,8 +696,6 @@ class FrameFeedBroadcaster:
             sleep_for = next_deadline - time.perf_counter()
             if sleep_for > 0:
                 time.sleep(sleep_for)
-            else:
-                next_deadline = time.perf_counter()
         return None
 
     def _feed_ai_clip(self, video_path: str, *, fade_in: bool = True, prefetched=None) -> bool:
@@ -692,8 +712,7 @@ class FrameFeedBroadcaster:
             sleep_for = next_deadline - time.perf_counter()
             if sleep_for > 0:
                 time.sleep(sleep_for)
-            else:
-                next_deadline = time.perf_counter()
+            # Jangan reset clock jika telat — reset bikin burst frame lalu ngadat di IG.
 
         # --- Prefetched frames ---
         if prefetched is not None:
@@ -833,12 +852,11 @@ class FrameFeedBroadcaster:
                 nxt = self._peek_next_ai(pending, last_spoken, idle_abs)
                 came_from_idle = False
                 if not nxt:
-                    # Reset chain clock saat masuk idle — next AI soft-open lagi.
-                    self._chain_from_ai = False
-                    self._av_deadline = None
-                    self._prefetch.clear()
+                    idle_started = time.perf_counter()
                     nxt = self._feed_idle_until_ai(pending, last_spoken, idle_abs)
-                    came_from_idle = True
+                    came_from_idle = (time.perf_counter() - idle_started) > 0.15
+                    if came_from_idle:
+                        self._chain_from_ai = False
                     if not nxt:
                         if self._shutting_down:
                             break

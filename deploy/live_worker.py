@@ -209,16 +209,31 @@ class AILiveWorker:
 
         clean_name = host_name.lower().replace(".png", "").replace(".jpg", "").replace(".mp4", "").strip()
 
-        # Prefer exact clip names first — jangan jatuh ke namira.mp4 sebelum clip gesture dicek.
-        exact_names = [f"{clean_name}.mp4", f"{clean_name}_idle.mp4"]
-        if not clean_name.endswith("_talk_expressive") and clean_name not in ("talk_expressive",):
-            # Saat mencari host "namira", jangan ambil namira.mp4 dulu jika
-            # talk_expressive ada — itu sumber lipsync yang sama dengan idle.
+        gesture_tokens = (
+            "wave",
+            "nod",
+            "laugh",
+            "point_up",
+            "point_down",
+            "idle",
+            "think",
+            "talk_expressive",
+            "expressive",
+        )
+        is_specific_clip = any(
+            clean_name == token or clean_name.endswith("_" + token)
+            for token in gesture_tokens
+        )
+        if is_specific_clip:
+            exact_names = [f"{clean_name}.mp4"]
+        elif not clean_name.endswith("_talk_expressive"):
             exact_names = [
                 f"{clean_name}_talk_expressive.mp4",
                 f"{clean_name}.mp4",
                 f"{clean_name}_idle.mp4",
             ]
+        else:
+            exact_names = [f"{clean_name}.mp4", f"{clean_name}_idle.mp4"]
         for d in candidate_dirs:
             if not os.path.exists(d):
                 continue
@@ -266,21 +281,22 @@ class AILiveWorker:
         return None
 
     def _resolve_action_clip(self, host_type, host_name, action_tag):
-        """Selalu pakai talk_expressive — pose tubuh konsisten antar segmen.
+        """Pilih clip gesture sesuai action. Fallback ke talk_expressive bila file tidak ada.
 
-        Gesture WAVE/RAISE_HAND/dll ganti clip sumber dari frame-0 pose berbeda,
-        sehingga tangan terlihat loncat saat pindah video. Lipsync tetap natural
-        di wajah; tubuh mengikuti satu clip bicara yang sama.
+        Canvas 720x1280 (pad, bukan crop) menahan lonjakan resolusi antar clip.
         """
         host = (host_name or "namira").lower().strip()
-        # Abaikan action_tag untuk kontinuitas pose (kecuali idle eksplisit).
-        action = "talk_expressive"
-        if (action_tag or "").lower().strip() == "idle":
-            action = "idle"
-
+        action = (action_tag or "talk_expressive").lower().strip().replace("-", "_")
         aliases = {
             "talk_expressive": ["talk_expressive", "expressive"],
             "idle": ["idle"],
+            "wave": ["wave", "raise_hand"],
+            "raise_hand": ["wave", "raise_hand"],
+            "nod": ["nod"],
+            "laugh": ["laugh"],
+            "point_up": ["point_up"],
+            "point_down": ["point_down"],
+            "think": ["think", "nod"],
         }
         variants = aliases.get(action, [action])
         candidates = []
@@ -292,7 +308,7 @@ class AILiveWorker:
                     f"namira_{variant}",
                 ]
             )
-        if action != "idle":
+        if action not in ("idle", "talk_expressive"):
             candidates.append(f"{host}_talk_expressive")
             candidates.append("namira_talk_expressive")
         candidates.append(f"{host}_idle")
@@ -307,6 +323,7 @@ class AILiveWorker:
             seen.add(name)
             found = self._get_idle_video(host_type, name)
             if found:
+                print(f"[ACTION] {action} → {os.path.basename(found)}")
                 return found
         return self._get_idle_video(host_type, host)
 
