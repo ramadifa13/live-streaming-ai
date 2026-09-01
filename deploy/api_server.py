@@ -930,18 +930,45 @@ async def update_stream_product(req: UpdateProductRequest):
 @app.get("/stream/broadcast-status")
 async def broadcast_status():
     running = broadcaster_process is not None and broadcaster_process.poll() is None
+    rtmp_connected = False
+    rtmp_state = "disconnected"
+    rtmp_error = ""
+    if read_rtmp_status is not None:
+        rtmp_state, rtmp_error = read_rtmp_status(output_dir)
+        rtmp_connected = rtmp_state == "connected"
     if _broadcast_boot_state == "error" and _broadcast_boot_error:
         return {
             "success": False,
             "status": "error",
             "boot_state": "error",
             "error": _broadcast_boot_error,
+            "rtmp_connected": rtmp_connected,
+            "rtmp_state": rtmp_state,
         }
-    if _broadcast_boot_state == "starting" and not running:
-        return {"success": True, "status": "starting", "boot_state": "starting"}
-    if running:
-        return {"success": True, "status": "streaming", "boot_state": "running"}
-    return {"success": True, "status": "stopped", "boot_state": _broadcast_boot_state}
+    if rtmp_connected or running:
+        return {
+            "success": True,
+            "status": "streaming",
+            "boot_state": "running",
+            "rtmp_connected": rtmp_connected,
+            "rtmp_state": rtmp_state,
+        }
+    if _broadcast_boot_state == "starting":
+        return {
+            "success": True,
+            "status": "starting",
+            "boot_state": "starting",
+            "rtmp_connected": False,
+            "rtmp_state": rtmp_state,
+        }
+    return {
+        "success": True,
+        "status": "stopped",
+        "boot_state": _broadcast_boot_state,
+        "rtmp_connected": False,
+        "rtmp_state": rtmp_state,
+        "rtmp_error": rtmp_error,
+    }
 
 @app.get("/stream/status/{job_id}")
 async def get_job_status(job_id: str):

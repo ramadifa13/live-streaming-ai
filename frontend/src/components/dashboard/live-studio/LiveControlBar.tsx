@@ -232,23 +232,58 @@ export const LiveControlBar: React.FC = () => {
         connectingStageText: "Menghubungkan RTMP ke platform...",
       });
 
-      const bcastJson = await liveSessionService.startBroadcast(
-        {
-          rtmpUrl: normalizedUrl,
-          streamKey: normalizedKey,
-          sessionId,
-          avatarImage: selectedAvatar.image,
-          avatarVideo: "/avatars/namira.mp4",
-          productName: activeFeaturedProduct.name,
-          productPrice: String(activeFeaturedProduct.price).replace(/\D/g, ""),
-          productImageUrl: activeFeaturedProduct.image,
-          bannerImageUrl: activeFeaturedProduct.bannerImage,
-          platform: selectedPlatform,
-          stockCount: activeFeaturedProduct.stock,
-          ctaLabel: selectedPlatform === "Instagram Live" ? "DM Sekarang" : "Beli Sekarang",
-        },
-        controller.signal,
-      );
+      const httpMediaOnly = (url?: string) =>
+        url && /^https?:\/\//i.test(url) ? url : undefined;
+
+      let bcastJson: {
+        success?: boolean;
+        waitingForGoLive?: boolean;
+        message?: string;
+        error?: string;
+      };
+      try {
+        bcastJson = await liveSessionService.startBroadcast(
+          {
+            rtmpUrl: normalizedUrl,
+            streamKey: normalizedKey,
+            sessionId,
+            avatarImage: selectedAvatar.image,
+            avatarVideo: "/avatars/namira.mp4",
+            productName: activeFeaturedProduct.name,
+            productPrice: String(activeFeaturedProduct.price).replace(/\D/g, ""),
+            productImageUrl: httpMediaOnly(activeFeaturedProduct.image),
+            bannerImageUrl: httpMediaOnly(activeFeaturedProduct.bannerImage),
+            platform: selectedPlatform,
+            stockCount: activeFeaturedProduct.stock,
+            ctaLabel: selectedPlatform === "Instagram Live" ? "DM Sekarang" : "Beli Sekarang",
+          },
+          controller.signal,
+        );
+      } catch (broadcastErr) {
+        const msg =
+          broadcastErr instanceof Error ? broadcastErr.message : String(broadcastErr);
+        const looksLikeTimeout = /timeout|504|502|gateway/i.test(msg);
+        if (looksLikeTimeout && sessionId) {
+          useLiveSessionStore.setState({
+            connectingStageText: "RTMP mungkin sudah terhubung — memverifikasi...",
+          });
+          await liveSessionService.waitForRtmpConnected(sessionId, {
+            signal: controller.signal,
+            maxWaitMs: 25_000,
+            onProgress: (text) => {
+              if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
+              useLiveSessionStore.setState({ connectingStageText: text });
+            },
+          });
+          bcastJson = {
+            success: true,
+            waitingForGoLive: true,
+            message: "RTMP terhubung! Sedang menggenerate Video AI...",
+          };
+        } else {
+          throw broadcastErr;
+        }
+      }
 
       if (useLiveSessionStore.getState().connectAttemptId !== attemptId) {
         await liveSessionService.teardownSession(sessionId);

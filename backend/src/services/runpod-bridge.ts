@@ -176,16 +176,22 @@ export async function startRunPodBroadcast(
     return { success: true, status: "already_running" };
   }
 
-  const deadline = Date.now() + 60_000;
+  const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
-    const status = (await workerRequestWithRetry(
-      podId,
-      "/stream/broadcast-status",
-      { signal: AbortSignal.timeout(10_000) },
-      2,
-    ).catch(() => null)) as RunPodBroadcastResult & {
-      boot_state?: string;
-    };
+    const [status, queue] = await Promise.all([
+      workerRequestWithRetry(
+        podId,
+        "/stream/broadcast-status",
+        { signal: AbortSignal.timeout(8_000) },
+        1,
+      ).catch(() => null) as Promise<
+        (RunPodBroadcastResult & {
+          boot_state?: string;
+          rtmp_connected?: boolean;
+        }) | null
+      >,
+      getRunPodQueueStatus(podId),
+    ]);
 
     if (status?.status === "error" || status?.boot_state === "error") {
       throw new Error(
@@ -193,19 +199,30 @@ export async function startRunPodBroadcast(
       );
     }
 
+    const rtmpReady =
+      queue?.rtmp_connected === true ||
+      status?.rtmp_connected === true ||
+      queue?.rtmp_state === "connected";
     const running =
+      rtmpReady ||
       status?.status === "streaming" ||
       status?.status === "already_running" ||
       status?.boot_state === "running";
     if (running) {
-      return { success: true, status: status.status || "streaming" };
+      return { success: true, status: status?.status || "streaming" };
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  }
+
+  // Kickoff diterima worker — RTMP mungkin sudah connected walau polling lambat.
+  const finalQueue = await getRunPodQueueStatus(podId).catch(() => null);
+  if (finalQueue?.rtmp_connected || finalQueue?.rtmp_state === "connected") {
+    return { success: true, status: "streaming" };
   }
 
   throw new Error(
-    "Broadcast worker belum aktif setelah 60s — cek api_server.log dan broadcaster.log di pod",
+    "Broadcast worker belum aktif setelah 45s — cek api_server.log dan broadcaster.log di pod",
   );
 }
 

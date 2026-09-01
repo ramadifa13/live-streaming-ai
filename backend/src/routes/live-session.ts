@@ -347,14 +347,18 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       }
     }
 
+    // Jangan kirim data-URL base64 ke worker (bisa >5MB → timeout POST).
+    const httpMediaOnly = (url?: string) =>
+      url && /^https?:\/\//i.test(url) ? url : undefined;
+
     // Mulai RTMP stream ke platform → worker tampilkan idle video
     const result = await startRunPodBroadcast(podId, {
       rtmpUrl,
       streamKey,
       productName,
       productPrice,
-      productImageUrl,
-      bannerImageUrl,
+      productImageUrl: httpMediaOnly(productImageUrl),
+      bannerImageUrl: httpMediaOnly(bannerImageUrl),
       platform,
       stockCount,
       ctaLabel,

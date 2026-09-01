@@ -197,6 +197,37 @@ export const liveSessionService = {
     return await res.json();
   },
 
+  async waitForRtmpConnected(
+    sessionId: string,
+    options?: {
+      signal?: AbortSignal;
+      onProgress?: (stageText: string) => void;
+      maxWaitMs?: number;
+    },
+  ): Promise<void> {
+    const maxWaitMs = options?.maxWaitMs ?? 30_000;
+    const started = Date.now();
+
+    while (Date.now() - started < maxWaitMs) {
+      if (options?.signal?.aborted) {
+        throw new DOMException("Inisialisasi dibatalkan", "AbortError");
+      }
+
+      const status = await this.fetchPipelineStatus(sessionId);
+      if (status?.stageText && options?.onProgress) {
+        options.onProgress(String(status.stageText));
+      }
+      if (status?.isRtmpConnected) return;
+      if (status?.rtmpError) {
+        throw new Error(String(status.rtmpError));
+      }
+
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+
+    throw new Error("RTMP belum terdeteksi terhubung setelah menunggu.");
+  },
+
   async waitForPodReady(
     sessionId: string,
     options?: {
