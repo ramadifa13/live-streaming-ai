@@ -8,15 +8,36 @@ import urllib.request
 import math
 import re
 import signal
+import threading
 import traceback
 from collections import deque
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+try:
+    from rtmp_utils import (
+        FfmpegLogWatcher,
+        join_rtmp_url,
+        write_rtmp_status,
+    )
+except ImportError:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from rtmp_utils import (
+        FfmpegLogWatcher,
+        join_rtmp_url,
+        write_rtmp_status,
+    )
+
+try:
+    from video_canvas import ffmpeg_fit_filter, prefer_talk_clip
+except ImportError:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from video_canvas import ffmpeg_fit_filter, prefer_talk_clip
 
 class AIBroadcaster:
     def __init__(self, rtmp_url, idle_video_path, output_folder,
                  product_name="", product_price="", product_image_url="", banner_image_url=""):
         self.rtmp_url = rtmp_url
-        self.idle_video = idle_video_path
+        self.idle_video = prefer_talk_clip(idle_video_path) if idle_video_path else idle_video_path
         self.output_folder = output_folder
         self.product_name = product_name
         self.product_price = product_price
@@ -35,6 +56,9 @@ class AIBroadcaster:
         self._duration_cache = {}
         self._audio_cache = {}
         self._shutting_down = False
+        self._rtmp_fatal = False
+        self._rtmp_fatal_hint = ""
+        self._stderr_thread = None
         self._current_worker = None
         self.output_width = 720
         self.output_height = 1280
@@ -284,61 +308,117 @@ class AIBroadcaster:
         out_path = os.path.join(tmp_dir, "live_overlay.png")
         overlay.save(out_path, "PNG")
         self.overlay_png_path = out_path
+        public_overlay = os.path.join(self.output_folder, "overlay_live.png")
+        try:
+            overlay.save(public_overlay, "PNG")
+        except Exception as e:
+            print(f"[BROADCASTER] Gagal salin overlay_live.png: {e}")
         print(f"[BROADCASTER] PIL Live Overlay berhasil dirender: {out_path}")
 
     def _ensure_master_process(self):
-        status_file = os.path.join(self.output_folder, "rtmp_status.txt")
-        if self.master_process is None or self.master_process.poll() is not None:
+        if self._rtmp_fatal:
+            write_rtmp_status(self.output_folder, "failed", self._rtmp_fatal_hint)
+            return
+        if self.master_process is not None and self.master_process.poll() is None:
+            return
+
+        write_rtmp_status(self.output_folder, "connecting")
+        if self.master_process is not None:
+            print(
+                f"[BROADCASTER] Master FFmpeg keluar (exit code: {self.master_process.poll()})."
+            )
             try:
-                with open(status_file, "w") as f:
-                    f.write("disconnected")
+                self.master_process.stdin.close()
             except Exception:
                 pass
-
-            if self.master_process is not None:
-                print(f"[BROADCASTER] Master FFmpeg keluar (exit code: {self.master_process.poll()}). Menginisialisasi ulang...")
-                try:
-                    self.master_process.stdin.close()
-                except Exception:
-                    pass
-                try:
-                    self.master_process.terminate()
-                    self.master_process.wait(timeout=2)
-                except Exception:
-                    pass
-            print("[BROADCASTER] Membuka Master FFmpeg RTMP Ingest Connection...")
-            master_command = [
-                "ffmpeg",
-                "-y",
-                "-fflags", "+genpts+igndts+discardcorrupt",
-                "-use_wallclock_as_timestamps", "1",
-                "-f", "mpegts",
-                "-i", "pipe:0",
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-ar", "44100",
-                "-max_muxing_queue_size", "4096",
-                "-flvflags", "no_duration_filesize",
-                "-rtmp_live", "live",
-                "-f", "flv",
-                self.rtmp_url
-            ]
             try:
-                log_dir = "/workspace/ai_live_worker/logs"
-                os.makedirs(log_dir, exist_ok=True)
-                self.log_file = open(os.path.join(log_dir, "master_ffmpeg.log"), "a", encoding="utf-8")
-                self.master_process = subprocess.Popen(
-                    master_command,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.DEVNULL,
-                    stderr=self.log_file
-                )
-                self.master_process_start_time = time.time()
-                print(f"[BROADCASTER] Master FFmpeg aktif (PID: {self.master_process.pid})")
-            except Exception as e:
-                print(f"[BROADCASTER ERROR] Gagal memulai master FFmpeg: {e}")
-                self.master_process = None
+                self.master_process.terminate()
+                self.master_process.wait(timeout=2)
+            except Exception:
+                pass
+            # Instagram/Facebook mematikan session setelah I/O error —
+            # jangan publish ulang ke stream key yang sudah hangus.
+            self._rtmp_fatal = True
+            self._rtmp_fatal_hint = (
+                self._rtmp_fatal_hint
+                or "Koneksi RTMP terputus. Buat siaran baru di platform dan tempel Stream Key baru."
+            )
+            write_rtmp_status(self.output_folder, "failed", self._rtmp_fatal_hint)
+            print(f"[BROADCASTER] RTMP fatal — tidak reconnect: {self._rtmp_fatal_hint}")
+            return
+
+        print("[BROADCASTER] Membuka Master FFmpeg RTMP Ingest Connection...")
+        master_command = [
+            "ffmpeg",
+            "-y",
+            "-fflags", "+genpts+igndts+discardcorrupt",
+            "-err_detect", "ignore_err",
+            "-avoid_negative_ts", "make_zero",
+            "-f", "mpegts",
+            "-i", "pipe:0",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-ar", "44100",
+            "-max_muxing_queue_size", "4096",
+            "-flvflags", "no_duration_filesize",
+            "-rtmp_live", "live",
+            "-f", "flv",
+            self.rtmp_url,
+        ]
+        try:
+            log_dir = "/workspace/ai_live_worker/logs"
+            os.makedirs(log_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, "master_ffmpeg.log")
+            self.log_file = open(log_path, "a", encoding="utf-8")
+            self.master_process = subprocess.Popen(
+                master_command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            self.master_process_start_time = time.time()
+            watcher = FfmpegLogWatcher(
+                on_fatal=self._on_rtmp_fatal,
+                on_progress=lambda: (
+                    write_rtmp_status(self.output_folder, "connected")
+                    if not self._rtmp_fatal
+                    else None
+                ),
+            )
+
+            def _pump_stderr():
+                proc = self.master_process
+                if proc is None or proc.stderr is None:
+                    return
+                try:
+                    while True:
+                        chunk = proc.stderr.read(4096)
+                        if not chunk:
+                            break
+                        text = chunk.decode("utf-8", errors="ignore")
+                        try:
+                            self.log_file.write(text)
+                            self.log_file.flush()
+                        except Exception:
+                            pass
+                        watcher.ingest(text)
+                except Exception:
+                    pass
+
+            self._stderr_thread = threading.Thread(target=_pump_stderr, daemon=True)
+            self._stderr_thread.start()
+            print(f"[BROADCASTER] Master FFmpeg aktif (PID: {self.master_process.pid})")
+        except Exception as e:
+            print(f"[BROADCASTER ERROR] Gagal memulai master FFmpeg: {e}")
+            write_rtmp_status(self.output_folder, "failed", str(e))
+            self.master_process = None
+
+    def _on_rtmp_fatal(self, hint: str) -> None:
+        self._rtmp_fatal = True
+        self._rtmp_fatal_hint = hint
+        write_rtmp_status(self.output_folder, "failed", hint)
+        print(f"[BROADCASTER] RTMP fatal: {hint}")
 
     def _probe_cache_key(self, video_path):
         try:
@@ -430,7 +510,9 @@ class AIBroadcaster:
             "-ar", "44100",
             "-ac", "2",
             "-max_muxing_queue_size", "2048",
-            "-mpegts_flags", "+initial_discontinuity",
+            "-mpegts_flags", "+resend_headers+initial_discontinuity",
+            "-muxpreload", "0",
+            "-muxdelay", "0",
             "-flush_packets", "1",
             "-f", "mpegts",
             "pipe:1",
@@ -438,9 +520,7 @@ class AIBroadcaster:
 
     def _video_fade_chain(self, fade_in=0.0, fade_out=0.0, fade_out_start=None):
         scale = (
-            f"scale={self.output_width}:{self.output_height}:"
-            "force_original_aspect_ratio=increase,"
-            f"crop={self.output_width}:{self.output_height}"
+            ffmpeg_fit_filter(self.output_width, self.output_height)
         )
         parts = [scale]
         if fade_in > 0:
@@ -545,9 +625,8 @@ class AIBroadcaster:
         from_dur = self._probe_duration(from_path)
         offset = max(0.08, from_dur - fade)
         scale = (
-            f"scale={self.output_width}:{self.output_height}:"
-            "force_original_aspect_ratio=increase,"
-            f"crop={self.output_width}:{self.output_height},fps={self.output_fps}"
+            ffmpeg_fit_filter(self.output_width, self.output_height)
+            + f",fps={self.output_fps}"
         )
         has_overlay = bool(
             self.overlay_png_path and os.path.exists(self.overlay_png_path)
@@ -563,8 +642,8 @@ class AIBroadcaster:
             )
             cmd = [
                 "ffmpeg", "-y",
-                "-i", from_path,
-                "-i", to_path,
+                "-re", "-i", from_path,
+                "-re", "-i", to_path,
                 "-loop", "1", "-i", self.overlay_png_path,
                 "-filter_complex", fc,
                 "-map", "[vout]",
@@ -579,8 +658,8 @@ class AIBroadcaster:
             )
             cmd = [
                 "ffmpeg", "-y",
-                "-i", from_path,
-                "-i", to_path,
+                "-re", "-i", from_path,
+                "-re", "-i", to_path,
                 "-filter_complex", fc,
                 "-map", "[vout]",
                 "-map", "[aout]",
@@ -593,7 +672,7 @@ class AIBroadcaster:
         if self._shutting_down:
             return None
         self._ensure_master_process()
-        if self.master_process is None or self.master_process.stdin is None:
+        if self._rtmp_fatal or self.master_process is None or self.master_process.stdin is None:
             print("[BROADCASTER ERROR] Master FFmpeg pipe tidak tersedia.")
             return None
         try:
@@ -640,13 +719,11 @@ class AIBroadcaster:
         self._current_worker = None
         self.master_process = None
 
-        try:
-            with open(
-                os.path.join(self.output_folder, "rtmp_status.txt"), "w"
-            ) as f:
-                f.write("disconnected")
-        except Exception:
-            pass
+        write_rtmp_status(
+            self.output_folder,
+            "failed" if self._rtmp_fatal else "disconnected",
+            self._rtmp_fatal_hint,
+        )
 
     def _stream_file_async(
         self,
@@ -802,6 +879,13 @@ class AIBroadcaster:
 
         while not self._shutting_down:
             try:
+                if self._rtmp_fatal:
+                    print("[BROADCASTER] Menghentikan loop — RTMP sudah fatal.")
+                    break
+                if self.master_process is not None and self.master_process.poll() is not None:
+                    self._ensure_master_process()
+                    if self._rtmp_fatal:
+                        break
                 # 0. Hot-Swap Video Overlay
                 update_file = os.path.join(self.output_folder, "update_overlay.json")
                 if os.path.exists(update_file):
@@ -970,20 +1054,6 @@ class AIBroadcaster:
                     else:
                         time.sleep(0.5)
 
-                # Status RTMP
-                if self.master_process and self.master_process.poll() is None:
-                    if time.time() - self.master_process_start_time > 3:
-                        try:
-                            with open(
-                                os.path.join(
-                                    self.output_folder, "rtmp_status.txt"
-                                ),
-                                "w",
-                            ) as f:
-                                f.write("connected")
-                        except Exception:
-                            pass
-
                 time.sleep(0.05)
 
             except Exception as loop_err:
@@ -995,14 +1065,12 @@ class AIBroadcaster:
 if __name__ == "__main__":
     import json
 
-    RTMP_BASE_URL = os.environ.get("RTMP_URL", "").rstrip("/")
+    RTMP_BASE_URL = os.environ.get("RTMP_URL", "")
     STREAM_KEY = os.environ.get("STREAM_KEY", "")
-    if not RTMP_BASE_URL or not STREAM_KEY:
+    if not RTMP_BASE_URL.strip() or not STREAM_KEY.strip():
         raise RuntimeError("RTMP_URL dan STREAM_KEY wajib diisi melalui environment")
-    if RTMP_BASE_URL.endswith(f"/{STREAM_KEY}"):
-        RTMP_URL = RTMP_BASE_URL
-    else:
-        RTMP_URL = f"{RTMP_BASE_URL}/{STREAM_KEY}"
+    RTMP_URL = join_rtmp_url(RTMP_BASE_URL, STREAM_KEY)
+    print(f"[BROADCASTER] Target RTMP: {RTMP_URL.split('?')[0]}?**")
     
     OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "/workspace/ai_live_worker/output")
     IDLE_VIDEO = os.environ.get(
@@ -1050,9 +1118,32 @@ if __name__ == "__main__":
         signal.signal(signal.SIGINT, _handle_termination)
 
         broadcaster.start_loop()
+        if broadcaster._rtmp_fatal:
+            sys.exit(2)
     except KeyboardInterrupt:
         print("\n[BROADCASTER] Siaran dimatikan.")
     finally:
         if broadcaster is not None:
             broadcaster.shutdown()
+
+
+def prepare_overlay_files(
+    output_folder,
+    product_name="",
+    product_price="",
+    product_image_url="",
+    banner_image_url="",
+):
+    """Render overlay PNG tanpa membuka koneksi RTMP (dipakai frame_feed)."""
+    dummy = object.__new__(AIBroadcaster)
+    dummy.output_folder = output_folder
+    dummy.product_name = product_name or ""
+    dummy.product_price = product_price or ""
+    dummy.product_image_url = product_image_url or ""
+    dummy.banner_image_url = banner_image_url or ""
+    dummy.local_product_img = None
+    dummy.local_banner_img = None
+    dummy.overlay_png_path = None
+    dummy._prepare_overlay_assets()
+    return dummy.overlay_png_path
 

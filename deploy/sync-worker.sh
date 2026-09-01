@@ -11,26 +11,65 @@ DEPLOY_DIR="${DEPLOY_DIR:-$REPO_DIR/deploy}"
 FORCE_ASSETS="${FORCE_ASSETS:-0}"
 
 # Buat worker .env dari deploy/.env (jika ada) atau .env.example.
+# Jika .env worker sudah ada, tambahkan key yang belum ada (jangan override).
 bootstrap_worker_env() {
-	if [ -f "$WORKER_DIR/.env" ]; then
-		return 0
-	fi
-
 	mkdir -p "$WORKER_DIR"
 
+	if [ ! -f "$WORKER_DIR/.env" ]; then
+		if [ -f "$DEPLOY_DIR/.env" ]; then
+			echo "[ENV] Membuat $WORKER_DIR/.env dari deploy/.env ..."
+			cp -f "$DEPLOY_DIR/.env" "$WORKER_DIR/.env"
+			return 0
+		fi
+		if [ -f "$DEPLOY_DIR/.env.example" ]; then
+			echo "[ENV] deploy/.env tidak ada — membuat $WORKER_DIR/.env dari .env.example ..."
+			cp -f "$DEPLOY_DIR/.env.example" "$WORKER_DIR/.env"
+			return 0
+		fi
+		echo "[WARN] Tidak ada deploy/.env atau .env.example — worker memakai default env."
+		return 0
+	fi
+
+	local src=""
 	if [ -f "$DEPLOY_DIR/.env" ]; then
-		echo "[ENV] Membuat $WORKER_DIR/.env dari deploy/.env ..."
-		cp -f "$DEPLOY_DIR/.env" "$WORKER_DIR/.env"
+		src="$DEPLOY_DIR/.env"
+	elif [ -f "$DEPLOY_DIR/.env.example" ]; then
+		src="$DEPLOY_DIR/.env.example"
+	else
 		return 0
 	fi
 
-	if [ -f "$DEPLOY_DIR/.env.example" ]; then
-		echo "[ENV] deploy/.env tidak ada — membuat $WORKER_DIR/.env dari .env.example ..."
-		cp -f "$DEPLOY_DIR/.env.example" "$WORKER_DIR/.env"
-		return 0
-	fi
-
-	echo "[WARN] Tidak ada deploy/.env atau .env.example — worker memakai default env."
+	# Merge key yang belum ada — supaya BROADCAST_MODE=frame_feed masuk ke pod lama.
+	python3 - "$src" "$WORKER_DIR/.env" <<'PY' || true
+import sys
+src, dest = sys.argv[1], sys.argv[2]
+def parse(path):
+    data = {}
+    order = []
+    with open(path, "r", encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[7:].strip()
+            key, val = line.split("=", 1)
+            key = key.strip()
+            if key and key not in data:
+                data[key] = raw if raw.endswith("\n") else raw + "\n"
+                order.append(key)
+    return data, order
+src_data, src_order = parse(src)
+dest_data, _ = parse(dest)
+missing = [k for k in src_order if k not in dest_data]
+if not missing:
+    sys.exit(0)
+with open(dest, "a", encoding="utf-8") as fh:
+    fh.write("\n# merged from deploy .env\n")
+    for key in missing:
+        fh.write(src_data[key])
+print("[ENV] Ditambah ke worker .env:", ", ".join(missing))
+PY
 }
 
 # Pulihkan pip di venv worker jika hilang/rusak.

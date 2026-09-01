@@ -24,6 +24,7 @@ import { liveSessionService, toLiveProductSnapshot } from "@/services/liveSessio
 import { oauthService } from "@/services/oauthService";
 import { copyToClipboard } from "@/utils/clipboard";
 import { formatTime } from "@/utils/formatters";
+import { isValidRtmpUrl, normalizeRtmpInput } from "@/utils/rtmp";
 import { LiveMetricsBar } from "@/components/dashboard/LiveMetricsBar";
 import { ChatMessage } from "@/app/dashboard/types";
 
@@ -111,16 +112,7 @@ export const LiveControlBar: React.FC = () => {
 
     const attemptId = Date.now();
     const controller = new AbortController();
-
-    useLiveSessionStore.setState({
-      isConnectingLive: true,
-      hasConfirmedBroadcast: false,
-      connectAttemptId: attemptId,
-      connectAbortController: controller,
-    });
-    showToast(`Menghubungkan ke server ${selectedPlatform}... Memverifikasi RTMP Ingest Handshake...`);
-
-    const activeTargetRtmp =
+    const { rtmpUrl: normalizedUrl, streamKey: normalizedKey } = normalizeRtmpInput(
       customRtmpUrl !== ""
         ? customRtmpUrl
         : selectedPlatform.includes("Instagram")
@@ -131,8 +123,35 @@ export const LiveControlBar: React.FC = () => {
               ? "rtmp://live.shopee.co.id/live/"
               : selectedPlatform.includes("TikTok")
                 ? "rtmp://live.tiktok.com/live/"
-                : "rtmp://live.livestreamer.ai/live";
+                : "rtmp://live.livestreamer.ai/live",
+      streamKey,
+    );
 
+    if (!normalizedKey) {
+      showToast(
+        "Tempel Stream Key dari platform dulu. Di Instagram, key lama yang sudah putus tidak bisa dipakai ulang — buat siaran baru.",
+      );
+      return;
+    }
+    if (!isValidRtmpUrl(normalizedUrl)) {
+      showToast("RTMP URL tidak valid. Harus diawali rtmp:// atau rtmps://");
+      return;
+    }
+    if (normalizedUrl !== customRtmpUrl || normalizedKey !== streamKey) {
+      setCustomRtmpUrl(normalizedUrl);
+      setStreamKey(normalizedKey);
+    }
+
+    useLiveSessionStore.setState({
+      isConnectingLive: true,
+      hasConfirmedBroadcast: false,
+      connectAttemptId: attemptId,
+      connectAbortController: controller,
+      pipelineStatus: null,
+    });
+    showToast(`Menghubungkan ke server ${selectedPlatform}... Memverifikasi RTMP Ingest Handshake...`);
+
+    let createdSessionId: string | null = null;
     try {
       connectingAbortRef.current = controller;
 
@@ -159,15 +178,20 @@ export const LiveControlBar: React.FC = () => {
         controller.signal,
       );
 
-      if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
-
       const sessionId = sessionJson.data?.id;
       if (!sessionId) {
         throw new Error("Sesi live tidak dibuat oleh server");
       }
+      createdSessionId = sessionId;
+
+      if (useLiveSessionStore.getState().connectAttemptId !== attemptId) {
+        await liveSessionService.teardownSession(sessionId);
+        return;
+      }
 
       useLiveSessionStore.setState({
         currentLiveSessionId: sessionId,
+        liveSessionPhase: "pending",
         connectingStageText: "Mengalokasikan Cloud GPU RTX 4090...",
       });
 
@@ -179,7 +203,10 @@ export const LiveControlBar: React.FC = () => {
         },
       });
 
-      if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
+      if (useLiveSessionStore.getState().connectAttemptId !== attemptId) {
+        await liveSessionService.teardownSession(sessionId);
+        return;
+      }
 
       useLiveSessionStore.setState({
         connectingStageText: "Menghubungkan RTMP ke platform...",
@@ -187,9 +214,9 @@ export const LiveControlBar: React.FC = () => {
 
       const bcastJson = await liveSessionService.startBroadcast(
         {
-          rtmpUrl: activeTargetRtmp,
-          streamKey: streamKey,
-          sessionId: sessionJson.data?.id,
+          rtmpUrl: normalizedUrl,
+          streamKey: normalizedKey,
+          sessionId,
           avatarImage: selectedAvatar.image,
           avatarVideo: "/avatars/namira.mp4",
           productName: activeFeaturedProduct.name,
@@ -203,7 +230,10 @@ export const LiveControlBar: React.FC = () => {
         controller.signal,
       );
 
-      if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
+      if (useLiveSessionStore.getState().connectAttemptId !== attemptId) {
+        await liveSessionService.teardownSession(sessionId);
+        return;
+      }
 
       if (bcastJson.success) {
         useLiveSessionStore.setState({
@@ -228,10 +258,13 @@ export const LiveControlBar: React.FC = () => {
               : `RTMP terhubung! Menunggu ${selectedPlatform} memulai live...`),
         );
       } else {
+        await liveSessionService.teardownSession(sessionId);
         useLiveSessionStore.setState({
           isConnectingLive: false,
           isWaitingForGoLive: false,
           currentLiveSessionId: null,
+          liveSessionPhase: "idle",
+          pipelineStatus: null,
         });
         showToast(`Gagal terhubung ke ${selectedPlatform}: ${bcastJson.error || "Server RTMP menolak koneksi."}`);
       }
@@ -240,10 +273,13 @@ export const LiveControlBar: React.FC = () => {
       if (connectingAbortRef.current?.signal.aborted) return;
       const message =
         err instanceof Error ? err.message : "Error koneksi: Pastikan server backend online.";
+      await liveSessionService.teardownSession(createdSessionId);
       useLiveSessionStore.setState({
         isConnectingLive: false,
         isWaitingForGoLive: false,
         currentLiveSessionId: null,
+        liveSessionPhase: "idle",
+        pipelineStatus: null,
       });
       showToast(message);
     }
@@ -481,6 +517,11 @@ export const LiveControlBar: React.FC = () => {
                       Salin
                     </button>
                   </div>
+                  {selectedPlatform.includes("Instagram") && (
+                    <p className="mt-1 text-[8.5px] text-amber-400/90 leading-relaxed">
+                      Stream key Instagram sekali pakai. Kalau siaran putus, buat live baru di Instagram lalu tempel key yang baru.
+                    </p>
+                  )}
                 </div>
 
                 {!selectedPlatform.toLowerCase().includes("custom") && (

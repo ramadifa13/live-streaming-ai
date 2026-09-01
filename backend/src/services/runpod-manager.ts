@@ -351,6 +351,11 @@ async function throwIfBootAborted(
   shouldAbort?: () => boolean,
 ): Promise<void> {
   if (!shouldAbort?.() || !podId) return;
+  const staticPodId = (process.env.RUNPOD_POD_ID || "").trim();
+  if (staticPodId && podId === staticPodId) {
+    // stopSession yang memutuskan pause/terminate pod statis.
+    throw new Error("Pod bootstrap dibatalkan (sesi dihentikan)");
+  }
   console.log(
     `[RunPodManager] [Pod ${podId}] Bootstrap dibatalkan — terminate pod...`,
   );

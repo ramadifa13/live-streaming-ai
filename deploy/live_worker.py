@@ -164,22 +164,28 @@ class AILiveWorker:
             target_dir = getattr(self, f"assets_{host_type}")
             if not os.path.exists(target_dir):
                 continue
-            for f in os.listdir(target_dir):
-                if f.endswith(".mp4") and not f.startswith("temp_"):
-                    video_path = os.path.join(target_dir, f)
-                    try:
-                        _get_avatar_materials(
-                            video_path=video_path,
-                            bbox_shift=0,
-                            extra_margin=10,
-                            version="v15",
-                            parsing_mode="jaw",
-                            vae=vae,
-                            fp=fp,
-                            default_fps=25,
-                        )
-                    except Exception as e:
-                        print(f"[WARMUP WARNING] Pre-cache {f} notice: {e}")
+            files = [
+                f
+                for f in os.listdir(target_dir)
+                if f.endswith(".mp4") and not f.startswith("temp_")
+            ]
+            talk_clips = [f for f in files if "talk_expressive" in f.lower()]
+            # Hanya cache clip lipsync. Precache semua gesture bisa OOM / force-close.
+            for f in talk_clips or files[:1]:
+                video_path = os.path.join(target_dir, f)
+                try:
+                    _get_avatar_materials(
+                        video_path=video_path,
+                        bbox_shift=0,
+                        extra_margin=10,
+                        version="v15",
+                        parsing_mode="jaw",
+                        vae=vae,
+                        fp=fp,
+                        default_fps=25,
+                    )
+                except Exception as e:
+                    print(f"[WARMUP WARNING] Pre-cache {f} notice: {e}")
 
     def _get_idle_video(self, host_type, host_name):
         """Cari file bahan baku video di folder 2D/3D dengan multi-directory fallback"""
@@ -205,6 +211,14 @@ class AILiveWorker:
 
         # Prefer exact clip names first — jangan jatuh ke namira.mp4 sebelum clip gesture dicek.
         exact_names = [f"{clean_name}.mp4", f"{clean_name}_idle.mp4"]
+        if not clean_name.endswith("_talk_expressive") and clean_name not in ("talk_expressive",):
+            # Saat mencari host "namira", jangan ambil namira.mp4 dulu jika
+            # talk_expressive ada — itu sumber lipsync yang sama dengan idle.
+            exact_names = [
+                f"{clean_name}_talk_expressive.mp4",
+                f"{clean_name}.mp4",
+                f"{clean_name}_idle.mp4",
+            ]
         for d in candidate_dirs:
             if not os.path.exists(d):
                 continue

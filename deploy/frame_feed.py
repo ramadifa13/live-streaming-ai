@@ -30,6 +30,18 @@ from typing import Deque, List, Optional
 import cv2
 import numpy as np
 
+try:
+    from rtmp_utils import FfmpegLogWatcher, join_rtmp_url, write_rtmp_status
+except ImportError:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from rtmp_utils import FfmpegLogWatcher, join_rtmp_url, write_rtmp_status
+
+try:
+    from video_canvas import fit_bgr, prefer_talk_clip
+except ImportError:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from video_canvas import fit_bgr, prefer_talk_clip
+
 
 def _sequence_key(path: str):
     basename = os.path.basename(path.rstrip("/\\"))
@@ -107,9 +119,7 @@ class _PrefetchCache:
                 loaded = []
                 for frame, chunk in it:
                     if frame.shape[1] != self.width or frame.shape[0] != self.height:
-                        frame = cv2.resize(
-                            frame, (self.width, self.height), interpolation=cv2.INTER_AREA
-                        )
+                        frame = fit_bgr(frame, self.width, self.height)
                     loaded.append((frame, chunk))
                 with self._lock:
                     if token == self._token and self.path == path:
@@ -136,22 +146,7 @@ class _PrefetchCache:
 
 def _prefer_talk_visual(idle_path: str) -> str:
     """Pakai talk_expressive sebagai visual idle bila tersedia — pose nyambung."""
-    if not idle_path:
-        return idle_path
-    directory = os.path.dirname(idle_path) or "."
-    base = os.path.basename(idle_path)
-    stem = os.path.splitext(base)[0]
-    host = stem.replace("_idle", "").replace("_talk_expressive", "") or "namira"
-    for name in (
-        f"{host}_talk_expressive.mp4",
-        "namira_talk_expressive.mp4",
-        "talk_expressive.mp4",
-    ):
-        candidate = os.path.join(directory, name)
-        if os.path.exists(candidate):
-            print(f"[FRAME-FEED] Visual idle → {name} (pose match talk clips)")
-            return candidate
-    return idle_path
+    return prefer_talk_clip(idle_path)
 
 
 def _load_frames(video_path: str, width: int, height: int):
@@ -163,9 +158,7 @@ def _load_frames(video_path: str, width: int, height: int):
         ok, frame = cap.read()
         if not ok:
             break
-        if frame.shape[1] != width or frame.shape[0] != height:
-            frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
-        frames.append(frame)
+        frames.append(fit_bgr(frame, width, height))
     cap.release()
     if not frames:
         raise RuntimeError(f"Video kosong: {video_path}")
@@ -235,6 +228,9 @@ class FrameFeedBroadcaster:
         print(f"[FRAME-FEED] Memuat frame idle dari {os.path.basename(visual_path)}...")
         self.idle_frames = _load_frames(visual_path, self.width, self.height)
         self.idle_idx = 0
+        self.idle_anchor = 0
+        self.idle_hold = max(1, int(os.environ.get("IDLE_HOLD_FRAMES", "16")))
+        self._idle_ping = 0
 
         self._shutting_down = False
         self.ffmpeg = None
@@ -254,22 +250,75 @@ class FrameFeedBroadcaster:
 
         os.makedirs(self.output_folder, exist_ok=True)
         self._rtmp_status_path = os.path.join(self.output_folder, "rtmp_status.txt")
+        self._rtmp_fatal = False
+        self._rtmp_fatal_hint = ""
+        self._stderr_thread = None
         self._start_encoder()
 
-    def _set_rtmp_status(self, connected: bool) -> None:
-        try:
-            with open(self._rtmp_status_path, "w", encoding="utf-8") as fh:
-                fh.write("connected" if connected else "disconnected")
-        except Exception:
-            pass
+    def _set_rtmp_status(self, connected: bool, error: str = "") -> None:
+        if self._rtmp_fatal and connected:
+            return
+        write_rtmp_status(
+            self.output_folder,
+            "connected" if connected else ("failed" if self._rtmp_fatal else "disconnected"),
+            error or self._rtmp_fatal_hint,
+        )
+
+    def _on_rtmp_fatal(self, hint: str) -> None:
+        self._rtmp_fatal = True
+        self._rtmp_fatal_hint = hint
+        write_rtmp_status(self.output_folder, "failed", hint)
+        print(f"[FRAME-FEED] RTMP fatal: {hint}")
+
+    def _idle_display_frame(self):
+        """Idle tidak mengitari seluruh klip — itu menggeser pose menjauh dari
+        cycle MuseTalk. Ping-pong ~0.6 detik di sekitar frame terakhir bicara
+        supaya idle→bicara tidak ganti muka/framing.
+        """
+        n = len(self.idle_frames)
+        if n <= 1:
+            return self.idle_frames[0]
+        window = min(self.idle_hold, n)
+        if window <= 1:
+            return self.idle_frames[self.idle_anchor % n]
+        period = window * 2 - 2
+        p = self._idle_ping % period
+        off = p if p < window else period - p
+        return self.idle_frames[(self.idle_anchor + off) % n]
+
+    def _advance_idle_hold(self) -> None:
+        self._idle_ping += 1
+
+    def _lock_idle_anchor(self, frames_played: int) -> None:
+        n = max(1, len(self.idle_frames))
+        self.idle_anchor = (self.idle_anchor + max(0, frames_played)) % n
+        self._idle_ping = 0
+        self.idle_idx = self.idle_anchor
 
     def _prepare_overlay(self):
-        """Reuse overlay PNG dari broadcaster segment bila sudah digenerate."""
-        candidate = os.path.join(self.output_folder, "overlay_live.png")
-        if os.path.exists(candidate):
-            self.overlay_png_path = candidate
-            return
-        # Lazy: biarkan tanpa overlay; hot-swap file tetap dipantau di loop.
+        """Generate overlay PNG (nama file harus overlay_live.png, sama dengan hot-swap)."""
+        try:
+            from broadcaster import prepare_overlay_files
+
+            path = prepare_overlay_files(
+                self.output_folder,
+                product_name=self.product_name,
+                product_price=self.product_price,
+                product_image_url=self.product_image_url,
+                banner_image_url=self.banner_image_url,
+            )
+            if path and os.path.exists(path):
+                self.overlay_png_path = path
+                return
+        except Exception as err:
+            print(f"[FRAME-FEED] Overlay generate notice: {err}")
+        for candidate in (
+            os.path.join(self.output_folder, "overlay_live.png"),
+            os.path.join(self.output_folder, "tmp_assets", "live_overlay.png"),
+        ):
+            if os.path.exists(candidate):
+                self.overlay_png_path = candidate
+                return
         self.overlay_png_path = None
 
     def _apply_overlay(self, frame: np.ndarray) -> np.ndarray:
@@ -358,6 +407,8 @@ class FrameFeedBroadcaster:
             str(self.sample_rate),
             "-ac",
             "2",
+            "-flvflags",
+            "no_duration_filesize",
             "-f",
             "flv",
             "-rtmp_live",
@@ -382,29 +433,51 @@ class FrameFeedBroadcaster:
         self._fifo_thread.start()
 
         print("[FRAME-FEED] Menyalakan encoder RTMP (satu sesi kontinu)...")
+        write_rtmp_status(self.output_folder, "connecting")
+        log_dir = "/workspace/ai_live_worker/logs"
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "frame_feed_ffmpeg.log")
+        self.log_file = open(log_path, "a", encoding="utf-8")
         self.ffmpeg = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
+        watcher = FfmpegLogWatcher(
+            on_fatal=self._on_rtmp_fatal,
+            on_progress=lambda: self._set_rtmp_status(True),
+        )
+
+        def _pump_stderr():
+            proc = self.ffmpeg
+            if proc is None or proc.stderr is None:
+                return
+            try:
+                while True:
+                    chunk = proc.stderr.read(4096)
+                    if not chunk:
+                        break
+                    text = chunk.decode("utf-8", errors="ignore")
+                    try:
+                        self.log_file.write(text)
+                        self.log_file.flush()
+                    except Exception:
+                        pass
+                    watcher.ingest(text)
+            except Exception:
+                pass
+
+        self._stderr_thread = threading.Thread(target=_pump_stderr, daemon=True)
+        self._stderr_thread.start()
+
         if not ready.wait(timeout=15):
             raise RuntimeError("Timeout membuka FIFO frame-feed")
         if err_box:
             raise err_box[0]
         if self.ffmpeg.poll() is not None:
-            err = self.ffmpeg.stderr.read().decode("utf-8", errors="ignore") if self.ffmpeg.stderr else ""
-            raise RuntimeError(f"FFmpeg frame-feed gagal start: {err[:500]}")
-
-        self._set_rtmp_status(True)
-        # Legacy flag (queue-status lama); primary = rtmp_status.txt
-        flag = os.path.join(self.output_folder, "rtmp_connected.flag")
-        try:
-            with open(flag, "w", encoding="utf-8") as fh:
-                fh.write("connected")
-        except Exception:
-            pass
-        print("[FRAME-FEED] Encoder siap — status RTMP: connected (menunggu ingest platform).")
+            raise RuntimeError("FFmpeg frame-feed gagal start — cek logs/frame_feed_ffmpeg.log")
+        print("[FRAME-FEED] Encoder siap — menunggu handshake RTMP (belum connected).")
 
     def shutdown(self):
         if self._shutting_down:
@@ -530,8 +603,8 @@ class FrameFeedBroadcaster:
                 self._av_deadline = next_deadline
                 return nxt
 
-            frame = self.idle_frames[self.idle_idx % len(self.idle_frames)]
-            self.idle_idx = (self.idle_idx + 1) % len(self.idle_frames)
+            frame = self._idle_display_frame()
+            self._advance_idle_hold()
             if not self._write_av(frame, silence):
                 return None
 
@@ -562,6 +635,7 @@ class FrameFeedBroadcaster:
 
         # --- Prefetched frames ---
         if prefetched is not None:
+            played = 0
             for idx, (frame, chunk) in enumerate(prefetched):
                 if self._shutting_down:
                     break
@@ -569,11 +643,14 @@ class FrameFeedBroadcaster:
                     gain = (idx + 1) / float(fade_frames)
                     samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) * gain
                     chunk = np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
+                frame = fit_bgr(frame, self.width, self.height)
                 if not self._write_av(frame, chunk):
                     return False
                 ok_any = True
-                self.idle_idx = (self.idle_idx + 1) % len(self.idle_frames)
+                played += 1
                 _pace()
+            if ok_any:
+                self._lock_idle_anchor(played)
             self._av_deadline = next_deadline
             return ok_any
 
@@ -596,7 +673,7 @@ class FrameFeedBroadcaster:
                 if self._shutting_down:
                     break
                 if frame.shape[1] != self.width or frame.shape[0] != self.height:
-                    frame = cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_AREA)
+                    frame = fit_bgr(frame, self.width, self.height)
                 if fade_frames and idx < fade_frames:
                     gain = (idx + 1) / float(fade_frames)
                     samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) * gain
@@ -604,9 +681,10 @@ class FrameFeedBroadcaster:
                 if not self._write_av(frame, chunk):
                     return False
                 ok_any = True
-                self.idle_idx = (self.idle_idx + 1) % len(self.idle_frames)
                 idx += 1
                 _pace()
+            if ok_any:
+                self._lock_idle_anchor(idx)
             self._av_deadline = next_deadline
             return ok_any
 
@@ -625,7 +703,7 @@ class FrameFeedBroadcaster:
             if not ok:
                 break
             if frame.shape[1] != self.width or frame.shape[0] != self.height:
-                frame = cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_AREA)
+                frame = fit_bgr(frame, self.width, self.height)
 
             chunk = pcm[audio_pos : audio_pos + self.bytes_per_audio_frame]
             audio_pos += self.bytes_per_audio_frame
@@ -636,10 +714,12 @@ class FrameFeedBroadcaster:
                 cap.release()
                 return False
             ok_any = True
-            self.idle_idx = (self.idle_idx + 1) % len(self.idle_frames)
             _pace()
 
         cap.release()
+        if ok_any:
+            played = max(1, audio_pos // max(1, self.bytes_per_audio_frame))
+            self._lock_idle_anchor(played)
         self._av_deadline = next_deadline
         return ok_any
 
@@ -654,24 +734,35 @@ class FrameFeedBroadcaster:
 
         while not self._shutting_down:
             try:
+                if self._rtmp_fatal:
+                    print("[FRAME-FEED] Menghentikan loop — RTMP sudah fatal.")
+                    break
                 if self.ffmpeg and self.ffmpeg.poll() is not None:
-                    err = ""
-                    if self.ffmpeg.stderr:
-                        try:
-                            err = self.ffmpeg.stderr.read().decode("utf-8", errors="ignore")[-800:]
-                        except Exception:
-                            pass
+                    if not self._rtmp_fatal:
+                        self._rtmp_fatal = True
+                        self._rtmp_fatal_hint = (
+                            self._rtmp_fatal_hint
+                            or "Koneksi RTMP terputus. Buat siaran baru di platform dan tempel Stream Key baru."
+                        )
                     self._set_rtmp_status(False)
-                    print(f"[FRAME-FEED] Encoder mati: {err}")
+                    print(f"[FRAME-FEED] Encoder mati: {self._rtmp_fatal_hint}")
                     break
 
                 # Hot-swap overlay
                 update_file = os.path.join(self.output_folder, "update_overlay.json")
                 if os.path.exists(update_file):
                     try:
-                        overlay = os.path.join(self.output_folder, "overlay_live.png")
-                        if os.path.exists(overlay):
-                            self.overlay_png_path = overlay
+                        with open(update_file, "r", encoding="utf-8") as fh:
+                            data = json.load(fh)
+                        self.product_name = data.get("product_name", self.product_name)
+                        self.product_price = data.get("product_price", self.product_price)
+                        self.product_image_url = data.get(
+                            "product_image_url", self.product_image_url
+                        )
+                        self.banner_image_url = data.get(
+                            "banner_image_url", self.banner_image_url
+                        )
+                        self._prepare_overlay()
                         os.remove(update_file)
                         print("[FRAME-FEED] Overlay diperbarui")
                     except Exception as err:
@@ -704,7 +795,7 @@ class FrameFeedBroadcaster:
                     self._prefetch.request(pending[0])
 
                 prefetched = self._prefetch.take(path)
-                fade_in = came_from_idle or not self._chain_from_ai
+                fade_in = (not came_from_idle) and (not self._chain_from_ai)
                 played = self._feed_ai_clip(path, fade_in=fade_in, prefetched=prefetched)
                 if played:
                     last_spoken = path
@@ -722,14 +813,12 @@ class FrameFeedBroadcaster:
 
 
 if __name__ == "__main__":
-    RTMP_BASE_URL = os.environ.get("RTMP_URL", "").rstrip("/")
+    RTMP_BASE_URL = os.environ.get("RTMP_URL", "")
     STREAM_KEY = os.environ.get("STREAM_KEY", "")
-    if not RTMP_BASE_URL or not STREAM_KEY:
+    if not RTMP_BASE_URL.strip() or not STREAM_KEY.strip():
         raise RuntimeError("RTMP_URL dan STREAM_KEY wajib diisi")
-    if RTMP_BASE_URL.endswith(f"/{STREAM_KEY}"):
-        RTMP_URL = RTMP_BASE_URL
-    else:
-        RTMP_URL = f"{RTMP_BASE_URL}/{STREAM_KEY}"
+    RTMP_URL = join_rtmp_url(RTMP_BASE_URL, STREAM_KEY)
+    print(f"[FRAME-FEED] Target RTMP: {RTMP_URL.split('?')[0]}?**")
 
     OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "/workspace/ai_live_worker/output")
     IDLE_VIDEO = os.environ.get(
@@ -778,6 +867,8 @@ if __name__ == "__main__":
         signal.signal(signal.SIGTERM, _handle_termination)
         signal.signal(signal.SIGINT, _handle_termination)
         broadcaster.start_loop()
+        if broadcaster._rtmp_fatal:
+            sys.exit(2)
     except KeyboardInterrupt:
         print("\n[FRAME-FEED] Dimatikan.")
     finally:

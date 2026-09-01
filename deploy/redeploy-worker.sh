@@ -55,6 +55,7 @@ ensure_worker_python_deps
 echo "[4/5] Menghentikan proses worker lama ..."
 pkill -9 -f "api_server.py" 2>/dev/null || true
 pkill -9 -f "broadcaster.py" 2>/dev/null || true
+pkill -9 -f "frame_feed.py" 2>/dev/null || true
 pkill -9 -f "live_worker.py" 2>/dev/null || true
 sleep 1
 

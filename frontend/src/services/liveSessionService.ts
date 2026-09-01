@@ -140,6 +140,12 @@ export const liveSessionService = {
     return null;
   },
 
+  async teardownSession(sessionId?: string | null) {
+    if (!sessionId) return;
+    await this.stopBroadcast(sessionId);
+    await this.stopSession({ sessionId });
+  },
+
   async pauseStream(): Promise<boolean> {
     const res = await fetch("/api/live-stream/pause", { method: "POST" });
     const json = await res.json();
@@ -158,8 +164,11 @@ export const liveSessionService = {
     return true;
   },
 
-  async fetchMetrics() {
-    const res = await fetch("/api/live-session/metrics");
+  async fetchMetrics(sessionId?: string | null) {
+    const query = sessionId
+      ? `?sessionId=${encodeURIComponent(sessionId)}`
+      : "";
+    const res = await fetch(`/api/live-session/metrics${query}`);
     if (!res.ok) {
       return null;
     }

@@ -22,6 +22,17 @@ try:
 except ImportError:
     load_env_files = None
 
+try:
+    from rtmp_utils import read_rtmp_status, write_rtmp_status
+except ImportError:
+    read_rtmp_status = None
+    write_rtmp_status = None
+
+try:
+    from video_canvas import prefer_talk_clip
+except ImportError:
+    prefer_talk_clip = None
+
 # Muat .env worker sebelum init AILiveWorker / MuseTalk flags.
 if load_env_files is not None:
     _here = os.path.dirname(os.path.abspath(__file__))
@@ -296,8 +307,27 @@ async def periodic_cleanup_and_watchdog():
             await asyncio.sleep(5)
             # 1. Watchdog for broadcaster
             if current_broadcast_env and broadcaster_process is not None:
+                rtmp_state, rtmp_err = ("disconnected", "")
+                if read_rtmp_status is not None:
+                    rtmp_state, rtmp_err = read_rtmp_status(output_dir)
+                if rtmp_state == "failed":
+                    print(
+                        "[WATCHDOG STOP] RTMP fatal — tidak me-restart dengan "
+                        f"stream key yang sama. {rtmp_err}"
+                    )
+                    current_broadcast_env = None
+                    _terminate_broadcaster()
+                    continue
                 ret = broadcaster_process.poll()
                 if ret is not None:
+                    if ret == 2:
+                        print(
+                            "[WATCHDOG STOP] Broadcaster exit 2 — RTMP fatal, "
+                            "stream key tidak di-retry."
+                        )
+                        current_broadcast_env = None
+                        _terminate_broadcaster()
+                        continue
                     now = time.time()
                     if broadcaster_restarts >= MAX_BROADCASTER_RESTARTS:
                         print(
@@ -551,15 +581,22 @@ async def get_queue_status():
     buffer_seconds = round(playable_seconds + in_flight_seconds, 2)
 
     rtmp_connected = False
+    rtmp_error = ""
+    rtmp_state = "disconnected"
     if is_broadcasting:
-        status_file = os.path.join(output_dir, "rtmp_status.txt")
-        if os.path.exists(status_file):
-            try:
-                with open(status_file, "r") as f:
-                    rtmp_connected = (f.read().strip() == "connected")
-            except Exception:
-                pass
-        if not rtmp_connected:
+        if read_rtmp_status is not None:
+            rtmp_state, rtmp_error = read_rtmp_status(output_dir)
+            rtmp_connected = rtmp_state == "connected"
+        else:
+            status_file = os.path.join(output_dir, "rtmp_status.txt")
+            if os.path.exists(status_file):
+                try:
+                    with open(status_file, "r") as f:
+                        rtmp_state = f.read().strip()
+                        rtmp_connected = rtmp_state == "connected"
+                except Exception:
+                    pass
+        if not rtmp_connected and rtmp_state not in ("failed", "connecting"):
             legacy_flag = os.path.join(output_dir, "rtmp_connected.flag")
             if os.path.exists(legacy_flag):
                 try:
@@ -567,6 +604,8 @@ async def get_queue_status():
                         rtmp_connected = (f.read().strip() == "connected")
                 except Exception:
                     pass
+    elif read_rtmp_status is not None:
+        rtmp_state, rtmp_error = read_rtmp_status(output_dir)
 
     return {
         "success": True,
@@ -581,6 +620,8 @@ async def get_queue_status():
         "active_processing_count": len(active_processing),
         "broadcasting": is_broadcasting,
         "rtmp_connected": rtmp_connected,
+        "rtmp_error": rtmp_error,
+        "rtmp_state": rtmp_state,
         "warmed_up": getattr(worker, "_warmed_up", False),
     }
 
@@ -622,14 +663,20 @@ async def start_broadcast(req: BroadcastRequest):
     global broadcaster_process, total_videos_rendered, current_broadcast_env
     global broadcaster_restarts, broadcaster_next_restart_at
     try:
-        final_rtmp_url = req.rtmp_url or req.rtmpUrl or ""
-        final_stream_key = req.stream_key or req.streamKey or ""
+        final_rtmp_url = (req.rtmp_url or req.rtmpUrl or "").strip()
+        final_stream_key = (
+            (req.stream_key or req.streamKey or "")
+            .replace("\r", "")
+            .replace("\n", "")
+            .strip()
+        )
         if not final_rtmp_url or not final_stream_key:
             raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
 
-        # Idempoten: backend membungkus endpoint ini dengan retry, dan handler ini
-        # menghapus seluruh MP4 di output. Tanpa penjagaan ini, retry akibat
-        # timeout palsu akan membuang buffer bicara yang sudah siap tayang.
+        # Idempoten HANYA jika RTMP benar-benar connected. Proses Python yang
+        # masih hidup setelah FFmpeg drop bukan alasan untuk menolak key baru
+        # atau retry.
+        already_connected = False
         if (
             broadcaster_process is not None
             and broadcaster_process.poll() is None
@@ -637,6 +684,11 @@ async def start_broadcast(req: BroadcastRequest):
             and current_broadcast_env.get("RTMP_URL") == final_rtmp_url
             and current_broadcast_env.get("STREAM_KEY") == final_stream_key
         ):
+            rtmp_state = "disconnected"
+            if read_rtmp_status is not None:
+                rtmp_state, _ = read_rtmp_status(output_dir)
+            already_connected = rtmp_state == "connected"
+        if already_connected:
             print(
                 "[AI-Worker] start-broadcast diabaikan — siaran dengan target yang "
                 f"sama sudah aktif (PID: {broadcaster_process.pid})."
@@ -649,23 +701,30 @@ async def start_broadcast(req: BroadcastRequest):
 
         os.makedirs(output_dir, exist_ok=True)
 
-        # Resolusi path idle video
+        # Resolusi path idle video — utamakan talk_expressive agar idle = sumber lipsync
         resolved_idle = req.idle_video or req.idleVideo or ""
         if not resolved_idle or not os.path.exists(resolved_idle):
             for candidate in [
+                "/workspace/ai_live_worker/assets/3d/namira_talk_expressive.mp4",
                 "/workspace/ai_live_worker/assets/3d/namira_idle.mp4",
                 "/workspace/ai_live_worker/assets/3d/namira.mp4",
+                "/workspace/live-streaming-ai/deploy/assets/3d/namira_talk_expressive.mp4",
                 "/workspace/live-streaming-ai/deploy/assets/3d/namira_idle.mp4",
                 "/workspace/live-streaming-ai/deploy/assets/3d/namira.mp4",
+                os.path.join(os.path.dirname(__file__), "assets/3d/namira_talk_expressive.mp4"),
                 os.path.join(os.path.dirname(__file__), "assets/3d/namira_idle.mp4"),
                 os.path.join(os.path.dirname(__file__), "assets/3d/namira.mp4"),
             ]:
                 if os.path.exists(candidate):
                     resolved_idle = candidate
                     break
+        if resolved_idle and prefer_talk_clip is not None:
+            resolved_idle = prefer_talk_clip(resolved_idle)
 
         # Hentikan broadcaster lama jika ada agar tidak bentrok RTMP URL
         _terminate_broadcaster(timeout=5.0)
+        if write_rtmp_status is not None:
+            write_rtmp_status(output_dir, "connecting")
 
         # Reset counter dan state watchdog saat siaran baru dimulai
         total_videos_rendered = 0

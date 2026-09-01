@@ -21,6 +21,7 @@ export interface PipelineStatus {
   isLive?: boolean;
   isBroadcasting?: boolean;
   isRtmpConnected?: boolean;
+  rtmpError?: string;
   stageIndex?: number;
   stageText?: string;
   podReady?: boolean;
@@ -184,11 +185,22 @@ export const useLiveSessionStore = create<LiveSessionState>()(
         })),
       setSessionSummary: (sum) => set({ sessionSummary: sum }),
       setPipelineStatus: (status) =>
-        set((state) => ({
-          pipelineStatus: status,
-          connectingStageIndex: status?.stageIndex ?? state.connectingStageIndex,
-          connectingStageText: status?.stageText ?? state.connectingStageText,
-        })),
+        set((state) => {
+          const previousError = state.pipelineStatus?.rtmpError;
+          const merged =
+            status && previousError && !status.rtmpError
+              ? {
+                  ...status,
+                  rtmpError: previousError,
+                  stageText: status.stageText || previousError,
+                }
+              : status;
+          return {
+            pipelineStatus: merged,
+            connectingStageIndex: merged?.stageIndex ?? state.connectingStageIndex,
+            connectingStageText: merged?.stageText ?? state.connectingStageText,
+          };
+        }),
       setIsLiveActive: (active) => set({ isLiveActive: active }),
       setIsLivePaused: (paused) => set({ isLivePaused: paused }),
       setLiveSessionPhase: (phase) => set({ liveSessionPhase: phase }),
@@ -233,8 +245,7 @@ export const useLiveSessionStore = create<LiveSessionState>()(
         });
 
         if (sid) {
-          await liveSessionService.stopBroadcast(sid);
-          await liveSessionService.stopSession({ sessionId: sid });
+          await liveSessionService.teardownSession(sid);
         }
       },
 

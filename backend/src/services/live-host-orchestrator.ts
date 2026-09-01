@@ -138,6 +138,7 @@ interface QueueMetrics {
   workerOffline: boolean;
   broadcasting: boolean;
   rtmpConnected: boolean;
+  rtmpError: string;
   warmedUp: boolean;
 }
 
@@ -183,6 +184,9 @@ interface HostRuntimeState {
   // Last known speech queue estimate. Used even if worker API temporarily errors.
   estimatedBufferSeconds: number;
   scriptBank: ScriptBankState;
+
+  rtmpFailedAt: number;
+  rtmpFailStopping: boolean;
 }
 
 interface PlanPolicy {
@@ -659,10 +663,13 @@ class LiveHostOrchestrator {
         workerOffline: false,
         broadcasting: false,
         rtmpConnected: false,
+        rtmpError: "",
         warmedUp: false,
       },
       estimatedBufferSeconds: 0,
       scriptBank: emptyScriptBank(config.productId),
+      rtmpFailedAt: 0,
+      rtmpFailStopping: false,
     };
 
     this.sessions.set(config.sessionId, state);
@@ -727,6 +734,10 @@ class LiveHostOrchestrator {
         if (!s || s.abortController.signal.aborted || s.isLive) break;
 
         const queue = await this.refreshQueueMetrics(sessionId);
+        if (queue.rtmpError) {
+          await sleep(2000);
+          continue;
+        }
         if (queue.workerOffline) {
           await sleep(2000);
           continue;
@@ -783,6 +794,13 @@ class LiveHostOrchestrator {
         }
 
         await this.refreshQueueMetrics(sessionId);
+        if (s.lastQueue.rtmpError) {
+          console.log(
+            `[LiveHost] RTMP fatal saat live — menghentikan generasi: ${sessionId}`,
+          );
+          this.onSessionExpired?.(sessionId);
+          break;
+        }
         const policy = this.getPolicy(s);
 
         this.pruneCommentQueue(s);
@@ -1531,6 +1549,7 @@ class LiveHostOrchestrator {
         workerOffline: true,
         broadcasting: false,
         rtmpConnected: false,
+        rtmpError: "",
         warmedUp: false,
       };
     }
@@ -1545,6 +1564,7 @@ class LiveHostOrchestrator {
         workerOffline: false,
         broadcasting: false,
         rtmpConnected: false,
+        rtmpError: "",
         warmedUp: false,
       };
       return state.lastQueue;
@@ -1599,6 +1619,7 @@ class LiveHostOrchestrator {
         workerOffline: false,
         broadcasting: Boolean(raw.broadcasting),
         rtmpConnected: Boolean(raw.rtmp_connected),
+        rtmpError: String(raw.rtmp_error || ""),
         warmedUp: Boolean(raw.warmed_up || bufferSeconds > 0 || queuedVideos > 0),
       };
 
@@ -1697,6 +1718,7 @@ class LiveHostOrchestrator {
         isLive: false,
         isBroadcasting: false,
         isRtmpConnected: false,
+        rtmpError: "",
         bufferSeconds: 0,
         workerOffline: true,
         stageIndex: 0,
@@ -1707,12 +1729,26 @@ class LiveHostOrchestrator {
     const queue = await this.refreshQueueMetrics(sessionId);
     const policy = this.getPolicy(state);
     const rtmpRequired = Boolean(state.config.rtmpUrl);
-    const rtmpOk =
-      !rtmpRequired || queue.rtmpConnected || queue.broadcasting;
+    const rtmpOk = !rtmpRequired || queue.rtmpConnected;
     const ready =
       queue.bufferSeconds >= policy.minBufferSeconds &&
       queue.queuedVideos >= 1 &&
       rtmpOk;
+
+    if (queue.rtmpError) {
+      if (!state.rtmpFailedAt) state.rtmpFailedAt = Date.now();
+      const waitMs = state.isLive ? 5_000 : 90_000;
+      if (
+        !state.rtmpFailStopping &&
+        Date.now() - state.rtmpFailedAt >= waitMs
+      ) {
+        state.rtmpFailStopping = true;
+        console.log(
+          `[LiveHost] RTMP gagal — menghentikan sesi ${sessionId} setelah ${Math.round(waitMs / 1000)}s.`,
+        );
+        this.onSessionExpired?.(sessionId);
+      }
+    }
 
     if (ready && (!rtmpRequired || queue.rtmpConnected)) {
       state.pipelineReady = true;
@@ -1721,7 +1757,10 @@ class LiveHostOrchestrator {
     let stageIndex = 0;
     let stageText = "Menyiapkan AI Host...";
 
-    if (!queue.warmedUp && queue.queuedVideos === 0 && state.counters.submitted === 0) {
+    if (queue.rtmpError) {
+      stageIndex = 3;
+      stageText = queue.rtmpError;
+    } else if (!queue.warmedUp && queue.queuedVideos === 0 && state.counters.submitted === 0) {
       stageIndex = 1;
       stageText = "Memuat model AI Host ke Cloud GPU...";
     } else if (queue.bufferSeconds < policy.minBufferSeconds || queue.queuedVideos < 2) {
@@ -1730,7 +1769,7 @@ class LiveHostOrchestrator {
     } else if (rtmpRequired && !queue.rtmpConnected) {
       stageIndex = 3;
       stageText = queue.broadcasting
-        ? "Menghubungkan RTMP ke platform (Instagram)..."
+        ? "Menghubungkan RTMP ke platform..."
         : "Menunggu koneksi RTMP...";
     } else if (!state.isLive) {
       stageIndex = 4;
@@ -1749,6 +1788,7 @@ class LiveHostOrchestrator {
       isLive: state.isLive,
       isBroadcasting: queue.broadcasting,
       isRtmpConnected: queue.rtmpConnected,
+      rtmpError: queue.rtmpError || "",
       bufferSeconds: Math.round(queue.bufferSeconds),
       workerOffline: queue.workerOffline,
       warmedUp: queue.warmedUp,

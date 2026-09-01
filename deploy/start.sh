@@ -59,6 +59,7 @@ if [ -f "$WORKER_DIR/.env" ]; then
 	source "$WORKER_DIR/.env"
 	set +a
 fi
+echo "[INFO] BROADCAST_MODE=${BROADCAST_MODE:-segment}"
 
 if [ -f "$WORKER_DIR/env/bin/python" ]; then
 	PYTHON_BIN="$WORKER_DIR/env/bin/python"

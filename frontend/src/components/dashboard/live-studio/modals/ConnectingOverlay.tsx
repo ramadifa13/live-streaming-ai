@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Wifi, Loader2, Radio } from "lucide-react";
+import { Wifi, Loader2, Radio, AlertTriangle } from "lucide-react";
 import { PlatformIcon } from "@/components/shared/PlatformIcon";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
@@ -24,7 +24,9 @@ export const ConnectingOverlay: React.FC = () => {
   const stageIndex = pipelineStatus?.stageIndex ?? connectingStageIndex;
   const videosReady = (pipelineStatus?.videosQueued ?? 0) >= 2;
   const podBooting = pipelineStatus?.podBooting === true;
+  const rtmpFailed = Boolean(pipelineStatus?.rtmpError);
   const canGoLive =
+    !rtmpFailed &&
     !podBooting &&
     pipelineStatus?.podReady !== false &&
     pipelineStatus?.ready === true &&
@@ -64,13 +66,25 @@ export const ConnectingOverlay: React.FC = () => {
 
         <div className="p-5 sm:p-6 overflow-y-auto flex-1 z-10 custom-scrollbar relative">
           <div className="relative mx-auto mb-3 flex h-12 w-12 items-center justify-center">
-            <div className="absolute inset-0 rounded-full border border-indigo-500/30 animate-ping opacity-60" />
-            <div className="absolute inset-0 rounded-full border-2 border-t-indigo-500 border-r-purple-500 border-b-transparent border-l-transparent animate-spin" />
-            <Wifi className="relative w-6 h-6 text-indigo-400" />
+            {rtmpFailed ? (
+              <div className="flex h-12 w-12 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10">
+                <AlertTriangle className="w-6 h-6 text-red-400" />
+              </div>
+            ) : (
+              <>
+                <div className="absolute inset-0 rounded-full border border-indigo-500/30 animate-ping opacity-60" />
+                <div className="absolute inset-0 rounded-full border-2 border-t-indigo-500 border-r-purple-500 border-b-transparent border-l-transparent animate-spin" />
+                <Wifi className="relative w-6 h-6 text-indigo-400" />
+              </>
+            )}
           </div>
 
           <h3 className="text-base sm:text-lg font-extrabold text-white tracking-wide mb-0.5">
-            {canGoLive ? "Siap Go Live!" : "Menyiapkan Sesi Live AI"}
+            {rtmpFailed
+              ? "Koneksi RTMP Gagal"
+              : canGoLive
+                ? "Siap Go Live!"
+                : "Menyiapkan Sesi Live AI"}
           </h3>
           <p className="text-[11px] text-slate-400 mb-2 flex items-center justify-center gap-2 flex-wrap">
             Host AI{" "}
@@ -81,7 +95,7 @@ export const ConnectingOverlay: React.FC = () => {
             </span>
           </p>
 
-          {!canGoLive && (
+          {!canGoLive && !rtmpFailed && (
             <p className="text-[12px] text-slate-300 leading-relaxed mb-3 px-1">
               {podBooting
                 ? connectingStageText ||
@@ -124,17 +138,34 @@ export const ConnectingOverlay: React.FC = () => {
               <span className="text-slate-400">RTMP</span>
               <span
                 className={
-                  pipelineStatus?.isRtmpConnected || pipelineStatus?.isBroadcasting
-                    ? "text-emerald-400 font-semibold"
-                    : "text-amber-400"
+                  pipelineStatus?.rtmpError
+                    ? "text-red-400 font-semibold"
+                    : pipelineStatus?.isRtmpConnected
+                      ? "text-emerald-400 font-semibold"
+                      : "text-amber-400"
                 }
               >
-                {pipelineStatus?.isRtmpConnected || pipelineStatus?.isBroadcasting
-                  ? "Terhubung"
-                  : "Menunggu..."}
+                {pipelineStatus?.rtmpError
+                  ? "Gagal"
+                  : pipelineStatus?.isRtmpConnected
+                    ? "Terhubung"
+                    : "Menunggu..."}
               </span>
             </div>
+            {pipelineStatus?.rtmpError && (
+              <p className="text-[10px] text-red-300 leading-relaxed pt-1 border-t border-white/5">
+                {pipelineStatus.rtmpError}
+              </p>
+            )}
           </div>
+
+          {rtmpFailed && (
+            <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-left">
+              <p className="text-[11px] font-semibold text-red-200 leading-relaxed">
+                Stream Key Instagram/Facebook hanya berlaku sekali. Setelah putus, buat siaran baru di platform, tempel Stream Key baru, lalu mulai ulang.
+              </p>
+            </div>
+          )}
 
           {canGoLive && (
             <div className="mb-4 rounded-xl border border-yellow-500/30 bg-yellow-500/5 p-3 text-left">
@@ -170,6 +201,14 @@ export const ConnectingOverlay: React.FC = () => {
                 </>
               )}
             </button>
+          ) : rtmpFailed ? (
+            <button
+              type="button"
+              onClick={cancelInitialization}
+              className="w-full mb-2 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-red-600 to-rose-500 hover:brightness-110 active:scale-95 transition cursor-pointer"
+            >
+              Tutup & coba Stream Key baru
+            </button>
           ) : (
             <div className="mb-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-center">
               <div className="flex items-center justify-center gap-2 text-[11px] text-amber-200/90 font-medium">
@@ -182,6 +221,7 @@ export const ConnectingOverlay: React.FC = () => {
             </div>
           )}
 
+          {!rtmpFailed && (
           <button
             type="button"
             onClick={cancelInitialization}
@@ -190,6 +230,7 @@ export const ConnectingOverlay: React.FC = () => {
           >
             Batalkan Inisialisasi
           </button>
+          )}
         </div>
       </div>
     </div>

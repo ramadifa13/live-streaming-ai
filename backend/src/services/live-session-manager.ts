@@ -58,7 +58,7 @@ class LiveSessionManager {
     liveHostOrchestrator.setSessionExpiredHandler((sessionId) => {
       if (!this.activeSessions.has(sessionId)) return;
       console.log(
-        `[LiveSessionManager] Plan sesi ${sessionId} selesai — menghentikan sesi & melepas GPU.`,
+        `[LiveSessionManager] Menghentikan sesi ${sessionId} & melepas GPU.`,
       );
       void this.stopSession(sessionId).catch((err) =>
         console.error(
@@ -87,6 +87,21 @@ class LiveSessionManager {
     product?: ProductSnapshot;
     catalog?: ProductSnapshot[];
   }): Promise<{ sessionId: string; state: SessionState }> {
+    const previousIds = Array.from(this.activeSessions.keys());
+    const staticPodId = (process.env.RUNPOD_POD_ID || "").trim();
+    const keepGpu = Boolean(staticPodId);
+    for (const id of previousIds) {
+      console.log(
+        `[LiveSessionManager] Mengganti sesi lama ${id} sebelum sesi baru (keepGpu=${keepGpu}).`,
+      );
+      await this.stopSession(id, undefined, { keepGpu }).catch((err) =>
+        console.warn(
+          `[LiveSessionManager] Gagal menghentikan sesi lama ${id}:`,
+          err,
+        ),
+      );
+    }
+
     setLiveSessionActive(true);
 
     const session = await prisma.liveSession.create({
@@ -208,12 +223,22 @@ class LiveSessionManager {
       const podId = typeof podIdStr === "string" ? podIdStr : null;
       if (!this.activeSessions.has(sessionId)) {
         if (podId) {
-          await releaseGpuForJob(podId).catch((err) =>
-            console.error(
-              `[LiveSessionManager] Gagal terminate pod ${podId} setelah sesi dihapus:`,
-              err,
-            ),
+          const staticId = (process.env.RUNPOD_POD_ID || "").trim();
+          const reused = Array.from(this.activeSessions.values()).some(
+            (item) => item.podId === podId,
           );
+          if (podId === staticId || reused) {
+            console.log(
+              `[LiveSessionManager] Pod ${podId} tetap dipakai sesi lain — tidak di-release.`,
+            );
+          } else {
+            await releaseGpuForJob(podId).catch((err) =>
+              console.error(
+                `[LiveSessionManager] Gagal terminate pod ${podId} setelah sesi dihapus:`,
+                err,
+              ),
+            );
+          }
         }
         return;
       }
@@ -308,6 +333,7 @@ class LiveSessionManager {
       sales?: number;
       productSold?: number;
     },
+    options?: { keepGpu?: boolean },
   ): Promise<{
     success: boolean;
     summary?: Record<string, unknown>;
@@ -318,7 +344,10 @@ class LiveSessionManager {
     }
 
     session.bootstrapAbort = true;
-    const podToTerminate = session.podId ?? null;
+    const staticPodId = (process.env.RUNPOD_POD_ID || "").trim();
+    const podToTerminate = options?.keepGpu
+      ? null
+      : session.podId || staticPodId || null;
 
     this.clearTimers(sessionId);
     liveHostOrchestrator.stop(sessionId);

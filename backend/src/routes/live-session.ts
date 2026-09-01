@@ -72,14 +72,16 @@ const broadcastSchema = z.object({
   rtmpUrl: z
     .string()
     .min(5, "RTMP URL tidak boleh kosong")
+    .transform((value) => value.trim())
     .refine(
-      (value) => /^rtmps?:\/\/.+/i.test(value.trim()),
+      (value) => /^rtmps?:\/\/.+/i.test(value),
       "RTMP URL harus diawali rtmp:// atau rtmps://",
     ),
   streamKey: z
     .string()
     .min(1, "Stream key tidak boleh kosong")
-    .refine((value) => !/[\r\n]/.test(value), "Stream key tidak valid"),
+    .transform((value) => value.replace(/[\r\n\s]/g, ""))
+    .refine((value) => value.length > 0, "Stream key tidak boleh kosong"),
   sessionId: z.string().optional(),
   avatarImage: z.string().optional(),
   avatarVideo: z.string().optional(),
@@ -456,7 +458,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         reply.code(400);
         return {
           success: false,
-          error: `Belum siap untuk Go Live: Pastikan RTMP sudah terhubung dan 2 video pembuka selesai dirender (Status saat ini: ${pipelineStatus.generationCount}/2 video selesai, RTMP: ${pipelineStatus.isBroadcasting ? "Terhubung" : "Belum Terhubung"}).`,
+          error: `Belum siap untuk Go Live: Pastikan RTMP sudah terhubung dan 2 video pembuka selesai dirender (Status saat ini: ${pipelineStatus.generationCount}/2 video selesai, RTMP: ${pipelineStatus.isRtmpConnected ? "Terhubung" : "Belum Terhubung"}).`,
         };
       }
 
@@ -743,6 +745,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
           workerBroadcast?.status === "streaming" ||
           streamStatus.handshakeVerified,
         sessionStatus,
+        sessionId: sessionId || null,
         platform: session?.platform || "TikTok LIVE",
         product: null,
         avatar: session?.avatar || null,

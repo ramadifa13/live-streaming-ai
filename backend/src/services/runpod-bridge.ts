@@ -49,6 +49,8 @@ export interface RunPodQueueStatus {
   active_processing_count?: number;
   broadcasting?: boolean;
   rtmp_connected?: boolean;
+  rtmp_error?: string;
+  rtmp_state?: string;
   warmed_up?: boolean;
 }
 

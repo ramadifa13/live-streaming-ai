@@ -30,6 +30,20 @@ except ImportError:
         sys.path.insert(0, _worker_root)
     from gpu_compat import log_gpu_status, resolve_use_float16
 
+try:
+    from video_canvas import CANVAS_H, CANVAS_W, fit_bgr
+except ImportError:
+    _worker_root = os.environ.get("WORKER_ROOT", "/workspace/ai_live_worker")
+    if _worker_root not in sys.path:
+        sys.path.insert(0, _worker_root)
+    try:
+        from video_canvas import CANVAS_H, CANVAS_W, fit_bgr
+    except ImportError:
+        CANVAS_W, CANVAS_H = 720, 1280
+
+        def fit_bgr(frame, width=CANVAS_W, height=CANVAS_H):
+            return frame
+
 def _extract_landmarks_from_frames(frames, bbox_shift=0):
     """
     Ekstraksi landmark dan bounding box langsung dari list frame array numpy (RAM).
@@ -242,7 +256,15 @@ def _get_avatar_materials(video_path, bbox_shift, extra_margin, version, parsing
     Subsequent tasks for the same avatar will fetch materials instantly in 0 ms.
     """
     global _avatar_assets_cache
-    cache_key = (os.path.abspath(video_path), bbox_shift, extra_margin, version, parsing_mode)
+    cache_key = (
+        os.path.abspath(video_path),
+        bbox_shift,
+        extra_margin,
+        version,
+        parsing_mode,
+        CANVAS_W,
+        CANVAS_H,
+    )
 
     if cache_key in _avatar_assets_cache:
         return _avatar_assets_cache[cache_key]
@@ -261,7 +283,7 @@ def _get_avatar_materials(video_path, bbox_shift, extra_margin, version, parsing
             ret, frame = cap.read()
             if not ret or frame is None:
                 break
-            frame_list.append(frame)
+            frame_list.append(fit_bgr(frame, CANVAS_W, CANVAS_H))
         cap.release()
 
         if not frame_list:
@@ -345,7 +367,7 @@ def _get_avatar_materials(video_path, bbox_shift, extra_margin, version, parsing
         mask_materials_cycle = mask_materials + mask_materials[::-1]
 
         material_bundle = {
-            'fps': fps,
+            'fps': float(default_fps) or 25.0,
             'frame_list_cycle': frame_list_cycle,
             'coord_list_cycle': coord_list_cycle,
             'input_latent_list_cycle': input_latent_list_cycle,
@@ -415,13 +437,12 @@ def main(args):
                 fp=fp,
                 default_fps=args.fps
             )
-            fps = materials['fps']
             frame_list_cycle = materials['frame_list_cycle']
             coord_list_cycle = materials['coord_list_cycle']
             input_latent_list_cycle = materials['input_latent_list_cycle']
             mask_materials_cycle = materials['mask_materials_cycle']
-            vid_w = materials['width']
-            vid_h = materials['height']
+            fps = float(getattr(args, "fps", 25) or 25)
+            vid_w, vid_h = CANVAS_W, CANVAS_H
 
             # 4. Extract audio Whisper features (~100-200ms)
             whisper_input_features, librosa_length = audio_processor.get_audio_feature(audio_path)
@@ -552,6 +573,8 @@ def main(args):
                         combine_frame = get_image(ori_frame, res_frame_resized, [x1, y1, x2, y2], mode=args.parsing_mode, fp=fp)
                     except Exception:
                         combine_frame = ori_frame
+
+                combine_frame = fit_bgr(combine_frame, CANVAS_W, CANVAS_H)
 
                 if ffseg_writer is not None:
                     ffseg_writer.write_frame(combine_frame)

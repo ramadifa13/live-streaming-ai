@@ -60,19 +60,47 @@ export default function Dashboard() {
   // Reconcile persisted session state with backend after reload.
   useEffect(() => {
     const sid = useLiveSessionStore.getState().currentLiveSessionId;
-    const phase = useLiveSessionStore.getState().liveSessionPhase;
-    if (!sid || phase === "idle" || phase === "ended") return;
+    if (!sid) return;
 
-    void liveSessionService.fetchMetrics().then((json) => {
-      const sessionStatus = json?.data?.sessionStatus;
-      if (!sessionStatus) {
+    void liveSessionService.fetchMetrics(sid).then((json) => {
+      const sessionStatus = json?.data?.sessionStatus as string | undefined;
+      const backendSid = (json?.data?.sessionId as string | undefined) || sid;
+      const dead =
+        !sessionStatus ||
+        sessionStatus === "ended" ||
+        sessionStatus === "error" ||
+        sessionStatus === "idle";
+
+      if (dead) {
         useLiveSessionStore.setState({
           isLiveActive: false,
           isConnectingLive: false,
           isWaitingForGoLive: false,
-          liveSessionPhase: "ended",
+          liveSessionPhase: "idle",
           currentLiveSessionId: null,
           pipelineStatus: null,
+        });
+        return;
+      }
+
+      if (sessionStatus === "starting" || sessionStatus === "pending") {
+        useLiveSessionStore.setState({
+          currentLiveSessionId: backendSid,
+          liveSessionPhase: "pending",
+          isConnectingLive: true,
+          isWaitingForGoLive: true,
+          isLiveActive: false,
+        });
+        return;
+      }
+
+      if (sessionStatus === "live") {
+        useLiveSessionStore.setState({
+          currentLiveSessionId: backendSid,
+          liveSessionPhase: "live",
+          isLiveActive: true,
+          isConnectingLive: false,
+          isWaitingForGoLive: false,
         });
       }
     });
