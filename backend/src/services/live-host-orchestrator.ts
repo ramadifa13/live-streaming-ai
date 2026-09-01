@@ -1,7 +1,4 @@
-import {
-  forwardToRunPodGPU,
-  getRunPodQueueStatus,
-} from "./runpod-bridge.js";
+import { forwardToRunPodGPU, getRunPodQueueStatus } from "./runpod-bridge.js";
 import {
   generateHostResponse,
   generateScriptBankLines,
@@ -40,7 +37,6 @@ import {
 import { livePlatformConnector } from "./live-platform-connector.js";
 import { getAvatarActionSet, isGestureAction } from "./avatar-actions.js";
 import { synthesizeSpeech } from "./tts.js";
-
 
 export type StreamPlan = "1H" | "2H" | "8H" | "24H";
 
@@ -312,9 +308,7 @@ const WORKER_FAIL_STOP_MS = 120_000;
 const GENERATION_BACKOFF_MS = 800;
 /** Batas idle di siaran sebelum orchestrator boost generate (detik). */
 export const MAX_ONAIR_IDLE_SECONDS = 5;
-const SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS = Number(
-  process.env.LIVE_SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS || 90_000,
-);
+const SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS = Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS || 90_000);
 const SCRIPT_BANK_LLM_REFILL_MAX = Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_MAX || 16);
 const SCRIPT_BANK_LOW = Number(process.env.LIVE_SCRIPT_BANK_LOW || 12);
 const SCRIPT_BANK_LLM_EXHAUST_BONUS = Number(process.env.LIVE_SCRIPT_BANK_LLM_EXHAUST_BONUS || 6);
@@ -350,20 +344,17 @@ const AUTONOMOUS_TOPIC_BANK: Array<{
   {
     topic: "benefit",
     modes: ["SELL", "DEMO"],
-    prompt:
-      "bedah satu manfaat utama dengan contoh penggunaan sehari-hari, jangan mengulang benefit terakhir",
+    prompt: "bedah satu manfaat utama dengan contoh penggunaan sehari-hari, jangan mengulang benefit terakhir",
   },
   {
     topic: "how_to_use",
     modes: ["DEMO", "QNA"],
-    prompt:
-      "jelaskan cara penggunaan berdasarkan data produk, praktis dan tidak seperti membaca manual",
+    prompt: "jelaskan cara penggunaan berdasarkan data produk, praktis dan tidak seperti membaca manual",
   },
   {
     topic: "buyer_fit",
     modes: ["ENGAGE", "SELL"],
-    prompt:
-      "jelaskan tipe kebutuhan/orang yang kemungkinan paling cocok dengan produk berdasarkan fakta yang tersedia",
+    prompt: "jelaskan tipe kebutuhan/orang yang kemungkinan paling cocok dengan produk berdasarkan fakta yang tersedia",
   },
   {
     topic: "objection",
@@ -374,50 +365,42 @@ const AUTONOMOUS_TOPIC_BANK: Array<{
   {
     topic: "comparison",
     modes: ["QNA", "SELL"],
-    prompt:
-      "jelaskan perbedaan produk aktif dengan produk lain di katalog jika relevan; gunakan data katalog saja",
+    prompt: "jelaskan perbedaan produk aktif dengan produk lain di katalog jika relevan; gunakan data katalog saja",
   },
   {
     topic: "value",
     modes: ["SELL", "ENGAGE"],
-    prompt:
-      "bantu penonton menilai value berdasarkan fitur/manfaat yang nyata, tanpa klaim hiperbola",
+    prompt: "bantu penonton menilai value berdasarkan fitur/manfaat yang nyata, tanpa klaim hiperbola",
   },
   {
     topic: "use_case",
     modes: ["ENGAGE", "DEMO"],
-    prompt:
-      "ceritakan satu skenario penggunaan yang relatable tanpa membuat testimoni palsu",
+    prompt: "ceritakan satu skenario penggunaan yang relatable tanpa membuat testimoni palsu",
   },
   {
     topic: "micro_tip",
     modes: ["DEMO", "ENGAGE"],
-    prompt:
-      "berikan satu tips kecil yang berguna terkait penggunaan produk",
+    prompt: "berikan satu tips kecil yang berguna terkait penggunaan produk",
   },
   {
     topic: "catalog_bridge",
     modes: ["SELL", "ENGAGE"],
-    prompt:
-      "buat jembatan halus ke produk lain di katalog hanya jika ada alasan yang jelas",
+    prompt: "buat jembatan halus ke produk lain di katalog hanya jika ada alasan yang jelas",
   },
   {
     topic: "soft_cta",
     modes: ["SELL"],
-    prompt:
-      "buat ajakan tindakan yang ringan dan kontekstual; jangan memakai pola CTA terakhir",
+    prompt: "buat ajakan tindakan yang ringan dan kontekstual; jangan memakai pola CTA terakhir",
   },
   {
     topic: "social_engagement",
     modes: ["SOCIAL", "ENGAGE"],
-    prompt:
-      "ajak penonton ikut percakapan dengan pertanyaan ringan yang tidak selalu berujung jualan",
+    prompt: "ajak penonton ikut percakapan dengan pertanyaan ringan yang tidak selalu berujung jualan",
   },
   {
     topic: "reframe",
     modes: ["OBJECTION", "ENGAGE"],
-    prompt:
-      "ubah sudut pandang penonton terhadap satu kebutuhan tanpa mengulang argumen terakhir",
+    prompt: "ubah sudut pandang penonton terhadap satu kebutuhan tanpa mengulang argumen terakhir",
   },
   {
     topic: "mini_story",
@@ -428,26 +411,22 @@ const AUTONOMOUS_TOPIC_BANK: Array<{
   {
     topic: "price_context",
     modes: ["SELL", "QNA"],
-    prompt:
-      "bahas harga hanya jika relevan dengan konteks; jangan mengulang angka harga tanpa alasan",
+    prompt: "bahas harga hanya jika relevan dengan konteks; jangan mengulang angka harga tanpa alasan",
   },
   {
     topic: "faq",
     modes: ["QNA"],
-    prompt:
-      "jawab satu FAQ yang belum dibahas, berdasarkan knowledge produk yang tersedia",
+    prompt: "jawab satu FAQ yang belum dibahas, berdasarkan knowledge produk yang tersedia",
   },
   {
     topic: "energy_reset",
     modes: ["ENGAGE", "SOCIAL"],
-    prompt:
-      "ubah ritme percakapan supaya sesi terasa hidup, singkat, hangat, dan tidak seperti membaca skrip",
+    prompt: "ubah ritme percakapan supaya sesi terasa hidup, singkat, hangat, dan tidak seperti membaca skrip",
   },
   {
     topic: "closing_loop",
     modes: ["CLOSING"],
-    prompt:
-      "buat rangkuman singkat dari hal penting yang belum dirangkum, lalu CTA hanya bila memang waktunya tepat",
+    prompt: "buat rangkuman singkat dari hal penting yang belum dirangkum, lalu CTA hanya bila memang waktunya tepat",
   },
 ];
 
@@ -475,8 +454,16 @@ function fingerprint(text: string): string {
 }
 
 function similarity(a: string, b: string): number {
-  const aa = new Set(normalizeText(a).split(" ").filter((x) => x.length >= 3));
-  const bb = new Set(normalizeText(b).split(" ").filter((x) => x.length >= 3));
+  const aa = new Set(
+    normalizeText(a)
+      .split(" ")
+      .filter((x) => x.length >= 3),
+  );
+  const bb = new Set(
+    normalizeText(b)
+      .split(" ")
+      .filter((x) => x.length >= 3),
+  );
   if (!aa.size || !bb.size) return 0;
   let intersection = 0;
   for (const token of aa) if (bb.has(token)) intersection++;
@@ -565,9 +552,7 @@ class LiveHostOrchestrator {
    * Dipanggil saat durasi plan habis. Tanpa handler ini loop generasi hanya
    * berhenti sementara pod tetap menyala dan tertagih sampai dihentikan manual.
    */
-  public setSessionExpiredHandler(
-    handler: (sessionId: string) => void,
-  ): void {
+  public setSessionExpiredHandler(handler: (sessionId: string) => void): void {
     this.onSessionExpired = handler;
   }
 
@@ -629,9 +614,7 @@ class LiveHostOrchestrator {
     state.modeStartedAt = Date.now();
     state.slotCursor = 0;
 
-    console.log(
-      `[LiveHost] 🔄 Product switched: session=${sessionId}, product=${productId}`,
-    );
+    console.log(`[LiveHost] 🔄 Product switched: session=${sessionId}, product=${productId}`);
   }
 
   public async startLivePipeline(sessionId: string): Promise<void> {
@@ -644,9 +627,7 @@ class LiveHostOrchestrator {
     state.startedAt = state.startedAt || Date.now();
     state.lastActivityAt = Date.now();
 
-    console.log(
-      `[LiveHost] ✅ Session ${sessionId} LIVE — plan=${state.config.plan || "2H"}`,
-    );
+    console.log(`[LiveHost] ✅ Session ${sessionId} LIVE — plan=${state.config.plan || "2H"}`);
 
     if (!state.generationRunning) {
       void this.runLiveGenerationLoop(sessionId);
@@ -727,9 +708,7 @@ class LiveHostOrchestrator {
 
     this.sessions.set(config.sessionId, state);
 
-    console.log(
-      `[LiveHost] 🎬 Background pipeline start: session=${config.sessionId}, plan=${state.config.plan}`,
-    );
+    console.log(`[LiveHost] 🎬 Background pipeline start: session=${config.sessionId}, plan=${state.config.plan}`);
 
     void this.warmupWorkerModel(config.sessionId);
     void this.runPreLivePipeline(config.sessionId);
@@ -797,10 +776,7 @@ class LiveHostOrchestrator {
         }
 
         const policy = this.getPolicy(s);
-        if (
-          queue.bufferSeconds >= policy.minBufferSeconds &&
-          queue.queuedVideos >= 2
-        ) {
+        if (queue.bufferSeconds >= policy.minBufferSeconds && queue.queuedVideos >= 2) {
           await sleep(1200);
           continue;
         }
@@ -839,18 +815,14 @@ class LiveHostOrchestrator {
           try {
             this.onSessionExpired?.(sessionId);
           } catch (err: any) {
-            console.warn(
-              `[LiveHost] Session expiry handler notice: ${err?.message || err}`,
-            );
+            console.warn(`[LiveHost] Session expiry handler notice: ${err?.message || err}`);
           }
           break;
         }
 
         await this.refreshQueueMetrics(sessionId);
         if (s.lastQueue.rtmpError) {
-          console.log(
-            `[LiveHost] RTMP fatal saat live — menghentikan generasi: ${sessionId}`,
-          );
+          console.log(`[LiveHost] RTMP fatal saat live — menghentikan generasi: ${sessionId}`);
           this.onSessionExpired?.(sessionId);
           break;
         }
@@ -860,9 +832,7 @@ class LiveHostOrchestrator {
 
         const comment = this.takeBestComment(s);
         const urgentComment =
-          comment &&
-          (comment.priority >= 45 ||
-            s.lastQueue.bufferSeconds <= MAX_ONAIR_IDLE_SECONDS);
+          comment && (comment.priority >= 45 || s.lastQueue.bufferSeconds <= MAX_ONAIR_IDLE_SECONDS);
 
         if (comment && (urgentComment || s.lastQueue.bufferSeconds < policy.maxBufferSeconds)) {
           await this.generateAndQueueCommentResponse(sessionId, comment);
@@ -932,17 +902,19 @@ class LiveHostOrchestrator {
       stock: product.stock,
       copywriting: product.copywriting,
       targetAudience: product.targetAudience,
-      faqPack: product.faqPack?.length ? product.faqPack : buildDefaultFaqPack({
-        id: product.id,
-        name: product.name,
-        price: this.formatProductPrice(product),
-        category: product.category,
-        benefits: knowledge.benefits,
-        description: product.description,
-        usage: knowledge.usage,
-        faq: knowledge.faq,
-        stock: product.stock,
-      }),
+      faqPack: product.faqPack?.length
+        ? product.faqPack
+        : buildDefaultFaqPack({
+            id: product.id,
+            name: product.name,
+            price: this.formatProductPrice(product),
+            category: product.category,
+            benefits: knowledge.benefits,
+            description: product.description,
+            usage: knowledge.usage,
+            faq: knowledge.faq,
+            stock: product.stock,
+          }),
       hasBanner: Boolean(product.bannerImage),
     };
   }
@@ -988,9 +960,7 @@ class LiveHostOrchestrator {
       // Pastikan selalu ada filler lokal agar buffer rendah tidak idle.
       mergeScriptLines(
         state.scriptBank,
-        recycleLocalScriptBank(this.toScriptFacts(product), state.catalog).filter((l) =>
-          FILLER_TOPICS.has(l.topic),
-        ),
+        recycleLocalScriptBank(this.toScriptFacts(product), state.catalog).filter((l) => FILLER_TOPICS.has(l.topic)),
         state.memory.utterances.slice(-12),
       );
     } else {
@@ -1008,8 +978,7 @@ class LiveHostOrchestrator {
     const policy = this.getPolicy(state);
     const scriptBankLow = policy.scriptBankLow || SCRIPT_BANK_LOW;
     const llmRefillMax = policy.scriptBankLlmRefillMax || SCRIPT_BANK_LLM_REFILL_MAX;
-    const llmRefillCooldownMs =
-      policy.scriptBankLlmRefillCooldownMs || SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS;
+    const llmRefillCooldownMs = policy.scriptBankLlmRefillCooldownMs || SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS;
 
     const recentWindow = policy.memoryUtterances >= 55 ? 36 : 24;
     const recent = state.memory.utterances.slice(-recentWindow);
@@ -1020,11 +989,7 @@ class LiveHostOrchestrator {
     if (remaining > scriptBankLow && freshCount > SCRIPT_BANK_FRESH_LOW + 4) return;
 
     // 1) Selalu recycle lokal dulu — anti-idle tanpa rate limit.
-    const recycled = recycleLocalScriptBank(
-      this.toScriptFacts(state.product),
-      state.catalog,
-      recent,
-    );
+    const recycled = recycleLocalScriptBank(this.toScriptFacts(state.product), state.catalog, recent);
     const addedLocal = mergeScriptLines(state.scriptBank, recycled, recent);
     state.scriptBank.lastRefillAt = Date.now();
     if (addedLocal > 0) {
@@ -1035,21 +1000,17 @@ class LiveHostOrchestrator {
       this.seedScriptBank(state, state.product);
     }
 
-    const stillLow =
-      remainingScriptLines(state.scriptBank) <= Math.max(4, Math.floor(scriptBankLow / 2));
+    const stillLow = remainingScriptLines(state.scriptBank) <= Math.max(4, Math.floor(scriptBankLow / 2));
     const localExhausted =
       freshCount <= SCRIPT_BANK_FRESH_LOW ||
       (addedLocal === 0 && recycled.length === 0 && remaining <= scriptBankLow * 2);
     const allowLlm =
-      liveBrainDuringLive() ||
-      (liveBrainRefillWhenLow() && stillLow) ||
-      (liveBrainRefillOnExhaust() && localExhausted);
+      liveBrainDuringLive() || (liveBrainRefillWhenLow() && stillLow) || (liveBrainRefillOnExhaust() && localExhausted);
     if (!allowLlm) return;
 
     const bank = state.scriptBank;
     const cooled = Date.now() - (bank.lastLlmRefillAt || 0) >= llmRefillCooldownMs;
-    const effectiveMax =
-      localExhausted ? llmRefillMax + SCRIPT_BANK_LLM_EXHAUST_BONUS : llmRefillMax;
+    const effectiveMax = localExhausted ? llmRefillMax + SCRIPT_BANK_LLM_EXHAUST_BONUS : llmRefillMax;
     const underCap = (bank.llmRefillCount || 0) < effectiveMax;
     if (!cooled || !underCap) return;
 
@@ -1072,8 +1033,7 @@ class LiveHostOrchestrator {
     const freshCount = countFreshScriptLines(state.scriptBank, recent);
     const remaining = remainingScriptLines(state.scriptBank);
     const localExhausted =
-      freshCount <= SCRIPT_BANK_FRESH_LOW ||
-      remaining <= Math.max(4, Math.floor(scriptBankLow / 2));
+      freshCount <= SCRIPT_BANK_FRESH_LOW || remaining <= Math.max(4, Math.floor(scriptBankLow / 2));
 
     await awaitBrainReady(sessionId);
     const lines = await generateScriptBankLines(
@@ -1093,11 +1053,7 @@ class LiveHostOrchestrator {
       state.catalog,
       state.memory.utterances.slice(-24),
     );
-    const added = mergeScriptLines(
-      state.scriptBank,
-      [...lines, ...localBoost],
-      state.memory.utterances.slice(-24),
-    );
+    const added = mergeScriptLines(state.scriptBank, [...lines, ...localBoost], state.memory.utterances.slice(-24));
     state.scriptBank.lastRefillAt = Date.now();
     if (lines.length > 0) {
       state.scriptBank.llmRefillCount = (state.scriptBank.llmRefillCount || 0) + 1;
@@ -1110,10 +1066,7 @@ class LiveHostOrchestrator {
     }
   }
 
-  private async generateAndQueueNext(
-    sessionId: string,
-    source: "prelive" | "live",
-  ): Promise<void> {
+  private async generateAndQueueNext(sessionId: string, source: "prelive" | "live"): Promise<void> {
     const state = this.sessions.get(sessionId);
     if (!state) return;
 
@@ -1133,8 +1086,7 @@ class LiveHostOrchestrator {
     const recentCtas = state.memory.ctas.slice(-3);
     const avoidCta = recentCtas.filter((c) => c && c !== "NONE").length >= 1;
     const bufferCritical =
-      state.lastQueue.queuedVideos === 0 ||
-      (state.lastQueue.bufferSeconds > 0 && state.lastQueue.bufferSeconds <= 4);
+      state.lastQueue.queuedVideos === 0 || (state.lastQueue.bufferSeconds > 0 && state.lastQueue.bufferSeconds <= 4);
     // Filler hanya saat kritis — jangan prefer hanya karena ritme/slot filler.
     const preferFiller = bufferCritical;
 
@@ -1171,12 +1123,7 @@ class LiveHostOrchestrator {
       topic: hostResponse.topic || topic.topic,
     };
 
-    const accepted = await this.processHostResponse(
-      sessionId,
-      hostResponse,
-      source,
-      topic.topic,
-    );
+    const accepted = await this.processHostResponse(sessionId, hostResponse, source, topic.topic);
 
     if (!accepted) {
       state.counters.duplicateResponsesPrevented++;
@@ -1191,12 +1138,7 @@ class LiveHostOrchestrator {
         }) ||
         takeScriptLine(state.scriptBank, recent, { preferFiller: true });
       if (retry) {
-        const retryAccepted = await this.processHostResponse(
-          sessionId,
-          retry,
-          source,
-          retry.topic || topic.topic,
-        );
+        const retryAccepted = await this.processHostResponse(sessionId, retry, source, retry.topic || topic.topic);
         if (retryAccepted) return;
         state.counters.duplicateResponsesPrevented++;
       }
@@ -1204,10 +1146,7 @@ class LiveHostOrchestrator {
     }
   }
 
-  private async generateAndQueueCommentResponse(
-    sessionId: string,
-    comment: PendingComment,
-  ): Promise<void> {
+  private async generateAndQueueCommentResponse(sessionId: string, comment: PendingComment): Promise<void> {
     const state = this.sessions.get(sessionId);
     if (!state) return;
 
@@ -1227,9 +1166,7 @@ class LiveHostOrchestrator {
         `[LiveHost] comment LLM reason=${llmDecision.reason} intent=${comment.intent} from=${author || "Audience"}`,
       );
     } else {
-      console.log(
-        `[LiveHost] comment local intent=${comment.intent} from=${author || "Audience"}`,
-      );
+      console.log(`[LiveHost] comment local intent=${comment.intent} from=${author || "Audience"}`);
     }
 
     let response: HostResponse | null = null;
@@ -1274,12 +1211,7 @@ class LiveHostOrchestrator {
 
     if (!response) return;
 
-    const accepted = await this.processHostResponse(
-      sessionId,
-      response,
-      "comment",
-      `comment:${comment.intent}`,
-    );
+    const accepted = await this.processHostResponse(sessionId, response, "comment", `comment:${comment.intent}`);
 
     if (accepted) {
       state.counters.commentsAnswered++;
@@ -1304,10 +1236,7 @@ class LiveHostOrchestrator {
     const recent = state.memory.utterances.slice(-18);
 
     // Semantic-ish anti-repeat gate tanpa additional embedding API.
-    const maxSimilarity = recent.reduce(
-      (max, previous) => Math.max(max, similarity(speech, previous)),
-      0,
-    );
+    const maxSimilarity = recent.reduce((max, previous) => Math.max(max, similarity(speech, previous)), 0);
 
     if (maxSimilarity >= 0.88 || this.hasRepeatedStructure(speech, recent)) {
       return false;
@@ -1317,8 +1246,7 @@ class LiveHostOrchestrator {
     if (
       response.ctaType !== "NONE" &&
       state.memory.ctas.length > 0 &&
-      normalizeText(state.memory.ctas[state.memory.ctas.length - 1] || "") ===
-        normalizeText(response.ctaType)
+      normalizeText(state.memory.ctas[state.memory.ctas.length - 1] || "") === normalizeText(response.ctaType)
     ) {
       return false;
     }
@@ -1356,13 +1284,7 @@ class LiveHostOrchestrator {
     }
     if (isGestureAction(finalAction)) state.memory.lastGestureAction = finalAction;
 
-    await this.submitToGPU(
-      sessionId,
-      finalText,
-      audioBase64,
-      finalAction,
-      source === "comment",
-    );
+    await this.submitToGPU(sessionId, finalText, audioBase64, finalAction, source === "comment");
 
     state.counters.generated++;
     state.lastActivityAt = Date.now();
@@ -1370,7 +1292,8 @@ class LiveHostOrchestrator {
     state.currentMode = response.mode;
     state.modeStartedAt = Date.now();
     state.memory.lastResponseAt = Date.now();
-    if (source !== "comment") state.memory.lastSalesAt = response.ctaType === "NONE" ? state.memory.lastSalesAt : Date.now();
+    if (source !== "comment")
+      state.memory.lastSalesAt = response.ctaType === "NONE" ? state.memory.lastSalesAt : Date.now();
 
     this.recordMemory(state, {
       ...response,
@@ -1436,8 +1359,7 @@ class LiveHostOrchestrator {
     const elapsedMinutes = Math.round(this.elapsedMs(state) / 60_000);
     const phaseBoost = new Set(phasePreferTopics(elapsedMinutes));
     const bufferCritical =
-      state.lastQueue.queuedVideos === 0 ||
-      (state.lastQueue.bufferSeconds > 0 && state.lastQueue.bufferSeconds <= 4);
+      state.lastQueue.queuedVideos === 0 || (state.lastQueue.bufferSeconds > 0 && state.lastQueue.bufferSeconds <= 4);
 
     // Buffer kritis → topik pendek berbasis fakta, bukan stall filler.
     if (bufferCritical) {
@@ -1528,12 +1450,7 @@ class LiveHostOrchestrator {
    * - queue tetap kecil agar komentar tidak basi;
    * - pertanyaan mirip disatukan dengan drop duplicate.
    */
-  public enqueue(
-    sessionId: string,
-    text: string,
-    authorName?: string,
-    platformCommentId?: string,
-  ): void {
+  public enqueue(sessionId: string, text: string, authorName?: string, platformCommentId?: string): void {
     const state = this.sessions.get(sessionId);
     if (!state || !state.isLive) return;
 
@@ -1553,9 +1470,7 @@ class LiveHostOrchestrator {
 
     const dedupeKey = fingerprint(clean);
     const duplicateActive = state.pendingComments.some(
-      (comment) =>
-        comment.dedupeKey === dedupeKey ||
-        similarity(comment.text, clean) >= 0.82,
+      (comment) => comment.dedupeKey === dedupeKey || similarity(comment.text, clean) >= 0.82,
     );
 
     if (duplicateActive) {
@@ -1583,16 +1498,13 @@ class LiveHostOrchestrator {
     const policy = this.getPolicy(state);
     while (state.pendingComments.length > policy.maxPendingComments) {
       // Buang priority terendah/terlama, bukan elemen terakhir secara buta.
-      const dropIndex = state.pendingComments.reduce(
-        (lowest, item, index, list) => {
-          if (lowest === -1) return index;
-          const current = list[lowest]!;
-          if (item.priority < current.priority) return index;
-          if (item.priority === current.priority && item.createdAt < current.createdAt) return index;
-          return lowest;
-        },
-        -1,
-      );
+      const dropIndex = state.pendingComments.reduce((lowest, item, index, list) => {
+        if (lowest === -1) return index;
+        const current = list[lowest]!;
+        if (item.priority < current.priority) return index;
+        if (item.priority === current.priority && item.createdAt < current.createdAt) return index;
+        return lowest;
+      }, -1);
       if (dropIndex >= 0) {
         state.pendingComments.splice(dropIndex, 1);
         state.counters.commentsDropped++;
@@ -1627,9 +1539,7 @@ class LiveHostOrchestrator {
     return state.pendingComments.shift() || null;
   }
 
-  private async ensureProductSnapshot(
-    state: HostRuntimeState,
-  ): Promise<ProductSnapshot | null> {
+  private async ensureProductSnapshot(state: HostRuntimeState): Promise<ProductSnapshot | null> {
     if (state.product && Date.now() < state.productCacheExpiresAt) return state.product;
 
     const found =
@@ -1697,11 +1607,7 @@ class LiveHostOrchestrator {
       const queuedVideos = readyVideos;
       const activeProcessing = Number(raw.active_processing_count || 0);
 
-      const playableSeconds = Number(
-        raw.playable_buffer_seconds ??
-          raw.queued_videos_duration_seconds ??
-          NaN,
-      );
+      const playableSeconds = Number(raw.playable_buffer_seconds ?? raw.queued_videos_duration_seconds ?? NaN);
       const inFlightSeconds = Number(raw.in_flight_buffer_seconds ?? NaN);
 
       const explicitTotal = Number(raw.buffer_seconds ?? NaN);
@@ -1718,8 +1624,7 @@ class LiveHostOrchestrator {
       } else {
         bufferSeconds = Math.max(
           0,
-          queuedVideos * FALLBACK_SPEECH_SECONDS +
-            activeProcessing * IN_FLIGHT_RENDER_SECONDS,
+          queuedVideos * FALLBACK_SPEECH_SECONDS + activeProcessing * IN_FLIGHT_RENDER_SECONDS,
         );
       }
 
@@ -1736,10 +1641,7 @@ class LiveHostOrchestrator {
         warmedUp: Boolean(raw.warmed_up || bufferSeconds > 0 || queuedVideos > 0),
       };
 
-      if (
-        state.isLive &&
-        state.lastQueue.bufferSeconds > this.getPolicy(state).minBufferSeconds
-      ) {
+      if (state.isLive && state.lastQueue.bufferSeconds > this.getPolicy(state).minBufferSeconds) {
         state.lastActivityAt = Date.now();
       }
 
@@ -1809,10 +1711,7 @@ class LiveHostOrchestrator {
     }
   }
 
-  public async waitForPipelineReady(
-    sessionId: string,
-    timeoutMs = 180_000,
-  ): Promise<boolean> {
+  public async waitForPipelineReady(sessionId: string, timeoutMs = 180_000): Promise<boolean> {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
       const state = this.sessions.get(sessionId);
@@ -1849,25 +1748,18 @@ class LiveHostOrchestrator {
     const policy = this.getPolicy(state);
     const rtmpRequired = Boolean(state.config.rtmpUrl);
     const rtmpOk = !rtmpRequired || queue.rtmpConnected;
-    const bufferReady =
-      queue.bufferSeconds >= policy.minBufferSeconds && queue.queuedVideos >= 1;
+    const bufferReady = queue.bufferSeconds >= policy.minBufferSeconds && queue.queuedVideos >= 1;
     if (bufferReady && rtmpOk) {
       state.pipelineReady = true;
     }
-    const ready =
-      Boolean(state.pipelineReady) && rtmpOk && !queue.rtmpError;
+    const ready = Boolean(state.pipelineReady) && rtmpOk && !queue.rtmpError;
 
     if (queue.rtmpError) {
       if (!state.rtmpFailedAt) state.rtmpFailedAt = Date.now();
       const waitMs = state.isLive ? 5_000 : 90_000;
-      if (
-        !state.rtmpFailStopping &&
-        Date.now() - state.rtmpFailedAt >= waitMs
-      ) {
+      if (!state.rtmpFailStopping && Date.now() - state.rtmpFailedAt >= waitMs) {
         state.rtmpFailStopping = true;
-        console.log(
-          `[LiveHost] RTMP gagal — menghentikan sesi ${sessionId} setelah ${Math.round(waitMs / 1000)}s.`,
-        );
+        console.log(`[LiveHost] RTMP gagal — menghentikan sesi ${sessionId} setelah ${Math.round(waitMs / 1000)}s.`);
         this.onSessionExpired?.(sessionId);
       }
     }
@@ -1875,8 +1767,7 @@ class LiveHostOrchestrator {
     let stageIndex = 0;
     let stageText = "Menyiapkan AI Host...";
 
-    const offlineMs =
-      state.workerOfflineSince > 0 ? Date.now() - state.workerOfflineSince : 0;
+    const offlineMs = state.workerOfflineSince > 0 ? Date.now() - state.workerOfflineSince : 0;
     const workerStuck =
       queue.workerOffline &&
       offlineMs >= WORKER_OFFLINE_FAIL_MS &&
@@ -1886,16 +1777,12 @@ class LiveHostOrchestrator {
     const workerError = workerStuck
       ? state.lastWorkerError?.includes("502")
         ? "Worker GPU crash atau tidak merespons (HTTP 502). Bukan masalah Stream Key — coba mulai ulang sesi."
-        : state.lastWorkerError ||
-          "Worker GPU tidak merespons. Coba mulai ulang sesi live."
+        : state.lastWorkerError || "Worker GPU tidak merespons. Coba mulai ulang sesi live."
       : "";
 
     if (workerError) {
       if (!state.workerFailedAt) state.workerFailedAt = Date.now();
-      if (
-        !state.workerFailStopping &&
-        Date.now() - state.workerFailedAt >= WORKER_FAIL_STOP_MS
-      ) {
+      if (!state.workerFailStopping && Date.now() - state.workerFailedAt >= WORKER_FAIL_STOP_MS) {
         state.workerFailStopping = true;
         console.log(
           `[LiveHost] Worker offline — menghentikan sesi ${sessionId} setelah ${Math.round(WORKER_FAIL_STOP_MS / 1000)}s.`,
@@ -1920,9 +1807,7 @@ class LiveHostOrchestrator {
       stageText = "Menyiapkan segmen pembuka AI Host...";
     } else if (rtmpRequired && !queue.rtmpConnected) {
       stageIndex = 3;
-      stageText = queue.broadcasting
-        ? "Menghubungkan RTMP ke platform..."
-        : "Menunggu koneksi RTMP...";
+      stageText = queue.broadcasting ? "Menghubungkan RTMP ke platform..." : "Menunggu koneksi RTMP...";
     } else if (!state.isLive) {
       stageIndex = 4;
       stageText = "AI Host siap. Silakan konfirmasi Go Live.";
@@ -1945,9 +1830,7 @@ class LiveHostOrchestrator {
       bufferSeconds: Math.round(queue.bufferSeconds),
       workerOffline: queue.workerOffline,
       workerOfflineSeconds:
-        state.workerOfflineSince > 0
-          ? Math.round((Date.now() - state.workerOfflineSince) / 1000)
-          : 0,
+        state.workerOfflineSince > 0 ? Math.round((Date.now() - state.workerOfflineSince) / 1000) : 0,
       warmedUp: queue.warmedUp,
       currentMode: state.currentMode,
       elapsedSeconds: Math.round(this.elapsedMs(state) / 1000),
