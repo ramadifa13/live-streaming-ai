@@ -227,10 +227,11 @@ class AILiveWorker:
         if is_specific_clip:
             exact_names = [f"{clean_name}.mp4"]
         elif not clean_name.endswith("_talk_expressive"):
+            # Host "namira" → utamakan idle untuk lookup generik, lalu talk.
             exact_names = [
+                f"{clean_name}_idle.mp4",
                 f"{clean_name}_talk_expressive.mp4",
                 f"{clean_name}.mp4",
-                f"{clean_name}_idle.mp4",
             ]
         else:
             exact_names = [f"{clean_name}.mp4", f"{clean_name}_idle.mp4"]
@@ -261,8 +262,8 @@ class AILiveWorker:
             if not os.path.exists(d):
                 continue
             for fallback in (
-                "namira_talk_expressive.mp4",
                 "namira_idle.mp4",
+                "namira_talk_expressive.mp4",
                 "namira.mp4",
             ):
                 p = os.path.join(d, fallback)

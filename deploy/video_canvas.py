@@ -52,13 +52,8 @@ def fit_bgr(frame, width: int = CANVAS_W, height: int = CANVAS_H):
     return canvas
 
 
-def prefer_talk_clip(idle_path: str) -> str:
-    """Idle harus klip yang sama dengan sumber MuseTalk (talk_expressive).
-
-    namira_idle.mp4 dan namira_talk_expressive.mp4 adalah take berbeda:
-    ukuran kepala, pose, dan framing tidak sama — transisi idle→bicara
-    terlihat seperti muka/resolusi berganti.
-    """
+def prefer_idle_clip(idle_path: str) -> str:
+    """Utamakan *_idle.mp4 untuk visual idle (bukan talk_expressive)."""
     if not idle_path:
         return idle_path
     directory = os.path.dirname(idle_path) or "."
@@ -71,13 +66,18 @@ def prefer_talk_clip(idle_path: str) -> str:
         or "namira"
     )
     for name in (
-        f"{host}_talk_expressive.mp4",
-        "namira_talk_expressive.mp4",
-        "talk_expressive.mp4",
+        f"{host}_idle.mp4",
+        "namira_idle.mp4",
+        "idle.mp4",
     ):
         candidate = os.path.join(directory, name)
         if os.path.exists(candidate):
             if os.path.abspath(candidate) != os.path.abspath(idle_path):
-                print(f"[CANVAS] Idle visual → {name} (satu klip dengan lipsync)")
+                print(f"[CANVAS] Idle visual → {name}")
             return candidate
     return idle_path
+
+
+def prefer_talk_clip(idle_path: str) -> str:
+    """Legacy: utamakan talk_expressive. Idle sekarang pakai prefer_idle_clip()."""
+    return prefer_idle_clip(idle_path)

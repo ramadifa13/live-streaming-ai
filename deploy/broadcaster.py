@@ -28,16 +28,16 @@ except ImportError:
     )
 
 try:
-    from video_canvas import ffmpeg_fit_filter, prefer_talk_clip
+    from video_canvas import ffmpeg_fit_filter, prefer_idle_clip
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from video_canvas import ffmpeg_fit_filter, prefer_talk_clip
+    from video_canvas import ffmpeg_fit_filter, prefer_idle_clip
 
 class AIBroadcaster:
     def __init__(self, rtmp_url, idle_video_path, output_folder,
                  product_name="", product_price="", product_image_url="", banner_image_url=""):
         self.rtmp_url = rtmp_url
-        self.idle_video = prefer_talk_clip(idle_video_path) if idle_video_path else idle_video_path
+        self.idle_video = prefer_idle_clip(idle_video_path) if idle_video_path else idle_video_path
         self.output_folder = output_folder
         self.product_name = product_name
         self.product_price = product_price

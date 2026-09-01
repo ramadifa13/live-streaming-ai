@@ -29,9 +29,9 @@ except ImportError:
     write_rtmp_status = None
 
 try:
-    from video_canvas import prefer_talk_clip
+    from video_canvas import prefer_idle_clip
 except ImportError:
-    prefer_talk_clip = None
+    prefer_idle_clip = None
 
 # Muat .env worker sebelum init AILiveWorker / MuseTalk flags.
 if load_env_files is not None:
@@ -701,25 +701,25 @@ async def start_broadcast(req: BroadcastRequest):
 
         os.makedirs(output_dir, exist_ok=True)
 
-        # Resolusi path idle video — utamakan talk_expressive agar idle = sumber lipsync
+        # Resolusi path idle video — utamakan namira_idle.mp4
         resolved_idle = req.idle_video or req.idleVideo or ""
         if not resolved_idle or not os.path.exists(resolved_idle):
             for candidate in [
-                "/workspace/ai_live_worker/assets/3d/namira_talk_expressive.mp4",
                 "/workspace/ai_live_worker/assets/3d/namira_idle.mp4",
+                "/workspace/ai_live_worker/assets/3d/namira_talk_expressive.mp4",
                 "/workspace/ai_live_worker/assets/3d/namira.mp4",
-                "/workspace/live-streaming-ai/deploy/assets/3d/namira_talk_expressive.mp4",
                 "/workspace/live-streaming-ai/deploy/assets/3d/namira_idle.mp4",
+                "/workspace/live-streaming-ai/deploy/assets/3d/namira_talk_expressive.mp4",
                 "/workspace/live-streaming-ai/deploy/assets/3d/namira.mp4",
-                os.path.join(os.path.dirname(__file__), "assets/3d/namira_talk_expressive.mp4"),
                 os.path.join(os.path.dirname(__file__), "assets/3d/namira_idle.mp4"),
+                os.path.join(os.path.dirname(__file__), "assets/3d/namira_talk_expressive.mp4"),
                 os.path.join(os.path.dirname(__file__), "assets/3d/namira.mp4"),
             ]:
                 if os.path.exists(candidate):
                     resolved_idle = candidate
                     break
-        if resolved_idle and prefer_talk_clip is not None:
-            resolved_idle = prefer_talk_clip(resolved_idle)
+        if resolved_idle and prefer_idle_clip is not None:
+            resolved_idle = prefer_idle_clip(resolved_idle)
 
         # Hentikan broadcaster lama jika ada agar tidak bentrok RTMP URL
         _terminate_broadcaster(timeout=5.0)

@@ -6,7 +6,7 @@ secara kontinu:
 
   • Idle dipotong per frame saat clip AI baru siap (tidak menunggu chunk 1.5s).
   • Tidak ada spawn worker FFmpeg antar kalimat → jeda/gap RTMP mengecil.
-  • Visual idle memakai talk_expressive bila ada (pose sama dengan clip bicara).
+  • Visual idle memakai namira_idle.mp4 (atau IDLE_VIDEO), bukan talk_expressive.
 
 Aktifkan dengan BROADCAST_MODE=frame_feed (default tetap segment).
 """
@@ -36,10 +36,10 @@ except ImportError:
     from rtmp_utils import FfmpegLogWatcher, join_rtmp_url, write_rtmp_status
 
 try:
-    from video_canvas import fit_bgr, prefer_talk_clip
+    from video_canvas import fit_bgr, prefer_idle_clip
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from video_canvas import fit_bgr, prefer_talk_clip
+    from video_canvas import fit_bgr, prefer_idle_clip
 
 
 def _sequence_key(path: str):
@@ -143,9 +143,9 @@ class _PrefetchCache:
         return None
 
 
-def _prefer_talk_visual(idle_path: str) -> str:
-    """Pakai talk_expressive sebagai visual idle bila tersedia — pose nyambung."""
-    return prefer_talk_clip(idle_path)
+def _prefer_idle_visual(idle_path: str) -> str:
+    """Pakai *_idle.mp4 sebagai visual idle bila tersedia."""
+    return prefer_idle_clip(idle_path)
 
 
 def _load_frames(video_path: str, width: int, height: int):
@@ -222,7 +222,7 @@ class FrameFeedBroadcaster:
         self.samples_per_frame = int(round(self.sample_rate / float(self.fps)))
         self.bytes_per_audio_frame = self.samples_per_frame * 2 * 2
 
-        visual_path = _prefer_talk_visual(idle_video_path)
+        visual_path = _prefer_idle_visual(idle_video_path)
         self.idle_video = visual_path
         print(f"[FRAME-FEED] Memuat frame idle dari {os.path.basename(visual_path)}...")
         self.idle_frames = _load_frames(visual_path, self.width, self.height)
@@ -274,7 +274,7 @@ class FrameFeedBroadcaster:
         print(f"[FRAME-FEED] RTMP fatal: {hint}")
 
     def _idle_display_frame(self, full_loop: bool = False):
-        """Sebelum clip pertama: loop talk_expressive.
+        """Sebelum clip pertama: loop idle.
         Setelah bicara: tahan pose terakhir (bukan ping-pong — itu kelihatan ngadat).
         """
         n = len(self.idle_frames)
