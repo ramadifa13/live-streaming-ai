@@ -20,7 +20,6 @@ import re
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import traceback
@@ -234,12 +233,8 @@ class FrameFeedBroadcaster:
 
         self._shutting_down = False
         self.ffmpeg = None
-        self._video_fifo = None
-        self._audio_fifo = None
-        self._tmpdir = None
         self._v_fh = None
         self._a_fh = None
-        self._fifo_thread = None
 
         self.overlay_png_path = None
         self._prepare_overlay()
@@ -341,18 +336,45 @@ class FrameFeedBroadcaster:
             return frame
 
     def _start_encoder(self):
-        self._tmpdir = tempfile.mkdtemp(prefix="frame_feed_")
-        self._video_fifo = os.path.join(self._tmpdir, "video.fifo")
-        self._audio_fifo = os.path.join(self._tmpdir, "audio.fifo")
-        os.mkfifo(self._video_fifo)
-        os.mkfifo(self._audio_fifo)
+        """Encoder via anonymous pipe — jangan mkfifo.
 
+        Dua named pipe + open() berurutan deadlock: FFmpeg probe input pertama
+        menunggu data, Python menunggu reader input kedua. Timeout 15s, RTMP
+        tidak pernah handshake.
+        """
         gop = self.fps * 2
+        video_r, video_w = os.pipe()
+        audio_r, audio_w = os.pipe()
+        os.set_inheritable(video_r, True)
+        os.set_inheritable(audio_r, True)
+        os.set_inheritable(video_w, False)
+        os.set_inheritable(audio_w, False)
+        try:
+            import fcntl
+
+            pipe_bytes = min(4 * 1024 * 1024, max(1024 * 1024, self.width * self.height * 3))
+            set_sz = getattr(fcntl, "F_SETPIPE_SZ", 1031)
+            for fd in (video_r, video_w, audio_r, audio_w):
+                try:
+                    fcntl.fcntl(fd, set_sz, pipe_bytes)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        v_in = f"/proc/self/fd/{video_r}"
+        a_in = f"/proc/self/fd/{audio_r}"
         cmd = [
             "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "info",
+            "-stats",
             "-y",
-            "-v",
-            "warning",
+            "-fflags",
+            "+nobuffer+genpts",
+            "-thread_queue_size",
+            "512",
             "-f",
             "rawvideo",
             "-pix_fmt",
@@ -361,16 +383,26 @@ class FrameFeedBroadcaster:
             f"{self.width}x{self.height}",
             "-r",
             str(self.fps),
+            "-probesize",
+            "32",
+            "-analyzeduration",
+            "0",
             "-i",
-            self._video_fifo,
+            v_in,
+            "-thread_queue_size",
+            "512",
             "-f",
             "s16le",
             "-ar",
             str(self.sample_rate),
             "-ac",
             "2",
+            "-probesize",
+            "32",
+            "-analyzeduration",
+            "0",
             "-i",
-            self._audio_fifo,
+            a_in,
             "-map",
             "0:v",
             "-map",
@@ -416,34 +448,33 @@ class FrameFeedBroadcaster:
             self.rtmp_url,
         ]
 
-        # Buka FIFO di thread terpisah supaya FFmpeg tidak deadlock saat open().
-        ready = threading.Event()
-        err_box = []
-
-        def _open_fifos():
-            try:
-                self._v_fh = open(self._video_fifo, "wb", buffering=0)
-                self._a_fh = open(self._audio_fifo, "wb", buffering=0)
-                ready.set()
-            except Exception as exc:
-                err_box.append(exc)
-                ready.set()
-
-        self._fifo_thread = threading.Thread(target=_open_fifos, daemon=True)
-        self._fifo_thread.start()
-
         print("[FRAME-FEED] Menyalakan encoder RTMP (satu sesi kontinu)...")
         write_rtmp_status(self.output_folder, "connecting")
         log_dir = "/workspace/ai_live_worker/logs"
         os.makedirs(log_dir, exist_ok=True)
         log_path = os.path.join(log_dir, "frame_feed_ffmpeg.log")
         self.log_file = open(log_path, "a", encoding="utf-8")
-        self.ffmpeg = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
+        try:
+            self.ffmpeg = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                pass_fds=(video_r, audio_r),
+            )
+        except Exception:
+            for fd in (video_r, video_w, audio_r, audio_w):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise
+
+        os.close(video_r)
+        os.close(audio_r)
+        self._v_fh = os.fdopen(video_w, "wb", buffering=0)
+        self._a_fh = os.fdopen(audio_w, "wb", buffering=0)
+
         watcher = FfmpegLogWatcher(
             on_fatal=self._on_rtmp_fatal,
             on_progress=lambda: self._set_rtmp_status(True),
@@ -471,12 +502,11 @@ class FrameFeedBroadcaster:
         self._stderr_thread = threading.Thread(target=_pump_stderr, daemon=True)
         self._stderr_thread.start()
 
-        if not ready.wait(timeout=15):
-            raise RuntimeError("Timeout membuka FIFO frame-feed")
-        if err_box:
-            raise err_box[0]
+        time.sleep(0.2)
         if self.ffmpeg.poll() is not None:
-            raise RuntimeError("FFmpeg frame-feed gagal start — cek logs/frame_feed_ffmpeg.log")
+            raise RuntimeError(
+                "FFmpeg frame-feed gagal start — cek logs/frame_feed_ffmpeg.log"
+            )
         print("[FRAME-FEED] Encoder siap — menunggu handshake RTMP (belum connected).")
 
     def shutdown(self):
@@ -500,18 +530,6 @@ class FrameFeedBroadcaster:
                     self.ffmpeg.kill()
                 except Exception:
                     pass
-        if self._tmpdir and os.path.isdir(self._tmpdir):
-            for name in ("video.fifo", "audio.fifo"):
-                path = os.path.join(self._tmpdir, name)
-                try:
-                    if os.path.exists(path):
-                        os.remove(path)
-                except Exception:
-                    pass
-            try:
-                os.rmdir(self._tmpdir)
-            except Exception:
-                pass
 
     def _write_av(self, frame: np.ndarray, pcm: bytes):
         if self._shutting_down or self._v_fh is None or self._a_fh is None:
