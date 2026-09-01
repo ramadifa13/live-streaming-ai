@@ -67,9 +67,26 @@ export const LiveControlBar: React.FC = () => {
   const connectingAbortRef = useRef<AbortController | null>(null);
 
   const handleCopy = async (text: string, label: string) => {
+    if (!text?.trim()) {
+      showToast(`${label} masih kosong — salin dari dashboard platform live Anda.`);
+      return;
+    }
     const ok = await copyToClipboard(text);
     if (ok) showToast(`${label} berhasil disalin ke clipboard!`);
   };
+
+  const rtmpUrlPlaceholder =
+    selectedPlatform.includes("Instagram")
+      ? "Salin Server URL dari Instagram Live Producer / Professional Dashboard..."
+      : selectedPlatform.includes("YouTube")
+        ? "Salin Server URL dari YouTube Studio → Go Live..."
+        : selectedPlatform.includes("TikTok")
+          ? "Salin Server URL dari TikTok LIVE Studio..."
+          : selectedPlatform.includes("Shopee")
+            ? "Salin Server URL dari Shopee Live Center..."
+            : selectedPlatform.includes("Facebook")
+              ? "Salin Server URL dari Meta Live Producer..."
+              : "Salin Server / Stream URL dari dashboard platform live Anda...";
 
   const handleSwitchNextProduct = async () => {
     if (products.length === 0) return;
@@ -114,20 +131,16 @@ export const LiveControlBar: React.FC = () => {
     const attemptId = Date.now();
     const controller = new AbortController();
     const { rtmpUrl: normalizedUrl, streamKey: normalizedKey } = normalizeRtmpInput(
-      customRtmpUrl !== ""
-        ? customRtmpUrl
-        : selectedPlatform.includes("Instagram")
-          ? "rtmps://live-upload.instagram.com:443/rtmp/"
-          : selectedPlatform.includes("YouTube")
-            ? "rtmp://a.rtmp.youtube.com/live2"
-            : selectedPlatform.includes("Shopee")
-              ? "rtmp://live.shopee.co.id/live/"
-              : selectedPlatform.includes("TikTok")
-                ? "rtmp://live.tiktok.com/live/"
-                : "rtmp://live.livestreamer.ai/live",
+      customRtmpUrl,
       streamKey,
     );
 
+    if (!normalizedUrl.trim()) {
+      showToast(
+        "Tempel Server / Stream URL dari platform live Anda. URL harus sesuai dengan yang ditampilkan di dashboard siaran.",
+      );
+      return;
+    }
     if (!normalizedKey) {
       showToast(
         "Tempel Stream Key dari platform dulu. Di Instagram, key lama yang sudah putus tidak bisa dipakai ulang — buat siaran baru.",
@@ -484,13 +497,14 @@ export const LiveControlBar: React.FC = () => {
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <p className="text-[9px] text-slate-400">Server / Stream URL ({selectedPlatform})</p>
+                    <p className="text-[8px] text-amber-400/90">Wajib salin dari platform</p>
                   </div>
                   <div className="flex rounded border border-[#232c42] bg-[#111827]">
                     <input
                       type="text"
                       value={customRtmpUrl}
                       onChange={(e) => setCustomRtmpUrl(e.target.value)}
-                      placeholder="Masukkan Server RTMP URL..."
+                      placeholder={rtmpUrlPlaceholder}
                       className="w-full bg-transparent p-1.5 text-[10px] text-slate-300 outline-none font-mono"
                     />
                     <button
@@ -760,7 +774,7 @@ export const LiveControlBar: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => handleCopy(customRtmpUrl || "rtmp://live.livestreamer.ai/live", "RTMP URL")}
+            onClick={() => handleCopy(customRtmpUrl, "RTMP URL")}
             className="flex items-center justify-center gap-1 rounded-lg border border-[#232c42] bg-[#111827] px-3 py-2 text-[9.5px] font-medium text-slate-300 hover:bg-white/5 transition cursor-pointer"
           >
             <Copy className="w-3 h-3" />

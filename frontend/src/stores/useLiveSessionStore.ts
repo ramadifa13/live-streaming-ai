@@ -210,22 +210,12 @@ export const useLiveSessionStore = create<LiveSessionState>()(
       setLiveSessionPhase: (phase) => set({ liveSessionPhase: phase }),
 
       handlePlatformSelect: (platName) => {
-        set({ selectedPlatform: platName });
-        if (platName.toLowerCase().includes("custom")) {
-          set({ connectMode: "MANUAL", customRtmpUrl: "" });
-        } else if (platName.includes("Instagram")) {
-          set({ customRtmpUrl: "rtmps://live-upload.instagram.com:443/rtmp/" });
-        } else if (platName.includes("YouTube")) {
-          set({ customRtmpUrl: "rtmp://a.rtmp.youtube.com/live2" });
-        } else if (platName.includes("TikTok")) {
-          set({ customRtmpUrl: "rtmp://live.tiktok.com/live/" });
-        } else if (platName.includes("Shopee")) {
-          set({ customRtmpUrl: "rtmp://live.shopee.co.id/live/" });
-        } else if (platName.includes("Facebook")) {
-          set({ customRtmpUrl: "rtmps://live-api-s.facebook.com:443/rtmp/" });
-        } else {
-          set({ customRtmpUrl: "rtmp://live.livestreamer.ai/live" });
-        }
+        set({
+          selectedPlatform: platName,
+          customRtmpUrl: "",
+          streamKey: "",
+          connectMode: platName.toLowerCase().includes("custom") ? "MANUAL" : get().connectMode,
+        });
       },
 
       cancelInitialization: async () => {
