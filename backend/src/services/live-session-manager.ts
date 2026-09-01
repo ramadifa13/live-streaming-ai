@@ -26,6 +26,7 @@ export interface ManagedSession {
   podId?: string | null;
   podBootStatus?: "pending" | "booting" | "ready" | "failed";
   podBootMessage?: string;
+  bootstrapAbort?: boolean;
   watchdogTimer?: NodeJS.Timeout;
   livePollTimer?: NodeJS.Timeout;
   pendingTimer?: NodeJS.Timeout;
@@ -186,12 +187,36 @@ class LiveSessionManager {
     try {
       managed.podBootStatus = "booting";
       managed.podBootMessage = "Mengalokasikan Cloud GPU RTX 4090...";
-      const podIdStr = await startPodAndWait(360_000, (message) => {
-        const current = this.activeSessions.get(sessionId);
-        if (current) current.podBootMessage = message;
+      const podIdStr = await startPodAndWait(360_000, {
+        onProgress: (message) => {
+          const current = this.activeSessions.get(sessionId);
+          if (current) current.podBootMessage = message;
+        },
+        onPodCreated: (podId) => {
+          const current = this.activeSessions.get(sessionId);
+          if (current) current.podId = podId;
+        },
+        shouldAbort: () => {
+          const current = this.activeSessions.get(sessionId);
+          return (
+            !current ||
+            current.bootstrapAbort === true ||
+            current.state === "ended"
+          );
+        },
       });
       const podId = typeof podIdStr === "string" ? podIdStr : null;
-      if (!managed) return;
+      if (!this.activeSessions.has(sessionId)) {
+        if (podId) {
+          await releaseGpuForJob(podId).catch((err) =>
+            console.error(
+              `[LiveSessionManager] Gagal terminate pod ${podId} setelah sesi dihapus:`,
+              err,
+            ),
+          );
+        }
+        return;
+      }
 
       managed.podId = podId;
       managed.podBootStatus = "ready";
@@ -220,6 +245,12 @@ class LiveSessionManager {
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "Gagal menghidupkan GPU RunPod";
+      if (message.includes("dibatalkan")) {
+        console.log(
+          `[LiveSessionManager] Pod bootstrap dibatalkan (${sessionId})`,
+        );
+        return;
+      }
       console.error(`[LiveSessionManager] Pod bootstrap gagal (${sessionId}):`, err);
       const current = this.activeSessions.get(sessionId);
       if (current) {
@@ -286,6 +317,9 @@ class LiveSessionManager {
       return { success: false };
     }
 
+    session.bootstrapAbort = true;
+    const podToTerminate = session.podId ?? null;
+
     this.clearTimers(sessionId);
     liveHostOrchestrator.stop(sessionId);
 
@@ -302,10 +336,15 @@ class LiveSessionManager {
       data: { status: "ended" },
     });
 
-    if (session.podId) {
-      releaseGpuForJob(session.podId).catch((err) =>
-        console.error("Failed to stop GPU Pod:", err),
-      );
+    if (podToTerminate) {
+      try {
+        await releaseGpuForJob(podToTerminate);
+        console.log(
+          `[LiveSessionManager] Pod ${podToTerminate} terminate/stop diminta untuk sesi ${sessionId}`,
+        );
+      } catch (err) {
+        console.error("Failed to stop GPU Pod:", err);
+      }
     }
 
     const durationSeconds =
@@ -648,6 +687,9 @@ class LiveSessionManager {
     const session = this.activeSessions.get(sessionId);
     if (!session) return;
 
+    session.bootstrapAbort = true;
+    const podToTerminate = session.podId ?? null;
+
     this.clearTimers(sessionId);
     liveHostOrchestrator.stop(sessionId);
 
@@ -663,8 +705,8 @@ class LiveSessionManager {
 
     livePlatformConnector.stopSession(sessionId);
 
-    if (session.podId) {
-      releaseGpuForJob(session.podId).catch(() => {});
+    if (podToTerminate) {
+      await releaseGpuForJob(podToTerminate).catch(() => {});
     }
     this.activeSessions.delete(sessionId);
     if (this.activeSessions.size === 0) {

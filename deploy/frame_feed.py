@@ -253,7 +253,15 @@ class FrameFeedBroadcaster:
         self._chain_from_ai = False
 
         os.makedirs(self.output_folder, exist_ok=True)
+        self._rtmp_status_path = os.path.join(self.output_folder, "rtmp_status.txt")
         self._start_encoder()
+
+    def _set_rtmp_status(self, connected: bool) -> None:
+        try:
+            with open(self._rtmp_status_path, "w", encoding="utf-8") as fh:
+                fh.write("connected" if connected else "disconnected")
+        except Exception:
+            pass
 
     def _prepare_overlay(self):
         """Reuse overlay PNG dari broadcaster segment bila sudah digenerate."""
@@ -352,6 +360,8 @@ class FrameFeedBroadcaster:
             "2",
             "-f",
             "flv",
+            "-rtmp_live",
+            "live",
             self.rtmp_url,
         ]
 
@@ -386,19 +396,21 @@ class FrameFeedBroadcaster:
             err = self.ffmpeg.stderr.read().decode("utf-8", errors="ignore") if self.ffmpeg.stderr else ""
             raise RuntimeError(f"FFmpeg frame-feed gagal start: {err[:500]}")
 
-        # Tandai RTMP connected untuk queue-status orchestrator.
+        self._set_rtmp_status(True)
+        # Legacy flag (queue-status lama); primary = rtmp_status.txt
         flag = os.path.join(self.output_folder, "rtmp_connected.flag")
         try:
             with open(flag, "w", encoding="utf-8") as fh:
                 fh.write("connected")
         except Exception:
             pass
-        print("[FRAME-FEED] Encoder siap.")
+        print("[FRAME-FEED] Encoder siap — status RTMP: connected (menunggu ingest platform).")
 
     def shutdown(self):
         if self._shutting_down:
             return
         self._shutting_down = True
+        self._set_rtmp_status(False)
         print("[FRAME-FEED] Menutup encoder...")
         for fh in (self._v_fh, self._a_fh):
             if fh is not None:
@@ -649,6 +661,7 @@ class FrameFeedBroadcaster:
                             err = self.ffmpeg.stderr.read().decode("utf-8", errors="ignore")[-800:]
                         except Exception:
                             pass
+                    self._set_rtmp_status(False)
                     print(f"[FRAME-FEED] Encoder mati: {err}")
                     break
 

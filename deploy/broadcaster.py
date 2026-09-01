@@ -310,16 +310,17 @@ class AIBroadcaster:
             master_command = [
                 "ffmpeg",
                 "-y",
-                "-fflags", "+genpts",
-                "-async", "1",
+                "-fflags", "+genpts+igndts+discardcorrupt",
+                "-use_wallclock_as_timestamps", "1",
                 "-f", "mpegts",
                 "-i", "pipe:0",
                 "-c:v", "copy",
                 "-c:a", "aac",
                 "-b:a", "128k",
                 "-ar", "44100",
-                "-max_muxing_queue_size", "2048",
+                "-max_muxing_queue_size", "4096",
                 "-flvflags", "no_duration_filesize",
+                "-rtmp_live", "live",
                 "-f", "flv",
                 self.rtmp_url
             ]
@@ -429,6 +430,8 @@ class AIBroadcaster:
             "-ar", "44100",
             "-ac", "2",
             "-max_muxing_queue_size", "2048",
+            "-mpegts_flags", "+initial_discontinuity",
+            "-flush_packets", "1",
             "-f", "mpegts",
             "pipe:1",
         ]

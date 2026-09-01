@@ -1706,12 +1706,17 @@ class LiveHostOrchestrator {
 
     const queue = await this.refreshQueueMetrics(sessionId);
     const policy = this.getPolicy(state);
+    const rtmpRequired = Boolean(state.config.rtmpUrl);
+    const rtmpOk =
+      !rtmpRequired || queue.rtmpConnected || queue.broadcasting;
     const ready =
       queue.bufferSeconds >= policy.minBufferSeconds &&
       queue.queuedVideos >= 1 &&
-      (queue.rtmpConnected || queue.broadcasting || !state.config.rtmpUrl);
+      rtmpOk;
 
-    if (ready) state.pipelineReady = true;
+    if (ready && (!rtmpRequired || queue.rtmpConnected)) {
+      state.pipelineReady = true;
+    }
 
     let stageIndex = 0;
     let stageText = "Menyiapkan AI Host...";
@@ -1722,9 +1727,11 @@ class LiveHostOrchestrator {
     } else if (queue.bufferSeconds < policy.minBufferSeconds || queue.queuedVideos < 2) {
       stageIndex = 2;
       stageText = "Menyiapkan segmen pembuka AI Host...";
-    } else if (!queue.rtmpConnected && !queue.broadcasting && state.config.rtmpUrl) {
+    } else if (rtmpRequired && !queue.rtmpConnected) {
       stageIndex = 3;
-      stageText = "Menunggu koneksi RTMP...";
+      stageText = queue.broadcasting
+        ? "Menghubungkan RTMP ke platform (Instagram)..."
+        : "Menunggu koneksi RTMP...";
     } else if (!state.isLive) {
       stageIndex = 4;
       stageText = "AI Host siap. Silakan konfirmasi Go Live.";

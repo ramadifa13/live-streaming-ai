@@ -330,21 +330,56 @@ export async function resumePod(podId: string): Promise<boolean> {
   }
 }
 
+export type StartPodOptions = {
+  onProgress?: (message: string) => void;
+  /** Dipanggil segera setelah pod dibuat — agar stop bisa terminate walau masih booting. */
+  onPodCreated?: (podId: string) => void;
+  shouldAbort?: () => boolean;
+};
+
+function resolveStartPodOptions(
+  onProgressOrOptions?: ((message: string) => void) | StartPodOptions,
+): StartPodOptions {
+  if (typeof onProgressOrOptions === "function") {
+    return { onProgress: onProgressOrOptions };
+  }
+  return onProgressOrOptions ?? {};
+}
+
+async function throwIfBootAborted(
+  podId: string | null | undefined,
+  shouldAbort?: () => boolean,
+): Promise<void> {
+  if (!shouldAbort?.() || !podId) return;
+  console.log(
+    `[RunPodManager] [Pod ${podId}] Bootstrap dibatalkan — terminate pod...`,
+  );
+  await stopPod(podId);
+  throw new Error("Pod bootstrap dibatalkan (sesi dihentikan)");
+}
 /**
  * Helper: Polling health check endpoint /health hingga AI Worker siap (200 OK)
  */
 async function waitForWorkerHealth(
   currentPodId: string,
   healthTimeout = 300000,
-  onProgress?: (message: string) => void,
+  options: StartPodOptions = {},
 ): Promise<string> {
+  const onProgress = options.onProgress;
+  const shouldAbort = options.shouldAbort;
   const workerUrl = getWorkerUrl(currentPodId);
+  if (!workerUrl) {
+    throw new Error(
+      `[RunPodManager] [Pod ${currentPodId}] Worker URL tidak tersedia.`,
+    );
+  }
   const healthStart = Date.now();
   console.log(
     `[RunPodManager] [Pod ${currentPodId}] Menunggu AI Worker di ${workerUrl} siap...`,
   );
 
   while (Date.now() - healthStart < healthTimeout) {
+    await throwIfBootAborted(currentPodId, shouldAbort);
     const elapsed = Math.round((Date.now() - healthStart) / 1000);
     try {
       const res = await fetch(`${workerUrl}/health`, {
@@ -395,8 +430,11 @@ async function waitForWorkerHealth(
  */
 export async function startPodAndWait(
   timeoutMs = 120000,
-  onProgress?: (message: string) => void,
+  onProgressOrOptions?: ((message: string) => void) | StartPodOptions,
 ): Promise<string | null> {
+  const options = resolveStartPodOptions(onProgressOrOptions);
+  const onProgress = options.onProgress;
+  const shouldAbort = options.shouldAbort;
   updateGpuActivity();
 
   if (process.env.RUNPOD_POD_ID) {
@@ -417,6 +455,7 @@ export async function startPodAndWait(
         // Tunggu status desiredStatus menjadi RUNNING
         const resumeStart = Date.now();
         while (Date.now() - resumeStart < timeoutMs) {
+          await throwIfBootAborted(staticPodId, shouldAbort);
           status = await getPodStatus(staticPodId).catch(() => null);
           if (status && status.desiredStatus === "RUNNING") {
             console.log(
@@ -433,7 +472,7 @@ export async function startPodAndWait(
       }
 
       onProgress?.("Menghidupkan pod GPU...");
-      return await waitForWorkerHealth(staticPodId, timeoutMs, onProgress);
+      return await waitForWorkerHealth(staticPodId, timeoutMs, options);
     }
   }
 
@@ -501,10 +540,13 @@ export async function startPodAndWait(
     throw new Error("Gagal menyalakan pod setelah beberapa kali percobaan.");
   }
 
+  options.onPodCreated?.(currentPodId);
+
   // Poll until it's running
   const startTime = Date.now();
   let status: PodStatus | null = null;
   while (Date.now() - startTime < timeoutMs) {
+    await throwIfBootAborted(currentPodId, shouldAbort);
     status = await getPodStatus(currentPodId);
     if (status && status.desiredStatus === "RUNNING") {
       console.log(
@@ -522,7 +564,7 @@ export async function startPodAndWait(
   }
 
   onProgress?.("Pod RUNNING — menunggu AI Worker siap...");
-  return await waitForWorkerHealth(currentPodId, timeoutMs, onProgress);
+  return await waitForWorkerHealth(currentPodId, timeoutMs, options);
 }
 /**
  * Menghentikan pod tanpa menghapusnya (GPU dilepas, disk & volume tetap ada).

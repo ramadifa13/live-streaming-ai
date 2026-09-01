@@ -559,6 +559,14 @@ async def get_queue_status():
                     rtmp_connected = (f.read().strip() == "connected")
             except Exception:
                 pass
+        if not rtmp_connected:
+            legacy_flag = os.path.join(output_dir, "rtmp_connected.flag")
+            if os.path.exists(legacy_flag):
+                try:
+                    with open(legacy_flag, "r") as f:
+                        rtmp_connected = (f.read().strip() == "connected")
+                except Exception:
+                    pass
 
     return {
         "success": True,
