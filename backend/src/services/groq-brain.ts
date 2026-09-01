@@ -743,7 +743,7 @@ async function callGroqWithModel(
     if (
       useJsonFormat &&
       (response.status === 400 || response.status === 422) &&
-      /response_format|json_object|json schema/i.test(errBody)
+      /response_format|json_object|json schema|json_validate_failed/i.test(errBody)
     ) {
       return callGroqWithModel(prompt, model, options, false);
     }

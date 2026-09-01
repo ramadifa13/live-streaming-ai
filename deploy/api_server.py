@@ -158,28 +158,47 @@ def _cleanup_playable_outputs(folder: str, idle_abs: str = "") -> None:
     """Hapus sisa MP4 + .ffseg dari sesi sebelumnya (kecuali idle asset)."""
     import shutil
 
-    for f in glob.glob(os.path.join(folder, "**", "*.mp4"), recursive=True):
-        if idle_abs and os.path.abspath(f) == idle_abs:
-            continue
-        base = os.path.basename(f)
-        if base in IDLE_CLIP_BASENAMES or base.endswith("idle.mp4"):
-            continue
+    scan_roots = [folder]
+    live_sub = os.path.join(folder, "live_videos")
+    if os.path.isdir(live_sub):
+        scan_roots.append(live_sub)
+
+    for root in scan_roots:
         try:
-            os.remove(f)
-        except Exception:
-            pass
-    for d in glob.glob(os.path.join(folder, "**", "*.ffseg"), recursive=True):
-        if os.path.isdir(d):
+            names = os.listdir(root)
+        except OSError:
+            continue
+        for name in names:
+            path = os.path.join(root, name)
+            if name.endswith(".mp4"):
+                if idle_abs and os.path.abspath(path) == idle_abs:
+                    continue
+                if name in IDLE_CLIP_BASENAMES or name.endswith("idle.mp4"):
+                    continue
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+            elif name.endswith(".ffseg") or name.endswith(".ffseg.partial"):
+                if os.path.isdir(path):
+                    try:
+                        shutil.rmtree(path, ignore_errors=True)
+                    except Exception:
+                        pass
+
+    # Fallback: recursive scan hanya bila masih ada artefak besar di subfolder lain.
+    try:
+        remaining_mp4 = glob.glob(os.path.join(folder, "**", "task_*.mp4"), recursive=True)
+        remaining_mp4 += glob.glob(os.path.join(folder, "**", "prio_*.mp4"), recursive=True)
+        for f in remaining_mp4[:200]:
+            if idle_abs and os.path.abspath(f) == idle_abs:
+                continue
             try:
-                shutil.rmtree(d, ignore_errors=True)
+                os.remove(f)
             except Exception:
                 pass
-    for d in glob.glob(os.path.join(folder, "**", "*.ffseg.partial"), recursive=True):
-        if os.path.isdir(d):
-            try:
-                shutil.rmtree(d, ignore_errors=True)
-            except Exception:
-                pass
+    except Exception:
+        pass
 
 def prune_old_jobs():
     """Prune expired jobs to prevent memory leaks during 24/7 streaming."""
@@ -660,135 +679,140 @@ async def start_playback(req: PlaybackRequest):
 
 @app.post("/stream/start-broadcast")
 async def start_broadcast(req: BroadcastRequest):
-    global broadcaster_process, total_videos_rendered, current_broadcast_env
-    global broadcaster_restarts, broadcaster_next_restart_at
     try:
-        final_rtmp_url = (req.rtmp_url or req.rtmpUrl or "").strip()
-        final_stream_key = (
-            (req.stream_key or req.streamKey or "")
-            .replace("\r", "")
-            .replace("\n", "")
-            .strip()
-        )
-        if not final_rtmp_url or not final_stream_key:
-            raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
-
-        # Idempoten HANYA jika RTMP benar-benar connected. Proses Python yang
-        # masih hidup setelah FFmpeg drop bukan alasan untuk menolak key baru
-        # atau retry.
-        already_connected = False
-        if (
-            broadcaster_process is not None
-            and broadcaster_process.poll() is None
-            and current_broadcast_env is not None
-            and current_broadcast_env.get("RTMP_URL") == final_rtmp_url
-            and current_broadcast_env.get("STREAM_KEY") == final_stream_key
-        ):
-            rtmp_state = "disconnected"
-            if read_rtmp_status is not None:
-                rtmp_state, _ = read_rtmp_status(output_dir)
-            already_connected = rtmp_state == "connected"
-        if already_connected:
-            print(
-                "[AI-Worker] start-broadcast diabaikan — siaran dengan target yang "
-                f"sama sudah aktif (PID: {broadcaster_process.pid})."
-            )
-            return {
-                "success": True,
-                "status": "already_running",
-                "pid": broadcaster_process.pid,
-            }
-
-        os.makedirs(output_dir, exist_ok=True)
-
-        # Resolusi path idle video — utamakan namira_idle.mp4
-        resolved_idle = req.idle_video or req.idleVideo or ""
-        if not resolved_idle or not os.path.exists(resolved_idle):
-            for candidate in [
-                "/workspace/ai_live_worker/assets/3d/namira_idle.mp4",
-                "/workspace/ai_live_worker/assets/3d/namira_talk_expressive.mp4",
-                "/workspace/ai_live_worker/assets/3d/namira.mp4",
-                "/workspace/live-streaming-ai/deploy/assets/3d/namira_idle.mp4",
-                "/workspace/live-streaming-ai/deploy/assets/3d/namira_talk_expressive.mp4",
-                "/workspace/live-streaming-ai/deploy/assets/3d/namira.mp4",
-                os.path.join(os.path.dirname(__file__), "assets/3d/namira_idle.mp4"),
-                os.path.join(os.path.dirname(__file__), "assets/3d/namira_talk_expressive.mp4"),
-                os.path.join(os.path.dirname(__file__), "assets/3d/namira.mp4"),
-            ]:
-                if os.path.exists(candidate):
-                    resolved_idle = candidate
-                    break
-        if resolved_idle and prefer_idle_clip is not None:
-            resolved_idle = prefer_idle_clip(resolved_idle)
-
-        # Hentikan broadcaster lama jika ada agar tidak bentrok RTMP URL
-        _terminate_broadcaster(timeout=5.0)
-        if write_rtmp_status is not None:
-            write_rtmp_status(output_dir, "connecting")
-
-        # Reset counter dan state watchdog saat siaran baru dimulai
-        total_videos_rendered = 0
-        broadcaster_restarts = 0
-        broadcaster_next_restart_at = 0.0
-
-        # Bersihkan sisa video lama dan flag lama sebelum mulai siaran baru
-        flag_path = os.path.join(output_dir, "playback_active.flag")
-        if os.path.exists(flag_path):
-            try:
-                os.remove(flag_path)
-            except Exception:
-                pass
-        import glob
-        idle_abs = os.path.abspath(resolved_idle) if resolved_idle else ""
-        _cleanup_playable_outputs(output_dir, idle_abs)
-
-        config_path = os.path.join(output_dir, "broadcast_config.json")
-        config_data = {
-            "rtmp_url": final_rtmp_url,
-            "stream_key": final_stream_key,
-            "idle_video": resolved_idle,
-            "output_folder": output_dir,
-            "product_name": req.product_name or req.productName or "",
-            "product_price": req.product_price or req.productPrice or "",
-            "product_image_url": req.product_image_url or req.productImageUrl or "",
-            "banner_image_url": req.banner_image_url or req.bannerImageUrl or "",
-            "platform": req.platform or "",
-        }
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(config_data, f)
-
-        # Minimal environment variables to prevent Linux [Errno 7] Argument list too long
-        env = os.environ.copy()
-        env.pop("PRODUCT_IMAGE_URL", None)
-        env.pop("BANNER_IMAGE_URL", None)
-        env["RTMP_URL"] = final_rtmp_url
-        env["STREAM_KEY"] = final_stream_key
-        env["IDLE_VIDEO"] = resolved_idle
-        env["OUTPUT_FOLDER"] = output_dir
-        env["CONFIG_PATH"] = config_path
-        env["WORKER_REQUIRE_AUDIO"] = "1"
-        # Mode siaran: segment (default) | frame_feed (kontinu, idle interruptible)
-        mode = (
-            os.environ.get("BROADCAST_MODE")
-            or env.get("BROADCAST_MODE")
-            or "segment"
-        ).strip().lower()
-        env["BROADCAST_MODE"] = mode
-        # Pastikan proses API (MuseTalk) juga menulis .ffseg saat frame_feed aktif.
-        if mode in ("frame_feed", "frame-feed", "continuous"):
-            os.environ["BROADCAST_MODE"] = mode
-            os.environ.setdefault("MUSETALK_RAW_FEED", "1")
-            os.environ.setdefault("MUSETALK_SKIP_MP4", "1")
-            env["MUSETALK_RAW_FEED"] = os.environ.get("MUSETALK_RAW_FEED", "1")
-            env["MUSETALK_SKIP_MP4"] = os.environ.get("MUSETALK_SKIP_MP4", "1")
-        current_broadcast_env = env
-
-        broadcaster_process = _spawn_broadcaster(env)
-        return {"success": True, "status": "starting", "pid": broadcaster_process.pid}
+        return await asyncio.to_thread(_start_broadcast_sync, req)
+    except HTTPException:
+        raise
     except Exception as e:
-        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Gagal memulai broadcast di pod: {str(e)}")
+
+
+def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
+    global broadcaster_process, total_videos_rendered, current_broadcast_env
+    global broadcaster_restarts, broadcaster_next_restart_at
+
+    final_rtmp_url = (req.rtmp_url or req.rtmpUrl or "").strip()
+    final_stream_key = (
+        (req.stream_key or req.streamKey or "")
+        .replace("\r", "")
+        .replace("\n", "")
+        .strip()
+    )
+    if not final_rtmp_url or not final_stream_key:
+        raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
+
+    # Idempoten HANYA jika RTMP benar-benar connected. Proses Python yang
+    # masih hidup setelah FFmpeg drop bukan alasan untuk menolak key baru
+    # atau retry.
+    already_connected = False
+    if (
+        broadcaster_process is not None
+        and broadcaster_process.poll() is None
+        and current_broadcast_env is not None
+        and current_broadcast_env.get("RTMP_URL") == final_rtmp_url
+        and current_broadcast_env.get("STREAM_KEY") == final_stream_key
+    ):
+        rtmp_state = "disconnected"
+        if read_rtmp_status is not None:
+            rtmp_state, _ = read_rtmp_status(output_dir)
+        already_connected = rtmp_state == "connected"
+    if already_connected:
+        print(
+            "[AI-Worker] start-broadcast diabaikan — siaran dengan target yang "
+            f"sama sudah aktif (PID: {broadcaster_process.pid})."
+        )
+        return {
+            "success": True,
+            "status": "already_running",
+            "pid": broadcaster_process.pid,
+        }
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Resolusi path idle video — utamakan namira_idle.mp4
+    resolved_idle = req.idle_video or req.idleVideo or ""
+    if not resolved_idle or not os.path.exists(resolved_idle):
+        for candidate in [
+            "/workspace/ai_live_worker/assets/3d/namira_idle.mp4",
+            "/workspace/ai_live_worker/assets/3d/namira_talk_expressive.mp4",
+            "/workspace/ai_live_worker/assets/3d/namira.mp4",
+            "/workspace/live-streaming-ai/deploy/assets/3d/namira_idle.mp4",
+            "/workspace/live-streaming-ai/deploy/assets/3d/namira_talk_expressive.mp4",
+            "/workspace/live-streaming-ai/deploy/assets/3d/namira.mp4",
+            os.path.join(os.path.dirname(__file__), "assets/3d/namira_idle.mp4"),
+            os.path.join(os.path.dirname(__file__), "assets/3d/namira_talk_expressive.mp4"),
+            os.path.join(os.path.dirname(__file__), "assets/3d/namira.mp4"),
+        ]:
+            if os.path.exists(candidate):
+                resolved_idle = candidate
+                break
+    if resolved_idle and prefer_idle_clip is not None:
+        resolved_idle = prefer_idle_clip(resolved_idle)
+
+    # Hentikan broadcaster lama jika ada agar tidak bentrok RTMP URL
+    _terminate_broadcaster(timeout=5.0)
+    if write_rtmp_status is not None:
+        write_rtmp_status(output_dir, "connecting")
+
+    # Reset counter dan state watchdog saat siaran baru dimulai
+    total_videos_rendered = 0
+    broadcaster_restarts = 0
+    broadcaster_next_restart_at = 0.0
+
+    # Bersihkan sisa video lama dan flag lama sebelum mulai siaran baru
+    flag_path = os.path.join(output_dir, "playback_active.flag")
+    if os.path.exists(flag_path):
+        try:
+            os.remove(flag_path)
+        except Exception:
+            pass
+    idle_abs = os.path.abspath(resolved_idle) if resolved_idle else ""
+    _cleanup_playable_outputs(output_dir, idle_abs)
+
+    config_path = os.path.join(output_dir, "broadcast_config.json")
+    config_data = {
+        "rtmp_url": final_rtmp_url,
+        "stream_key": final_stream_key,
+        "idle_video": resolved_idle,
+        "output_folder": output_dir,
+        "product_name": req.product_name or req.productName or "",
+        "product_price": req.product_price or req.productPrice or "",
+        "product_image_url": req.product_image_url or req.productImageUrl or "",
+        "banner_image_url": req.banner_image_url or req.bannerImageUrl or "",
+        "platform": req.platform or "",
+    }
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config_data, f)
+
+    # Minimal environment variables to prevent Linux [Errno 7] Argument list too long
+    env = os.environ.copy()
+    env.pop("PRODUCT_IMAGE_URL", None)
+    env.pop("BANNER_IMAGE_URL", None)
+    env["RTMP_URL"] = final_rtmp_url
+    env["STREAM_KEY"] = final_stream_key
+    env["IDLE_VIDEO"] = resolved_idle
+    env["OUTPUT_FOLDER"] = output_dir
+    env["CONFIG_PATH"] = config_path
+    env["WORKER_REQUIRE_AUDIO"] = "1"
+    # Mode siaran: segment (default) | frame_feed (kontinu, idle interruptible)
+    mode = (
+        os.environ.get("BROADCAST_MODE")
+        or env.get("BROADCAST_MODE")
+        or "segment"
+    ).strip().lower()
+    env["BROADCAST_MODE"] = mode
+    # Pastikan proses API (MuseTalk) juga menulis .ffseg saat frame_feed aktif.
+    if mode in ("frame_feed", "frame-feed", "continuous"):
+        os.environ["BROADCAST_MODE"] = mode
+        os.environ.setdefault("MUSETALK_RAW_FEED", "1")
+        os.environ.setdefault("MUSETALK_SKIP_MP4", "1")
+        env["MUSETALK_RAW_FEED"] = os.environ.get("MUSETALK_RAW_FEED", "1")
+        env["MUSETALK_SKIP_MP4"] = os.environ.get("MUSETALK_SKIP_MP4", "1")
+    current_broadcast_env = env
+
+    broadcaster_process = _spawn_broadcaster(env)
+    return {"success": True, "status": "starting", "pid": broadcaster_process.pid}
 
 @app.post("/stream/stop-broadcast")
 async def stop_broadcast():

@@ -642,6 +642,13 @@ export async function stopPod(podId: string): Promise<boolean> {
     console.log(`[RunPodManager] Terminating Pod ${podId}...`);
     return !!data;
   } catch (err: any) {
+    const msg = String(err?.message || err);
+    if (/pod not found|POD_NOT_FOUND/i.test(msg)) {
+      console.log(
+        `[RunPodManager] Pod ${podId} sudah tidak ada — dianggap berhenti.`,
+      );
+      return true;
+    }
     console.error(`[RunPodManager] Error terminating Pod ${podId}:`, err);
     return false;
   }

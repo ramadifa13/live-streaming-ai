@@ -103,12 +103,14 @@ async function workerRequestWithRetry(
     } catch (err: any) {
       lastError = err;
       const status = Number(err.message?.match(/\d{3}/)?.[0]);
-      if (
+      const isTransient =
         status === 502 ||
         status === 503 ||
         status === 504 ||
-        err.name === "TimeoutError"
-      ) {
+        err.name === "TimeoutError" ||
+        err.name === "AbortError" ||
+        /timeout|aborted/i.test(String(err.message || ""));
+      if (isTransient) {
         const backoff = 1000 * Math.pow(2, attempt);
         console.warn(
           `[RunPodBridge] Worker connection retry in ${backoff}ms (${err.message})...`,
@@ -136,23 +138,30 @@ export async function startRunPodBroadcast(
     ctaLabel?: string;
   },
 ): Promise<RunPodBroadcastResult> {
-  return workerRequestWithRetry(podId, "/stream/start-broadcast", {
-    method: "POST",
-    body: JSON.stringify({
-      rtmp_url: params.rtmpUrl,
-      stream_key: params.streamKey,
-      rtmpUrl: params.rtmpUrl,
-      streamKey: params.streamKey,
-      product_name: params.productName,
-      product_price: params.productPrice,
-      product_image_url: params.productImageUrl,
-      banner_image_url: params.bannerImageUrl,
-      bannerImageUrl: params.bannerImageUrl,
-      platform: params.platform,
-      stock_count: params.stockCount,
-      cta_label: params.ctaLabel,
-    }),
-  });
+  // start-broadcast bisa memakan waktu (terminate FFmpeg lama + cleanup output).
+  return workerRequestWithRetry(
+    podId,
+    "/stream/start-broadcast",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        rtmp_url: params.rtmpUrl,
+        stream_key: params.streamKey,
+        rtmpUrl: params.rtmpUrl,
+        streamKey: params.streamKey,
+        product_name: params.productName,
+        product_price: params.productPrice,
+        product_image_url: params.productImageUrl,
+        banner_image_url: params.bannerImageUrl,
+        bannerImageUrl: params.bannerImageUrl,
+        platform: params.platform,
+        stock_count: params.stockCount,
+        cta_label: params.ctaLabel,
+      }),
+      signal: AbortSignal.timeout(120_000),
+    },
+    4,
+  );
 }
 
 export async function updateRunPodBroadcastProduct(
