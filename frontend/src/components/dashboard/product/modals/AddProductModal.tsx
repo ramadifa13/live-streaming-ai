@@ -3,9 +3,10 @@
 import React, { useEffect, useState } from "react";
 import Image from "next/image";
 import { X, Upload, Image as ImageIcon, ShoppingBag, Link2 } from "lucide-react";
-import { useProductStore } from "@/stores/useProductStore";
+import { useProductStore, buildNewProductFromForm } from "@/stores/useProductStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
+import { compressImageDataUrl } from "@/utils/image-compress";
 import { PRODUCT_CATEGORIES } from "@/lib/product-categories";
 
 export const AddProductModal: React.FC = () => {
@@ -36,7 +37,7 @@ export const AddProductModal: React.FC = () => {
 
   if (!showAddProductModal || isLiveActive) return null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (isLiveActive) {
       showToast("Produk tidak bisa ditambah saat live sedang aktif. Akhiri live dulu.");
@@ -44,13 +45,18 @@ export const AddProductModal: React.FC = () => {
     }
     setIsSubmitting(true);
     try {
-      await createProduct();
+      const newProd = buildNewProductFromForm(newProductForm);
       setShowAddProductModal(false);
-      resetNewProductForm();
-      showToast("Produk tersimpan. Script bank disiapkan di background.");
+      setIsSubmitting(false);
+      void createProduct(newProd)
+        .then(() => {
+          showToast("Produk tersimpan. Script bank disiapkan di background.");
+        })
+        .catch((err) => {
+          showToast(err instanceof Error ? err.message : "Gagal menyimpan produk");
+        });
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal menyimpan produk");
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -120,20 +126,19 @@ export const AddProductModal: React.FC = () => {
                       type="file"
                       accept="image/*"
                       className="hidden"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          const file = e.target.files[0];
-                          const reader = new FileReader();
-                          reader.onload = (uploadEvent) => {
-                            if (uploadEvent.target?.result) {
-                              setNewProductForm({
-                                image: String(uploadEvent.target.result),
-                              });
-                              showToast(`Foto ${file.name} berhasil diunggah!`);
-                            }
-                          };
-                          reader.readAsDataURL(file);
-                        }
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = async (uploadEvent) => {
+                          if (!uploadEvent.target?.result) return;
+                          const compressed = await compressImageDataUrl(
+                            String(uploadEvent.target.result),
+                          );
+                          setNewProductForm({ image: compressed });
+                          showToast(`Foto ${file.name} berhasil diunggah!`);
+                        };
+                        reader.readAsDataURL(file);
                       }}
                     />
                   </label>
@@ -356,20 +361,20 @@ export const AddProductModal: React.FC = () => {
                       type="file"
                       accept="image/*"
                       className="hidden"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          const file = e.target.files[0];
-                          const reader = new FileReader();
-                          reader.onload = (uploadEvent) => {
-                            if (uploadEvent.target?.result) {
-                              setNewProductForm({
-                                bannerImage: String(uploadEvent.target.result),
-                              });
-                              showToast(`Banner ${file.name} berhasil diunggah!`);
-                            }
-                          };
-                          reader.readAsDataURL(file);
-                        }
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = async (uploadEvent) => {
+                          if (!uploadEvent.target?.result) return;
+                          const compressed = await compressImageDataUrl(
+                            String(uploadEvent.target.result),
+                            960,
+                          );
+                          setNewProductForm({ bannerImage: compressed });
+                          showToast(`Banner ${file.name} berhasil diunggah!`);
+                        };
+                        reader.readAsDataURL(file);
                       }}
                     />
                   </label>

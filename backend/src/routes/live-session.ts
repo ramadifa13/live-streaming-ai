@@ -540,12 +540,16 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       status.stageText === "Session tidak ditemukan." &&
       liveSessionManager.getSession(sessionId)
     ) {
+      const workerIssue = Boolean(status.workerError) || Boolean(status.workerOffline);
       return {
         ...status,
-        stageIndex: 1,
-        stageText: boot?.podReady
-          ? "Menghubungkan RTMP ke platform..."
-          : boot?.stageText || "Menghubungkan RTMP ke platform...",
+        stageIndex: workerIssue ? 2 : 1,
+        stageText: workerIssue
+          ? status.workerError ||
+            "Worker GPU tidak merespons. Tunggu sebentar atau mulai ulang sesi."
+          : boot?.podReady
+            ? "Menghubungkan RTMP ke platform..."
+            : boot?.stageText || "Menghubungkan RTMP ke platform...",
         podReady: boot?.podReady ?? false,
         podBooting: boot?.podBooting ?? false,
         podFailed: boot?.podFailed ?? false,

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import { Product } from "@/app/dashboard/types";
 import { parseProductCsv } from "@/utils/csvParser";
 import { aiService } from "@/services/aiService";
@@ -73,10 +73,154 @@ interface ProductState {
   setProducts: (products: Product[] | ((prev: Product[]) => Product[])) => void;
 
   loadProducts: () => Promise<void>;
-  createProduct: () => Promise<Product>;
-  saveEditedProduct: () => Promise<Product>;
+  createProduct: (prebuilt?: Product) => Promise<Product>;
+  saveEditedProduct: (prebuilt?: Product) => Promise<Product>;
   deleteProduct: (id?: string) => Promise<boolean>;
   importCsvProducts: () => Promise<number>;
+}
+
+function isStorageQuotaError(err: unknown): boolean {
+  return (
+    err instanceof DOMException &&
+    (err.name === "QuotaExceededError" || err.code === 22)
+  );
+}
+
+export const PRODUCT_STORAGE_QUOTA_EVENT = "livio-storage-quota";
+
+/** Buang field besar dari produk sebelum ditulis ke localStorage. */
+function slimProductForPersist(product: Product): Product {
+  if (!product || product.id === "loading") return product;
+  const { scriptBank: _sb, faqPack: _faq, ...rest } = product;
+  return rest;
+}
+
+function slimPersistPayload(serialized: string): string | null {
+  try {
+    const parsed = JSON.parse(serialized) as {
+      state?: {
+        products?: Product[];
+        activeFeaturedProduct?: Product;
+        pinnedProductIds?: string[];
+      };
+    };
+    if (!parsed?.state) return null;
+    parsed.state.products = (parsed.state.products || []).map(slimProductForPersist);
+    if (parsed.state.activeFeaturedProduct) {
+      parsed.state.activeFeaturedProduct = slimProductForPersist(
+        parsed.state.activeFeaturedProduct,
+      );
+    }
+    return JSON.stringify(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function notifyStorageQuotaWarning(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(PRODUCT_STORAGE_QUOTA_EVENT));
+}
+
+function createSafeLocalStorage(): StateStorage {
+  if (typeof window === "undefined") {
+    return {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+    };
+  }
+  return {
+    getItem: (name) => localStorage.getItem(name),
+    setItem: (name, value) => {
+      try {
+        localStorage.setItem(name, value);
+        return;
+      } catch (err) {
+        if (!isStorageQuotaError(err)) throw err;
+      }
+      const slimmed = slimPersistPayload(value);
+      if (slimmed) {
+        try {
+          localStorage.setItem(name, slimmed);
+          notifyStorageQuotaWarning();
+          return;
+        } catch (err) {
+          if (!isStorageQuotaError(err)) throw err;
+        }
+      }
+      console.warn(
+        "[ProductStore] localStorage penuh — perubahan tetap di memori sampai ruang kosong.",
+      );
+      notifyStorageQuotaWarning();
+    },
+    removeItem: (name) => localStorage.removeItem(name),
+  };
+}
+
+export function buildNewProductFromForm(form: NewProductFormData): Product {
+  if (!form.image) throw new Error("Foto / gambar produk wajib diisi.");
+  if (!form.name.trim()) throw new Error("Nama produk wajib diisi.");
+  const numPrice = parseInt(String(form.price).replace(/\D/g, ""), 10) || 0;
+  if (numPrice <= 0) {
+    throw new Error("Harga jual live (Rp) wajib diisi dengan angka valid.");
+  }
+  if (!form.tag) throw new Error("Kategori produk wajib dipilih.");
+  if (form.tag === "General" || form.tag === "Lainnya") {
+    throw new Error("Pilih kategori produk yang spesifik.");
+  }
+  if (!form.description.trim()) {
+    throw new Error("Deskripsi lengkap produk wajib diisi.");
+  }
+
+  return {
+    id: newLocalId(),
+    name: form.name.trim(),
+    price: formatPrice(numPrice),
+    stock: Number(form.stock) || 0,
+    tag: normalizeProductCategory(form.tag),
+    sku: form.sku ? form.sku.trim() : "",
+    image: form.image,
+    bannerImage: form.bannerImage || "",
+    link: form.link ? form.link.trim() : "",
+    description: form.description.trim(),
+    benefits: form.benefits.trim() || undefined,
+    usage: form.usage.trim() || undefined,
+    faq: form.faq.trim() || undefined,
+  };
+}
+
+export function buildEditedProduct(editProd: Product): Product {
+  if (!editProd?.id) throw new Error("Produk tidak ditemukan.");
+  if (!editProd.name?.trim()) throw new Error("Nama produk wajib diisi.");
+
+  const numPrice =
+    typeof editProd.price === "number"
+      ? editProd.price
+      : parseInt(String(editProd.price).replace(/\D/g, ""), 10) || 0;
+  if (numPrice <= 0) {
+    throw new Error("Harga jual live (Rp) wajib diisi dengan angka valid.");
+  }
+  if (!editProd.tag) throw new Error("Kategori produk wajib dipilih.");
+  if (editProd.tag === "General" || editProd.tag === "Lainnya") {
+    throw new Error("Pilih kategori produk yang spesifik.");
+  }
+  if (!editProd.description?.trim()) {
+    throw new Error("Deskripsi lengkap produk wajib diisi.");
+  }
+
+  return {
+    ...editProd,
+    name: editProd.name.trim(),
+    price: formatPrice(numPrice),
+    stock: Number(editProd.stock) || 0,
+    tag: normalizeProductCategory(editProd.tag),
+    sku: editProd.sku || "",
+    description: editProd.description.trim(),
+    benefits: editProd.benefits?.trim() || undefined,
+    usage: editProd.usage?.trim() || undefined,
+    faq: editProd.faq?.trim() || undefined,
+  };
 }
 
 function newLocalId(): string {
@@ -263,33 +407,8 @@ export const useProductStore = create<ProductState>()(
         set({ isLoadingProducts: false });
       },
 
-      createProduct: async () => {
-        const form = get().newProductForm;
-        if (!form.image) throw new Error("Foto / gambar produk wajib diisi.");
-        if (!form.name.trim()) throw new Error("Nama produk wajib diisi.");
-        const numPrice = parseInt(String(form.price).replace(/\D/g, ""), 10) || 0;
-        if (numPrice <= 0) throw new Error("Harga jual live (Rp) wajib diisi dengan angka valid.");
-        if (!form.tag) throw new Error("Kategori produk wajib dipilih.");
-        if (form.tag === "General" || form.tag === "Lainnya") {
-          throw new Error("Pilih kategori produk yang spesifik.");
-        }
-        if (!form.description.trim()) throw new Error("Deskripsi lengkap produk wajib diisi.");
-
-        const newProd: Product = {
-          id: newLocalId(),
-          name: form.name.trim(),
-          price: formatPrice(numPrice),
-          stock: Number(form.stock) || 0,
-          tag: normalizeProductCategory(form.tag),
-          sku: form.sku ? form.sku.trim() : "",
-          image: form.image,
-          bannerImage: form.bannerImage || "",
-          link: form.link ? form.link.trim() : "",
-          description: form.description.trim(),
-          benefits: form.benefits.trim() || undefined,
-          usage: form.usage.trim() || undefined,
-          faq: form.faq.trim() || undefined,
-        };
+      createProduct: async (prebuilt?: Product) => {
+        const newProd = prebuilt ?? buildNewProductFromForm(get().newProductForm);
         set((state) => ({
           products: [newProd, ...state.products],
           activeFeaturedProduct: newProd,
@@ -301,40 +420,16 @@ export const useProductStore = create<ProductState>()(
         return newProd;
       },
 
-      saveEditedProduct: async () => {
-        const editProd = get().selectedProductForEdit;
-        if (!editProd || !editProd.id) throw new Error("Produk tidak ditemukan.");
-        if (!editProd.name?.trim()) throw new Error("Nama produk wajib diisi.");
-
-        const numPrice =
-          typeof editProd.price === "number"
-            ? editProd.price
-            : parseInt(String(editProd.price).replace(/\D/g, ""), 10) || 0;
-        if (numPrice <= 0) throw new Error("Harga jual live (Rp) wajib diisi dengan angka valid.");
-        if (!editProd.tag) throw new Error("Kategori produk wajib dipilih.");
-        if (editProd.tag === "General" || editProd.tag === "Lainnya") {
-          throw new Error("Pilih kategori produk yang spesifik.");
-        }
-        if (!editProd.description?.trim()) throw new Error("Deskripsi lengkap produk wajib diisi.");
-
-        const formattedProduct: Product = {
-          ...editProd,
-          name: editProd.name.trim(),
-          price: formatPrice(numPrice),
-          stock: Number(editProd.stock) || 0,
-          tag: normalizeProductCategory(editProd.tag),
-          sku: editProd.sku || "",
-          description: editProd.description.trim(),
-          benefits: editProd.benefits?.trim() || undefined,
-          usage: editProd.usage?.trim() || undefined,
-          faq: editProd.faq?.trim() || undefined,
-        };
+      saveEditedProduct: async (prebuilt?: Product) => {
+        const source = prebuilt ?? get().selectedProductForEdit;
+        if (!source) throw new Error("Produk tidak ditemukan.");
+        const formattedProduct = buildEditedProduct(source);
         set((state) => ({
           products: state.products.map((p) =>
-            p.id === editProd.id ? formattedProduct : p,
+            p.id === formattedProduct.id ? formattedProduct : p,
           ),
           activeFeaturedProduct:
-            state.activeFeaturedProduct.id === editProd.id
+            state.activeFeaturedProduct.id === formattedProduct.id
               ? formattedProduct
               : state.activeFeaturedProduct,
         }));
@@ -397,21 +492,28 @@ export const useProductStore = create<ProductState>()(
     }),
     {
       name: "livio-pay-per-use-products",
-      storage: createJSONStorage(() => {
-        if (typeof window === "undefined") {
-          return {
-            getItem: () => null,
-            setItem: () => {},
-            removeItem: () => {},
-          };
-        }
-        return localStorage;
-      }),
+      storage: createJSONStorage(() => createSafeLocalStorage()),
       partialize: (state) => ({
-        products: state.products,
-        activeFeaturedProduct: state.activeFeaturedProduct,
+        products: state.products.map(slimProductForPersist),
+        activeFeaturedProduct: slimProductForPersist(state.activeFeaturedProduct),
         pinnedProductIds: state.pinnedProductIds,
       }),
+      version: 2,
+      migrate: (persisted: unknown) => {
+        const data = persisted as {
+          products?: Product[];
+          activeFeaturedProduct?: Product;
+          pinnedProductIds?: string[];
+        };
+        if (!data) return persisted;
+        return {
+          ...data,
+          products: (data.products || []).map(slimProductForPersist),
+          activeFeaturedProduct: data.activeFeaturedProduct
+            ? slimProductForPersist(data.activeFeaturedProduct)
+            : data.activeFeaturedProduct,
+        };
+      },
     },
   ),
 );

@@ -7,6 +7,7 @@ import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { ProductFilter } from "./ProductFilter";
 import { ProductList } from "./ProductList";
+import { compressImageDataUrl } from "@/utils/image-compress";
 
 export const ProductPanel: React.FC = () => {
   const currentStep = useDashboardUIStore((state) => state.currentStep);
@@ -25,24 +26,22 @@ export const ProductPanel: React.FC = () => {
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        if (ev.target?.result) {
-          const uploadedUri = String(ev.target.result);
-          setActiveFeaturedProduct((prev) => ({
-            ...prev,
-            image: uploadedUri,
-          }));
-          setProducts((prev) =>
-            prev.map((p) => (p.id === activeFeaturedProduct.id ? { ...p, image: uploadedUri } : p)),
-          );
-          showToast(` Foto ${file.name} berhasil diterapkan ke ${activeFeaturedProduct.name}!`);
-        }
-      };
-      reader.readAsDataURL(file);
-    }
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      if (!ev.target?.result) return;
+      const uploadedUri = await compressImageDataUrl(String(ev.target.result));
+      setActiveFeaturedProduct((prev) => ({
+        ...prev,
+        image: uploadedUri,
+      }));
+      setProducts((prev) =>
+        prev.map((p) => (p.id === activeFeaturedProduct.id ? { ...p, image: uploadedUri } : p)),
+      );
+      showToast(` Foto ${file.name} berhasil diterapkan ke ${activeFeaturedProduct.name}!`);
+    };
+    reader.readAsDataURL(file);
   };
 
   return (

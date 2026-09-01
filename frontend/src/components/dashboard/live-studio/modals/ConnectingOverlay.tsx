@@ -28,8 +28,10 @@ export const ConnectingOverlay: React.FC = () => {
   const rtmpConnected = pipelineStatus?.isRtmpConnected === true;
   const podBooting = pipelineStatus?.podBooting === true;
   const rtmpFailed = Boolean(pipelineStatus?.rtmpError);
+  const workerFailed = Boolean(pipelineStatus?.workerError);
+  const connectionFailed = rtmpFailed || workerFailed;
   const canGoLive =
-    !rtmpFailed &&
+    !connectionFailed &&
     !podBooting &&
     pipelineStatus?.podReady !== false &&
     rtmpConnected &&
@@ -69,7 +71,7 @@ export const ConnectingOverlay: React.FC = () => {
 
         <div className="p-5 sm:p-6 overflow-y-auto flex-1 z-10 custom-scrollbar relative">
           <div className="relative mx-auto mb-3 flex h-12 w-12 items-center justify-center">
-            {rtmpFailed ? (
+            {connectionFailed ? (
               <div className="flex h-12 w-12 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10">
                 <AlertTriangle className="w-6 h-6 text-red-400" />
               </div>
@@ -83,7 +85,9 @@ export const ConnectingOverlay: React.FC = () => {
           </div>
 
           <h3 className="text-base sm:text-lg font-extrabold text-white tracking-wide mb-0.5">
-            {rtmpFailed
+            {workerFailed
+              ? "Worker GPU Bermasalah"
+              : rtmpFailed
               ? "Koneksi RTMP Gagal"
               : canGoLive
                 ? "Siap Go Live!"
@@ -98,7 +102,7 @@ export const ConnectingOverlay: React.FC = () => {
             </span>
           </p>
 
-          {!canGoLive && !rtmpFailed && (
+          {!canGoLive && !connectionFailed && (
             <p className="text-[12px] text-slate-300 leading-relaxed mb-3 px-1">
               {podBooting
                 ? connectingStageText ||
@@ -138,6 +142,24 @@ export const ConnectingOverlay: React.FC = () => {
               </span>
             </div>
             <div className="flex items-center justify-between text-[10px]">
+              <span className="text-slate-400">Worker GPU</span>
+              <span
+                className={
+                  pipelineStatus?.workerError
+                    ? "text-red-400 font-semibold"
+                    : pipelineStatus?.workerOffline
+                      ? "text-amber-400"
+                      : "text-emerald-400 font-semibold"
+                }
+              >
+                {pipelineStatus?.workerError
+                  ? "Offline"
+                  : pipelineStatus?.workerOffline
+                    ? `Menunggu... (${pipelineStatus.workerOfflineSeconds ?? 0}s)`
+                    : "Online"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[10px]">
               <span className="text-slate-400">RTMP</span>
               <span
                 className={
@@ -155,14 +177,22 @@ export const ConnectingOverlay: React.FC = () => {
                     : "Menunggu..."}
               </span>
             </div>
-            {pipelineStatus?.rtmpError && (
+            {(pipelineStatus?.workerError || pipelineStatus?.rtmpError) && (
               <p className="text-[10px] text-red-300 leading-relaxed pt-1 border-t border-white/5">
-                {pipelineStatus.rtmpError}
+                {pipelineStatus.workerError || pipelineStatus.rtmpError}
               </p>
             )}
           </div>
 
-          {rtmpFailed && (
+          {workerFailed && (
+            <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-left">
+              <p className="text-[11px] font-semibold text-red-200 leading-relaxed">
+                Ini bukan masalah Stream Key atau laptop Anda. Worker GPU di RunPod crash atau overload saat generate video AI. Tutup sesi ini dan coba Connect lagi — jika berulang, hubungi admin.
+              </p>
+            </div>
+          )}
+
+          {rtmpFailed && !workerFailed && (
             <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-left">
               <p className="text-[11px] font-semibold text-red-200 leading-relaxed">
                 Stream Key Instagram/Facebook hanya berlaku sekali. Setelah putus, buat siaran baru di platform, tempel Stream Key baru, lalu mulai ulang.
@@ -208,13 +238,13 @@ export const ConnectingOverlay: React.FC = () => {
                 </>
               )}
             </button>
-          ) : rtmpFailed ? (
+          ) : connectionFailed ? (
             <button
               type="button"
               onClick={cancelInitialization}
               className="w-full mb-2 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-red-600 to-rose-500 hover:brightness-110 active:scale-95 transition cursor-pointer"
             >
-              Tutup & coba Stream Key baru
+              {workerFailed ? "Tutup & coba lagi" : "Tutup & coba Stream Key baru"}
             </button>
           ) : (
             <div className="mb-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-center">
@@ -232,7 +262,7 @@ export const ConnectingOverlay: React.FC = () => {
             </div>
           )}
 
-          {!rtmpFailed && (
+          {!connectionFailed && (
           <button
             type="button"
             onClick={cancelInitialization}

@@ -22,6 +22,9 @@ export interface PipelineStatus {
   isBroadcasting?: boolean;
   isRtmpConnected?: boolean;
   rtmpError?: string;
+  workerError?: string;
+  workerOffline?: boolean;
+  workerOfflineSeconds?: number;
   stageIndex?: number;
   stageText?: string;
   podReady?: boolean;

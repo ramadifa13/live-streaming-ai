@@ -193,6 +193,13 @@ interface HostRuntimeState {
 
   rtmpFailedAt: number;
   rtmpFailStopping: boolean;
+
+  /** Timestamp pertama kali worker terdeteksi offline (0 = online). */
+  workerOfflineSince: number;
+  /** Pesan error terakhir dari worker (502, timeout, dll). */
+  lastWorkerError: string;
+  workerFailStopping: boolean;
+  workerFailedAt: number;
 }
 
 interface PlanPolicy {
@@ -296,6 +303,10 @@ const IN_FLIGHT_RENDER_SECONDS = 10;
 const PRODUCT_CACHE_TTL_MS = 30_000;
 const QUEUE_POLL_MS = 800;
 const COMMENT_SCAN_MS = 400;
+/** Worker offline berapa lama sebelum dianggap gagal (bukan blip sementara). */
+const WORKER_OFFLINE_FAIL_MS = 45_000;
+/** Auto-stop sesi jika worker tidak pulih setelah ini. */
+const WORKER_FAIL_STOP_MS = 120_000;
 const GENERATION_BACKOFF_MS = 800;
 /** Batas idle di siaran sebelum orchestrator boost generate (detik). */
 export const MAX_ONAIR_IDLE_SECONDS = 5;
@@ -705,6 +716,10 @@ class LiveHostOrchestrator {
       scriptBank: emptyScriptBank(config.productId),
       rtmpFailedAt: 0,
       rtmpFailStopping: false,
+      workerOfflineSince: 0,
+      lastWorkerError: "",
+      workerFailStopping: false,
+      workerFailedAt: 0,
     };
 
     this.sessions.set(config.sessionId, state);
@@ -1656,12 +1671,15 @@ class LiveHostOrchestrator {
     try {
       const raw: any = await getRunPodQueueStatus(podId);
       if (!raw?.success) {
+        if (!state.workerOfflineSince) state.workerOfflineSince = Date.now();
         state.lastQueue = {
           ...state.lastQueue,
           workerOffline: true,
         };
         return state.lastQueue;
       }
+
+      state.workerOfflineSince = 0;
 
       const readyVideos = Number(raw.queued_videos_count || 0);
       const queuedVideos = readyVideos;
@@ -1715,11 +1733,14 @@ class LiveHostOrchestrator {
 
       return state.lastQueue;
     } catch (err: any) {
+      if (!state.workerOfflineSince) state.workerOfflineSince = Date.now();
+      const msg = err?.message || String(err);
+      if (msg) state.lastWorkerError = msg;
       state.lastQueue = {
         ...state.lastQueue,
         workerOffline: true,
       };
-      console.warn(`[LiveHost] Queue status error: ${err?.message || err}`);
+      console.warn(`[LiveHost] Queue status error: ${msg}`);
       return state.lastQueue;
     }
   }
@@ -1776,8 +1797,11 @@ class LiveHostOrchestrator {
         this.getPolicy(state).maxBufferSeconds,
         state.estimatedBufferSeconds + estimateDurationSeconds(text),
       );
-    } catch (err) {
+    } catch (err: any) {
       state.counters.failed++;
+      const msg = err?.message || String(err);
+      if (msg) state.lastWorkerError = msg;
+      if (!state.workerOfflineSince) state.workerOfflineSince = Date.now();
       throw err;
     }
   }
@@ -1848,7 +1872,36 @@ class LiveHostOrchestrator {
     let stageIndex = 0;
     let stageText = "Menyiapkan AI Host...";
 
-    if (queue.rtmpError) {
+    const offlineMs =
+      state.workerOfflineSince > 0 ? Date.now() - state.workerOfflineSince : 0;
+    const workerStuck =
+      queue.workerOffline &&
+      offlineMs >= WORKER_OFFLINE_FAIL_MS &&
+      (state.counters.failed > 0 ||
+        state.counters.submitted > 0 ||
+        (state.counters.generated === 0 && offlineMs >= 90_000));
+    const workerError = workerStuck
+      ? state.lastWorkerError?.includes("502")
+        ? "Worker GPU crash atau tidak merespons (HTTP 502). Bukan masalah Stream Key — coba mulai ulang sesi."
+        : state.lastWorkerError ||
+          "Worker GPU tidak merespons. Coba mulai ulang sesi live."
+      : "";
+
+    if (workerError) {
+      if (!state.workerFailedAt) state.workerFailedAt = Date.now();
+      if (
+        !state.workerFailStopping &&
+        Date.now() - state.workerFailedAt >= WORKER_FAIL_STOP_MS
+      ) {
+        state.workerFailStopping = true;
+        console.log(
+          `[LiveHost] Worker offline — menghentikan sesi ${sessionId} setelah ${Math.round(WORKER_FAIL_STOP_MS / 1000)}s.`,
+        );
+        this.onSessionExpired?.(sessionId);
+      }
+      stageIndex = 2;
+      stageText = workerError;
+    } else if (queue.rtmpError) {
       stageIndex = 3;
       stageText = queue.rtmpError;
     } else if (!queue.warmedUp && queue.queuedVideos === 0 && state.counters.submitted === 0) {
@@ -1885,8 +1938,13 @@ class LiveHostOrchestrator {
       isBroadcasting: queue.broadcasting,
       isRtmpConnected: queue.rtmpConnected,
       rtmpError: queue.rtmpError || "",
+      workerError,
       bufferSeconds: Math.round(queue.bufferSeconds),
       workerOffline: queue.workerOffline,
+      workerOfflineSeconds:
+        state.workerOfflineSince > 0
+          ? Math.round((Date.now() - state.workerOfflineSince) / 1000)
+          : 0,
       warmedUp: queue.warmedUp,
       currentMode: state.currentMode,
       elapsedSeconds: Math.round(this.elapsedMs(state) / 1000),

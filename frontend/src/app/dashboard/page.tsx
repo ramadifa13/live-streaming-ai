@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef } from "react";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
-import { useProductStore } from "@/stores/useProductStore";
+import { useProductStore, PRODUCT_STORAGE_QUOTA_EVENT } from "@/stores/useProductStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { oauthService } from "@/services/oauthService";
@@ -56,6 +56,17 @@ export default function Dashboard() {
   useEffect(() => {
     loadProducts();
   }, [loadProducts]);
+
+  useEffect(() => {
+    const onQuota = () => {
+      showToast(
+        "Penyimpanan browser penuh. Hapus beberapa produk lama atau refresh setelah deploy terbaru. Data tetap dipakai sampai halaman ditutup.",
+        "warning",
+      );
+    };
+    window.addEventListener(PRODUCT_STORAGE_QUOTA_EVENT, onQuota);
+    return () => window.removeEventListener(PRODUCT_STORAGE_QUOTA_EVENT, onQuota);
+  }, [showToast]);
 
   // Reconcile persisted session state with backend after reload.
   useEffect(() => {

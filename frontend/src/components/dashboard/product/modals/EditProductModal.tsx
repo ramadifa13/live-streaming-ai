@@ -3,9 +3,10 @@
 import React, { useState } from "react";
 import Image from "next/image";
 import { X, Upload, Image as ImageIcon, Pencil, Link2 } from "lucide-react";
-import { useProductStore } from "@/stores/useProductStore";
+import { useProductStore, buildEditedProduct } from "@/stores/useProductStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { PRODUCT_CATEGORIES } from "@/lib/product-categories";
+import { compressImageDataUrl } from "@/utils/image-compress";
 
 export const EditProductModal: React.FC = () => {
   const showEditProductModal = useDashboardUIStore((state) => state.showEditProductModal);
@@ -26,17 +27,24 @@ export const EditProductModal: React.FC = () => {
     setSelectedProductForEdit(null);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedProductForEdit) return;
     setIsSubmitting(true);
     try {
-      await saveEditedProduct();
+      const updated = buildEditedProduct(selectedProductForEdit);
       setShowEditProductModal(false);
       setSelectedProductForEdit(null);
-      showToast("Produk diperbarui. Script bank disiapkan ulang di background.");
+      setIsSubmitting(false);
+      void saveEditedProduct(updated)
+        .then(() => {
+          showToast("Produk diperbarui. Script bank disiapkan ulang di background.");
+        })
+        .catch((err) => {
+          showToast(err instanceof Error ? err.message : "Gagal memperbarui produk");
+        });
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal memperbarui produk");
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -109,21 +117,22 @@ export const EditProductModal: React.FC = () => {
                       type="file"
                       accept="image/*"
                       className="hidden"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          const file = e.target.files[0];
-                          const reader = new FileReader();
-                          reader.onload = (uploadEvent) => {
-                            if (uploadEvent.target?.result) {
-                              setSelectedProductForEdit({
-                                ...selectedProductForEdit,
-                                image: String(uploadEvent.target.result),
-                              });
-                              showToast(`Foto ${file.name} berhasil diperbarui!`);
-                            }
-                          };
-                          reader.readAsDataURL(file);
-                        }
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = async (uploadEvent) => {
+                          if (!uploadEvent.target?.result) return;
+                          const compressed = await compressImageDataUrl(
+                            String(uploadEvent.target.result),
+                          );
+                          setSelectedProductForEdit({
+                            ...selectedProductForEdit,
+                            image: compressed,
+                          });
+                          showToast(`Foto ${file.name} berhasil diperbarui!`);
+                        };
+                        reader.readAsDataURL(file);
                       }}
                     />
                   </label>
@@ -389,21 +398,23 @@ export const EditProductModal: React.FC = () => {
                       type="file"
                       accept="image/*"
                       className="hidden"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          const file = e.target.files[0];
-                          const reader = new FileReader();
-                          reader.onload = (uploadEvent) => {
-                            if (uploadEvent.target?.result) {
-                              setSelectedProductForEdit({
-                                ...selectedProductForEdit,
-                                bannerImage: String(uploadEvent.target.result),
-                              });
-                              showToast(`Banner ${file.name} berhasil diperbarui!`);
-                            }
-                          };
-                          reader.readAsDataURL(file);
-                        }
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = async (uploadEvent) => {
+                          if (!uploadEvent.target?.result) return;
+                          const compressed = await compressImageDataUrl(
+                            String(uploadEvent.target.result),
+                            960,
+                          );
+                          setSelectedProductForEdit({
+                            ...selectedProductForEdit,
+                            bannerImage: compressed,
+                          });
+                          showToast(`Banner ${file.name} berhasil diperbarui!`);
+                        };
+                        reader.readAsDataURL(file);
                       }}
                     />
                   </label>
