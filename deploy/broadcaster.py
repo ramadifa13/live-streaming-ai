@@ -33,6 +33,12 @@ except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from video_canvas import ffmpeg_fit_filter, prefer_idle_clip
 
+try:
+    from pose_transition import build_morph_clip
+except ImportError:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from pose_transition import build_morph_clip
+
 class AIBroadcaster:
     def __init__(self, rtmp_url, idle_video_path, output_folder,
                  product_name="", product_price="", product_image_url="", banner_image_url=""):
@@ -52,6 +58,9 @@ class AIBroadcaster:
         self.idle_chunk_seconds = float(os.environ.get("BROADCAST_IDLE_CHUNK_SECONDS", "1.5"))
         self.max_onair_idle_seconds = float(os.environ.get("BROADCAST_MAX_IDLE_SECONDS", "6.0"))
         self.idle_streak_started_at = None
+        # Pose-morph (Tier B): transisi via optical-flow warp, bukan fade opacity biasa.
+        self.pose_morph_enabled = os.environ.get("BROADCAST_POSE_MORPH", "1") not in ("0", "false", "False")
+        self.pose_morph_min_clip_seconds = float(os.environ.get("BROADCAST_POSE_MORPH_MIN_CLIP_SECONDS", "0.6"))
         self.master_process = None
         self._duration_cache = {}
         self._audio_cache = {}
@@ -620,6 +629,92 @@ class AIBroadcaster:
         cmd.extend(self._encode_output_args())
         return cmd
 
+    def _maybe_build_morph_bridge(self, from_path, to_path, fade):
+        """Coba render klip morph optical-flow. Return path bila sukses dan
+        layak dipakai, None bila gagal atau klip terlalu pendek untuk di-trim
+        (fallback aman ke crossfade fade biasa)."""
+        if not self.pose_morph_enabled:
+            return None
+        from_dur = self._probe_duration(from_path)
+        to_dur = self._probe_duration(to_path)
+        min_needed = fade + self.pose_morph_min_clip_seconds
+        if from_dur < min_needed or to_dur < min_needed:
+            return None
+
+        tmp_dir = os.path.join(self.output_folder, "tmp_transitions")
+        os.makedirs(tmp_dir, exist_ok=True)
+        morph_path = os.path.join(
+            tmp_dir, f"morph_{int(time.time() * 1000)}_{os.getpid()}.mp4"
+        )
+        ok = build_morph_clip(
+            from_path, to_path, morph_path, morph_seconds=fade, fps=self.output_fps
+        )
+        if ok:
+            return morph_path
+        if os.path.exists(morph_path):
+            try:
+                os.remove(morph_path)
+            except Exception:
+                pass
+        return None
+
+    def _cleanup_stale_transition_tmp(self, max_age=30.0):
+        """GC malas untuk klip morph — dihapus belakangan (bukan langsung
+        setelah spawn) karena worker FFmpeg yang membacanya berjalan async."""
+        tmp_dir = os.path.join(self.output_folder, "tmp_transitions")
+        if not os.path.isdir(tmp_dir):
+            return
+        now = time.time()
+        for name in os.listdir(tmp_dir):
+            path = os.path.join(tmp_dir, name)
+            try:
+                if now - os.path.getmtime(path) > max_age:
+                    os.remove(path)
+            except Exception:
+                pass
+
+    def _build_morph_crossfade_command(self, from_path, morph_path, to_path, fade):
+        """A (dipotong sebelum overlap) → morph optical-flow → B (dipotong
+        setelah overlap). Durasi total sama seperti xfade lama (fade tetap
+        dipotong dari kedua sisi), tapi zona overlap diisi gerakan nyata,
+        bukan dissolve opacity dua pose berbeda."""
+        from_dur = self._probe_duration(from_path)
+        trim_end = max(0.05, from_dur - fade)
+        scale = (
+            ffmpeg_fit_filter(self.output_width, self.output_height)
+            + f",fps={self.output_fps}"
+        )
+        has_overlay = bool(
+            self.overlay_png_path and os.path.exists(self.overlay_png_path)
+        )
+
+        fc = (
+            f"[0:v]{scale},trim=end={trim_end},setpts=PTS-STARTPTS[v0];"
+            f"[1:v]{scale}[vm];"
+            f"[2:v]{scale},trim=start={fade},setpts=PTS-STARTPTS[v1];"
+            f"[v0][vm][v1]concat=n=3:v=1:a=0[vconcat];"
+        )
+        cmd = [
+            "ffmpeg", "-y",
+            "-re", "-i", from_path,
+            "-re", "-i", morph_path,
+            "-re", "-i", to_path,
+        ]
+        if has_overlay:
+            cmd.extend(["-loop", "1", "-i", self.overlay_png_path])
+            fc += "[vconcat][3:v]overlay=0:0:shortest=1[vout];"
+        else:
+            fc += "[vconcat]copy[vout];"
+        fc += f"[0:a][2:a]acrossfade=d={fade}:c1=tri:c2=tri[aout]"
+
+        cmd.extend([
+            "-filter_complex", fc,
+            "-map", "[vout]",
+            "-map", "[aout]",
+        ])
+        cmd.extend(self._encode_output_args())
+        return cmd
+
     def _build_crossfade_command(self, from_path, to_path, fade=None):
         """FFmpeg xfade + acrossfade untuk transisi natural antar clip."""
         fade = self.crossfade_seconds if fade is None else fade
@@ -791,6 +886,17 @@ class AIBroadcaster:
         fade = self._resolve_crossfade_seconds(to_path)
         label_from = os.path.basename(from_path)
         label_to = os.path.basename(to_path)
+
+        morph_path = self._maybe_build_morph_bridge(from_path, to_path, fade)
+        if morph_path:
+            print(
+                f"[BROADCASTER] 🌊 Pose-morph transisi {fade}s: "
+                f"{label_from} → {label_to}"
+            )
+            return self._spawn_worker(
+                self._build_morph_crossfade_command(from_path, morph_path, to_path, fade)
+            )
+
         print(
             f"[BROADCASTER] ✨ Crossfade {fade}s: "
             f"{label_from} → {label_to}"
@@ -901,7 +1007,8 @@ class AIBroadcaster:
     def start_loop(self):
         print(
             f"\n[BROADCASTER] Siaran live — crossfade={self.crossfade_seconds}s, "
-            f"fade={self.fade_seconds}s, idle_chunk={self.idle_chunk_seconds}s\n"
+            f"fade={self.fade_seconds}s, idle_chunk={self.idle_chunk_seconds}s, "
+            f"pose_morph={'ON' if self.pose_morph_enabled else 'OFF'}\n"
         )
         last_spoken_video = None
         consecutive_idle_errors = 0
@@ -920,6 +1027,7 @@ class AIBroadcaster:
                     self._ensure_master_process()
                     if self._rtmp_fatal:
                         break
+                self._cleanup_stale_transition_tmp()
                 # 0. Hot-Swap Video Overlay
                 update_file = os.path.join(self.output_folder, "update_overlay.json")
                 if os.path.exists(update_file):
