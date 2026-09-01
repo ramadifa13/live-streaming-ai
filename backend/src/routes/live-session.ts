@@ -296,15 +296,57 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         })
       : null;
 
-    // Warmup GPU worker terlebih dahulu
-    if (managedSession) {
-      await warmupWorker(managedSession.podId).catch((err) =>
-        console.warn("[Broadcast] Warmup notice:", err),
-      );
+    const sessionIdForBoot = parsed.data.sessionId;
+    if (sessionIdForBoot && managedSession) {
+      const boot = liveSessionManager.getSessionBootStatus(sessionIdForBoot);
+      if (boot && !boot.podReady) {
+        if (boot.podFailed) {
+          reply.code(502);
+          return {
+            success: false,
+            error: boot.stageText || "GPU RunPod gagal dihidupkan",
+            podFailed: true,
+          };
+        }
+        reply.code(409);
+        return {
+          success: false,
+          error:
+            "GPU RunPod masih booting. Tunggu hingga siap (polling pipeline-status).",
+          podBooting: true,
+          stageText: boot.stageText,
+        };
+      }
+    }
+
+    const podId = managedSession?.podId ?? null;
+    if (managedSession && !podId) {
+      reply.code(409);
+      return {
+        success: false,
+        error: "Pod GPU belum dialokasikan untuk sesi ini.",
+        podBooting: true,
+      };
+    }
+
+    // Verifikasi cepat — bootstrap sudah menunggu health penuh di startPodAndWait
+    if (podId) {
+      try {
+        await warmupWorker(podId, 20);
+      } catch (err) {
+        reply.code(502);
+        return {
+          success: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : "AI Worker RunPod belum merespons",
+        };
+      }
     }
 
     // Mulai RTMP stream ke platform → worker tampilkan idle video
-    const result = await startRunPodBroadcast(managedSession?.podId, {
+    const result = await startRunPodBroadcast(podId, {
       rtmpUrl,
       streamKey,
       productName,

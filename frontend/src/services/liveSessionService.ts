@@ -91,6 +91,18 @@ export const liveSessionService = {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
+      if (res.status === 409 && err.podBooting) {
+        throw new Error(
+          err.stageText ||
+            "GPU masih booting. Tunggu sebentar lalu coba hubungkan lagi.",
+        );
+      }
+      if (res.status === 504 || res.status === 502) {
+        throw new Error(
+          err.error ||
+            "Server timeout saat menghubungkan RTMP. Pastikan GPU RunPod sudah siap.",
+        );
+      }
       throw new Error(err.error || "Gagal broadcast stream");
     }
     return await res.json();

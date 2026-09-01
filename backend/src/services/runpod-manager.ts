@@ -614,12 +614,61 @@ export async function getGpuControlStatus(podId: string | null) {
   };
 }
 
-export function getWorkerUrl(podId?: string | null): string {
-  const workerUrl =
-    process.env.RUNPOD_WORKER_URL || process.env.AVATAR_WORKER_URL;
+/**
+ * URL worker GPU. Pod dinamis (on-demand) SELALU pakai proxy RunPod per-podId —
+ * jangan override dengan RUNPOD_WORKER_URL=localhost di VPS.
+ */
+export function getWorkerUrl(podId?: string | null): string | null {
+  const resolvedPodId =
+    podId?.trim() || process.env.RUNPOD_POD_ID?.trim() || null;
 
-  if (workerUrl) return workerUrl.replace(/\/$/, "");
-  if (podId) return `https://${podId}-8000.proxy.runpod.net`;
+  if (resolvedPodId) {
+    return `https://${resolvedPodId}-8000.proxy.runpod.net`;
+  }
 
-  return "http://localhost:8000";
+  const staticUrl = (
+    process.env.RUNPOD_WORKER_URL ||
+    process.env.AVATAR_WORKER_URL ||
+    ""
+  ).replace(/\/$/, "");
+
+  if (
+    staticUrl &&
+    !staticUrl.includes("localhost") &&
+    !staticUrl.includes("127.0.0.1")
+  ) {
+    return staticUrl;
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    return staticUrl || "http://localhost:8000";
+  }
+
+  return null;
+}
+
+/** Verifikasi cepat worker /health (dipakai setelah bootstrap selesai). */
+export async function verifyWorkerHealth(
+  podId: string,
+  maxWaitMs = 15_000,
+): Promise<boolean> {
+  const workerUrl = getWorkerUrl(podId);
+  if (!workerUrl) return false;
+
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${workerUrl}/health`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { status?: string };
+        if (!body.status || body.status === "ok") return true;
+      }
+    } catch {
+      /* retry */
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  return false;
 }

@@ -63,8 +63,14 @@ async function workerRequest(
   path: string,
   init?: RequestInit,
 ) {
+  const baseUrl = getWorkerUrl(podId);
+  if (!baseUrl) {
+    throw new Error(
+      "Worker GPU belum siap (podId kosong). Tunggu boot RunPod selesai.",
+    );
+  }
   const signal = init?.signal || AbortSignal.timeout(60000);
-  const response = await fetch(`${getWorkerUrl(podId)}${path}`, {
+  const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
     signal,
@@ -239,31 +245,47 @@ export async function triggerWorkerPlayback(
  */
 export async function warmupWorker(
   podId: string | null | undefined,
-  maxWaitSeconds = 60,
+  maxWaitSeconds = 15,
 ): Promise<void> {
-  console.log(`[RunPodBridge] Memeriksa kesiapan AI Worker di RunPod...`);
+  if (!podId) {
+    throw new Error(
+      "Worker GPU belum dialokasikan — broadcast dipanggil sebelum pod siap.",
+    );
+  }
+
+  const workerUrl = getWorkerUrl(podId);
+  if (!workerUrl) {
+    throw new Error("URL worker RunPod tidak tersedia.");
+  }
+
+  console.log(
+    `[RunPodBridge] Memeriksa kesiapan AI Worker di ${workerUrl}...`,
+  );
   const start = Date.now();
-  for (let attempt = 0; attempt < maxWaitSeconds; attempt++) {
+  const maxAttempts = Math.max(1, Math.ceil(maxWaitSeconds / 1.5));
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       const health = await workerRequest(podId, "/health", {
         signal: AbortSignal.timeout(5000),
       });
-      if (health && health.status === "ok") {
+      if (health && (!health.status || health.status === "ok")) {
         console.log(
-          `[RunPodBridge] AI Worker online dan siap melayani render video! (${Math.round((Date.now() - start) / 1000)}s)`,
+          `[RunPodBridge] AI Worker online (${Math.round((Date.now() - start) / 1000)}s)`,
         );
         return;
       }
-    } catch (err) {
-      if (attempt % 5 === 0) {
+    } catch {
+      if (attempt % 3 === 0) {
         console.log(
-          `[RunPodBridge] Menunggu AI Worker inisialisasi (${attempt + 1}s)...`,
+          `[RunPodBridge] Menunggu AI Worker (${Math.round((Date.now() - start) / 1000)}s)...`,
         );
       }
     }
     await new Promise((r) => setTimeout(r, 1500));
   }
-  console.warn(`[RunPodBridge] Selesai menunggu inisialisasi.`);
+  throw new Error(
+    `AI Worker belum merespons /health setelah ${maxWaitSeconds}s`,
+  );
 }
 
 export async function forwardToRunPodGPU(
