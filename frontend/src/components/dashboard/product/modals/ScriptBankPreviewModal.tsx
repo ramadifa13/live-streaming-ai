@@ -1,10 +1,9 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { X, RefreshCw, ScrollText, Loader2 } from "lucide-react";
+import { X, ScrollText, Loader2 } from "lucide-react";
 import { useProductStore } from "@/stores/useProductStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
-import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { getScriptBankMeta } from "@/lib/script-bank";
 
 const TOPIC_LABELS: Record<string, string> = {
@@ -33,12 +32,9 @@ function topicLabel(topic?: string): string {
 export const ScriptBankPreviewModal: React.FC = () => {
   const showScriptBankModal = useDashboardUIStore((state) => state.showScriptBankModal);
   const setShowScriptBankModal = useDashboardUIStore((state) => state.setShowScriptBankModal);
-  const showToast = useDashboardUIStore((state) => state.showToast);
 
   const activeFeaturedProduct = useProductStore((state) => state.activeFeaturedProduct);
   const scriptBankPreparingIds = useProductStore((state) => state.scriptBankPreparingIds);
-  const regenerateScriptBank = useProductStore((state) => state.regenerateScriptBank);
-  const isLiveActive = useLiveSessionStore((state) => state.isLiveActive);
 
   const [filterTopic, setFilterTopic] = useState<string>("ALL");
 
@@ -60,16 +56,6 @@ export const ScriptBankPreviewModal: React.FC = () => {
   }, [lines, filterTopic]);
 
   if (!showScriptBankModal) return null;
-
-  const handleRegenerate = async () => {
-    if (!activeFeaturedProduct.id || isLiveActive) return;
-    try {
-      await regenerateScriptBank(activeFeaturedProduct.id);
-      showToast("Script bank disiapkan ulang.");
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Gagal menyiapkan script bank");
-    }
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-fadeIn">
@@ -135,21 +121,12 @@ export const ScriptBankPreviewModal: React.FC = () => {
             ))
           ) : (
             <p className="text-center text-xs text-slate-500 py-8">
-              Belum ada naskah. Simpan produk dengan deskripsi lengkap, lalu regenerate script bank.
+              Belum ada naskah. Script bank otomatis dibuat saat tambah atau edit produk dengan deskripsi lengkap.
             </p>
           )}
         </div>
 
-        <div className="mt-4 flex justify-between items-center gap-2 pt-3 border-t border-[#232c42] shrink-0">
-          <button
-            type="button"
-            onClick={handleRegenerate}
-            disabled={isLiveActive || bankMeta.status === "preparing" || !activeFeaturedProduct.id}
-            className="rounded-lg border border-purple-500/40 bg-purple-500/10 px-3 py-2 text-xs font-semibold text-purple-300 hover:bg-purple-500/20 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${bankMeta.status === "preparing" ? "animate-spin" : ""}`} />
-            Regenerate Script Bank
-          </button>
+        <div className="mt-4 flex justify-end pt-3 border-t border-[#232c42] shrink-0">
           <button
             type="button"
             onClick={() => setShowScriptBankModal(false)}

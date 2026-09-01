@@ -77,7 +77,6 @@ interface ProductState {
   saveEditedProduct: () => Promise<Product>;
   deleteProduct: (id?: string) => Promise<boolean>;
   importCsvProducts: () => Promise<number>;
-  regenerateScriptBank: (productId: string) => Promise<void>;
 }
 
 function newLocalId(): string {
@@ -394,21 +393,6 @@ export const useProductStore = create<ProductState>()(
         );
 
         return imported.length;
-      },
-
-      regenerateScriptBank: async (productId: string) => {
-        const product = get().products.find((p) => p.id === productId);
-        if (!product) throw new Error("Produk tidak ditemukan.");
-        if (!product.description?.trim()) {
-          throw new Error("Isi deskripsi produk dulu sebelum menyiapkan script bank.");
-        }
-        markScriptBankPreparing(set, productId, true);
-        try {
-          const enriched = await attachScriptBank(product);
-          applyProductUpdate(set, enriched);
-        } finally {
-          markScriptBankPreparing(set, productId, false);
-        }
       },
     }),
     {

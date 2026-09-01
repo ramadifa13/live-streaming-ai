@@ -47,7 +47,7 @@ export const ProductPanel: React.FC = () => {
 
   return (
     <div
-      className={`flex h-full min-h-0 flex-col rounded-xl border p-4 transition ${
+      className={`flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-xl border p-4 transition ${
         currentStep === 1
           ? "border-blue-500/60 bg-[#0c1428] ring-1 ring-blue-500/30 shadow-lg shadow-blue-900/10"
           : "border-[#232c42] bg-[#0c1221]"
@@ -128,13 +128,13 @@ export const ProductPanel: React.FC = () => {
 
       <ProductFilter />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
-        <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <ProductList />
         </div>
 
-        <div className="flex w-full shrink-0 flex-col justify-between gap-2 lg:w-[155px] lg:self-stretch">
-          <label className="flex min-h-[120px] lg:h-full w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-blue-500/50 bg-[#111827] text-center text-xs cursor-pointer hover:border-blue-400 hover:bg-[#162038] transition p-2.5 shadow-inner group">
+        <div className="grid shrink-0 grid-cols-1 gap-2 sm:grid-cols-2">
+          <label className="flex min-h-[100px] w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-blue-500/50 bg-[#111827] text-center text-xs cursor-pointer hover:border-blue-400 hover:bg-[#162038] transition p-2.5 shadow-inner group">
             <div className="h-8 w-8 rounded-full bg-blue-500/10 flex items-center justify-center mb-1 text-blue-400 group-hover:scale-110 transition">
               <Upload className="h-4 w-4" />
             </div>

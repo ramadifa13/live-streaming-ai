@@ -26,8 +26,8 @@ export const ProductFilter: React.FC = () => {
   const CATEGORIES = ["ALL", ...categoryCounts.uniqueTags];
 
   return (
-    <div className="mb-3 flex flex-wrap items-center gap-2">
-      <div className="relative flex-1 min-w-[160px]">
+    <div className="mb-3 flex min-w-0 flex-col gap-2">
+      <div className="relative w-full min-w-0">
         <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-2.5 text-slate-500">
           <Search className="h-3.5 w-3.5" />
         </div>
@@ -49,7 +49,7 @@ export const ProductFilter: React.FC = () => {
         )}
       </div>
 
-      <div className="flex items-center gap-1 overflow-x-auto pb-0.5 text-[10px]">
+      <div className="flex w-full min-w-0 items-center gap-1 overflow-x-auto pb-0.5 text-[10px] [scrollbar-width:thin]">
         {CATEGORIES.map((cat) => {
           const count = categoryCounts.counts[cat] ?? 0;
           const isActive = productCategoryFilter === cat;

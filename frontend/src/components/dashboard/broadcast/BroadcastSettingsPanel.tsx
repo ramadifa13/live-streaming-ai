@@ -131,7 +131,7 @@ export const BroadcastSettingsPanel: React.FC = () => {
 
   return (
     <div
-      className={`flex h-full min-h-0 flex-col rounded-xl border p-4 transition ${
+      className={`flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-xl border p-4 transition ${
         currentStep === 3
           ? "border-blue-500/60 bg-[#0c1428] ring-1 ring-blue-500/30 shadow-lg shadow-blue-900/10"
           : "border-[#232c42] bg-[#0c1221]"

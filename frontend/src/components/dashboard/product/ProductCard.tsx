@@ -2,11 +2,10 @@
 
 import React from "react";
 import Image from "next/image";
-import { Pencil, Trash2, ShoppingBag, RefreshCw, ScrollText } from "lucide-react";
+import { Pencil, Trash2, ShoppingBag } from "lucide-react";
 import { Product } from "@/app/dashboard/types";
 import { useProductStore } from "@/stores/useProductStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
-import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { getScriptBankMeta } from "@/lib/script-bank";
 
 interface ProductCardProps {
@@ -18,9 +17,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const setActiveFeaturedProduct = useProductStore((state) => state.setActiveFeaturedProduct);
   const setSelectedProductForEdit = useProductStore((state) => state.setSelectedProductForEdit);
   const deleteProduct = useProductStore((state) => state.deleteProduct);
-  const regenerateScriptBank = useProductStore((state) => state.regenerateScriptBank);
   const scriptBankPreparingIds = useProductStore((state) => state.scriptBankPreparingIds);
-  const isLiveActive = useLiveSessionStore((state) => state.isLiveActive);
 
   const setShowEditProductModal = useDashboardUIStore((state) => state.setShowEditProductModal);
   const showToast = useDashboardUIStore((state) => state.showToast);
@@ -49,17 +46,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
       } catch (err) {
         showToast(err instanceof Error ? err.message : "Gagal menghapus produk");
       }
-    }
-  };
-
-  const handleRegenerateBank = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!product.id || isLiveActive) return;
-    try {
-      await regenerateScriptBank(product.id);
-      showToast(`Script bank ${product.name} disiapkan ulang.`);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Gagal menyiapkan script bank");
     }
   };
 
@@ -120,7 +106,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             >
               {bankMeta.status === "preparing" ? (
                 <span className="inline-flex items-center gap-0.5">
-                  <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                  <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
                   {bankMeta.label}
                 </span>
               ) : (
@@ -131,15 +117,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
         </div>
 
         <div className="flex items-center gap-0.5 shrink-0 pl-1">
-          <button
-            type="button"
-            onClick={handleRegenerateBank}
-            disabled={isLiveActive || bankMeta.status === "preparing"}
-            className="p-1.5 text-slate-400 hover:text-purple-300 hover:bg-purple-500/15 rounded-lg transition active:scale-90 cursor-pointer disabled:opacity-40"
-            title="Regenerate script bank (ucapan otonom host)"
-          >
-            <ScrollText className="w-3.5 h-3.5" />
-          </button>
           <button
             type="button"
             onClick={handleEdit}
