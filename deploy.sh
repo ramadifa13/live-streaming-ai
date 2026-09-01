@@ -1,60 +1,59 @@
-cat > /root/deploy.sh <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Jalankan di VPS: bash /root/deploy.sh
+# Atau dari laptop: ssh root@<IP> "bash /root/deploy.sh"
+# Sinkronkan skrip ini: scp deploy.sh root@<IP>:/root/deploy.sh
+
 # ==================== CONFIGURATION ====================
-REPO_DIR="/var/www/app"                     # where the repo is cloned
-BRANCH="main"                               # change if you use another branch
+REPO_DIR="/var/www/app"
+BRANCH="main"
 BACKEND_DIR="$REPO_DIR/backend"
 FRONTEND_DIR="$REPO_DIR/frontend"
 PM2_BACKEND_NAME="api"
 PM2_FRONTEND_NAME="frontend"
-NGINX_SITE="/etc/nginx/sites-available/app"
-DOMAINS="livio.id www.livio.id"             # add ai.livio.id if you use it
+DOMAINS="livio.id www.livio.id"
 # ======================================================
 
-echo "=== Auto‑redeploy started: $(date) ==="
+echo "=== Auto-redeploy started: $(date) ==="
 
-# ---- 1. Pull latest code ----
 cd "$REPO_DIR"
 echo "Fetching latest changes from origin/$BRANCH ..."
 git fetch --prune
-git reset --hard origin/"$BRANCH"   # will prompt for credentials if needed
+git reset --hard "origin/$BRANCH"
+echo "HEAD: $(git log -1 --oneline)"
 
-# ---- 2. Backend: install, generate Prisma, build ----
 echo "▶ Backend: npm install"
 cd "$BACKEND_DIR"
-npm install --quiet
+npm install
+
 echo "▶ Backend: npx prisma generate"
-npx prisma generate --quiet
+npx prisma generate
+
 echo "▶ Backend: clean dist + build"
 rm -rf "$BACKEND_DIR/dist"
-npm run build --quiet   # adjust if your build script differs
+npm run build
 
-# ---- 3. Frontend: install & build (Next.js) ----
 echo "▶ Frontend: npm install"
 cd "$FRONTEND_DIR"
-npm install --quiet
-echo "▶ Frontend: npm run build"
-npm run build --quiet   # produces .next/
+npm install
 
-# ---- 4. Restart PM2 services ----
+echo "▶ Frontend: npm run build"
+npm run build
+
 echo "▶ Restarting PM2 services"
-pm2 restart "$PM2_BACKEND_NAME"
-pm2 restart "$PM2_FRONTEND_NAME"
+pm2 restart "$PM2_BACKEND_NAME" --update-env
+pm2 restart "$PM2_FRONTEND_NAME" --update-env
 pm2 save
 
-# ---- 5. Reload Nginx (if config changed) ----
 echo "▶ Testing Nginx configuration"
 nginx -t
 echo "▶ Reloading Nginx"
 systemctl reload nginx
 
-# ---- 6. Renew SSL certificate (if needed) ----
 echo "▶ Checking SSL renewal"
-certbot renew --quiet --no-self-upgrade
-# If you just added a domain/subdomain and want to force a new cert, uncomment:
-# certbot --nginx -d $DOMAINS --force-renewal
+certbot renew --quiet --no-self-upgrade || true
 
-echo "=== Auto‑redeploy finished: $(date) ==="
-EOF
+echo "=== Auto-redeploy finished: $(date) ==="
+echo "Frontend build: $(cat "$FRONTEND_DIR/.next/BUILD_ID" 2>/dev/null || echo 'missing')"
+pm2 status
