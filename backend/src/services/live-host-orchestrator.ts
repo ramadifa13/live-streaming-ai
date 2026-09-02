@@ -1957,8 +1957,8 @@ class LiveHostOrchestrator {
       stageIndex = 3;
       stageText = queue.rtmpError;
     } else if (
-      queue.broadcastBootState === "starting" ||
-      queue.visualWorkerInitializing
+      !queue.visualWorkerRunning &&
+      (queue.broadcastBootState === "starting" || queue.visualWorkerInitializing)
     ) {
       stageIndex = 1;
       stageText =
@@ -2000,6 +2000,8 @@ class LiveHostOrchestrator {
       utteranceQueueCount: queue.utteranceQueueCount,
       broadcastMode: queue.broadcastMode,
       visualWorkerRunning: queue.visualWorkerRunning,
+      visualWorkerInitializing: queue.visualWorkerInitializing,
+      broadcastBootState: queue.broadcastBootState,
       pendingCount: queue.utteranceQueueCount,
       pendingCommentCount: state.pendingComments.length,
       isLive: state.isLive,

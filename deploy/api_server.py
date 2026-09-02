@@ -921,6 +921,7 @@ async def start_broadcast(req: BroadcastRequest):
 def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     global broadcaster_process, total_videos_rendered, current_broadcast_env
     global broadcaster_restarts, broadcaster_next_restart_at, visual_worker
+    global _broadcast_boot_state
 
     final_rtmp_url = (req.rtmp_url or req.rtmpUrl or "").strip()
     final_stream_key = (
@@ -1104,6 +1105,8 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         )
         vw.initialize()
         vw.start()
+        global _broadcast_boot_state
+        _broadcast_boot_state = "running"
         bridge = get_speech_bridge(output_dir)
         if bridge is not None:
             bridge.output_folder = output_dir

@@ -135,6 +135,23 @@ class SpeechBridge:
 
     def set_models(self, models_bundle) -> None:
         self._models = models_bundle
+        with self._lock:
+            stale = [
+                j
+                for j in list(self._pending)
+                if j.ready.is_set()
+                and j.whisper_chunks is None
+                and j.num_frames > 0
+                and not j.error
+            ]
+        for job in stale:
+            job.ready.clear()
+            threading.Thread(
+                target=self._prepare_job,
+                args=(job,),
+                name=f"RePrep-{job.task_id[:20]}",
+                daemon=True,
+            ).start()
 
     def set_callbacks(
         self,
@@ -188,6 +205,12 @@ class SpeechBridge:
             pcm = _extract_pcm_stereo(job.audio_path)
             job.pcm_frames = _split_pcm_frames(pcm)
             job.num_frames = len(job.pcm_frames)
+
+            if job.num_frames > 0 and not self._models:
+                wait_sec = float(os.environ.get("SPEECH_BRIDGE_MODEL_WAIT_SEC", "300"))
+                deadline = time.monotonic() + wait_sec
+                while not self._models and time.monotonic() < deadline:
+                    time.sleep(0.25)
 
             if self._models and job.num_frames > 0:
                 wav_16k = _normalize_to_16k_wav(job.audio_path)
