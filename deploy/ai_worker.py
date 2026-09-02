@@ -21,6 +21,7 @@ All video assets are decoded once at init into RAM. No disk I/O during stream.
 from __future__ import annotations
 
 import os
+import random
 import sys
 import time
 import threading
@@ -57,10 +58,20 @@ BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2  # stereo s16le
 CROSSFADE_FRAMES = int(os.environ.get("AI_WORKER_CROSSFADE", "4"))
 OVERLAP_FRAMES = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "5"))
 BBOX_SMOOTH_WINDOW = int(os.environ.get("AI_WORKER_BBOX_SMOOTH", "7"))
-RAW_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RAW_QUEUE", "12"))
-RENDER_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RENDER_QUEUE", "24"))
-RAW_QUEUE_BLOCK_SEC = float(os.environ.get("AI_WORKER_RAW_BLOCK_SEC", "0.1"))
+RAW_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RAW_QUEUE", "24"))
+RENDER_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RENDER_QUEUE", "48"))
+RAW_QUEUE_BLOCK_SEC = float(os.environ.get("AI_WORKER_RAW_BLOCK_SEC", "0.25"))
 MASK_FEATHER_PX = int(os.environ.get("AI_WORKER_MASK_FEATHER", "9"))
+AMBIENT_MIN_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MIN_SEC", "18"))
+AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "42"))
+IDLE_FALLBACK_AFTER = int(os.environ.get("AI_WORKER_IDLE_FALLBACK_AFTER", "2"))
+
+
+def _ambient_gesture_names() -> List[str]:
+    raw = (os.environ.get("AI_WORKER_AMBIENT_GESTURES") or "wave,nod").strip()
+    if raw.lower() in ("0", "off", "false", "none", "no"):
+        return []
+    return [n.strip() for n in raw.split(",") if n.strip()]
 
 try:
     from worker_telemetry import get_telemetry
@@ -370,7 +381,10 @@ class AssetBank:
 
     def _eager_clip_names(self) -> List[str]:
         """Clip yang di-decode ke RAM saat init. Sisanya lazy saat dipakai."""
-        raw = (os.environ.get("AI_WORKER_EAGER_CLIPS") or "idle,talk_expressive").strip()
+        raw = (
+            os.environ.get("AI_WORKER_EAGER_CLIPS")
+            or "idle,talk_expressive,wave,nod"
+        ).strip()
         if raw.lower() in ("all", "*"):
             return list(self.clips.keys()) if self.clips else ["idle", "talk_expressive"]
         names = [n.strip() for n in raw.split(",") if n.strip()]
@@ -549,6 +563,40 @@ class VideoStateMachine:
         self._talk_loop_count = 0
         self._scheduled_gesture: Optional[str] = None
         self._post_speech_gesture_active = False
+        self._ambient_names = _ambient_gesture_names()
+        self._next_ambient_at = 0.0
+        self._schedule_next_ambient()
+
+    def _schedule_next_ambient(self) -> None:
+        if not self._ambient_names:
+            self._next_ambient_at = 0.0
+            return
+        self._next_ambient_at = time.monotonic() + random.uniform(
+            AMBIENT_MIN_SEC, AMBIENT_MAX_SEC
+        )
+
+    def _maybe_queue_ambient_gesture(self) -> None:
+        """Gerakan spontan saat idle — supaya avatar tidak terlihat membeku."""
+        if not self._ambient_names or self._utterance_active or self._playthrough_lock:
+            return
+        if self.state != PlayState.IDLE or self._overlap is not None:
+            return
+        if time.monotonic() < self._next_ambient_at:
+            return
+        talk = self.bank.resolve_action("talk_expressive")
+        candidates: List[str] = []
+        for name in self._ambient_names:
+            resolved = self.bank.resolve_action(name)
+            if resolved in (self.bank._idle_name, talk, self.current_name):
+                continue
+            if resolved in self.bank.clips:
+                candidates.append(resolved)
+        self._schedule_next_ambient()
+        if not candidates or self.pending_action or self._action_queue:
+            return
+        tag = random.choice(candidates)
+        self.pending_action = tag
+        print(f"[StateMachine] Ambient gesture → {tag}")
 
     def set_utterance_gesture(self, tag: Optional[str]) -> None:
         """Gesture diputar segera setelah audio habis (bukan setelah talk loop end_pose)."""
@@ -735,7 +783,9 @@ class VideoStateMachine:
 
         at_base = self.frame_idx == clip.base_pose_frame
         at_end = self.frame_idx >= clip.end_pose
-        if self.state == PlayState.IDLE and not (at_base or at_end):
+        talk = self.bank.resolve_action("talk_expressive")
+        is_ambient = target not in (self.bank._idle_name, talk)
+        if self.state == PlayState.IDLE and not (at_base or at_end) and not is_ambient:
             self.pending_action = target
             return False
 
@@ -791,6 +841,7 @@ class VideoStateMachine:
         with self._lock:
             if llm_action and not self._playthrough_lock and not self._utterance_active:
                 self.request_action(llm_action)
+            self._maybe_queue_ambient_gesture()
 
             clip = self.bank.get_clip(self.current_name)
             if clip is None:
@@ -1142,8 +1193,37 @@ def frame_fetcher_loop(
 
 
 # ---------------------------------------------------------------------------
-# Broadcaster (Thread 3) — strict 30 FPS, never freeze
+# Broadcaster (Thread 3) — strict FPS, never freeze on pipeline lag
 # ---------------------------------------------------------------------------
+class _IdleFallbackPlayer:
+    """Animasi idle mandiri saat render queue kosong — cegah frame beku di RTMP."""
+
+    def __init__(self, bank: AssetBank):
+        self._bank = bank
+        self._clip: Optional[ClipAsset] = None
+        self._idx = 0
+        self._reload()
+
+    def _reload(self) -> None:
+        try:
+            self._clip = self._bank.idle_clip
+            self._idx = self._clip.base_pose_frame
+        except Exception:
+            self._clip = None
+
+    def next_frame(self) -> np.ndarray:
+        if self._clip is None or not self._clip.frames:
+            self._reload()
+        if self._clip is None or not self._clip.frames:
+            return np.zeros((CANVAS_H, CANVAS_W, 3), dtype=np.uint8)
+        idx = max(0, min(self._idx, len(self._clip.frames) - 1))
+        frame = self._clip.frames[idx].copy()
+        self._idx += 1
+        if self._idx > self._clip.end_pose:
+            self._idx = self._clip.base_pose_frame
+        return frame
+
+
 class StreamBroadcaster:
     """Push BGR + PCM to FFmpeg RTMP encoder (same pattern as frame_feed.py)."""
 
@@ -1160,6 +1240,7 @@ class StreamBroadcaster:
         self._proc = None
         self._stderr_log = None
         self._closed = False
+        self._lock = threading.Lock()
         if not self.rtmp_url.lower().startswith(("rtmp://", "rtmps://")):
             raise ValueError(
                 f"RTMP URL tidak valid (harus rtmp:// atau rtmps://): {self.rtmp_url[:80]}"
@@ -1404,69 +1485,76 @@ class StreamBroadcaster:
             offset += n
 
     def write(self, frame: np.ndarray, pcm: bytes) -> bool:
-        if self._v_fh is None or not self.is_alive():
-            return False
-        if frame is None or frame.size == 0:
-            return False
-        h, w = frame.shape[:2]
-        if w != self.width or h != self.height:
-            frame = fit_bgr(frame, self.width, self.height)
-        if frame.shape[2] != 3:
-            return False
-        if len(pcm) < self.bytes_per_audio:
-            pcm = pcm + b"\x00" * (self.bytes_per_audio - len(pcm))
-        elif len(pcm) > self.bytes_per_audio:
-            pcm = pcm[: self.bytes_per_audio]
-        expected = self.width * self.height * 3
-        buf = np.ascontiguousarray(frame, dtype=np.uint8).tobytes()
-        if len(buf) != expected:
-            print(
-                f"[Broadcaster] Frame size mismatch: got {len(buf)}, expected {expected}",
-                flush=True,
-            )
-            return False
-        try:
-            self._write_all(self._v_fh, buf)
-            self._write_all(self._a_fh, pcm)
-            return True
-        except (BrokenPipeError, OSError) as err:
-            print(f"[Broadcaster] RTMP pipe error: {err}", flush=True)
-            out_dir = os.environ.get("OUTPUT_FOLDER", "")
-            if out_dir:
-                try:
-                    from rtmp_utils import write_rtmp_status
+        with self._lock:
+            if self._closed or self._v_fh is None or self._a_fh is None:
+                return False
+            if getattr(self._v_fh, "closed", False) or getattr(self._a_fh, "closed", False):
+                return False
+            if not self.is_alive():
+                return False
+            if frame is None or frame.size == 0:
+                return False
+            h, w = frame.shape[:2]
+            if w != self.width or h != self.height:
+                frame = fit_bgr(frame, self.width, self.height)
+            if frame.shape[2] != 3:
+                return False
+            if len(pcm) < self.bytes_per_audio:
+                pcm = pcm + b"\x00" * (self.bytes_per_audio - len(pcm))
+            elif len(pcm) > self.bytes_per_audio:
+                pcm = pcm[: self.bytes_per_audio]
+            expected = self.width * self.height * 3
+            buf = np.ascontiguousarray(frame, dtype=np.uint8).tobytes()
+            if len(buf) != expected:
+                print(
+                    f"[Broadcaster] Frame size mismatch: got {len(buf)}, expected {expected}",
+                    flush=True,
+                )
+                return False
+            try:
+                self._write_all(self._v_fh, buf)
+                self._write_all(self._a_fh, pcm)
+                return True
+            except (BrokenPipeError, OSError, ValueError) as err:
+                print(f"[Broadcaster] RTMP pipe error: {err}", flush=True)
+                out_dir = os.environ.get("OUTPUT_FOLDER", "")
+                if out_dir:
+                    try:
+                        from rtmp_utils import write_rtmp_status
 
-                    write_rtmp_status(
-                        out_dir,
-                        "failed",
-                        "FFmpeg RTMP pipe putus — cek ai_worker_rtmp.log",
-                    )
-                except Exception:
-                    pass
-            return False
+                        write_rtmp_status(
+                            out_dir,
+                            "failed",
+                            "FFmpeg RTMP pipe putus — cek ai_worker_rtmp.log",
+                        )
+                    except Exception:
+                        pass
+                return False
 
     def shutdown(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        for fh in (self._v_fh, self._a_fh):
-            if fh:
-                try:
-                    fh.close()
-                except Exception:
-                    pass
-        self._v_fh = None
-        self._a_fh = None
-        if self._proc and self._proc.poll() is None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            for fh in (self._v_fh, self._a_fh):
+                if fh:
+                    try:
+                        fh.close()
+                    except Exception:
+                        pass
+            self._v_fh = None
+            self._a_fh = None
+            proc = self._proc
+            self._proc = None
+        if proc and proc.poll() is None:
             try:
-                self._proc.terminate()
-                self._proc.wait(timeout=3)
+                proc.terminate()
+                proc.wait(timeout=3)
             except Exception:
                 try:
-                    self._proc.kill()
+                    proc.kill()
                 except Exception:
                     pass
-        self._proc = None
 
 
 def broadcaster_loop(
@@ -1482,6 +1570,8 @@ def broadcaster_loop(
 
     fallback = bank.idle_clip.frames[bank.idle_clip.base_pose_frame].copy()
     last_good = fallback.copy()
+    idle_player = _IdleFallbackPlayer(bank)
+    stale_misses = 0
     pending: Dict[int, RenderedPacket] = {}
     next_seq = 0
     overlay_rgb = None
@@ -1572,12 +1662,17 @@ def broadcaster_loop(
         if pkt is not None:
             last_good = pkt.frame
             pcm = pkt.audio_pcm
+            stale_misses = 0
         else:
             pcm = silence
+            stale_misses += 1
             metrics.inc("frames_duplicated")
+            if stale_misses >= IDLE_FALLBACK_AFTER:
+                last_good = idle_player.next_frame()
+                metrics.inc("idle_fallback_frames")
 
         frame_out = _apply_overlay(last_good)
-        if bc:
+        if bc and not stop_event.is_set():
             if not bc.is_alive():
                 write_fail_streak += 1
                 if write_fail_streak >= 25 and out_dir:
@@ -1592,7 +1687,11 @@ def broadcaster_loop(
                         pass
             else:
                 write_start = time.perf_counter()
-                wrote = bc.write(frame_out, pcm)
+                try:
+                    wrote = bc.write(frame_out, pcm)
+                except Exception as write_err:
+                    print(f"[Broadcaster] write error: {write_err}", flush=True)
+                    wrote = False
                 metrics.record_latency("ffmpeg_write_ms", (time.perf_counter() - write_start) * 1000.0)
                 if wrote:
                     frames_written += 1
@@ -1673,6 +1772,7 @@ class AIVisualWorker:
         self._stop = threading.Event()
         self._threads: List[threading.Thread] = []
         self._running = False
+        self._pipeline_active = False
         self._broadcaster: Optional[StreamBroadcaster] = None
         self._rtmp_connected = False
 
@@ -1763,8 +1863,10 @@ class AIVisualWorker:
         """API entry — antri audio TTS untuk diputar live."""
         if self._bridge is None:
             raise RuntimeError("SpeechBridge tidak tersedia")
-        if not self._running:
+        if not self._bank:
             self.initialize()
+        if not self._pipeline_active and not self._running:
+            raise RuntimeError("Pipeline belum aktif — panggil start() dulu")
         return self._bridge.enqueue(
             audio_path,
             task_id=task_id,
@@ -1893,6 +1995,9 @@ class AIVisualWorker:
         for t in self._threads:
             t.start()
 
+        self._pipeline_active = True
+        print("[AIVisualWorker] Pipeline threads started — idle animation aktif")
+
         try:
             if wait_rtmp and self.rtmp_url:
                 self._wait_rtmp_connected()
@@ -1901,28 +2006,39 @@ class AIVisualWorker:
             raise
 
         self._running = True
-        print("[AIVisualWorker] Pipeline running (3 threads)")
+        print("[AIVisualWorker] Pipeline running (3 threads, RTMP ready)")
 
     def stop(self) -> None:
         self._stop.set()
         if self._engine:
             self._engine.clear_utterance()
+        # Tunggu thread Broadcaster selesai loop sebelum tutup pipe FFmpeg.
+        for t in self._threads:
+            t.join(timeout=2.0)
+        self._threads.clear()
         if self._broadcaster is not None:
             try:
                 self._broadcaster.shutdown()
             except Exception:
                 pass
             self._broadcaster = None
-        for t in self._threads:
-            t.join(timeout=2.0)
-        self._threads.clear()
         self._running = False
+        self._pipeline_active = False
         self._rtmp_connected = False
         print("[AIVisualWorker] Stopped")
 
     @property
     def is_running(self) -> bool:
         return self._running
+
+    @property
+    def is_pipeline_active(self) -> bool:
+        """True saat thread pipeline hidup (termasuk saat menunggu RTMP handshake)."""
+        return self._pipeline_active
+
+    @property
+    def is_accepting_utterances(self) -> bool:
+        return self._pipeline_active and self._bridge is not None
 
     @property
     def is_rtmp_connected(self) -> bool:

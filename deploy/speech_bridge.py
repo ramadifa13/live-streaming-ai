@@ -375,6 +375,9 @@ class SpeechBridge:
             if self._pending:
                 nxt = self._pending[0]
                 if nxt.action and nxt.ready.is_set():
+                    tag = nxt.action.strip().lower()
+                    if tag in ("none", "null", "idle", "talk", "talk_expressive"):
+                        return None
                     return nxt.action
         return None
 

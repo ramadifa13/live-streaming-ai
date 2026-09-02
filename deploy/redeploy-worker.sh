@@ -18,6 +18,8 @@ WORKER_DIR="${WORKER_DIR:-/workspace/ai_live_worker}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FORCE_GIT_RESET="${FORCE_GIT_RESET:-0}"
 SKIP_GIT_PULL="${SKIP_GIT_PULL:-0}"
+VERIFY="${VERIFY:-0}"
+STOP_BROADCAST="${STOP_BROADCAST:-0}"
 
 echo "============================================================"
 echo " AI Live Worker — Redeploy"
@@ -54,6 +56,17 @@ source "$SCRIPT_DIR/sync-worker.sh"
 echo "[3/5] Memastikan dependensi Python API (fastapi) ..."
 ensure_worker_python_deps
 
+if [ "$STOP_BROADCAST" = "1" ]; then
+	WORKER_PORT="${PORT:-8000}"
+	if [ -f "$WORKER_DIR/.env" ]; then
+		# shellcheck disable=SC1091
+		source "$WORKER_DIR/.env"
+		WORKER_PORT="${PORT:-8000}"
+	fi
+	echo "[3b] stop-broadcast ..."
+	curl -fsS -X POST "http://127.0.0.1:${WORKER_PORT}/stream/stop-broadcast" >/dev/null 2>&1 || true
+fi
+
 echo "[4/5] Restart worker ..."
 cd "$WORKER_DIR"
 SKIP_WATCHDOG=1 FORCE_RESTART=1 bash start.sh
@@ -68,3 +81,10 @@ if [ -f "$WORKER_DIR/.env" ]; then
 fi
 echo "     Health: curl -s http://localhost:${WORKER_PORT}/health"
 echo "     Log:    tail -f $WORKER_DIR/api_server.log"
+
+if [ "$VERIFY" = "1" ] && [ -f "$SCRIPT_DIR/verify-worker.sh" ]; then
+	echo ""
+	echo "[verify] Menjalankan verify-worker.sh ..."
+	sleep 2
+	bash "$SCRIPT_DIR/verify-worker.sh"
+fi

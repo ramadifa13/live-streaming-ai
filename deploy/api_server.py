@@ -260,6 +260,22 @@ _broadcast_boot_error = ""
 _broadcast_started_at: float = 0.0
 
 
+def _visual_worker_pipeline_active() -> bool:
+    """Pipeline thread hidup (termasuk saat menunggu RTMP handshake)."""
+    return visual_worker is not None and getattr(
+        visual_worker, "is_pipeline_active", visual_worker.is_running
+    )
+
+
+def _visual_worker_ready() -> bool:
+    """Siap menerima utterance (pipeline aktif atau masih boot)."""
+    if visual_worker is None:
+        return False
+    if _visual_worker_pipeline_active() or visual_worker.is_running:
+        return True
+    return _broadcast_boot_state == "starting"
+
+
 def _clear_speech_bridge_queue() -> None:
     bridge = get_speech_bridge(output_dir) if get_speech_bridge is not None else None
     if bridge is not None and hasattr(bridge, "clear_pending"):
@@ -432,6 +448,7 @@ async def periodic_cleanup_and_watchdog():
                     visual_worker = None
                 elif (
                     visual_worker is not None
+                    and not _visual_worker_pipeline_active()
                     and not visual_worker.is_running
                     and _broadcast_boot_state != "starting"
                 ):
@@ -515,7 +532,9 @@ async def health():
         "batch_size": worker.batch_size,
         "active_jobs": len(jobs),
         "broadcast_mode": os.environ.get("BROADCAST_MODE", "segment"),
-        "visual_worker_running": visual_worker is not None and visual_worker.is_running,
+        "visual_worker_running": _visual_worker_pipeline_active()
+        or (visual_worker is not None and visual_worker.is_running),
+        "visual_worker_pipeline_active": _visual_worker_pipeline_active(),
     }
 
 @app.get("/logs")
@@ -544,9 +563,10 @@ async def worker_metrics():
         return {"success": False, "error": "telemetry_unavailable"}
     snap = tel.snapshot(target_fps=float(AI_WORKER_TARGET_FPS))
     snap["success"] = True
-    snap["visual_worker_running"] = (
+    snap["visual_worker_running"] = _visual_worker_pipeline_active() or (
         visual_worker is not None and visual_worker.is_running
     )
+    snap["visual_worker_pipeline_active"] = _visual_worker_pipeline_active()
     snap["broadcast_mode"] = os.environ.get("BROADCAST_MODE", "segment")
     if is_ai_worker_mode():
         bridge = get_speech_bridge(output_dir)
@@ -595,7 +615,7 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                     "created_at": time.time(),
                 }
                 return
-            if visual_worker is None or not visual_worker.is_running:
+            if not _visual_worker_ready():
                 if _broadcast_boot_state == "starting":
                     bridge = get_speech_bridge(output_dir)
                     if bridge is not None:
@@ -747,7 +767,9 @@ async def get_queue_status():
     active_processing = [
         jid for jid, info in jobs.items() if info.get("status") == "processing"
     ]
-    visual_worker_running = visual_worker is not None and visual_worker.is_running
+    visual_worker_running = visual_worker is not None and (
+        visual_worker.is_running or _visual_worker_pipeline_active()
+    )
     broadcast_booting = _broadcast_boot_state == "starting"
     visual_worker_initializing = (
         visual_worker is not None
@@ -852,6 +874,7 @@ async def get_queue_status():
         "warmed_up": getattr(worker, "_warmed_up", False) or visual_worker_running,
         "utterance_queue_count": utterance_pending,
         "visual_worker_running": visual_worker_running,
+        "visual_worker_pipeline_active": _visual_worker_pipeline_active(),
         "visual_worker_initializing": visual_worker_initializing,
         "broadcast_boot_state": _broadcast_boot_state,
         "broadcast_boot_error": _broadcast_boot_error,
@@ -940,7 +963,7 @@ async def start_broadcast(req: BroadcastRequest):
         raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
 
     # Idempoten cepat — ai_worker sudah jalan + RTMP connected.
-    if is_ai_worker_mode() and visual_worker is not None and visual_worker.is_running:
+    if is_ai_worker_mode() and visual_worker is not None and _visual_worker_pipeline_active():
         rtmp_state = "disconnected"
         if read_rtmp_status is not None:
             rtmp_state, _ = read_rtmp_status(output_dir)
@@ -1061,7 +1084,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     ).strip().lower()
     ai_mode = mode in ("ai_worker", "ai-worker", "realtime", "visual_worker")
 
-    if ai_mode and visual_worker is not None and visual_worker.is_running:
+    if ai_mode and visual_worker is not None and _visual_worker_pipeline_active():
         rtmp_state = "disconnected"
         if read_rtmp_status is not None:
             rtmp_state, _ = read_rtmp_status(output_dir)
@@ -1219,6 +1242,13 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
             "model + assets (bisa 1–3 menit)..."
         )
         vw.initialize()
+        flag_path = os.path.join(output_dir, "playback_active.flag")
+        try:
+            with open(flag_path, "w", encoding="utf-8") as fh:
+                fh.write("1")
+            print("[AI-Worker] playback_active.flag dibuat (audio TTS aktif)")
+        except Exception as flag_err:
+            print(f"[AI-Worker] playback_active notice: {flag_err}")
         try:
             vw.start(wait_rtmp=True)
         except Exception as start_err:
@@ -1233,13 +1263,6 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         bridge = get_speech_bridge(output_dir)
         if bridge is not None:
             bridge.output_folder = output_dir
-        flag_path = os.path.join(output_dir, "playback_active.flag")
-        try:
-            with open(flag_path, "w", encoding="utf-8") as fh:
-                fh.write("1")
-            print("[AI-Worker] playback_active.flag dibuat (audio TTS aktif)")
-        except Exception as flag_err:
-            print(f"[AI-Worker] playback_active notice: {flag_err}")
         print(
             f"[AI-Worker] AIVisualWorker aktif @ {os.environ.get('AI_WORKER_FPS', '25')}fps "
             f"(in-process, no subprocess)"
@@ -1326,7 +1349,9 @@ async def update_stream_product(req: UpdateProductRequest):
 
 @app.get("/stream/broadcast-status")
 async def broadcast_status():
-    vw_running = visual_worker is not None and visual_worker.is_running
+    vw_running = visual_worker is not None and (
+        visual_worker.is_running or _visual_worker_pipeline_active()
+    )
     vw_initializing = (
         visual_worker is not None
         and not vw_running
@@ -1359,6 +1384,7 @@ async def broadcast_status():
             "rtmp_connected": rtmp_connected,
             "rtmp_state": rtmp_state,
             "visual_worker_running": vw_running,
+            "visual_worker_pipeline_active": _visual_worker_pipeline_active(),
             "visual_worker_initializing": vw_initializing,
         }
     if _broadcast_boot_state == "starting":
@@ -1369,6 +1395,7 @@ async def broadcast_status():
             "rtmp_connected": False,
             "rtmp_state": rtmp_state,
             "visual_worker_running": vw_running,
+            "visual_worker_pipeline_active": _visual_worker_pipeline_active(),
             "visual_worker_initializing": vw_initializing,
         }
     return {

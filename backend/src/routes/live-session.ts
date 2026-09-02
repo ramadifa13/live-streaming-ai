@@ -787,7 +787,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         sessionStatus,
         sessionId: sessionId || null,
         platform: session?.platform || "TikTok LIVE",
-        product: null,
+        product: managedSession?.product ?? null,
         avatar: session?.avatar || null,
         startedAt:
           session?.createdAt ||
