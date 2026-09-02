@@ -19,6 +19,7 @@ import { livePlatformConnector } from "../services/live-platform-connector.js";
 import { setLiveSessionActive, stopPod } from "../services/runpod-manager.js";
 import { liveSessionManager } from "../services/live-session-manager.js";
 import { liveHostOrchestrator, durationHoursToPlan, normalizeClientProduct } from "../services/live-host-orchestrator.js";
+import { assertRtmpCredentials } from "../utils/rtmp.js";
 
 const productSnapshotSchema = z.object({
   id: z.string().optional(),
@@ -278,8 +279,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     const {
-      rtmpUrl,
-      streamKey,
+      rtmpUrl: rawRtmpUrl,
+      streamKey: rawStreamKey,
       avatarImage,
       avatarVideo,
       sessionId,
@@ -291,6 +292,18 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       stockCount,
       ctaLabel,
     } = parsed.data;
+
+    let rtmpUrl: string;
+    let streamKey: string;
+    try {
+      ({ rtmpUrl, streamKey } = assertRtmpCredentials(rawRtmpUrl, rawStreamKey));
+    } catch (err) {
+      reply.code(400);
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : "RTMP URL / Stream Key tidak valid.",
+      };
+    }
     const managedSession = parsed.data.sessionId
       ? liveSessionManager.getSession(parsed.data.sessionId)
       : null;

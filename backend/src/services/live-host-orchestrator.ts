@@ -819,6 +819,9 @@ class LiveHostOrchestrator {
     if (queue.broadcastBootState === "starting" || queue.visualWorkerInitializing) {
       return;
     }
+    if (queue.broadcastBootState === "error" || queue.rtmpError) {
+      return;
+    }
 
     const now = Date.now();
     if (now < state.broadcastRetryAt) return;
@@ -873,6 +876,10 @@ class LiveHostOrchestrator {
         if (!s || s.abortController.signal.aborted || s.isLive) break;
 
         const queue = await this.refreshQueueMetrics(sessionId);
+        if (queue.broadcastBootState === "error") {
+          await sleep(2000);
+          continue;
+        }
         if (queue.rtmpError) {
           await sleep(2000);
           continue;
@@ -1768,6 +1775,11 @@ class LiveHostOrchestrator {
       const visualWorkerRunning = Boolean(raw.visual_worker_running);
       const visualWorkerInitializing = Boolean(raw.visual_worker_initializing);
       const broadcastBootState = String(raw.broadcast_boot_state || "idle");
+      const bootError = String(raw.broadcast_boot_error || "");
+      let rtmpError = String(raw.rtmp_error || "");
+      if (!rtmpError && broadcastBootState === "error" && bootError) {
+        rtmpError = bootError;
+      }
 
       let queuedVideos = Number(raw.queued_videos_count || 0);
       if (aiWorker) {
@@ -1824,7 +1836,7 @@ class LiveHostOrchestrator {
         workerOffline: false,
         broadcasting: Boolean(raw.broadcasting),
         rtmpConnected: Boolean(raw.rtmp_connected),
-        rtmpError: String(raw.rtmp_error || ""),
+        rtmpError,
         warmedUp: Boolean(
           raw.warmed_up ||
             visualWorkerRunning ||

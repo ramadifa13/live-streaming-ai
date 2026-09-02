@@ -1,5 +1,6 @@
 #!/bin/bash
 # Redeploy penuh AI worker di RunPod: git pull → sync semua file → restart.
+# Tanpa git pull: bash deploy/sync-restart.sh
 #
 # Usage (di terminal RunPod):
 #   bash /workspace/live-streaming-ai/deploy/redeploy-worker.sh

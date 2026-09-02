@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import re
+import socket
 from typing import Callable, Optional, Tuple
+from urllib.parse import urlparse
 
 FATAL_RTMP_MARKERS = (
     "failed to resolve hostname",
@@ -53,6 +55,89 @@ USER_HINT_DNS = (
     "Di terminal pod: perbaiki /etc/resolv.conf (8.8.8.8, 1.1.1.1), "
     "lalu redeploy-worker.sh dan gunakan Stream Key baru."
 )
+USER_HINT_FFMPEG = (
+    "FFmpeg tidak bisa start encoder RTMP — cek ai_worker_rtmp.log di pod."
+)
+
+
+def extract_rtmp_hostname(publish_url: str) -> str:
+    try:
+        parsed = urlparse((publish_url or "").strip())
+        return (parsed.hostname or "").strip()
+    except Exception:
+        return ""
+
+
+def validate_publish_url(publish_url: str) -> str:
+    """Validasi URL publish RTMP/RTMPS; return URL trimmed."""
+    url = (publish_url or "").strip()
+    if not url.lower().startswith(("rtmp://", "rtmps://")):
+        raise ValueError(
+            "URL publish RTMP tidak valid — pastikan RTMP URL + Stream Key benar "
+            f"(got: {url[:80]})"
+        )
+    host = extract_rtmp_hostname(url)
+    if not host:
+        raise ValueError("Hostname RTMP kosong — cek kolom RTMP URL dan Stream Key.")
+    if "/rtmp/" in url.lower() and url.rstrip("/").endswith("/rtmp"):
+        raise ValueError("Stream Key kosong — tempel Stream Key dari Instagram.")
+    return url
+
+
+def preflight_rtmp_publish(publish_url: str) -> None:
+    """Cek DNS untuk hostname RTMP sebelum FFmpeg start (fail-fast)."""
+    url = validate_publish_url(publish_url)
+    host = extract_rtmp_hostname(url)
+    port = 443 if url.lower().startswith("rtmps://") else 1935
+    force_v4 = os.environ.get("RTMP_FORCE_IPV4", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    v4_ok = False
+    try:
+        socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+        v4_ok = True
+    except OSError:
+        pass
+    if v4_ok:
+        return
+    try:
+        socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        if force_v4:
+            print(
+                f"[RTMP preflight] WARN: {host} tidak punya A record IPv4 — "
+                "coba RTMP_FORCE_IPV4=0 jika connect gagal."
+            )
+        return
+    except OSError as exc:
+        raise ValueError(f"{USER_HINT_DNS} (host={host}, err={exc})") from exc
+
+
+def summarize_ffmpeg_stderr(stderr_tail: str, fallback: str = USER_HINT_FFMPEG) -> str:
+    detail = (stderr_tail or "").strip().replace("\r", "\n")
+    if not detail:
+        return fallback
+    lines = [ln.strip() for ln in detail.split("\n") if ln.strip()]
+    for ln in reversed(lines):
+        hint = classify_ffmpeg_line(ln)
+        if hint:
+            return hint
+        low = ln.lower()
+        if any(
+            k in low
+            for k in (
+                "error",
+                "invalid",
+                "unrecognized",
+                "failed",
+                "cannot",
+                "not found",
+            )
+        ):
+            return ln[:240]
+    return fallback
 
 RTMP_CONNECTED_MARKERS = (
     "frame=",
@@ -130,6 +215,9 @@ def classify_ffmpeg_line(line: str) -> Optional[str]:
     if "connection refused" in low or "failed to connect" in low or "timed out" in low:
         return USER_HINT_REFUSED
     if "conversion failed" in low or "input/output error" in low or "writing trailer" in low:
+        # I/O error bisa DNS atau stream key — utamakan DNS jika ada jejak resolusi.
+        if is_dns_failure_line(line):
+            return USER_HINT_DNS
         return USER_HINT_INVALIDATED
     return USER_HINT_REFUSED
 

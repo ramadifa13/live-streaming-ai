@@ -818,6 +818,14 @@ async def get_queue_status():
                         rtmp_connected = (f.read().strip() == "connected")
                 except Exception:
                     pass
+        if (
+            not rtmp_connected
+            and visual_worker is not None
+            and getattr(visual_worker, "is_rtmp_connected", False)
+        ):
+            rtmp_connected = True
+            rtmp_state = "connected"
+            rtmp_error = ""
     elif read_rtmp_status is not None:
         rtmp_state, rtmp_error = read_rtmp_status(output_dir)
 
@@ -873,6 +881,36 @@ class BroadcastRequest(BaseModel):
     hostName: Optional[str] = None
     avatar_name: Optional[str] = None
     avatarName: Optional[str] = None
+
+
+@app.post("/stream/rtmp-preflight")
+async def rtmp_preflight(req: BroadcastRequest):
+    """Validasi DNS + URL publish sebelum boot MuseTalk (fail-fast)."""
+    final_rtmp_url = (req.rtmp_url or req.rtmpUrl or "").strip()
+    final_stream_key = (
+        (req.stream_key or req.streamKey or "")
+        .replace("\r", "")
+        .replace("\n", "")
+        .strip()
+    )
+    if not final_rtmp_url or not final_stream_key:
+        raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
+    try:
+        from rtmp_utils import join_rtmp_url, preflight_rtmp_publish, validate_publish_url
+    except ImportError:
+        join_rtmp_url = lambda base, key: f"{base.rstrip('/')}/{key}"  # type: ignore
+
+        def validate_publish_url(u):  # type: ignore
+            return u
+
+        def preflight_rtmp_publish(_u):  # type: ignore
+            return None
+
+    publish_url = join_rtmp_url(final_rtmp_url, final_stream_key)
+    publish_url = validate_publish_url(publish_url)
+    preflight_rtmp_publish(publish_url)
+    return {"success": True, "publish_url": publish_url.split("?")[0] + "?**"}
+
 
 class PlaybackRequest(BaseModel):
     action: str
@@ -944,6 +982,9 @@ async def start_broadcast(req: BroadcastRequest):
         except Exception as exc:
             _broadcast_boot_state = "error"
             _broadcast_boot_error = str(exc)
+            if stop_visual_broadcast is not None:
+                stop_visual_broadcast()
+            visual_worker = None
             traceback.print_exc()
 
     if _broadcast_boot_task and not _broadcast_boot_task.done():
@@ -973,6 +1014,19 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         join_rtmp_url = lambda base, key: f"{base.rstrip('/')}/{key}"  # type: ignore
 
     publish_url = join_rtmp_url(final_rtmp_url, final_stream_key)
+
+    try:
+        from rtmp_utils import preflight_rtmp_publish, validate_publish_url
+
+        publish_url = validate_publish_url(publish_url)
+        preflight_rtmp_publish(publish_url)
+        print(f"[AI-Worker] RTMP preflight OK → {publish_url.split('?')[0]}?**")
+    except ImportError:
+        pass
+    except ValueError as preflight_err:
+        if write_rtmp_status is not None:
+            write_rtmp_status(output_dir, "failed", str(preflight_err))
+        raise
 
     # Idempoten HANYA jika RTMP benar-benar connected.
     already_connected = False
@@ -1140,7 +1194,15 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
             "model + assets (bisa 1–3 menit)..."
         )
         vw.initialize()
-        vw.start()
+        try:
+            vw.start(wait_rtmp=True)
+        except Exception as start_err:
+            if stop_visual_broadcast is not None:
+                stop_visual_broadcast()
+            visual_worker = None
+            if write_rtmp_status is not None:
+                write_rtmp_status(output_dir, "failed", str(start_err)[:240])
+            raise RuntimeError(str(start_err)) from start_err
         global _broadcast_boot_state
         _broadcast_boot_state = "running"
         bridge = get_speech_bridge(output_dir)

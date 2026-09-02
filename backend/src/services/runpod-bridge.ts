@@ -57,6 +57,7 @@ export interface RunPodQueueStatus {
   visual_worker_running?: boolean;
   visual_worker_initializing?: boolean;
   broadcast_boot_state?: string;
+  broadcast_boot_error?: string;
 }
 
 import { getWorkerUrl } from "./runpod-manager.js";

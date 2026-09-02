@@ -1159,6 +1159,7 @@ class StreamBroadcaster:
         self._a_fh = None
         self._proc = None
         self._stderr_log = None
+        self._closed = False
         if not self.rtmp_url.lower().startswith(("rtmp://", "rtmps://")):
             raise ValueError(
                 f"RTMP URL tidak valid (harus rtmp:// atau rtmps://): {self.rtmp_url[:80]}"
@@ -1223,6 +1224,7 @@ class StreamBroadcaster:
             "-f", "flv",
             "-rtmp_live", "live",
             "-stimeout", "15000000",
+            "-rw_timeout", "15000000",
             self.rtmp_url,
         ])
         return cmd
@@ -1254,32 +1256,19 @@ class StreamBroadcaster:
             return ""
 
     def _fail_start(self, out_dir: str, hint: str, stderr_tail: str = "") -> None:
-        detail = stderr_tail.strip().replace("\r", "\n")
-        if detail:
-            lines = [ln.strip() for ln in detail.split("\n") if ln.strip()]
-            for ln in reversed(lines):
-                low = ln.lower()
-                if any(
-                    k in low
-                    for k in (
-                        "error",
-                        "invalid",
-                        "unrecognized",
-                        "no such",
-                        "failed",
-                        "cannot",
-                        "not found",
-                    )
-                ):
-                    hint = ln[:240]
-                    break
-        if out_dir:
-            try:
-                from rtmp_utils import write_rtmp_status
+        try:
+            from rtmp_utils import summarize_ffmpeg_stderr, write_rtmp_status
 
-                write_rtmp_status(out_dir, "failed", hint)
-            except Exception:
-                pass
+            hint = summarize_ffmpeg_stderr(stderr_tail, hint)
+            write_rtmp_status(out_dir, "failed", hint)
+        except Exception:
+            if out_dir:
+                try:
+                    from rtmp_utils import write_rtmp_status
+
+                    write_rtmp_status(out_dir, "failed", hint)
+                except Exception:
+                    pass
         raise RuntimeError(hint)
 
     def _start_encoder(self) -> None:
@@ -1457,25 +1446,35 @@ class StreamBroadcaster:
             return False
 
     def shutdown(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         for fh in (self._v_fh, self._a_fh):
             if fh:
                 try:
                     fh.close()
                 except Exception:
                     pass
+        self._v_fh = None
+        self._a_fh = None
         if self._proc and self._proc.poll() is None:
             try:
                 self._proc.terminate()
+                self._proc.wait(timeout=3)
             except Exception:
-                pass
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+        self._proc = None
 
 
 def broadcaster_loop(
     bank: AssetBank,
     render_q: queue.Queue,
     stop_event: threading.Event,
-    rtmp_url: Optional[str] = None,
     output_folder: str = "",
+    bc: Optional["StreamBroadcaster"] = None,
 ) -> None:
     period = 1.0 / float(TARGET_FPS)
     deadline = time.perf_counter()
@@ -1516,25 +1515,15 @@ def broadcaster_loop(
         out = base * (1.0 - overlay_alpha) + overlay_rgb * overlay_alpha
         return out.astype(np.uint8)
 
-    if rtmp_url:
+    if bc is None and out_dir:
         try:
-            if out_dir:
-                os.environ["OUTPUT_FOLDER"] = out_dir
-            bc = StreamBroadcaster(rtmp_url)
-            if out_dir:
-                try:
-                    from rtmp_utils import write_rtmp_status as _wrs
-                    _wrs(out_dir, "connecting")
-                except Exception:
-                    pass
-        except Exception as err:
-            print(f"[Broadcaster] RTMP init failed: {err}")
-            if out_dir:
-                try:
-                    from rtmp_utils import write_rtmp_status as _wrs
-                    _wrs(out_dir, "failed", str(err)[:240])
-                except Exception:
-                    pass
+            from rtmp_utils import read_rtmp_status as _read_st
+
+            state, err = _read_st(out_dir)
+            if state == "failed" and err:
+                print(f"[Broadcaster] RTMP tidak aktif: {err}")
+        except Exception:
+            pass
 
     frames_written = 0
     write_fail_streak = 0
@@ -1678,6 +1667,8 @@ class AIVisualWorker:
         self._stop = threading.Event()
         self._threads: List[threading.Thread] = []
         self._running = False
+        self._broadcaster: Optional[StreamBroadcaster] = None
+        self._rtmp_connected = False
 
     def _on_utterance_start(self, job) -> None:
         if self._engine:
@@ -1779,11 +1770,56 @@ class AIVisualWorker:
         if self._sm:
             self._sm.request_action(tag)
 
+    def _rtmp_connect_timeout_sec(self) -> float:
+        raw = os.environ.get("RTMP_CONNECT_TIMEOUT_SEC", "90")
+        try:
+            return max(15.0, float(raw))
+        except ValueError:
+            return 90.0
+
+    def _wait_rtmp_connected(self) -> None:
+        if not self.rtmp_url or not self.output_folder:
+            return
+        try:
+            from rtmp_utils import read_rtmp_status, USER_HINT_CONNECTING_SLOW
+        except ImportError:
+            return
+
+        deadline = time.monotonic() + self._rtmp_connect_timeout_sec()
+        print(
+            f"[AIVisualWorker] Menunggu RTMP connected "
+            f"(max {int(self._rtmp_connect_timeout_sec())}s)..."
+        )
+        while time.monotonic() < deadline:
+            if self._stop.is_set():
+                break
+            state, err = read_rtmp_status(self.output_folder)
+            if state == "connected":
+                self._rtmp_connected = True
+                print("[AIVisualWorker] RTMP connected.")
+                return
+            if state == "failed":
+                raise RuntimeError(err or "RTMP gagal — cek ai_worker_rtmp.log")
+            if self._broadcaster is not None and not self._broadcaster.is_alive():
+                state, err = read_rtmp_status(self.output_folder)
+                raise RuntimeError(
+                    err or "FFmpeg RTMP berhenti saat handshake — gunakan Stream Key baru."
+                )
+            time.sleep(0.5)
+
+        state, err = read_rtmp_status(self.output_folder)
+        if state == "connected":
+            self._rtmp_connected = True
+            return
+        raise RuntimeError(err or USER_HINT_CONNECTING_SLOW)
+
     def start(
         self,
         audio_fn: Callable[[], Tuple[bytes, bool]] = get_audio_chunk,
         action_fn: Callable[[], Optional[str]] = get_llm_action,
         audio_fn_ext: Optional[Callable[[], Tuple[bytes, bool, Optional[int]]]] = None,
+        *,
+        wait_rtmp: bool = True,
     ) -> None:
         if not self._bank or not self._sm or not self._engine:
             self.initialize()
@@ -1791,11 +1827,34 @@ class AIVisualWorker:
         if self._running:
             return
 
+        self._broadcaster = None
+        self._rtmp_connected = False
+        if self.rtmp_url:
+            try:
+                from rtmp_utils import preflight_rtmp_publish, validate_publish_url, write_rtmp_status
+
+                self.rtmp_url = validate_publish_url(self.rtmp_url)
+                preflight_rtmp_publish(self.rtmp_url)
+                os.makedirs(self.output_folder, exist_ok=True)
+                os.environ["OUTPUT_FOLDER"] = self.output_folder
+                write_rtmp_status(self.output_folder, "connecting")
+                self._broadcaster = StreamBroadcaster(self.rtmp_url)
+            except Exception as exc:
+                if self.output_folder:
+                    try:
+                        from rtmp_utils import write_rtmp_status
+
+                        write_rtmp_status(self.output_folder, "failed", str(exc)[:240])
+                    except Exception:
+                        pass
+                raise
+
         if audio_fn_ext is None and self._bridge is not None:
             audio_fn_ext = self._bridge.get_audio_chunk
             action_fn = self._bridge.make_action_hook()
 
         bridge_ref = self._bridge
+        broadcaster_ref = self._broadcaster
         self._stop.clear()
         self._threads = [
             threading.Thread(
@@ -1820,13 +1879,21 @@ class AIVisualWorker:
             ),
             threading.Thread(
                 target=broadcaster_loop,
-                args=(self._bank, self._render_q, self._stop, self.rtmp_url, self.output_folder),
+                args=(self._bank, self._render_q, self._stop, self.output_folder, broadcaster_ref),
                 name="Broadcaster",
                 daemon=True,
             ),
         ]
         for t in self._threads:
             t.start()
+
+        try:
+            if wait_rtmp and self.rtmp_url:
+                self._wait_rtmp_connected()
+        except Exception:
+            self.stop()
+            raise
+
         self._running = True
         print("[AIVisualWorker] Pipeline running (3 threads)")
 
@@ -1834,15 +1901,26 @@ class AIVisualWorker:
         self._stop.set()
         if self._engine:
             self._engine.clear_utterance()
+        if self._broadcaster is not None:
+            try:
+                self._broadcaster.shutdown()
+            except Exception:
+                pass
+            self._broadcaster = None
         for t in self._threads:
             t.join(timeout=2.0)
         self._threads.clear()
         self._running = False
+        self._rtmp_connected = False
         print("[AIVisualWorker] Stopped")
 
     @property
     def is_running(self) -> bool:
         return self._running
+
+    @property
+    def is_rtmp_connected(self) -> bool:
+        return self._rtmp_connected
 
     def run_forever(self, **kwargs) -> None:
         self.start(**kwargs)
@@ -1886,7 +1964,7 @@ def start_visual_broadcast(
     if output_folder:
         vw.output_folder = output_folder
     vw.initialize()
-    vw.start()
+    vw.start(wait_rtmp=True)
     return vw
 
 
