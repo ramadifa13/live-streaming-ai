@@ -139,9 +139,17 @@ ln -sfn "$WORKER_DIR/MuseTalk/models" "$WORKER_DIR/models"
 echo "Menyinkronkan skrip worker dari repo ..."
 if [ -f "$SYNC_SCRIPT" ]; then
 	sync_worker_files
-elif [ -d "/workspace/live-streaming-ai/deploy" ]; then
-	cp -f /workspace/live-streaming-ai/deploy/*.py "$WORKER_DIR/" 2>/dev/null || true
-	cp -f /workspace/live-streaming-ai/deploy/*.sh "$WORKER_DIR/" 2>/dev/null || true
+elif [ -d "$DEPLOY_DIR" ]; then
+	cp -f "$DEPLOY_DIR"/*.py "$WORKER_DIR/" 2>/dev/null || true
+	for shf in "$DEPLOY_DIR"/*.sh; do
+		[ -f "$shf" ] || continue
+		base="$(basename "$shf")"
+		if [ "$base" = "start.sh" ] && [ "${START_SH_RUNNING:-0}" = "1" ]; then
+			echo "[SYNC] Skip start.sh (sedang dijalankan — di-update di akhir start.sh)"
+			continue
+		fi
+		cp -f "$shf" "$WORKER_DIR/$base"
+	done
 fi
 
 # Ollama di RunPod bersifat opsional karena LLM diproses terpusat di Backend
