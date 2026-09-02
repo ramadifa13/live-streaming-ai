@@ -232,7 +232,24 @@ sync_worker_files() {
 		fi
 	fi
 
+	fix_shell_eol "$WORKER_DIR"
+	fix_shell_eol "$DEPLOY_DIR"
+
 	echo "[SYNC] Selesai."
+}
+
+# Hapus CRLF (Windows) — mencegah: set: pipefail: invalid option name
+fix_shell_eol() {
+	local dir="${1:-}"
+	[ -n "$dir" ] && [ -d "$dir" ] || return 0
+	local f
+	for f in "$dir"/*.sh; do
+		[ -f "$f" ] || continue
+		if grep -q $'\r' "$f" 2>/dev/null; then
+			sed -i 's/\r$//' "$f"
+			echo "[SYNC] CRLF→LF: $(basename "$f")"
+		fi
+	done
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

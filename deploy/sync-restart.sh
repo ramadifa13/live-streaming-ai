@@ -19,6 +19,9 @@ dedupe_worker_env
 ensure_worker_python_deps
 
 echo "[restart] Worker..."
+for f in "$WORKER_DIR"/*.sh "$SCRIPT_DIR"/*.sh; do
+	[ -f "$f" ] && sed -i 's/\r$//' "$f" 2>/dev/null || true
+done
 cd "$WORKER_DIR"
 SKIP_WATCHDOG=1 FORCE_RESTART=1 bash start.sh
 

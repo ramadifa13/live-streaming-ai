@@ -49,7 +49,11 @@ function api(token, path, init = {}) {
 }
 
 async function upload(token, relPath, localPath) {
-  const content = readFileSync(localPath).toString("base64");
+  let raw = readFileSync(localPath);
+  if (relPath.endsWith(".sh")) {
+    raw = Buffer.from(raw.toString("utf8").replace(/\r\n/g, "\n"), "utf8");
+  }
+  const content = raw.toString("base64");
   const parts = relPath.split("/");
   parts.pop();
   const parent = parts.join("/");

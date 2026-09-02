@@ -68,6 +68,10 @@ if [ "$STOP_BROADCAST" = "1" ]; then
 fi
 
 echo "[4/5] Restart worker ..."
+# Perbaiki CRLF dari Windows/Jupyter upload sebelum jalankan start.sh
+for f in "$WORKER_DIR"/*.sh "$SCRIPT_DIR"/*.sh; do
+	[ -f "$f" ] && sed -i 's/\r$//' "$f" 2>/dev/null || true
+done
 cd "$WORKER_DIR"
 SKIP_WATCHDOG=1 FORCE_RESTART=1 bash start.sh
 
