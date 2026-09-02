@@ -1185,9 +1185,10 @@ class StreamBroadcaster:
             "-i", a_in,
             "-map", "0:v", "-map", "1:a",
             "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-            "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
+            "-pix_fmt", "yuv420p", "-profile:v", "main", "-level", "4.0",
             "-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0",
             "-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "6000k",
+            "-vsync", "cfr",
             "-c:a", "aac", "-b:a", "128k",
             "-flvflags", "no_duration_filesize",
             "-f", "flv",
@@ -1244,16 +1245,9 @@ class StreamBroadcaster:
                 print(f"[Broadcaster] RTMP stderr watcher notice: {exc}")
         os.close(video_r)
         os.close(audio_r)
+        # Blocking pipe — NONBLOCK menyebabkan partial write → rawvideo corrupt (garis horizontal di IG).
         self._v_fh = os.fdopen(video_w, "wb", buffering=0)
         self._a_fh = os.fdopen(audio_w, "wb", buffering=0)
-        try:
-            import fcntl
-
-            for fh in (self._v_fh, self._a_fh):
-                flags = fcntl.fcntl(fh.fileno(), fcntl.F_GETFL)
-                fcntl.fcntl(fh.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
-        except Exception:
-            pass
         time.sleep(0.2)
         if self._proc and self._proc.poll() is not None:
             hint = "FFmpeg RTMP gagal start — cek ai_worker_rtmp.log"
@@ -1270,20 +1264,45 @@ class StreamBroadcaster:
     def is_alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
+    @staticmethod
+    def _write_all(fh, data: bytes) -> None:
+        """Tulis seluruh buffer ke pipe (rawvideo harus exact bytes per frame)."""
+        view = memoryview(data)
+        offset = 0
+        while offset < len(view):
+            n = fh.write(view[offset:])
+            if n is None or n <= 0:
+                raise BrokenPipeError("pipe write returned 0")
+            offset += n
+
     def write(self, frame: np.ndarray, pcm: bytes) -> bool:
         if self._v_fh is None or not self.is_alive():
+            return False
+        if frame is None or frame.size == 0:
+            return False
+        h, w = frame.shape[:2]
+        if w != self.width or h != self.height:
+            frame = fit_bgr(frame, self.width, self.height)
+        if frame.shape[2] != 3:
             return False
         if len(pcm) < self.bytes_per_audio:
             pcm = pcm + b"\x00" * (self.bytes_per_audio - len(pcm))
         elif len(pcm) > self.bytes_per_audio:
             pcm = pcm[: self.bytes_per_audio]
-        try:
-            self._v_fh.write(np.ascontiguousarray(frame, dtype=np.uint8).tobytes())
-            self._a_fh.write(pcm)
-            return True
-        except BlockingIOError:
+        expected = self.width * self.height * 3
+        buf = np.ascontiguousarray(frame, dtype=np.uint8).tobytes()
+        if len(buf) != expected:
+            print(
+                f"[Broadcaster] Frame size mismatch: got {len(buf)}, expected {expected}",
+                flush=True,
+            )
             return False
-        except (BrokenPipeError, OSError):
+        try:
+            self._write_all(self._v_fh, buf)
+            self._write_all(self._a_fh, pcm)
+            return True
+        except (BrokenPipeError, OSError) as err:
+            print(f"[Broadcaster] RTMP pipe error: {err}", flush=True)
             out_dir = os.environ.get("OUTPUT_FOLDER", "")
             if out_dir:
                 try:
