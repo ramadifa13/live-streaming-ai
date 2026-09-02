@@ -139,12 +139,6 @@ def summarize_ffmpeg_stderr(stderr_tail: str, fallback: str = USER_HINT_FFMPEG) 
             return ln[:240]
     return fallback
 
-RTMP_CONNECTED_MARKERS = (
-    "frame=",
-    "kb/s:",
-)
-
-
 def _clean(value: str) -> str:
     return (value or "").strip().replace("\r", "").replace("\n", "").replace(" ", "")
 
