@@ -138,6 +138,34 @@ async function workerRequestWithRetry(
   throw lastError;
 }
 
+function broadcastBootTimeoutMs(): number {
+  const raw = process.env.RUNPOD_BROADCAST_BOOT_TIMEOUT_MS;
+  const parsed = raw ? Number.parseInt(raw, 10) : 300_000;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 300_000;
+}
+
+function isBroadcastWorkerActive(
+  status: (RunPodBroadcastResult & {
+    boot_state?: string;
+    rtmp_connected?: boolean;
+    visual_worker_initializing?: boolean;
+  }) | null,
+  queue: RunPodQueueStatus | null,
+): boolean {
+  const rtmpReady =
+    queue?.rtmp_connected === true ||
+    status?.rtmp_connected === true ||
+    queue?.rtmp_state === "connected";
+  return (
+    rtmpReady ||
+    queue?.visual_worker_running === true ||
+    queue?.broadcasting === true ||
+    status?.status === "streaming" ||
+    status?.status === "already_running" ||
+    status?.boot_state === "running"
+  );
+}
+
 export async function startRunPodBroadcast(
   podId: string | null | undefined,
   params: {
@@ -195,18 +223,20 @@ export async function startRunPodBroadcast(
     return { success: true, status: "already_running" };
   }
 
-  const deadline = Date.now() + 45_000;
+  const bootTimeoutMs = broadcastBootTimeoutMs();
+  const deadline = Date.now() + bootTimeoutMs;
   while (Date.now() < deadline) {
     const [status, queue] = await Promise.all([
       workerRequestWithRetry(
         podId,
         "/stream/broadcast-status",
         { signal: AbortSignal.timeout(8_000) },
-        1,
+        2,
       ).catch(() => null) as Promise<
         (RunPodBroadcastResult & {
           boot_state?: string;
           rtmp_connected?: boolean;
+          visual_worker_initializing?: boolean;
         }) | null
       >,
       getRunPodQueueStatus(podId),
@@ -218,30 +248,35 @@ export async function startRunPodBroadcast(
       );
     }
 
-    const rtmpReady =
-      queue?.rtmp_connected === true ||
-      status?.rtmp_connected === true ||
-      queue?.rtmp_state === "connected";
-    const running =
-      rtmpReady ||
-      status?.status === "streaming" ||
-      status?.status === "already_running" ||
-      status?.boot_state === "running";
-    if (running) {
+    if (isBroadcastWorkerActive(status, queue)) {
       return { success: true, status: status?.status || "streaming" };
     }
 
     await new Promise((resolve) => setTimeout(resolve, 1200));
   }
 
-  // Kickoff diterima worker — RTMP mungkin sudah connected walau polling lambat.
-  const finalQueue = await getRunPodQueueStatus(podId).catch(() => null);
-  if (finalQueue?.rtmp_connected || finalQueue?.rtmp_state === "connected") {
-    return { success: true, status: "streaming" };
+  // Kickoff diterima worker — RTMP / visual worker mungkin sudah aktif walau polling lambat.
+  const [finalStatus, finalQueue] = await Promise.all([
+    workerRequestWithRetry(
+      podId,
+      "/stream/broadcast-status",
+      { signal: AbortSignal.timeout(8_000) },
+      2,
+    ).catch(() => null) as Promise<
+      (RunPodBroadcastResult & {
+        boot_state?: string;
+        rtmp_connected?: boolean;
+      }) | null
+    >,
+    getRunPodQueueStatus(podId).catch(() => null),
+  ]);
+  if (isBroadcastWorkerActive(finalStatus, finalQueue)) {
+    return { success: true, status: finalStatus?.status || "streaming" };
   }
 
+  const waitedSec = Math.round(bootTimeoutMs / 1000);
   throw new Error(
-    "Broadcast worker belum aktif setelah 45s — cek api_server.log dan broadcaster.log di pod",
+    `Broadcast worker belum aktif setelah ${waitedSec}s — cek api_server.log di pod (MuseTalk init bisa 2–3 menit pertama kali)`,
   );
 }
 
@@ -386,6 +421,28 @@ export async function warmupWorker(
   throw new Error(
     `AI Worker belum merespons /health setelah ${maxWaitSeconds}s`,
   );
+}
+
+/** Pastikan pod + worker API hidup sebelum broadcast (resume pod statis jika perlu). */
+export async function ensureWorkerReachable(
+  podId: string | null | undefined,
+  maxWaitSeconds = 60,
+): Promise<void> {
+  try {
+    await warmupWorker(podId, maxWaitSeconds);
+    return;
+  } catch (firstErr) {
+    const staticPodId = (process.env.RUNPOD_POD_ID || "").trim();
+    if (!staticPodId || staticPodId !== podId?.trim()) {
+      throw firstErr;
+    }
+    console.warn(
+      `[RunPodBridge] Worker offline — mencoba resume pod statis ${staticPodId}...`,
+    );
+    const { startPodAndWait } = await import("./runpod-manager.js");
+    await startPodAndWait(180_000);
+    await warmupWorker(podId, maxWaitSeconds);
+  }
 }
 
 export async function forwardToRunPodGPU(

@@ -1038,7 +1038,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     except Exception as overlay_err:
         print(f"[AI-Worker] Overlay notice: {overlay_err}")
 
-    if ai_mode and start_visual_broadcast is not None:
+    if ai_mode and get_visual_worker is not None:
         os.environ["AI_WORKER_FPS"] = os.environ.get(
             "AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "25")
         )
@@ -1050,12 +1050,25 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
             or "namira"
         )
         host_slug = str(host_raw).strip().lower() or "namira"
-        visual_worker = start_visual_broadcast(
-            publish_url,
-            idle_video=resolved_idle or "",
-            output_folder=output_dir,
-            host=host_slug,
+        assets_dir = (
+            os.path.dirname(resolved_idle)
+            if resolved_idle and os.path.exists(resolved_idle)
+            else None
         )
+        vw = get_visual_worker(output_dir)
+        visual_worker = vw  # expose segera agar broadcast-status bisa dipoll saat init
+        vw.rtmp_url = publish_url
+        if assets_dir:
+            vw.assets_dir = assets_dir
+        vw.host = host_slug
+        if output_dir:
+            vw.output_folder = output_dir
+        print(
+            f"[AI-Worker] Memuat AIVisualWorker ({host_slug}) — "
+            "model + assets (bisa 1–3 menit)..."
+        )
+        vw.initialize()
+        vw.start()
         bridge = get_speech_bridge(output_dir)
         if bridge is not None:
             bridge.output_folder = output_dir
@@ -1143,9 +1156,15 @@ async def update_stream_product(req: UpdateProductRequest):
 
 @app.get("/stream/broadcast-status")
 async def broadcast_status():
+    vw_running = visual_worker is not None and visual_worker.is_running
+    vw_initializing = (
+        visual_worker is not None
+        and not vw_running
+        and _broadcast_boot_state == "starting"
+    )
     running = (
         (broadcaster_process is not None and broadcaster_process.poll() is None)
-        or (visual_worker is not None and visual_worker.is_running)
+        or vw_running
     )
     rtmp_connected = False
     rtmp_state = "disconnected"
@@ -1169,6 +1188,8 @@ async def broadcast_status():
             "boot_state": "running",
             "rtmp_connected": rtmp_connected,
             "rtmp_state": rtmp_state,
+            "visual_worker_running": vw_running,
+            "visual_worker_initializing": vw_initializing,
         }
     if _broadcast_boot_state == "starting":
         return {
@@ -1177,6 +1198,8 @@ async def broadcast_status():
             "boot_state": "starting",
             "rtmp_connected": False,
             "rtmp_state": rtmp_state,
+            "visual_worker_running": vw_running,
+            "visual_worker_initializing": vw_initializing,
         }
     return {
         "success": True,

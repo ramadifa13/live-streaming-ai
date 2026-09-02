@@ -13,6 +13,7 @@ import {
   updateRunPodBroadcastProduct,
   stopRunPodBroadcast,
   warmupWorker,
+  ensureWorkerReachable,
 } from "../services/runpod-bridge.js";
 import { livePlatformConnector } from "../services/live-platform-connector.js";
 import { setLiveSessionActive, stopPod } from "../services/runpod-manager.js";
@@ -322,7 +323,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       }
     }
 
-    const podId = managedSession?.podId ?? null;
+    const podId =
+      managedSession?.podId ?? process.env.RUNPOD_POD_ID?.trim() ?? null;
     if (managedSession && !podId) {
       reply.code(409);
       return {
@@ -335,7 +337,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     // Verifikasi cepat — bootstrap sudah menunggu health penuh di startPodAndWait
     if (podId) {
       try {
-        await warmupWorker(podId, 20);
+        await ensureWorkerReachable(podId, 60);
       } catch (err) {
         reply.code(502);
         return {
