@@ -1174,14 +1174,16 @@ class StreamBroadcaster:
         v_in = f"/proc/self/fd/{video_r}"
         a_in = f"/proc/self/fd/{audio_r}"
         cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+            "ffmpeg", "-hide_banner", "-loglevel", "info", "-y",
             "-fflags", "+nobuffer+genpts",
             "-thread_queue_size", "512",
             "-f", "rawvideo", "-pix_fmt", "bgr24",
             "-s", f"{self.width}x{self.height}", "-r", str(self.fps),
+            "-probesize", "32", "-analyzeduration", "0",
             "-i", v_in,
             "-thread_queue_size", "512",
             "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "2",
+            "-probesize", "32", "-analyzeduration", "0",
             "-i", a_in,
             "-map", "0:v", "-map", "1:a",
             "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
@@ -1265,33 +1267,19 @@ class StreamBroadcaster:
         return self._proc is not None and self._proc.poll() is None
 
     @staticmethod
-    def _write_all(fh, data: bytes, timeout_sec: float = 0.35) -> bool:
-        """Tulis seluruh buffer ke pipe tanpa partial write (rawvideo harus exact).
+    def _write_all(fh, data: bytes) -> None:
+        """Tulis seluruh buffer ke pipe blocking (rawvideo harus exact bytes).
 
-        Pakai select + timeout agar thread broadcaster tidak hang selamanya saat
-        FFmpeg masih handshake RTMP (pipe penuh). Return False = skip frame ini.
+        Jangan pakai O_NONBLOCK / select-timeout — partial write merusak frame,
+        sedangkan blocking write di thread Broadcaster aman saat FFmpeg handshake RTMP.
         """
-        import select
-
         view = memoryview(data)
         offset = 0
-        fd = fh.fileno()
-        deadline = time.monotonic() + max(0.05, timeout_sec)
         while offset < len(view):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
-            try:
-                _, writable, _ = select.select([], [fh], [], remaining)
-            except (ValueError, OSError):
-                return False
-            if not writable:
-                continue
-            n = os.write(fd, view[offset:])
+            n = fh.write(view[offset:])
             if n is None or n <= 0:
                 raise BrokenPipeError("pipe write returned 0")
             offset += n
-        return True
 
     def write(self, frame: np.ndarray, pcm: bytes) -> bool:
         if self._v_fh is None or not self.is_alive():
@@ -1316,10 +1304,8 @@ class StreamBroadcaster:
             )
             return False
         try:
-            if not self._write_all(self._v_fh, buf):
-                return False
-            if not self._write_all(self._a_fh, pcm):
-                return False
+            self._write_all(self._v_fh, buf)
+            self._write_all(self._a_fh, pcm)
             return True
         except (BrokenPipeError, OSError) as err:
             print(f"[Broadcaster] RTMP pipe error: {err}", flush=True)
@@ -1478,7 +1464,7 @@ def broadcaster_loop(
                     write_fail_streak = 0
                     metrics.inc("frames_written")
                     metrics.note_broadcast_frame()
-                    if frames_written == 5 and out_dir:
+                    if frames_written == 2 and out_dir:
                         try:
                             from rtmp_utils import write_rtmp_status as _wrs
                             _wrs(out_dir, "connected")

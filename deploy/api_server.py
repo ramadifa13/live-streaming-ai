@@ -257,6 +257,7 @@ MAX_BROADCASTER_RESTARTS = 8
 _broadcast_boot_task: Optional[asyncio.Task] = None
 _broadcast_boot_state = "idle"  # idle | starting | running | error
 _broadcast_boot_error = ""
+_broadcast_started_at: float = 0.0
 
 
 def _clear_speech_bridge_queue() -> None:
@@ -794,6 +795,21 @@ async def get_queue_status():
                         rtmp_connected = rtmp_state == "connected"
                 except Exception:
                     pass
+        if (
+            not rtmp_connected
+            and rtmp_state == "connecting"
+            and _broadcast_started_at > 0
+            and not rtmp_error
+        ):
+            connecting_sec = time.time() - _broadcast_started_at
+            if connecting_sec >= 90:
+                try:
+                    from rtmp_utils import USER_HINT_CONNECTING_SLOW
+                except ImportError:
+                    USER_HINT_CONNECTING_SLOW = (
+                        "RTMP masih handshake — klik Go Live di platform lalu tunggu."
+                    )
+                rtmp_error = USER_HINT_CONNECTING_SLOW
         if not rtmp_connected and rtmp_state not in ("failed", "connecting"):
             legacy_flag = os.path.join(output_dir, "rtmp_connected.flag")
             if os.path.exists(legacy_flag):
@@ -820,6 +836,11 @@ async def get_queue_status():
         "rtmp_connected": rtmp_connected,
         "rtmp_error": rtmp_error,
         "rtmp_state": rtmp_state,
+        "rtmp_connecting_seconds": (
+            round(max(0.0, time.time() - _broadcast_started_at), 1)
+            if _broadcast_started_at > 0 and not rtmp_connected
+            else 0
+        ),
         "warmed_up": getattr(worker, "_warmed_up", False) or visual_worker_running,
         "utterance_queue_count": utterance_pending,
         "visual_worker_running": visual_worker_running,
@@ -934,7 +955,7 @@ async def start_broadcast(req: BroadcastRequest):
 def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     global broadcaster_process, total_videos_rendered, current_broadcast_env
     global broadcaster_restarts, broadcaster_next_restart_at, visual_worker
-    global _broadcast_boot_state
+    global _broadcast_boot_state, _broadcast_started_at
 
     final_rtmp_url = (req.rtmp_url or req.rtmpUrl or "").strip()
     final_stream_key = (
@@ -1019,6 +1040,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     _clear_speech_bridge_queue()
     if write_rtmp_status is not None:
         write_rtmp_status(output_dir, "connecting")
+    _broadcast_started_at = time.time()
 
     # Reset counter dan state watchdog saat siaran baru dimulai
     total_videos_rendered = 0
@@ -1163,9 +1185,11 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
 async def stop_broadcast():
     global broadcaster_process, total_videos_rendered, current_broadcast_env
     global _broadcast_boot_state, _broadcast_boot_error, _broadcast_boot_task, visual_worker
+    global _broadcast_started_at
     current_broadcast_env = None
     _broadcast_boot_state = "idle"
     _broadcast_boot_error = ""
+    _broadcast_started_at = 0.0
     if _broadcast_boot_task and not _broadcast_boot_task.done():
         _broadcast_boot_task.cancel()
     _terminate_broadcaster(timeout=10.0)

@@ -34,6 +34,18 @@ USER_HINT_PUBLISHING = (
 USER_HINT_REFUSED = (
     "Server RTMP menolak koneksi. Cek RTMP URL, Stream Key, dan jaringan pod."
 )
+USER_HINT_CONNECTING_SLOW = (
+    "RTMP masih handshake — pastikan sudah klik 'Siarkan Langsung' / 'Go Live' "
+    "di Instagram/Facebook, lalu tunggu 30–60 detik."
+)
+
+RTMP_CONNECTED_MARKERS = (
+    "frame=",
+    "press [q] to stop",
+    "output #0",
+    "kb/s:",
+    "speed=",
+)
 
 
 def _clean(value: str) -> str:
@@ -178,8 +190,10 @@ class FfmpegLogWatcher:
             self.fatal_hint = hint
             if self.on_fatal:
                 self.on_fatal(hint)
-        if "frame=" in line.lower():
-            self.frames_seen += 1
+        low = line.lower()
+        if any(marker in low for marker in RTMP_CONNECTED_MARKERS):
+            if "frame=" in low:
+                self.frames_seen += 1
             if self.on_progress and not self.fatal:
                 self.on_progress()
 

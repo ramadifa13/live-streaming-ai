@@ -2049,8 +2049,13 @@ class LiveHostOrchestrator {
         : "Menyiapkan segmen pembuka AI Host...";
     } else if (rtmpRequired && !queue.rtmpConnected) {
       stageIndex = 3;
-      stageText =
+      const connectingHint =
         queue.rtmpError ||
+        (Math.round(this.elapsedMs(state) / 1000) >= 90 && queue.broadcasting
+          ? "RTMP masih handshake — pastikan sudah klik 'Siarkan Langsung' di Instagram/Facebook."
+          : "");
+      stageText =
+        connectingHint ||
         (queue.broadcastBootState === "starting" || queue.visualWorkerInitializing
           ? "Menghubungkan RTMP ke platform..."
           : queue.broadcasting
