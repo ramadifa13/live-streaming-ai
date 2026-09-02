@@ -37,6 +37,32 @@ else
 	bad "api_server.py belum ter-update (total_videos_rendered)"
 fi
 
+if grep -q "StreamBroadcaster dimatikan oleh AIVisualWorker" "$WORKER_DIR/ai_worker.py" 2>/dev/null; then
+	ok "ai_worker.py: broadcaster lifecycle fix (no double shutdown)"
+else
+	bad "ai_worker.py belum ter-update (broadcaster_loop shutdown)"
+fi
+
+if ! grep -q 'bc: Optional\["StreamBroadcaster"\] = None' "$WORKER_DIR/ai_worker.py" 2>/dev/null; then
+	ok "ai_worker.py: bc shadow bug fixed"
+else
+	bad "ai_worker.py masih punya bc=None shadow di broadcaster_loop"
+fi
+
+if grep -q "preflight_rtmp_publish" "$WORKER_DIR/rtmp_utils.py" 2>/dev/null; then
+	ok "rtmp_utils.py: RTMP preflight + DNS hints"
+else
+	bad "rtmp_utils.py belum ter-update"
+fi
+
+for f in sync-restart.sh verify_rtmp.py; do
+	if [ -f "$WORKER_DIR/$f" ]; then
+		ok "$f ada"
+	else
+		warn "$f tidak ada — jalankan sync-restart.sh dari repo deploy"
+	fi
+done
+
 if grep -q "on_progress=lambda: write_rtmp_status" "$WORKER_DIR/ai_worker.py" 2>/dev/null; then
 	ok "ai_worker.py: RTMP on_progress fix"
 else

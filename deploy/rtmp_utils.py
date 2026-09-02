@@ -141,10 +141,7 @@ def summarize_ffmpeg_stderr(stderr_tail: str, fallback: str = USER_HINT_FFMPEG) 
 
 RTMP_CONNECTED_MARKERS = (
     "frame=",
-    "press [q] to stop",
-    "output #0",
     "kb/s:",
-    "speed=",
 )
 
 
@@ -301,9 +298,11 @@ class FfmpegLogWatcher:
             if self.on_fatal:
                 self.on_fatal(hint)
         low = line.lower()
-        if any(marker in low for marker in RTMP_CONNECTED_MARKERS):
-            if "frame=" in low:
-                self.frames_seen += 1
+        if "frame=" in low:
+            self.frames_seen += 1
+            if self.on_progress and not self.fatal and self.frames_seen >= 2:
+                self.on_progress()
+        elif "kb/s:" in low and "speed=" in low and self.frames_seen >= 1:
             if self.on_progress and not self.fatal:
                 self.on_progress()
 

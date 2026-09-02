@@ -1484,7 +1484,6 @@ def broadcaster_loop(
     last_good = fallback.copy()
     pending: Dict[int, RenderedPacket] = {}
     next_seq = 0
-    bc: Optional[StreamBroadcaster] = None
     overlay_rgb = None
     overlay_alpha = None
 
@@ -1622,8 +1621,7 @@ def broadcaster_loop(
             deadline = time.perf_counter()
             metrics.inc("broadcast_pacer_reset")
 
-    if bc:
-        bc.shutdown()
+    # StreamBroadcaster dimatikan oleh AIVisualWorker.stop() — jangan shutdown di sini.
     if out_dir:
         try:
             from rtmp_utils import write_rtmp_status as _wrs

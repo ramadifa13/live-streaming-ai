@@ -939,6 +939,29 @@ async def start_broadcast(req: BroadcastRequest):
     if not final_rtmp_url or not final_stream_key:
         raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
 
+    # Idempoten cepat — ai_worker sudah jalan + RTMP connected.
+    if is_ai_worker_mode() and visual_worker is not None and visual_worker.is_running:
+        rtmp_state = "disconnected"
+        if read_rtmp_status is not None:
+            rtmp_state, _ = read_rtmp_status(output_dir)
+        if rtmp_state == "connected":
+            same_target = (
+                current_broadcast_env is not None
+                and current_broadcast_env.get("RTMP_URL") == final_rtmp_url
+                and current_broadcast_env.get("STREAM_KEY") == final_stream_key
+            )
+            if same_target or current_broadcast_env is None:
+                print(
+                    "[AI-Worker] start-broadcast diabaikan — AIVisualWorker sudah "
+                    "connected dengan target yang sama."
+                )
+                return {
+                    "success": True,
+                    "status": "already_running",
+                    "pid": os.getpid(),
+                    "mode": "ai_worker",
+                }
+
     # Idempoten cepat — RTMP sudah connected dengan target yang sama.
     if (
         broadcaster_process is not None
@@ -988,6 +1011,8 @@ async def start_broadcast(req: BroadcastRequest):
             traceback.print_exc()
 
     if _broadcast_boot_task and not _broadcast_boot_task.done():
+        if _broadcast_boot_state == "starting":
+            return {"success": True, "status": "starting", "async": True}
         _broadcast_boot_task.cancel()
     _broadcast_boot_task = asyncio.create_task(_boot())
     return {"success": True, "status": "starting", "async": True}
