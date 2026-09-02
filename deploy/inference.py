@@ -20,7 +20,10 @@ from musetalk.utils.blending import get_image_prepare_material, get_image_blendi
 from musetalk.utils.face_parsing import FaceParsing
 from musetalk.utils.audio_processor import AudioProcessor
 from musetalk.utils.utils import get_file_type, get_video_fps, datagen, load_all_model
-from musetalk.utils.preprocessing import coord_placeholder
+
+# Jangan import musetalk.utils.preprocessing di top-level:
+# file itu load mmpose + init DWPose saat import. Cukup definisi sentinel di sini.
+coord_placeholder = (0.0, 0.0, 0.0, 0.0)
 
 try:
     from gpu_compat import log_gpu_status, resolve_use_float16
