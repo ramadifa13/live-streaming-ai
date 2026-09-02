@@ -16,29 +16,29 @@ REPO_DIR="${REPO_DIR:-/workspace/live-streaming-ai}"
 WORKER_DIR="${WORKER_DIR:-/workspace/ai_live_worker}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FORCE_GIT_RESET="${FORCE_GIT_RESET:-0}"
+SKIP_GIT_PULL="${SKIP_GIT_PULL:-0}"
 
 echo "============================================================"
 echo " AI Live Worker — Redeploy"
 echo "============================================================"
 
-if [ ! -d "$REPO_DIR/.git" ]; then
+if [ "$SKIP_GIT_PULL" = "1" ]; then
+	echo "[1/5] SKIP_GIT_PULL=1 — lewati git fetch/pull (pakai kode lokal di repo)."
+elif [ ! -d "$REPO_DIR/.git" ]; then
 	echo "[ERROR] Repo tidak ditemukan di $REPO_DIR"
 	echo "        Clone dulu: git clone https://github.com/ramadifa13/live-streaming-ai.git $REPO_DIR"
 	exit 1
-fi
-
-cd "$REPO_DIR"
-echo "[1/5] Mengambil kode terbaru dari origin/main ..."
-git fetch origin main
-
-if [ "$FORCE_GIT_RESET" = "1" ]; then
-	echo "      FORCE_GIT_RESET=1 → reset hard ke origin/main"
-	git reset --hard origin/main
 else
-	if ! git pull origin main; then
-		echo "[WARN] git pull gagal (kemungkinan konflik lokal)."
-		echo "       Menjalankan reset hard ke origin/main ..."
+	cd "$REPO_DIR"
+	echo "[1/5] Mengambil kode terbaru dari origin/main ..."
+	if ! git fetch origin main; then
+		echo "[WARN] git fetch gagal (401? gunakan PAT atau SKIP_GIT_PULL=1)."
+		echo "       Lanjut sync dari kode yang ada di $REPO_DIR ..."
+	elif [ "$FORCE_GIT_RESET" = "1" ]; then
+		echo "      FORCE_GIT_RESET=1 → reset hard ke origin/main"
 		git reset --hard origin/main
+	elif ! git pull origin main; then
+		echo "[WARN] git pull gagal — lanjut sync dari kode lokal di repo."
 	fi
 fi
 

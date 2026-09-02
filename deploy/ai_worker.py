@@ -1175,6 +1175,8 @@ class StreamBroadcaster:
         a_in = f"/proc/self/fd/{audio_r}"
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "info", "-y",
+            # RunPod sering tidak route IPv6 — DNS mengembalikan AAAA, FFmpeg gagal ke edge fbcdn.
+            "-4",
             "-fflags", "+nobuffer+genpts",
             "-thread_queue_size", "1024",
             "-f", "rawvideo", "-pix_fmt", "bgr24",

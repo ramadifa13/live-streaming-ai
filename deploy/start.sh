@@ -69,6 +69,12 @@ echo "[INFO] PORT=${WORKER_PORT}"
 # DNS pod RunPod kadang gagal resolve fbcdn.net → RTMP Instagram tidak pernah connect.
 ensure_worker_dns() {
 	local probe="${1:-live-upload.instagram.com}"
+	if getent ahostsv4 "$probe" >/dev/null 2>&1; then
+		return 0
+	fi
+	if getent hosts "$probe" >/dev/null 2>&1; then
+		echo "[WARN] DNS hanya IPv6 untuk $probe — FFmpeg dipaksa IPv4 (-4); pastikan A record ada."
+	fi
 	if getent hosts "$probe" >/dev/null 2>&1; then
 		return 0
 	fi
