@@ -65,6 +65,8 @@ MASK_FEATHER_PX = int(os.environ.get("AI_WORKER_MASK_FEATHER", "9"))
 AMBIENT_MIN_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MIN_SEC", "18"))
 AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "42"))
 IDLE_FALLBACK_AFTER = int(os.environ.get("AI_WORKER_IDLE_FALLBACK_AFTER", "2"))
+BROADCAST_MAX_LAG = int(os.environ.get("AI_WORKER_BROADCAST_MAX_LAG", "8"))
+BROADCAST_RENDER_WAIT_SEC = float(os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.04"))
 
 
 def _ambient_gesture_names() -> List[str]:
@@ -1150,10 +1152,7 @@ def frame_fetcher_loop(
     while not stop_event.is_set():
         tick_start = time.perf_counter()
         whisper_idx = None
-        if bridge is not None:
-            is_speech, whisper_idx = bridge.peek_audio_state()
-            pcm = b"\x00" * BYTES_PER_AUDIO_FRAME
-        elif audio_fn_ext is not None:
+        if audio_fn_ext is not None:
             pcm, is_speech, whisper_idx = audio_fn_ext()
         else:
             pcm, is_speech = audio_fn()
@@ -1574,6 +1573,7 @@ def broadcaster_loop(
 
     fallback = bank.idle_clip.frames[bank.idle_clip.base_pose_frame].copy()
     last_good = fallback.copy()
+    last_pcm = silence
     idle_player = _IdleFallbackPlayer(bank)
     stale_misses = 0
     pending: Dict[int, RenderedPacket] = {}
@@ -1660,34 +1660,41 @@ def broadcaster_loop(
                 break
 
         metrics.set_gauge("render_queue_depth", float(render_q.qsize()))
-        pkt = pending.pop(next_seq, None)
-        if pkt is None and pending:
-            # Resync: ambil frame terbaru meski next_seq sudah melaju (cegah idle+silent permanen).
-            best_seq = max(pending.keys())
-            for stale in [s for s in list(pending.keys()) if s != best_seq]:
-                pending.pop(stale, None)
-            pkt = pending.pop(best_seq, None)
-            if pkt is not None and best_seq != next_seq:
-                metrics.inc("broadcast_seq_resync")
-            next_seq = best_seq
+        utterance_active = (
+            bridge_ref is not None and bridge_ref.is_utterance_active()
+        )
 
-        # Audio dikonsumsi hanya di sini — tidak ikut hilang saat video packet miss.
-        if bridge_ref is not None:
-            pcm, _, _ = bridge_ref.get_audio_chunk()
-        elif pkt is not None:
-            pcm = pkt.audio_pcm
-        else:
-            pcm = silence
+        pkt = pending.pop(next_seq, None)
+        if pkt is None and not pending and utterance_active:
+            try:
+                fresh: RenderedPacket = render_q.get(
+                    timeout=BROADCAST_RENDER_WAIT_SEC
+                )
+                pending[fresh.seq] = fresh
+            except queue.Empty:
+                pass
+
+        if pkt is None and pending:
+            pick = min(pending.keys())
+            for stale in [s for s in list(pending.keys()) if s < pick]:
+                pending.pop(stale, None)
+            pkt = pending.pop(pick, None)
+            if pkt is not None and pick != next_seq:
+                metrics.inc("broadcast_seq_resync")
+            next_seq = pick
 
         if pkt is not None:
             last_good = pkt.frame
+            last_pcm = pkt.audio_pcm
+            pcm = pkt.audio_pcm
             stale_misses = 0
         else:
             stale_misses += 1
             metrics.inc("frames_duplicated")
-            if stale_misses >= IDLE_FALLBACK_AFTER:
+            if stale_misses >= IDLE_FALLBACK_AFTER and not utterance_active:
                 last_good = idle_player.next_frame()
                 metrics.inc("idle_fallback_frames")
+            pcm = last_pcm if utterance_active else silence
 
         frame_out = _apply_overlay(last_good)
         if bc and not stop_event.is_set():
