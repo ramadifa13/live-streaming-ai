@@ -1065,10 +1065,12 @@ class StreamBroadcaster:
         self._v_fh = None
         self._a_fh = None
         self._proc = None
+        self._stderr_log = None
         self._start_encoder()
 
     def _start_encoder(self) -> None:
         import subprocess
+        import threading
 
         gop = self.fps * 2
         video_r, video_w = os.pipe()
@@ -1100,13 +1102,52 @@ class StreamBroadcaster:
             "-f", "flv", "-rtmp_live", "live",
             self.rtmp_url,
         ]
+        out_dir = os.environ.get("OUTPUT_FOLDER", "")
+        log_fh = None
+        if out_dir:
+            try:
+                os.makedirs(out_dir, exist_ok=True)
+                log_path = os.path.join(out_dir, "ai_worker_rtmp.log")
+                log_fh = open(log_path, "a", encoding="utf-8", buffering=1)
+                self._stderr_log = log_fh
+            except Exception:
+                pass
         self._proc = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             pass_fds=(video_r, audio_r),
         )
+        if self._proc.stderr is not None:
+            try:
+                from rtmp_utils import FfmpegLogWatcher, write_rtmp_status
+
+                watcher = FfmpegLogWatcher(
+                    on_fatal=lambda hint: write_rtmp_status(
+                        out_dir, "failed", hint
+                    )
+                    if out_dir
+                    else None,
+                )
+
+                def _drain_stderr() -> None:
+                    proc = self._proc
+                    if proc is None or proc.stderr is None:
+                        return
+                    try:
+                        for chunk in iter(lambda: proc.stderr.read(4096), b""):
+                            text = chunk.decode("utf-8", errors="ignore")
+                            if log_fh:
+                                log_fh.write(text)
+                                log_fh.flush()
+                            watcher.ingest(text)
+                    except Exception:
+                        pass
+
+                threading.Thread(target=_drain_stderr, daemon=True).start()
+            except Exception:
+                pass
         os.close(video_r)
         os.close(audio_r)
         self._v_fh = os.fdopen(video_w, "wb", buffering=0)
@@ -1125,6 +1166,18 @@ class StreamBroadcaster:
             self._a_fh.write(pcm)
             return True
         except (BrokenPipeError, OSError):
+            out_dir = os.environ.get("OUTPUT_FOLDER", "")
+            if out_dir:
+                try:
+                    from rtmp_utils import write_rtmp_status
+
+                    write_rtmp_status(
+                        out_dir,
+                        "failed",
+                        "FFmpeg RTMP pipe putus — cek ai_worker_rtmp.log",
+                    )
+                except Exception:
+                    pass
             return False
 
     def shutdown(self) -> None:
@@ -1189,6 +1242,8 @@ def broadcaster_loop(
 
     if rtmp_url:
         try:
+            if out_dir:
+                os.environ["OUTPUT_FOLDER"] = out_dir
             bc = StreamBroadcaster(rtmp_url)
             if out_dir:
                 try:
@@ -1200,6 +1255,7 @@ def broadcaster_loop(
             print(f"[Broadcaster] RTMP init notice: {err} — dry-run mode")
 
     frames_written = 0
+    write_fail_streak = 0
     metrics = get_telemetry()
     metrics.set_gauge("target_fps", float(TARGET_FPS))
     while not stop_event.is_set():
@@ -1249,12 +1305,25 @@ def broadcaster_loop(
             metrics.record_latency("ffmpeg_write_ms", (time.perf_counter() - write_start) * 1000.0)
             if wrote:
                 frames_written += 1
+                write_fail_streak = 0
                 metrics.inc("frames_written")
                 metrics.note_broadcast_frame()
-                if frames_written == 30 and out_dir:
+                if frames_written == 10 and out_dir:
                     try:
                         from rtmp_utils import write_rtmp_status as _wrs
                         _wrs(out_dir, "connected")
+                    except Exception:
+                        pass
+            else:
+                write_fail_streak += 1
+                if write_fail_streak >= 25 and out_dir:
+                    try:
+                        from rtmp_utils import write_rtmp_status as _wrs
+                        _wrs(
+                            out_dir,
+                            "failed",
+                            "FFmpeg tidak menerima frame — cek ai_worker_rtmp.log",
+                        )
                     except Exception:
                         pass
         next_seq += 1

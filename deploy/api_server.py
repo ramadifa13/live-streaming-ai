@@ -83,6 +83,7 @@ visual_worker = None  # AIVisualWorker in-process saat mode ai_worker
 
 # In-memory jobs tracking with TTL cleanup
 jobs: Dict[str, Dict[str, Any]] = {}
+total_videos_rendered = 0
 MAX_JOBS_STORE = 200
 JOB_TTL_SECONDS = 3600  # 1 hour TTL
 AVG_RENDER_SECONDS = 10.0
@@ -422,7 +423,11 @@ async def periodic_cleanup_and_watchdog():
                     if stop_visual_broadcast is not None:
                         stop_visual_broadcast()
                     visual_worker = None
-                elif visual_worker is not None and not visual_worker.is_running:
+                elif (
+                    visual_worker is not None
+                    and not visual_worker.is_running
+                    and _broadcast_boot_state != "starting"
+                ):
                     print("[WATCHDOG ALERT] AIVisualWorker berhenti — siaran perlu di-start ulang.")
                     current_broadcast_env = None
             elif broadcaster_process is not None and broadcaster_process.poll() is None:
@@ -584,6 +589,28 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                 }
                 return
             if visual_worker is None or not visual_worker.is_running:
+                if _broadcast_boot_state == "starting":
+                    bridge = get_speech_bridge(output_dir)
+                    if bridge is not None:
+                        action_tag = (req.action or "talk_expressive").strip().lower()
+                        if not action_tag or action_tag in ("none", "null"):
+                            action_tag = "talk_expressive"
+                        bridge.enqueue(
+                            audio_path,
+                            task_id=task_id,
+                            action=action_tag,
+                            priority=bool(req.priority),
+                        )
+                        total_videos_rendered += 1
+                        jobs[task_id] = {
+                            "status": "done",
+                            "engine": "AIVisualWorker boot-queue",
+                            "lip_sync_active": False,
+                            "queued_utterances": bridge.pending_count(),
+                            "created_at": time.time(),
+                        }
+                        print(f"[API SUCCESS] Utterance queued (boot) {task_id}")
+                        return
                 jobs[task_id] = {
                     "status": "error",
                     "error": "Siaran belum dimulai — panggil /stream/start-broadcast dulu",
@@ -707,6 +734,7 @@ async def generate_neural_video(req: GenerateVideoRequest, wait: bool = False):
 
 @app.get("/stream/queue-status")
 async def get_queue_status():
+    global total_videos_rendered
     playable_paths = _collect_playable_videos(output_dir)
     video_files = [os.path.basename(p) for p in playable_paths]
     active_processing = [

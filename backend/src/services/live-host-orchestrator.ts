@@ -819,6 +819,13 @@ class LiveHostOrchestrator {
           await sleep(2000);
           continue;
         }
+        if (
+          isAiWorkerBroadcastMode(queue.broadcastMode) &&
+          !queue.visualWorkerRunning
+        ) {
+          await sleep(2000);
+          continue;
+        }
 
         const policy = this.getPolicy(s);
         if (
@@ -1971,9 +1978,13 @@ class LiveHostOrchestrator {
         : "Menyiapkan segmen pembuka AI Host...";
     } else if (rtmpRequired && !queue.rtmpConnected) {
       stageIndex = 3;
-      stageText = queue.broadcasting
-        ? "Menghubungkan RTMP ke platform..."
-        : "Menunggu koneksi RTMP...";
+      stageText =
+        queue.rtmpError ||
+        (queue.broadcastBootState === "starting" || queue.visualWorkerInitializing
+          ? "Menghubungkan RTMP ke platform..."
+          : queue.broadcasting
+            ? "Menghubungkan RTMP ke platform..."
+            : "Menunggu koneksi RTMP...");
     } else if (!state.isLive) {
       stageIndex = 4;
       stageText = "AI Host siap. Silakan konfirmasi Go Live.";
