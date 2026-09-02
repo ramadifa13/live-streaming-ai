@@ -1265,15 +1265,33 @@ class StreamBroadcaster:
         return self._proc is not None and self._proc.poll() is None
 
     @staticmethod
-    def _write_all(fh, data: bytes) -> None:
-        """Tulis seluruh buffer ke pipe (rawvideo harus exact bytes per frame)."""
+    def _write_all(fh, data: bytes, timeout_sec: float = 0.35) -> bool:
+        """Tulis seluruh buffer ke pipe tanpa partial write (rawvideo harus exact).
+
+        Pakai select + timeout agar thread broadcaster tidak hang selamanya saat
+        FFmpeg masih handshake RTMP (pipe penuh). Return False = skip frame ini.
+        """
+        import select
+
         view = memoryview(data)
         offset = 0
+        fd = fh.fileno()
+        deadline = time.monotonic() + max(0.05, timeout_sec)
         while offset < len(view):
-            n = fh.write(view[offset:])
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            try:
+                _, writable, _ = select.select([], [fh], [], remaining)
+            except (ValueError, OSError):
+                return False
+            if not writable:
+                continue
+            n = os.write(fd, view[offset:])
             if n is None or n <= 0:
                 raise BrokenPipeError("pipe write returned 0")
             offset += n
+        return True
 
     def write(self, frame: np.ndarray, pcm: bytes) -> bool:
         if self._v_fh is None or not self.is_alive():
@@ -1298,8 +1316,10 @@ class StreamBroadcaster:
             )
             return False
         try:
-            self._write_all(self._v_fh, buf)
-            self._write_all(self._a_fh, pcm)
+            if not self._write_all(self._v_fh, buf):
+                return False
+            if not self._write_all(self._a_fh, pcm):
+                return False
             return True
         except (BrokenPipeError, OSError) as err:
             print(f"[Broadcaster] RTMP pipe error: {err}", flush=True)

@@ -1,6 +1,7 @@
 import {
   forwardToRunPodGPU,
   getRunPodQueueStatus,
+  startRunPodBroadcast,
 } from "./runpod-bridge.js";
 import {
   generateHostResponse,
@@ -205,6 +206,10 @@ interface HostRuntimeState {
   lastWorkerError: string;
   workerFailStopping: boolean;
   workerFailedAt: number;
+
+  /** Retry start-broadcast bila visual worker belum jalan (mode ai_worker). */
+  broadcastRetryAt: number;
+  broadcastRetryCount: number;
 }
 
 interface PlanPolicy {
@@ -747,6 +752,8 @@ class LiveHostOrchestrator {
       lastWorkerError: "",
       workerFailStopping: false,
       workerFailedAt: 0,
+      broadcastRetryAt: 0,
+      broadcastRetryCount: 0,
     };
 
     this.sessions.set(config.sessionId, state);
@@ -799,6 +806,61 @@ class LiveHostOrchestrator {
     return this.elapsedMs(state) >= limitMs;
   }
 
+  private async ensureVisualBroadcast(sessionId: string): Promise<void> {
+    const state = this.sessions.get(sessionId);
+    if (!state || state.abortController.signal.aborted) return;
+
+    const { rtmpUrl, streamKey, podId } = state.config;
+    if (!rtmpUrl?.trim() || !streamKey?.trim() || !podId) return;
+
+    const queue = state.lastQueue;
+    if (!isAiWorkerBroadcastMode(queue.broadcastMode)) return;
+    if (queue.visualWorkerRunning) return;
+    if (queue.broadcastBootState === "starting" || queue.visualWorkerInitializing) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now < state.broadcastRetryAt) return;
+    if (state.broadcastRetryCount >= 8) return;
+
+    state.broadcastRetryCount += 1;
+    state.broadcastRetryAt = now + 15_000;
+
+    const product = state.product || state.config.product;
+    const httpMediaOnly = (url?: string) =>
+      url && /^https?:\/\//i.test(url) ? url : undefined;
+
+    console.log(
+      `[LiveHost] 🔁 Retry start-broadcast (${state.broadcastRetryCount}/8): ${sessionId}`,
+    );
+
+    try {
+      const result = await startRunPodBroadcast(podId, {
+        rtmpUrl: rtmpUrl.trim(),
+        streamKey: streamKey.trim(),
+        productName: product?.name,
+        productPrice: product?.price
+          ? String(product.price).replace(/\D/g, "")
+          : undefined,
+        productImageUrl: httpMediaOnly(product?.image),
+        bannerImageUrl: httpMediaOnly(product?.bannerImage),
+        hostName: state.config.avatarName || "namira",
+        waitForReady: false,
+      });
+      if (!result.success) {
+        state.lastWorkerError =
+          result.error || "Gagal memulai visual worker (start-broadcast)";
+        console.warn(
+          `[LiveHost] Retry start-broadcast gagal: ${state.lastWorkerError}`,
+        );
+      }
+    } catch (err: any) {
+      state.lastWorkerError = err?.message || String(err);
+      console.warn(`[LiveHost] Retry start-broadcast error: ${state.lastWorkerError}`);
+    }
+  }
+
   private async runPreLivePipeline(sessionId: string): Promise<void> {
     const state = this.sessions.get(sessionId);
     if (!state || state.preliveRunning) return;
@@ -823,6 +885,7 @@ class LiveHostOrchestrator {
           isAiWorkerBroadcastMode(queue.broadcastMode) &&
           !queue.visualWorkerRunning
         ) {
+          await this.ensureVisualBroadcast(sessionId);
           await sleep(2000);
           continue;
         }
@@ -1956,6 +2019,14 @@ class LiveHostOrchestrator {
     } else if (queue.rtmpError) {
       stageIndex = 3;
       stageText = queue.rtmpError;
+    } else if (
+      queue.broadcastBootState === "error" &&
+      !queue.visualWorkerRunning
+    ) {
+      stageIndex = 2;
+      stageText =
+        workerError ||
+        "Visual worker gagal start — coba putuskan dan hubungkan ulang sesi.";
     } else if (
       !queue.visualWorkerRunning &&
       (queue.broadcastBootState === "starting" || queue.visualWorkerInitializing)

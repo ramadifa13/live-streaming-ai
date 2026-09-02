@@ -315,6 +315,15 @@ class SpeechBridge:
                 except Exception:
                     pass
 
+    def clear_pending(self) -> None:
+        """Kosongkan antrian utterance (dipanggil saat stop-broadcast / sesi baru)."""
+        with self._lock:
+            self._pending.clear()
+            self._current = None
+            self._frame_cursor = 0
+            self._audio_exhausted = False
+            self._awaiting_visual_tail = False
+
     def signal_visual_complete(self) -> None:
         """Dipanggil state machine setelah clip talk mencapai end_pose."""
         with self._lock:

@@ -259,6 +259,12 @@ _broadcast_boot_state = "idle"  # idle | starting | running | error
 _broadcast_boot_error = ""
 
 
+def _clear_speech_bridge_queue() -> None:
+    bridge = get_speech_bridge(output_dir) if get_speech_bridge is not None else None
+    if bridge is not None and hasattr(bridge, "clear_pending"):
+        bridge.clear_pending()
+
+
 def _broadcaster_script_path(mode: Optional[str] = None) -> str:
     resolved = (mode or os.environ.get("BROADCAST_MODE") or "segment").strip().lower()
     if resolved in ("ai_worker", "ai-worker", "realtime", "visual_worker"):
@@ -819,6 +825,7 @@ async def get_queue_status():
         "visual_worker_running": visual_worker_running,
         "visual_worker_initializing": visual_worker_initializing,
         "broadcast_boot_state": _broadcast_boot_state,
+        "broadcast_boot_error": _broadcast_boot_error,
         "broadcast_mode": broadcast_mode,
     }
 
@@ -901,12 +908,18 @@ async def start_broadcast(req: BroadcastRequest):
     )
 
     async def _boot() -> None:
-        global _broadcast_boot_state, _broadcast_boot_error
+        global _broadcast_boot_state, _broadcast_boot_error, visual_worker
         _broadcast_boot_state = "starting"
         _broadcast_boot_error = ""
         try:
             await asyncio.to_thread(_start_broadcast_sync, req)
             _broadcast_boot_state = "running"
+        except asyncio.CancelledError:
+            _broadcast_boot_state = "idle"
+            if stop_visual_broadcast is not None:
+                stop_visual_broadcast()
+            visual_worker = None
+            raise
         except Exception as exc:
             _broadcast_boot_state = "error"
             _broadcast_boot_error = str(exc)
@@ -1003,6 +1016,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     if stop_visual_broadcast is not None:
         stop_visual_broadcast()
     visual_worker = None
+    _clear_speech_bridge_queue()
     if write_rtmp_status is not None:
         write_rtmp_status(output_dir, "connecting")
 
@@ -1124,6 +1138,12 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         broadcaster_process = None
         return {"success": True, "status": "starting", "pid": os.getpid(), "mode": "ai_worker"}
 
+    if ai_mode and get_visual_worker is None:
+        raise RuntimeError(
+            "BROADCAST_MODE=ai_worker tetapi modul ai_worker gagal diimpor — "
+            "cek api_server.log / deploy sync-worker."
+        )
+
     broadcaster_process = _spawn_broadcaster(env)
     print(
         f"[AI-Worker] Broadcaster dipicu (PID: {broadcaster_process.pid}, "
@@ -1152,6 +1172,7 @@ async def stop_broadcast():
     if stop_visual_broadcast is not None:
         stop_visual_broadcast()
     visual_worker = None
+    _clear_speech_bridge_queue()
 
     # Reset monotonic counter saat siaran selesai
     total_videos_rendered = 0
