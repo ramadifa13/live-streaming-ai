@@ -43,10 +43,13 @@ else
 	bad "ai_worker.py belum ter-update (broadcaster_loop shutdown)"
 fi
 
-if ! grep -q 'bc: Optional\["StreamBroadcaster"\] = None' "$WORKER_DIR/ai_worker.py" 2>/dev/null; then
-	ok "ai_worker.py: bc shadow bug fixed"
-else
+# Bug asli: assignment `bc = None` / typed local DI DALAM body broadcaster_loop.
+# Parameter fungsi `bc: Optional[...] = None,` (dengan koma) itu BENAR — jangan flag.
+if grep -E '^\s+bc = None\s*$' "$WORKER_DIR/ai_worker.py" 2>/dev/null \
+	|| grep -E '^\s+bc: Optional(\["StreamBroadcaster"\]|\[StreamBroadcaster\]) = None\s*$' "$WORKER_DIR/ai_worker.py" 2>/dev/null; then
 	bad "ai_worker.py masih punya bc=None shadow di broadcaster_loop"
+else
+	ok "ai_worker.py: bc shadow bug fixed"
 fi
 
 if grep -q "preflight_rtmp_publish" "$WORKER_DIR/rtmp_utils.py" 2>/dev/null; then

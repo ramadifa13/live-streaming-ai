@@ -85,14 +85,13 @@ function runInTerminal(token, termName, command, timeoutMs = 600000) {
     ws.addEventListener("message", (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        if (Array.isArray(msg) && msg[0] === "stdout") out += msg[1];
-        if (out.includes("__SYNC_DONE__")) {
-          clearTimeout(timer);
-          ws.close();
-          resolve(out);
-        }
+        if (Array.isArray(msg) && (msg[0] === "stdout" || msg[0] === "stream")) out += msg[1] || "";
       } catch {
         out += String(ev.data);
+      }
+      if (out.includes("__SYNC_DONE__") || out.includes("HEALTH_FAIL") || out.includes('"status"')) {
+        clearTimeout(timer);
+        setTimeout(() => { ws.close(); resolve(out); }, 2000);
       }
     });
     ws.addEventListener("error", (e) => {
