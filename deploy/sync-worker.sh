@@ -189,7 +189,19 @@ sync_worker_files() {
 
 	echo "[SYNC] Menyalin skrip Python & shell ke $WORKER_DIR ..."
 	cp -f "$DEPLOY_DIR"/*.py "$WORKER_DIR/" 2>/dev/null || true
-	cp -f "$DEPLOY_DIR"/*.sh "$WORKER_DIR/" 2>/dev/null || true
+	if [ "${START_SH_RUNNING:-0}" = "1" ]; then
+		for shf in "$DEPLOY_DIR"/*.sh; do
+			[ -f "$shf" ] || continue
+			base="$(basename "$shf")"
+			if [ "$base" = "start.sh" ]; then
+				echo "[SYNC] Skip start.sh (sedang dijalankan — di-update di akhir start.sh)"
+				continue
+			fi
+			cp -f "$shf" "$WORKER_DIR/$base"
+		done
+	else
+		cp -f "$DEPLOY_DIR"/*.sh "$WORKER_DIR/" 2>/dev/null || true
+	fi
 
 	if [ -f "$DEPLOY_DIR/requirements-worker.txt" ]; then
 		cp -f "$DEPLOY_DIR/requirements-worker.txt" "$WORKER_DIR/requirements-worker.txt" 2>/dev/null || true

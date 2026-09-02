@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+# Jangan timpa start.sh saat sedang dijalankan (bash baca file incremental → syntax error).
+export START_SH_RUNNING=1
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKER_DIR="/workspace/ai_live_worker"
 
@@ -220,8 +223,16 @@ echo "Health: curl -s http://127.0.0.1:${WORKER_PORT}/health"
 echo "Pantau log: tail -f $WORKER_DIR/api_server.log"
 
 if [ "${SKIP_WATCHDOG:-0}" = "1" ]; then
+	if [ -f "$DEPLOY_DIR/start.sh" ]; then
+		cp -f "$DEPLOY_DIR/start.sh" "$WORKER_DIR/start.sh"
+	fi
 	echo "[INFO] SKIP_WATCHDOG=1 — api_server berjalan tanpa supervisor loop (untuk redeploy/CI)."
 	exit 0
+fi
+
+# Update start.sh untuk run berikutnya (tidak ditimpa saat sync di atas).
+if [ -f "$DEPLOY_DIR/start.sh" ]; then
+	cp -f "$DEPLOY_DIR/start.sh" "$WORKER_DIR/start.sh"
 fi
 
 # Container Watchdog Supervisor: Pantau terus status api_server
