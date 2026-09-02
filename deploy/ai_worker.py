@@ -1147,8 +1147,10 @@ def frame_fetcher_loop(
 class StreamBroadcaster:
     """Push BGR + PCM to FFmpeg RTMP encoder (same pattern as frame_feed.py)."""
 
+    _ffmpeg_ipv4_supported: Optional[bool] = None
+
     def __init__(self, rtmp_url: str, width: int = CANVAS_W, height: int = CANVAS_H, fps: int = TARGET_FPS):
-        self.rtmp_url = rtmp_url
+        self.rtmp_url = (rtmp_url or "").strip()
         self.width = width
         self.height = height
         self.fps = fps
@@ -1157,26 +1159,49 @@ class StreamBroadcaster:
         self._a_fh = None
         self._proc = None
         self._stderr_log = None
+        if not self.rtmp_url.lower().startswith(("rtmp://", "rtmps://")):
+            raise ValueError(
+                f"RTMP URL tidak valid (harus rtmp:// atau rtmps://): {self.rtmp_url[:80]}"
+            )
         self._start_encoder()
 
-    def _start_encoder(self) -> None:
+    @classmethod
+    def _want_force_ipv4(cls) -> bool:
+        raw = os.environ.get("RTMP_FORCE_IPV4", "1").strip().lower()
+        return raw not in ("0", "false", "no", "off")
+
+    @classmethod
+    def _ffmpeg_ipv4_flag_supported(cls) -> bool:
+        if cls._ffmpeg_ipv4_supported is not None:
+            return cls._ffmpeg_ipv4_supported
         import subprocess
-        import threading
 
+        try:
+            proc = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-4", "-version"],
+                capture_output=True,
+                timeout=8,
+            )
+            err = (proc.stderr or proc.stdout or b"").decode("utf-8", errors="ignore").lower()
+            cls._ffmpeg_ipv4_supported = proc.returncode == 0 and "unrecognized" not in err
+        except Exception:
+            cls._ffmpeg_ipv4_supported = False
+        return cls._ffmpeg_ipv4_supported
+
+    def _build_ffmpeg_cmd(
+        self,
+        v_in: str,
+        a_in: str,
+        *,
+        force_ipv4: bool,
+    ) -> list:
         gop = self.fps * 2
-        video_r, video_w = os.pipe()
-        audio_r, audio_w = os.pipe()
-        os.set_inheritable(video_r, True)
-        os.set_inheritable(audio_r, True)
-        os.set_inheritable(video_w, False)
-        os.set_inheritable(audio_w, False)
-
-        v_in = f"/proc/self/fd/{video_r}"
-        a_in = f"/proc/self/fd/{audio_r}"
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "info", "-y",
-            # RunPod sering tidak route IPv6 — DNS mengembalikan AAAA, FFmpeg gagal ke edge fbcdn.
-            "-4",
+        ]
+        if force_ipv4:
+            cmd.append("-4")
+        cmd.extend([
             "-fflags", "+nobuffer+genpts",
             "-thread_queue_size", "1024",
             "-f", "rawvideo", "-pix_fmt", "bgr24",
@@ -1199,7 +1224,77 @@ class StreamBroadcaster:
             "-rtmp_live", "live",
             "-stimeout", "15000000",
             self.rtmp_url,
-        ]
+        ])
+        return cmd
+
+    @staticmethod
+    def _tail_stderr(proc, max_bytes: int = 8192) -> str:
+        if proc is None or proc.stderr is None:
+            return ""
+        try:
+            import select
+
+            text_parts = []
+            fd = proc.stderr.fileno()
+            deadline = time.monotonic() + 1.5
+            while time.monotonic() < deadline:
+                if proc.poll() is not None:
+                    rest = proc.stderr.read(max_bytes)
+                    if rest:
+                        text_parts.append(rest.decode("utf-8", errors="ignore"))
+                    break
+                ready, _, _ = select.select([proc.stderr], [], [], 0.15)
+                if ready:
+                    chunk = proc.stderr.read(4096)
+                    if chunk:
+                        text_parts.append(chunk.decode("utf-8", errors="ignore"))
+            body = "".join(text_parts)
+            return body[-2000:] if len(body) > 2000 else body
+        except Exception:
+            return ""
+
+    def _fail_start(self, out_dir: str, hint: str, stderr_tail: str = "") -> None:
+        detail = stderr_tail.strip().replace("\r", "\n")
+        if detail:
+            lines = [ln.strip() for ln in detail.split("\n") if ln.strip()]
+            for ln in reversed(lines):
+                low = ln.lower()
+                if any(
+                    k in low
+                    for k in (
+                        "error",
+                        "invalid",
+                        "unrecognized",
+                        "no such",
+                        "failed",
+                        "cannot",
+                        "not found",
+                    )
+                ):
+                    hint = ln[:240]
+                    break
+        if out_dir:
+            try:
+                from rtmp_utils import write_rtmp_status
+
+                write_rtmp_status(out_dir, "failed", hint)
+            except Exception:
+                pass
+        raise RuntimeError(hint)
+
+    def _start_encoder(self) -> None:
+        import subprocess
+        import threading
+
+        video_r, video_w = os.pipe()
+        audio_r, audio_w = os.pipe()
+        os.set_inheritable(video_r, True)
+        os.set_inheritable(audio_r, True)
+        os.set_inheritable(video_w, False)
+        os.set_inheritable(audio_w, False)
+
+        v_in = f"/proc/self/fd/{video_r}"
+        a_in = f"/proc/self/fd/{audio_r}"
         out_dir = os.environ.get("OUTPUT_FOLDER", "")
         self._output_dir = out_dir
         log_fh = None
@@ -1211,14 +1306,58 @@ class StreamBroadcaster:
                 self._stderr_log = log_fh
             except Exception:
                 pass
-        self._proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            pass_fds=(video_r, audio_r),
-        )
-        if self._proc.stderr is not None and out_dir:
+
+        want_ipv4 = self._want_force_ipv4() and self._ffmpeg_ipv4_flag_supported()
+        attempts = [want_ipv4, False] if want_ipv4 else [False]
+        last_stderr = ""
+        proc = None
+
+        for idx, use_ipv4 in enumerate(attempts):
+            cmd = self._build_ffmpeg_cmd(v_in, a_in, force_ipv4=use_ipv4)
+            if idx > 0:
+                print("[Broadcaster] Retry FFmpeg tanpa flag -4 (IPv4)...")
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    pass_fds=(video_r, audio_r),
+                )
+            except Exception as exc:
+                last_stderr = str(exc)
+                continue
+
+            time.sleep(0.35)
+            if proc.poll() is None:
+                self._proc = proc
+                break
+            last_stderr = self._tail_stderr(proc)
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            proc = None
+        else:
+            os.close(video_r)
+            os.close(audio_r)
+            try:
+                os.close(video_w)
+                os.close(audio_w)
+            except Exception:
+                pass
+            self._fail_start(
+                out_dir,
+                "FFmpeg RTMP gagal start — cek ai_worker_rtmp.log",
+                last_stderr,
+            )
+
+        if self._proc is None or self._proc.stderr is None:
+            os.close(video_r)
+            os.close(audio_r)
+            self._fail_start(out_dir, "FFmpeg RTMP gagal start (proses tidak hidup)", last_stderr)
+
+        if out_dir:
             try:
                 from rtmp_utils import FfmpegLogWatcher, write_rtmp_status
 
@@ -1228,12 +1367,12 @@ class StreamBroadcaster:
                 )
 
                 def _drain_stderr() -> None:
-                    proc = self._proc
-                    if proc is None or proc.stderr is None:
+                    p = self._proc
+                    if p is None or p.stderr is None:
                         return
                     try:
                         while True:
-                            chunk = proc.stderr.read(4096)
+                            chunk = p.stderr.read(4096)
                             if not chunk:
                                 break
                             text = chunk.decode("utf-8", errors="ignore")
@@ -1247,23 +1386,15 @@ class StreamBroadcaster:
                 threading.Thread(target=_drain_stderr, daemon=True).start()
             except Exception as exc:
                 print(f"[Broadcaster] RTMP stderr watcher notice: {exc}")
+
         os.close(video_r)
         os.close(audio_r)
-        # Blocking pipe — NONBLOCK menyebabkan partial write → rawvideo corrupt (garis horizontal di IG).
         self._v_fh = os.fdopen(video_w, "wb", buffering=0)
         self._a_fh = os.fdopen(audio_w, "wb", buffering=0)
-        time.sleep(0.2)
-        if self._proc and self._proc.poll() is not None:
-            hint = "FFmpeg RTMP gagal start — cek ai_worker_rtmp.log"
-            if out_dir:
-                try:
-                    from rtmp_utils import write_rtmp_status
-
-                    write_rtmp_status(out_dir, "failed", hint)
-                except Exception:
-                    pass
-            raise RuntimeError(hint)
-        print(f"[Broadcaster] RTMP encoder @ {self.fps}fps → {self.rtmp_url.split('?')[0]}?**")
+        print(
+            f"[Broadcaster] RTMP encoder @ {self.fps}fps → "
+            f"{self.rtmp_url.split('?')[0]}?**"
+        )
 
     def is_alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
@@ -1397,7 +1528,13 @@ def broadcaster_loop(
                 except Exception:
                     pass
         except Exception as err:
-            print(f"[Broadcaster] RTMP init notice: {err} — dry-run mode")
+            print(f"[Broadcaster] RTMP init failed: {err}")
+            if out_dir:
+                try:
+                    from rtmp_utils import write_rtmp_status as _wrs
+                    _wrs(out_dir, "failed", str(err)[:240])
+                except Exception:
+                    pass
 
     frames_written = 0
     write_fail_streak = 0
