@@ -59,7 +59,29 @@ if [ -f "$WORKER_DIR/.env" ]; then
 	source "$WORKER_DIR/.env"
 	set +a
 fi
+WORKER_PORT="${PORT:-8000}"
 echo "[INFO] BROADCAST_MODE=${BROADCAST_MODE:-segment}"
+echo "[INFO] PORT=${WORKER_PORT}"
+
+worker_health_url() {
+	echo "http://127.0.0.1:${WORKER_PORT}/health"
+}
+
+is_worker_healthy() {
+	curl -fsS "$(worker_health_url)" >/dev/null 2>&1 \
+		|| curl -fsS "http://127.0.0.1:${WORKER_PORT}/" >/dev/null 2>&1
+}
+
+stop_existing_worker() {
+	echo "[INFO] Menghentikan api_server lama (jika ada) ..."
+	pkill -9 -f "[a]pi_server.py" 2>/dev/null || true
+	if command -v fuser >/dev/null 2>&1; then
+		fuser -k "${WORKER_PORT}/tcp" 2>/dev/null || true
+	elif command -v lsof >/dev/null 2>&1; then
+		lsof -ti:"${WORKER_PORT}" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+	fi
+	sleep 1
+}
 
 if [ -f "$WORKER_DIR/env/bin/python" ]; then
 	PYTHON_BIN="$WORKER_DIR/env/bin/python"
@@ -106,15 +128,30 @@ else
 	echo "[INFO] LLM dipusatkan di Backend (Ollama RunPod dinonaktifkan untuk menghemat VRAM GPU)."
 fi
 
-echo "Memulai AI Worker API (Port 8000)..."
-"$PYTHON_BIN" api_server.py > "$WORKER_DIR/api_server.log" 2>&1 &
+if is_worker_healthy; then
+	echo "[OK] AI Worker API sudah aktif di port ${WORKER_PORT} — tidak memulai duplikat."
+	API_PID="$(pgrep -f '[a]pi_server.py' | head -n 1 || true)"
+	if [ -z "${API_PID:-}" ]; then
+		echo "[WARN] Health OK tetapi PID api_server tidak ditemukan — restart bersih."
+		stop_existing_worker
+	else
+		echo "Sistem sudah berjalan! (api_server PID: $API_PID)"
+		echo "Log API: $WORKER_DIR/api_server.log"
+		echo "Pantau log: tail -f $WORKER_DIR/api_server.log"
+		exit 0
+	fi
+fi
+
+stop_existing_worker
+
+echo "Memulai AI Worker API (port ${WORKER_PORT})..."
+: > "$WORKER_DIR/api_server.log"
+"$PYTHON_BIN" api_server.py >> "$WORKER_DIR/api_server.log" 2>&1 &
 API_PID=$!
 
-
-
 for attempt in $(seq 1 120); do
-	if curl -fsS "http://127.0.0.1:8000/health" >/dev/null 2>&1 || curl -fsS "http://127.0.0.1:8000/" >/dev/null 2>&1; then
-		echo "[OK] AI Worker API aktif dan merespon!"
+	if is_worker_healthy; then
+		echo "[OK] AI Worker API aktif dan merespon di port ${WORKER_PORT}!"
 		break
 	fi
 	sleep 1
@@ -140,15 +177,20 @@ echo "Broadcaster menunggu perintah backend melalui /stream/start-broadcast."
 
 echo "Sistem berhasil dijalankan di background! (api_server PID: $API_PID)"
 echo "Log API: $WORKER_DIR/api_server.log"
+echo "Health: curl -s http://127.0.0.1:${WORKER_PORT}/health"
+echo "Pantau log: tail -f $WORKER_DIR/api_server.log"
 
 # Container Watchdog Supervisor: Pantau terus status api_server
 echo "[WATCHDOG] Memulai container supervisor monitor..."
 while true; do
 	sleep 10
-	if ! kill -0 "$API_PID" 2>/dev/null; then
-		echo "[WATCHDOG ALERT] api_server.py mati! Me-restart api_server..."
-		"$PYTHON_BIN" api_server.py >> "$WORKER_DIR/api_server.log" 2>&1 &
-		API_PID=$!
-		echo "[WATCHDOG] api_server di-restart (PID: $API_PID)"
+	if is_worker_healthy; then
+		API_PID="$(pgrep -f '[a]pi_server.py' | head -n 1 || true)"
+		continue
 	fi
+	echo "[WATCHDOG ALERT] api_server tidak merespons di port ${WORKER_PORT} — restart..."
+	stop_existing_worker
+	"$PYTHON_BIN" api_server.py >> "$WORKER_DIR/api_server.log" 2>&1 &
+	API_PID=$!
+	echo "[WATCHDOG] api_server di-restart (PID: $API_PID)"
 done

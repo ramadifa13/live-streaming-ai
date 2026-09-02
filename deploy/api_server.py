@@ -1135,4 +1135,16 @@ async def get_job_status(job_id: str):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8000"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=port)
+    except OSError as exc:
+        errno = getattr(exc, "errno", None)
+        if errno in (48, 98, 10048) or "address already in use" in str(exc).lower():
+            print(
+                f"\n[ERROR] Port {port} sudah dipakai — instance api_server lain masih berjalan.\n"
+                f"        pkill -9 -f api_server.py\n"
+                f"        fuser -k {port}/tcp   # atau: lsof -ti:{port} | xargs kill -9\n"
+                f"        Lalu jalankan ulang: bash start.sh\n",
+                flush=True,
+            )
+        raise

@@ -65,5 +65,11 @@ bash start.sh
 
 echo ""
 echo "[OK] Redeploy selesai."
-echo "     Health: curl -s http://localhost:8000/health"
+WORKER_PORT="${PORT:-8000}"
+if [ -f "$WORKER_DIR/.env" ]; then
+	# shellcheck disable=SC1091
+	source "$WORKER_DIR/.env"
+	WORKER_PORT="${PORT:-8000}"
+fi
+echo "     Health: curl -s http://localhost:${WORKER_PORT}/health"
 echo "     Log:    tail -f $WORKER_DIR/api_server.log"
