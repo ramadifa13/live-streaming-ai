@@ -1099,10 +1099,13 @@ class StreamBroadcaster:
             "-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "6000k",
             "-c:a", "aac", "-b:a", "128k",
             "-flvflags", "no_duration_filesize",
-            "-f", "flv", "-rtmp_live", "live",
+            "-f", "flv",
+            "-rtmp_live", "live",
+            "-stimeout", "15000000",
             self.rtmp_url,
         ]
         out_dir = os.environ.get("OUTPUT_FOLDER", "")
+        self._output_dir = out_dir
         log_fh = None
         if out_dir:
             try:
@@ -1119,16 +1122,13 @@ class StreamBroadcaster:
             stderr=subprocess.PIPE,
             pass_fds=(video_r, audio_r),
         )
-        if self._proc.stderr is not None:
+        if self._proc.stderr is not None and out_dir:
             try:
                 from rtmp_utils import FfmpegLogWatcher, write_rtmp_status
 
                 watcher = FfmpegLogWatcher(
-                    on_fatal=lambda hint: write_rtmp_status(
-                        out_dir, "failed", hint
-                    )
-                    if out_dir
-                    else None,
+                    on_fatal=lambda hint: write_rtmp_status(out_dir, "failed", hint),
+                    on_progress=lambda: write_rtmp_status(out_dir, "connected"),
                 )
 
                 def _drain_stderr() -> None:
@@ -1136,7 +1136,10 @@ class StreamBroadcaster:
                     if proc is None or proc.stderr is None:
                         return
                     try:
-                        for chunk in iter(lambda: proc.stderr.read(4096), b""):
+                        while True:
+                            chunk = proc.stderr.read(4096)
+                            if not chunk:
+                                break
                             text = chunk.decode("utf-8", errors="ignore")
                             if log_fh:
                                 log_fh.write(text)
@@ -1146,16 +1149,38 @@ class StreamBroadcaster:
                         pass
 
                 threading.Thread(target=_drain_stderr, daemon=True).start()
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"[Broadcaster] RTMP stderr watcher notice: {exc}")
         os.close(video_r)
         os.close(audio_r)
         self._v_fh = os.fdopen(video_w, "wb", buffering=0)
         self._a_fh = os.fdopen(audio_w, "wb", buffering=0)
+        try:
+            import fcntl
+
+            for fh in (self._v_fh, self._a_fh):
+                flags = fcntl.fcntl(fh.fileno(), fcntl.F_GETFL)
+                fcntl.fcntl(fh.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        except Exception:
+            pass
+        time.sleep(0.2)
+        if self._proc and self._proc.poll() is not None:
+            hint = "FFmpeg RTMP gagal start — cek ai_worker_rtmp.log"
+            if out_dir:
+                try:
+                    from rtmp_utils import write_rtmp_status
+
+                    write_rtmp_status(out_dir, "failed", hint)
+                except Exception:
+                    pass
+            raise RuntimeError(hint)
         print(f"[Broadcaster] RTMP encoder @ {self.fps}fps → {self.rtmp_url.split('?')[0]}?**")
 
+    def is_alive(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
+
     def write(self, frame: np.ndarray, pcm: bytes) -> bool:
-        if self._v_fh is None:
+        if self._v_fh is None or not self.is_alive():
             return False
         if len(pcm) < self.bytes_per_audio:
             pcm = pcm + b"\x00" * (self.bytes_per_audio - len(pcm))
@@ -1165,6 +1190,8 @@ class StreamBroadcaster:
             self._v_fh.write(np.ascontiguousarray(frame, dtype=np.uint8).tobytes())
             self._a_fh.write(pcm)
             return True
+        except BlockingIOError:
+            return False
         except (BrokenPipeError, OSError):
             out_dir = os.environ.get("OUTPUT_FOLDER", "")
             if out_dir:
@@ -1300,21 +1327,7 @@ def broadcaster_loop(
 
         frame_out = _apply_overlay(last_good)
         if bc:
-            write_start = time.perf_counter()
-            wrote = bc.write(frame_out, pcm)
-            metrics.record_latency("ffmpeg_write_ms", (time.perf_counter() - write_start) * 1000.0)
-            if wrote:
-                frames_written += 1
-                write_fail_streak = 0
-                metrics.inc("frames_written")
-                metrics.note_broadcast_frame()
-                if frames_written == 10 and out_dir:
-                    try:
-                        from rtmp_utils import write_rtmp_status as _wrs
-                        _wrs(out_dir, "connected")
-                    except Exception:
-                        pass
-            else:
+            if not bc.is_alive():
                 write_fail_streak += 1
                 if write_fail_streak >= 25 and out_dir:
                     try:
@@ -1322,10 +1335,37 @@ def broadcaster_loop(
                         _wrs(
                             out_dir,
                             "failed",
-                            "FFmpeg tidak menerima frame — cek ai_worker_rtmp.log",
+                            "FFmpeg RTMP berhenti — cek ai_worker_rtmp.log",
                         )
                     except Exception:
                         pass
+            else:
+                write_start = time.perf_counter()
+                wrote = bc.write(frame_out, pcm)
+                metrics.record_latency("ffmpeg_write_ms", (time.perf_counter() - write_start) * 1000.0)
+                if wrote:
+                    frames_written += 1
+                    write_fail_streak = 0
+                    metrics.inc("frames_written")
+                    metrics.note_broadcast_frame()
+                    if frames_written == 5 and out_dir:
+                        try:
+                            from rtmp_utils import write_rtmp_status as _wrs
+                            _wrs(out_dir, "connected")
+                        except Exception:
+                            pass
+                else:
+                    write_fail_streak += 1
+                    if write_fail_streak >= 50 and out_dir:
+                        try:
+                            from rtmp_utils import write_rtmp_status as _wrs
+                            _wrs(
+                                out_dir,
+                                "failed",
+                                "FFmpeg tidak menerima frame — cek ai_worker_rtmp.log",
+                            )
+                        except Exception:
+                            pass
         next_seq += 1
 
         metrics.record_latency("broadcast_tick_ms", (time.perf_counter() - tick_start) * 1000.0)
