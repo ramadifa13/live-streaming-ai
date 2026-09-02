@@ -516,6 +516,7 @@ async def get_logs():
     return {"status": "ok", "lines": logs_output[-50:]}
 
 async def process_video_task(req: GenerateVideoRequest, task_id: str):
+    global total_videos_rendered, visual_worker
     audio_path = None
     try:
         # Resolve host_name & host_type dynamically with safe fallbacks
@@ -547,7 +548,6 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
 
         # --- Mode ai_worker: antri utterance ke pipeline real-time ---
         if is_ai_worker_mode() and get_visual_worker is not None:
-            global visual_worker
             if not audio_path or not os.path.exists(audio_path):
                 jobs[task_id] = {
                     "status": "error",
@@ -571,7 +571,6 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                 action=action_tag,
                 priority=bool(req.priority),
             )
-            global total_videos_rendered
             total_videos_rendered += 1
             jobs[task_id] = {
                 "status": "done",
@@ -610,7 +609,6 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
         rel_path = os.path.relpath(final_video_path, os.path.abspath(output_dir))
         video_url = f"/output/{rel_path}".replace("\\", "/")
 
-        global total_videos_rendered
         total_videos_rendered += 1
 
         jobs[task_id] = {
