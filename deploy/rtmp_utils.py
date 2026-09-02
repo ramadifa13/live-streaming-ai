@@ -7,6 +7,9 @@ import re
 from typing import Callable, Optional, Tuple
 
 FATAL_RTMP_MARKERS = (
+    "failed to resolve hostname",
+    "temporary failure in name resolution",
+    "name resolution",
     "session has been invalidated",
     "error in the push function",
     "av_interleaved_write_frame",
@@ -23,6 +26,13 @@ FATAL_RTMP_MARKERS = (
     "broken pipe",
 )
 
+DNS_FAILURE_MARKERS = (
+    "failed to resolve hostname",
+    "temporary failure in name resolution",
+    "name or service not known",
+    "could not resolve host",
+)
+
 USER_HINT_INVALIDATED = (
     "Stream key sudah tidak valid. Di Instagram/Facebook, buat siaran baru "
     "lalu tempel Stream Key yang baru — key lama tidak bisa dipakai ulang."
@@ -37,6 +47,11 @@ USER_HINT_REFUSED = (
 USER_HINT_CONNECTING_SLOW = (
     "RTMP masih handshake — pastikan sudah klik 'Siarkan Langsung' / 'Go Live' "
     "di Instagram/Facebook, lalu tunggu 30–60 detik."
+)
+USER_HINT_DNS = (
+    "Pod GPU tidak bisa resolve hostname Instagram (DNS gagal). "
+    "Di terminal pod: perbaiki /etc/resolv.conf (8.8.8.8, 1.1.1.1), "
+    "lalu redeploy-worker.sh dan gunakan Stream Key baru."
 )
 
 RTMP_CONNECTED_MARKERS = (
@@ -97,8 +112,15 @@ def join_rtmp_url(base_url: str, stream_key: str) -> str:
     return f"{base.rstrip('/')}/{key}"
 
 
+def is_dns_failure_line(line: str) -> bool:
+    low = (line or "").lower()
+    return any(marker in low for marker in DNS_FAILURE_MARKERS)
+
+
 def classify_ffmpeg_line(line: str) -> Optional[str]:
     low = (line or "").lower()
+    if is_dns_failure_line(line):
+        return USER_HINT_DNS
     if not any(marker in low for marker in FATAL_RTMP_MARKERS):
         return None
     if "session has been invalidated" in low or "error in the push function" in low:

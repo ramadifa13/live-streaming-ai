@@ -66,6 +66,30 @@ WORKER_PORT="${PORT:-8000}"
 echo "[INFO] BROADCAST_MODE=${BROADCAST_MODE:-segment}"
 echo "[INFO] PORT=${WORKER_PORT}"
 
+# DNS pod RunPod kadang gagal resolve fbcdn.net → RTMP Instagram tidak pernah connect.
+ensure_worker_dns() {
+	local probe="${1:-live-upload.instagram.com}"
+	if getent hosts "$probe" >/dev/null 2>&1; then
+		return 0
+	fi
+	echo "[WARN] DNS gagal resolve $probe — mencoba perbaiki nameserver..."
+	if [ -w /etc/resolv.conf ]; then
+		{
+			echo "nameserver 8.8.8.8"
+			echo "nameserver 1.1.1.1"
+			echo "nameserver 8.8.4.4"
+		} >> /etc/resolv.conf
+	fi
+	if getent hosts "$probe" >/dev/null 2>&1; then
+		echo "[OK] DNS pulih setelah update resolv.conf"
+		return 0
+	fi
+	echo "[WARN] DNS masih gagal — RTMP Instagram kemungkinan tidak connect."
+	echo "       Manual: echo -e 'nameserver 8.8.8.8\\nnameserver 1.1.1.1' | sudo tee /etc/resolv.conf"
+	return 1
+}
+ensure_worker_dns || true
+
 worker_health_url() {
 	echo "http://127.0.0.1:${WORKER_PORT}/health"
 }
