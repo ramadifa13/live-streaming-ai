@@ -149,7 +149,7 @@ echo "Memulai AI Worker API (port ${WORKER_PORT})..."
 "$PYTHON_BIN" api_server.py >> "$WORKER_DIR/api_server.log" 2>&1 &
 API_PID=$!
 
-for attempt in $(seq 1 120); do
+for attempt in $(seq 1 300); do
 	if is_worker_healthy; then
 		echo "[OK] AI Worker API aktif dan merespon di port ${WORKER_PORT}!"
 		break
@@ -160,9 +160,9 @@ for attempt in $(seq 1 120); do
 		tail -50 "$WORKER_DIR/api_server.log" 2>/dev/null || true
 		exit 1
 	fi
-	if [ "$attempt" -eq 120 ]; then
-		echo "[ERROR] api_server.py timeout 120s. Log:"
-		tail -50 "$WORKER_DIR/api_server.log" 2>/dev/null || true
+	if [ "$attempt" -eq 300 ]; then
+		echo "[ERROR] api_server.py timeout 300s. Log:"
+		tail -80 "$WORKER_DIR/api_server.log" 2>/dev/null || true
 		exit 1
 	fi
 done

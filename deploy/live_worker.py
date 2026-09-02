@@ -43,17 +43,32 @@ class AILiveWorker:
         self._ensure_musetalk_layout()
         self._clean_temp_dir()
 
-        # Warmup berat (load model ke VRAM & pre-cache avatar assets)
+        # Warmup berat (load model ke VRAM & pre-cache avatar) — jangan blokir HTTP startup.
         self._warmed_up = False
+        warmup_flag = (os.environ.get("MUSETALK_WARMUP_ON_START") or "0").strip().lower()
+        if warmup_flag in ("1", "true", "yes", "on"):
+            threading.Thread(
+                target=self._warmup_musetalk_safe,
+                name="MuseTalkWarmup",
+                daemon=True,
+            ).start()
+            print("[WARMUP] MuseTalk warmup di background (MUSETALK_WARMUP_ON_START=1)")
+        else:
+            print(
+                "[WARMUP] Skip startup warmup (MUSETALK_WARMUP_ON_START=0) — "
+                "model dimuat saat broadcast/utterance pertama."
+            )
+
+        print(
+            f"[INFO] 🚀 AI Worker API siap (Batch: {self.batch_size}, warmup deferred={warmup_flag not in ('1', 'true', 'yes', 'on')})..."
+        )
+
+    def _warmup_musetalk_safe(self) -> None:
         try:
             self._warmup_musetalk()
             self._warmed_up = True
         except Exception as e:
             print(f"[WARMUP WARNING] Pre-load MuseTalk notice: {e}")
-
-        print(
-            f"[INFO] 🚀 AI Worker siap melayani render video MuseTalk (Batch: {self.batch_size}, Audio: Piper-TTS Backend)..."
-        )
 
     def _clean_temp_dir(self):
         """Clean leftover temporary files from previous runs to save disk."""
@@ -129,7 +144,10 @@ class AILiveWorker:
         original_cwd = os.getcwd()
         os.chdir(musetalk_dir)
         try:
-            from scripts.inference import _load_models_cached, _get_avatar_materials
+            try:
+                from inference import _load_models_cached, _get_avatar_materials
+            except ImportError:
+                from scripts.inference import _load_models_cached, _get_avatar_materials
             paths = self._musetalk_paths()
             dummy_args = Namespace(
                 gpu_id=0,
@@ -153,7 +171,10 @@ class AILiveWorker:
 
     def _precache_idle_videos(self, models_bundle=None):
         print("[WARMUP] ⏳ Pre-caching avatar assets & face masks in RAM...")
-        from scripts.inference import _get_avatar_materials
+        try:
+            from inference import _get_avatar_materials
+        except ImportError:
+            from scripts.inference import _get_avatar_materials
         
         vae = models_bundle['vae'] if models_bundle else None
         fp = models_bundle['fp'] if models_bundle else None
