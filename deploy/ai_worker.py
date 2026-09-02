@@ -1150,7 +1150,10 @@ def frame_fetcher_loop(
     while not stop_event.is_set():
         tick_start = time.perf_counter()
         whisper_idx = None
-        if audio_fn_ext is not None:
+        if bridge is not None:
+            is_speech, whisper_idx = bridge.peek_audio_state()
+            pcm = b"\x00" * BYTES_PER_AUDIO_FRAME
+        elif audio_fn_ext is not None:
             pcm, is_speech, whisper_idx = audio_fn_ext()
         else:
             pcm, is_speech = audio_fn()
@@ -1563,6 +1566,7 @@ def broadcaster_loop(
     stop_event: threading.Event,
     output_folder: str = "",
     bc: Optional["StreamBroadcaster"] = None,
+    bridge: Optional["SpeechBridge"] = None,
 ) -> None:
     period = 1.0 / float(TARGET_FPS)
     deadline = time.perf_counter()
@@ -1578,6 +1582,12 @@ def broadcaster_loop(
     overlay_alpha = None
 
     out_dir = output_folder or os.environ.get("OUTPUT_FOLDER", "")
+    bridge_ref = bridge
+    if bridge_ref is None:
+        try:
+            bridge_ref = get_speech_bridge(out_dir)
+        except Exception:
+            bridge_ref = None
     if out_dir:
         try:
             from rtmp_utils import write_rtmp_status
@@ -1652,19 +1662,27 @@ def broadcaster_loop(
         metrics.set_gauge("render_queue_depth", float(render_q.qsize()))
         pkt = pending.pop(next_seq, None)
         if pkt is None and pending:
-            # LipSync tertinggal — resync ke frame terbaru, jangan freeze di last_good.
+            # Resync: ambil frame terbaru meski next_seq sudah melaju (cegah idle+silent permanen).
             best_seq = max(pending.keys())
-            if best_seq >= next_seq:
-                for stale in [s for s in list(pending.keys()) if s < best_seq]:
-                    pending.pop(stale, None)
-                pkt = pending.pop(best_seq)
-                next_seq = best_seq
-        if pkt is not None:
-            last_good = pkt.frame
+            for stale in [s for s in list(pending.keys()) if s != best_seq]:
+                pending.pop(stale, None)
+            pkt = pending.pop(best_seq, None)
+            if pkt is not None and best_seq != next_seq:
+                metrics.inc("broadcast_seq_resync")
+            next_seq = best_seq
+
+        # Audio dikonsumsi hanya di sini — tidak ikut hilang saat video packet miss.
+        if bridge_ref is not None:
+            pcm, _, _ = bridge_ref.get_audio_chunk()
+        elif pkt is not None:
             pcm = pkt.audio_pcm
-            stale_misses = 0
         else:
             pcm = silence
+
+        if pkt is not None:
+            last_good = pkt.frame
+            stale_misses = 0
+        else:
             stale_misses += 1
             metrics.inc("frames_duplicated")
             if stale_misses >= IDLE_FALLBACK_AFTER:
@@ -1987,7 +2005,14 @@ class AIVisualWorker:
             ),
             threading.Thread(
                 target=broadcaster_loop,
-                args=(self._bank, self._render_q, self._stop, self.output_folder, broadcaster_ref),
+                args=(
+                    self._bank,
+                    self._render_q,
+                    self._stop,
+                    self.output_folder,
+                    broadcaster_ref,
+                    bridge_ref,
+                ),
                 name="Broadcaster",
                 daemon=True,
             ),

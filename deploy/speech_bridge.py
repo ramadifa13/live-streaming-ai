@@ -342,6 +342,20 @@ class SpeechBridge:
     def is_awaiting_visual_tail(self) -> bool:
         return self._awaiting_visual_tail
 
+    def peek_audio_state(self) -> Tuple[bool, Optional[int]]:
+        """Non-consuming peek — untuk state machine / lipsync index tanpa mengambil PCM."""
+        if not self.playback_active():
+            return False, None
+        self._start_next_if_needed()
+        if self._current is None:
+            return False, None
+        if self._frame_cursor >= self._current.num_frames:
+            if not self._audio_exhausted:
+                self._audio_exhausted = True
+                self._awaiting_visual_tail = True
+            return False, None
+        return True, self._frame_cursor
+
     def get_audio_chunk(self) -> Tuple[bytes, bool, Optional[int]]:
         """Return (pcm_stereo, is_speech, whisper_frame_index).
 
