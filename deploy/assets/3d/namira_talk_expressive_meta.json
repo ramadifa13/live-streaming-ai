@@ -1,0 +1,5 @@
+{
+  "base_pose_frame": 0,
+  "end_pose_frame": -1,
+  "comment": "First frame dan last frame harus pose sama agar loop seamless saat audio panjang."
+}

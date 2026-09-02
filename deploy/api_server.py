@@ -49,8 +49,29 @@ if load_env_files is not None:
 
 from live_worker import AILiveWorker
 
-# Init AI Worker
+try:
+    from ai_worker import (
+        get_visual_worker,
+        start_visual_broadcast,
+        stop_visual_broadcast,
+        is_ai_worker_mode,
+    )
+    from speech_bridge import get_speech_bridge
+except ImportError:
+    get_visual_worker = None  # type: ignore
+    start_visual_broadcast = None  # type: ignore
+    stop_visual_broadcast = None  # type: ignore
+
+    def is_ai_worker_mode() -> bool:
+        return False
+
+    def get_speech_bridge(output_folder: str = ""):
+        return None
+
+# Init AI Worker (batch MuseTalk — fallback saat BROADCAST_MODE != ai_worker)
 worker = AILiveWorker()
+os.environ.setdefault("WORKER_TEMP", worker.temp_dir)
+visual_worker = None  # AIVisualWorker in-process saat mode ai_worker
 
 # In-memory jobs tracking with TTL cleanup
 jobs: Dict[str, Dict[str, Any]] = {}
@@ -231,6 +252,8 @@ _broadcast_boot_error = ""
 
 def _broadcaster_script_path(mode: Optional[str] = None) -> str:
     resolved = (mode or os.environ.get("BROADCAST_MODE") or "segment").strip().lower()
+    if resolved in ("ai_worker", "ai-worker", "realtime", "visual_worker"):
+        return ""  # in-process — tidak spawn subprocess
     name = "frame_feed.py" if resolved in ("frame_feed", "frame-feed", "continuous") else "broadcaster.py"
     candidate = os.path.join(os.path.dirname(__file__), name)
     if os.path.exists(candidate):
@@ -323,12 +346,12 @@ def _terminate_broadcaster(timeout: float = 8.0) -> None:
 
 async def periodic_cleanup_and_watchdog():
     """Background supervisor: auto-restarts crashed broadcaster and cleans up temp files."""
-    global broadcaster_process, current_broadcast_env
+    global broadcaster_process, current_broadcast_env, visual_worker
     global broadcaster_restarts, broadcaster_next_restart_at
     while True:
         try:
             await asyncio.sleep(5)
-            # 1. Watchdog for broadcaster
+            # 1. Watchdog for subprocess broadcaster
             if current_broadcast_env and broadcaster_process is not None:
                 rtmp_state, rtmp_err = ("disconnected", "")
                 if read_rtmp_status is not None:
@@ -378,6 +401,22 @@ async def periodic_cleanup_and_watchdog():
                             )
                         except Exception as restart_err:
                             print(f"[WATCHDOG ERROR] Gagal me-restart broadcaster: {restart_err}")
+            elif current_broadcast_env and is_ai_worker_mode():
+                rtmp_state, rtmp_err = ("disconnected", "")
+                if read_rtmp_status is not None:
+                    rtmp_state, rtmp_err = read_rtmp_status(output_dir)
+                if rtmp_state == "failed":
+                    print(
+                        "[WATCHDOG STOP] RTMP fatal (ai_worker) — "
+                        f"hentikan siaran manual. {rtmp_err}"
+                    )
+                    current_broadcast_env = None
+                    if stop_visual_broadcast is not None:
+                        stop_visual_broadcast()
+                    visual_worker = None
+                elif visual_worker is not None and not visual_worker.is_running:
+                    print("[WATCHDOG ALERT] AIVisualWorker berhenti — siaran perlu di-start ulang.")
+                    current_broadcast_env = None
             elif broadcaster_process is not None and broadcaster_process.poll() is None:
                 # Siaran sudah dihentikan tetapi proses masih hidup.
                 _terminate_broadcaster()
@@ -408,12 +447,15 @@ async def lifespan(app: FastAPI):
     watchdog_task = asyncio.create_task(periodic_cleanup_and_watchdog())
     yield
     # Shutdown
-    global broadcaster_process, current_broadcast_env
+    global broadcaster_process, current_broadcast_env, visual_worker
     print("[AI-Worker] FastAPI Server shutting down. Cleaning up processes...")
     if watchdog_task:
         watchdog_task.cancel()
     current_broadcast_env = None
     _terminate_broadcaster()
+    if stop_visual_broadcast is not None:
+        stop_visual_broadcast()
+    visual_worker = None
 
 app = FastAPI(title="LiveStreamer AI Worker", lifespan=lifespan)
 
@@ -452,6 +494,8 @@ async def health():
         "warmed_up": getattr(worker, "_warmed_up", False),
         "batch_size": worker.batch_size,
         "active_jobs": len(jobs),
+        "broadcast_mode": os.environ.get("BROADCAST_MODE", "segment"),
+        "visual_worker_running": visual_worker is not None and visual_worker.is_running,
     }
 
 @app.get("/logs")
@@ -500,6 +544,46 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                 return
         elif req.audio_url or req.audioUrl:
             audio_path = req.audio_url or req.audioUrl
+
+        # --- Mode ai_worker: antri utterance ke pipeline real-time ---
+        if is_ai_worker_mode() and get_visual_worker is not None:
+            global visual_worker
+            if not audio_path or not os.path.exists(audio_path):
+                jobs[task_id] = {
+                    "status": "error",
+                    "error": "Audio tidak tersedia untuk mode ai_worker",
+                    "created_at": time.time(),
+                }
+                return
+            if visual_worker is None or not visual_worker.is_running:
+                jobs[task_id] = {
+                    "status": "error",
+                    "error": "Siaran belum dimulai — panggil /stream/start-broadcast dulu",
+                    "created_at": time.time(),
+                }
+                return
+            action_tag = (req.action or "talk_expressive").strip().lower()
+            if not action_tag or action_tag in ("none", "null"):
+                action_tag = "talk_expressive"
+            visual_worker.enqueue_utterance(
+                audio_path,
+                task_id=task_id,
+                action=action_tag,
+                priority=bool(req.priority),
+            )
+            global total_videos_rendered
+            total_videos_rendered += 1
+            jobs[task_id] = {
+                "status": "done",
+                "engine": "AIVisualWorker realtime",
+                "lip_sync_active": True,
+                "queued_utterances": get_speech_bridge(output_dir).pending_count()
+                if get_speech_bridge(output_dir)
+                else 1,
+                "created_at": time.time(),
+            }
+            print(f"[API SUCCESS] Utterance queued {task_id} action={action_tag}")
+            return
 
         # Apply timeout safety to avoid stuck tasks (5 minutes timeout for cold-start / warmup)
         final_video_path = await asyncio.wait_for(
@@ -552,8 +636,13 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
             "created_at": time.time(),
         }
     finally:
-        # Bersihkan audio temp file yang dibuat oleh API server
-        if audio_path and os.path.exists(audio_path) and audio_path.startswith(worker.temp_dir):
+        # Bersihkan audio temp — kecuali ai_worker masih memakai file untuk prep
+        if (
+            audio_path
+            and os.path.exists(audio_path)
+            and audio_path.startswith(worker.temp_dir)
+            and not is_ai_worker_mode()
+        ):
             try:
                 os.remove(audio_path)
             except Exception:
@@ -597,7 +686,16 @@ async def get_queue_status():
     active_processing = [
         jid for jid, info in jobs.items() if info.get("status") == "processing"
     ]
-    is_broadcasting = broadcaster_process is not None and broadcaster_process.poll() is None
+    is_broadcasting = (
+        (broadcaster_process is not None and broadcaster_process.poll() is None)
+        or (visual_worker is not None and visual_worker.is_running)
+    )
+
+    utterance_pending = 0
+    if is_ai_worker_mode():
+        bridge = get_speech_bridge(output_dir)
+        if bridge is not None:
+            utterance_pending = bridge.pending_count()
 
     playable_seconds = sum(_probe_duration_seconds(p) for p in playable_paths)
     in_flight_seconds = len(active_processing) * AVG_RENDER_SECONDS
@@ -646,6 +744,8 @@ async def get_queue_status():
         "rtmp_error": rtmp_error,
         "rtmp_state": rtmp_state,
         "warmed_up": getattr(worker, "_warmed_up", False),
+        "utterance_queue_count": utterance_pending,
+        "broadcast_mode": os.environ.get("BROADCAST_MODE", "segment"),
     }
 
 class BroadcastRequest(BaseModel):
@@ -742,7 +842,7 @@ async def start_broadcast(req: BroadcastRequest):
 
 def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     global broadcaster_process, total_videos_rendered, current_broadcast_env
-    global broadcaster_restarts, broadcaster_next_restart_at
+    global broadcaster_restarts, broadcaster_next_restart_at, visual_worker
 
     final_rtmp_url = (req.rtmp_url or req.rtmpUrl or "").strip()
     final_stream_key = (
@@ -754,11 +854,27 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     if not final_rtmp_url or not final_stream_key:
         raise ValueError("rtmp_url dan stream_key wajib diisi")
 
-    # Idempoten HANYA jika RTMP benar-benar connected. Proses Python yang
-    # masih hidup setelah FFmpeg drop bukan alasan untuk menolak key baru
-    # atau retry.
+    try:
+        from rtmp_utils import join_rtmp_url
+    except ImportError:
+        join_rtmp_url = lambda base, key: f"{base.rstrip('/')}/{key}"  # type: ignore
+
+    publish_url = join_rtmp_url(final_rtmp_url, final_stream_key)
+
+    # Idempoten HANYA jika RTMP benar-benar connected.
     already_connected = False
-    if (
+    mode = (
+        os.environ.get("BROADCAST_MODE")
+        or "segment"
+    ).strip().lower()
+    ai_mode = mode in ("ai_worker", "ai-worker", "realtime", "visual_worker")
+
+    if ai_mode and visual_worker is not None and visual_worker.is_running:
+        rtmp_state = "disconnected"
+        if read_rtmp_status is not None:
+            rtmp_state, _ = read_rtmp_status(output_dir)
+        already_connected = rtmp_state == "connected"
+    elif (
         broadcaster_process is not None
         and broadcaster_process.poll() is None
         and current_broadcast_env is not None
@@ -770,14 +886,15 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
             rtmp_state, _ = read_rtmp_status(output_dir)
         already_connected = rtmp_state == "connected"
     if already_connected:
+        pid = broadcaster_process.pid if broadcaster_process else 0
         print(
             "[AI-Worker] start-broadcast diabaikan — siaran dengan target yang "
-            f"sama sudah aktif (PID: {broadcaster_process.pid})."
+            f"sama sudah aktif."
         )
         return {
             "success": True,
             "status": "already_running",
-            "pid": broadcaster_process.pid,
+            "pid": pid,
         }
 
     os.makedirs(output_dir, exist_ok=True)
@@ -804,6 +921,9 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
 
     # Hentikan broadcaster lama jika ada agar tidak bentrok RTMP URL
     _terminate_broadcaster(timeout=2.0)
+    if stop_visual_broadcast is not None:
+        stop_visual_broadcast()
+    visual_worker = None
     if write_rtmp_status is not None:
         write_rtmp_status(output_dir, "connecting")
 
@@ -862,6 +982,39 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         env["MUSETALK_SKIP_MP4"] = os.environ.get("MUSETALK_SKIP_MP4", "1")
     current_broadcast_env = env
 
+    # Render overlay produk sekali (dipakai ai_worker & frame_feed)
+    try:
+        from broadcaster import prepare_overlay_files
+        prepare_overlay_files(
+            output_dir,
+            product_name=config_data.get("product_name", ""),
+            product_price=config_data.get("product_price", ""),
+            product_image_url=config_data.get("product_image_url", ""),
+            banner_image_url=config_data.get("banner_image_url", ""),
+        )
+    except Exception as overlay_err:
+        print(f"[AI-Worker] Overlay notice: {overlay_err}")
+
+    if ai_mode and start_visual_broadcast is not None:
+        os.environ["AI_WORKER_FPS"] = os.environ.get(
+            "AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "30")
+        )
+        visual_worker = start_visual_broadcast(
+            publish_url,
+            idle_video=resolved_idle or "",
+            output_folder=output_dir,
+            host="namira",
+        )
+        bridge = get_speech_bridge(output_dir)
+        if bridge is not None:
+            bridge.output_folder = output_dir
+        print(
+            f"[AI-Worker] AIVisualWorker aktif @ {os.environ.get('AI_WORKER_FPS', '30')}fps "
+            f"(in-process, no subprocess)"
+        )
+        broadcaster_process = None
+        return {"success": True, "status": "starting", "pid": os.getpid(), "mode": "ai_worker"}
+
     broadcaster_process = _spawn_broadcaster(env)
     print(
         f"[AI-Worker] Broadcaster dipicu (PID: {broadcaster_process.pid}, "
@@ -880,13 +1033,16 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
 @app.post("/stream/stop-broadcast")
 async def stop_broadcast():
     global broadcaster_process, total_videos_rendered, current_broadcast_env
-    global _broadcast_boot_state, _broadcast_boot_error, _broadcast_boot_task
+    global _broadcast_boot_state, _broadcast_boot_error, _broadcast_boot_task, visual_worker
     current_broadcast_env = None
     _broadcast_boot_state = "idle"
     _broadcast_boot_error = ""
     if _broadcast_boot_task and not _broadcast_boot_task.done():
         _broadcast_boot_task.cancel()
     _terminate_broadcaster(timeout=10.0)
+    if stop_visual_broadcast is not None:
+        stop_visual_broadcast()
+    visual_worker = None
 
     # Reset monotonic counter saat siaran selesai
     total_videos_rendered = 0
@@ -929,7 +1085,10 @@ async def update_stream_product(req: UpdateProductRequest):
 
 @app.get("/stream/broadcast-status")
 async def broadcast_status():
-    running = broadcaster_process is not None and broadcaster_process.poll() is None
+    running = (
+        (broadcaster_process is not None and broadcaster_process.poll() is None)
+        or (visual_worker is not None and visual_worker.is_running)
+    )
     rtmp_connected = False
     rtmp_state = "disconnected"
     rtmp_error = ""

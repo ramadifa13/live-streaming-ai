@@ -1,0 +1,5 @@
+{
+  "base_pose_frame": 0,
+  "end_pose_frame": -1,
+  "comment": "end_pose_frame -1 = frame terakhir. Set eksplisit jika pose akhir bukan frame terakhir file."
+}
