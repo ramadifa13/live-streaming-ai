@@ -1560,8 +1560,16 @@ def broadcaster_loop(
                 break
 
         metrics.set_gauge("render_queue_depth", float(render_q.qsize()))
-        if next_seq in pending:
-            pkt = pending.pop(next_seq)
+        pkt = pending.pop(next_seq, None)
+        if pkt is None and pending:
+            # LipSync tertinggal — resync ke frame terbaru, jangan freeze di last_good.
+            best_seq = max(pending.keys())
+            if best_seq >= next_seq:
+                for stale in [s for s in list(pending.keys()) if s < best_seq]:
+                    pending.pop(stale, None)
+                pkt = pending.pop(best_seq)
+                next_seq = best_seq
+        if pkt is not None:
             last_good = pkt.frame
             pcm = pkt.audio_pcm
         else:
@@ -1708,7 +1716,7 @@ class AIVisualWorker:
             unet_config=os.path.join(models_root, "musetalkV15", "musetalk.json"),
             whisper_dir=os.path.join(models_root, "whisper"),
             vae_type="sd-vae-ft-mse",
-            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "8")),
+            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "2")),
         )
 
         original_cwd = os.getcwd()
@@ -1733,7 +1741,7 @@ class AIVisualWorker:
         self._engine = LipSyncEngine(
             models,
             self._bank,
-            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "8")),
+            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "2")),
             face_registry=self._face_registry,
         )
         if self._bridge is not None:

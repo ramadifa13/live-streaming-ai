@@ -329,8 +329,8 @@ class SpeechBridge:
         with self._lock:
             if self._current is None:
                 return
-            if not self._audio_exhausted:
-                return
+        # Jangan gate on _audio_exhausted — SM sudah konfirmasi visual selesai.
+        # Cek _audio_exhausted saja bisa bikin _current stuck → utterance #2+ tidak pernah play.
         self._finish_current()
 
     def is_utterance_active(self) -> bool:
