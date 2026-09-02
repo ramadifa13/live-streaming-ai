@@ -111,6 +111,9 @@ class UtteranceJob:
     whisper_chunks: Optional[torch.Tensor] = None
     num_frames: int = 0
     ready: threading.Event = field(default_factory=threading.Event)
+    lipsync_ready: threading.Event = field(default_factory=threading.Event)
+    lipsync_primed: bool = False
+    primed_at: float = 0.0
     error: str = ""
     created_at: float = field(default_factory=time.time)
 
@@ -129,6 +132,7 @@ class SpeechBridge:
         self._models = None
         self._on_utterance_start: Optional[Callable[[UtteranceJob], None]] = None
         self._on_utterance_end: Optional[Callable[[UtteranceJob], None]] = None
+        self._on_utterance_ready: Optional[Callable[[UtteranceJob], None]] = None
         self._silence = b"\x00" * BYTES_PER_AUDIO_FRAME
         self._audio_exhausted = False
         self._awaiting_visual_tail = False
@@ -157,9 +161,11 @@ class SpeechBridge:
         self,
         on_start: Optional[Callable[[UtteranceJob], None]] = None,
         on_end: Optional[Callable[[UtteranceJob], None]] = None,
+        on_ready: Optional[Callable[[UtteranceJob], None]] = None,
     ) -> None:
         self._on_utterance_start = on_start
         self._on_utterance_end = on_end
+        self._on_utterance_ready = on_ready
 
     def playback_active(self) -> bool:
         flag = os.path.join(self.output_folder, "playback_active.flag")
@@ -256,37 +262,69 @@ class SpeechBridge:
             audio_padding_length_left=2,
             audio_padding_length_right=2,
         )
-        # Sesuaikan panjang dengan PCM frames
+        # Sesuaikan panjang dengan PCM frames.
+        # Jangan pad dengan viseme terakhir — mulut akan tertahan terbuka di akhir audio.
         if chunks.shape[0] > num_frames:
             chunks = chunks[:num_frames]
         elif chunks.shape[0] < num_frames and chunks.shape[0] > 0:
-            pad = chunks[-1:].repeat(num_frames - chunks.shape[0], 1, 1)
-            chunks = torch.cat([chunks, pad], dim=0)
+            pad_n = num_frames - chunks.shape[0]
+            zeros = torch.zeros(
+                (pad_n,) + tuple(chunks.shape[1:]),
+                dtype=chunks.dtype,
+            )
+            chunks = torch.cat([chunks, zeros], dim=0)
         return chunks.cpu()
 
     def _start_next_if_needed(self) -> None:
+        """Idle tetap jalan sampai job siap + preroll mulut selesai (tanpa freeze frame)."""
         if self._current is not None:
             return
+        preroll_timeout = float(os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.0"))
+        candidate = None
         with self._lock:
             while self._pending:
-                candidate = self._pending.popleft()
-                if not candidate.ready.wait(timeout=0.05):
-                    self._pending.appendleft(candidate)
+                nxt = self._pending[0]
+                if not nxt.ready.is_set():
                     return
-                if candidate.error or candidate.num_frames <= 0:
-                    print(f"[SpeechBridge] Skip {candidate.task_id}: {candidate.error or 'empty'}")
+                nxt = self._pending.popleft()
+                if nxt.error or nxt.num_frames <= 0:
+                    print(f"[SpeechBridge] Skip {nxt.task_id}: {nxt.error or 'empty'}")
                     continue
-                self._current = candidate
-                self._frame_cursor = 0
-                self._audio_exhausted = False
-                self._awaiting_visual_tail = False
-                if self._on_utterance_start:
-                    try:
-                        self._on_utterance_start(candidate)
-                    except Exception as err:
-                        print(f"[SpeechBridge] on_start notice: {err}")
-                print(f"[SpeechBridge] ▶ Playing {candidate.task_id}")
+                candidate = nxt
+                break
+        if candidate is None:
+            return
+
+        if not candidate.lipsync_primed:
+            candidate.lipsync_primed = True
+            candidate.primed_at = time.monotonic()
+            if self._on_utterance_ready is not None:
+                try:
+                    self._on_utterance_ready(candidate)
+                except Exception as err:
+                    print(f"[SpeechBridge] on_ready notice: {err}")
+                    candidate.lipsync_ready.set()
+            else:
+                candidate.lipsync_ready.set()
+
+        if not candidate.lipsync_ready.is_set():
+            waited = time.monotonic() - (candidate.primed_at or candidate.created_at)
+            if waited < preroll_timeout:
+                with self._lock:
+                    self._pending.appendleft(candidate)
                 return
+
+        with self._lock:
+            self._current = candidate
+            self._frame_cursor = 0
+            self._audio_exhausted = False
+            self._awaiting_visual_tail = False
+        if self._on_utterance_start:
+            try:
+                self._on_utterance_start(candidate)
+            except Exception as err:
+                print(f"[SpeechBridge] on_start notice: {err}")
+        print(f"[SpeechBridge] ▶ Playing {candidate.task_id}")
 
     def _finish_current(self) -> None:
         finished = self._current

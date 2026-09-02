@@ -21,6 +21,7 @@ All video assets are decoded once at init into RAM. No disk I/O during stream.
 from __future__ import annotations
 
 import os
+import math
 import random
 import sys
 import time
@@ -55,18 +56,25 @@ TARGET_FPS = int(os.environ.get("AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS"
 SAMPLE_RATE = 44100
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
 BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2  # stereo s16le
-CROSSFADE_FRAMES = int(os.environ.get("AI_WORKER_CROSSFADE", "4"))
-OVERLAP_FRAMES = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "5"))
+CROSSFADE_FRAMES = int(os.environ.get("AI_WORKER_CROSSFADE", "6"))
+OVERLAP_FRAMES = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "6"))
 BBOX_SMOOTH_WINDOW = int(os.environ.get("AI_WORKER_BBOX_SMOOTH", "7"))
 RAW_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RAW_QUEUE", "24"))
 RENDER_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RENDER_QUEUE", "48"))
 RAW_QUEUE_BLOCK_SEC = float(os.environ.get("AI_WORKER_RAW_BLOCK_SEC", "0.25"))
-MASK_FEATHER_PX = int(os.environ.get("AI_WORKER_MASK_FEATHER", "9"))
+MASK_FEATHER_PX = int(os.environ.get("AI_WORKER_MASK_FEATHER", "15"))
 AMBIENT_MIN_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MIN_SEC", "18"))
 AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "42"))
 IDLE_FALLBACK_AFTER = int(os.environ.get("AI_WORKER_IDLE_FALLBACK_AFTER", "2"))
 BROADCAST_MAX_LAG = int(os.environ.get("AI_WORKER_BROADCAST_MAX_LAG", "8"))
-BROADCAST_RENDER_WAIT_SEC = float(os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.04"))
+BROADCAST_RENDER_WAIT_SEC = float(os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.10"))
+MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.62"))
+MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0.32"))
+MOUTH_MAX_DELTA = float(os.environ.get("MUSETALK_MAX_DELTA", "30"))
+LIPSYNC_PREROLL_FRAMES = int(os.environ.get("MUSETALK_PREROLL_FRAMES", "6"))
+LIPSYNC_WAIT_SEC = float(os.environ.get("MUSETALK_MOUTH_WAIT_SEC", "0.02"))
+LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "0"))
+LIPSYNC_PREROLL_TIMEOUT_SEC = float(os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.0"))
 
 
 def _ambient_gesture_names() -> List[str]:
@@ -209,6 +217,8 @@ class RenderedPacket:
     seq: int
     frame: np.ndarray
     audio_pcm: bytes
+    clip_name: str = ""
+    frame_idx: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -241,55 +251,74 @@ def blend_crossfade(a: np.ndarray, b: np.ndarray, alpha: float) -> np.ndarray:
     return blend_weighted(a, b, alpha)
 
 
+def _ease_in_out(t: float) -> float:
+    """Cosine ease — transisi clip tanpa lonjakan alpha di awal/akhir."""
+    t = max(0.0, min(1.0, float(t)))
+    return 0.5 - 0.5 * math.cos(math.pi * t)
+
+
+def _pcm_rms(pcm: bytes) -> float:
+    if not pcm:
+        return 0.0
+    samples = np.frombuffer(pcm, dtype=np.int16)
+    if samples.size == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(samples.astype(np.float32) ** 2))) / 32768.0
+
+
+def _mouth_strength_for_pcm(pcm: bytes) -> float:
+    """Lebih pelan saat audio lemah — mulut tidak melebar di jeda kata."""
+    base = max(0.25, min(0.85, MOUTH_STRENGTH))
+    rms = _pcm_rms(pcm)
+    t = float(np.clip((rms - 0.015) / 0.12, 0.0, 1.0))
+    return base * (0.50 + 0.50 * t)
+
+
+def _dampen_generated_mouth(original: np.ndarray, generated: np.ndarray, strength: float) -> np.ndarray:
+    """Campur hasil MuseTalk dengan crop asli + clamp delta agar rahang tidak tertarik."""
+    if original is None or generated is None:
+        return generated if generated is not None else original
+    if original.shape != generated.shape:
+        generated = cv2.resize(
+            generated, (original.shape[1], original.shape[0]), interpolation=cv2.INTER_CUBIC
+        )
+    orig_f = original.astype(np.float32)
+    gen_f = generated.astype(np.float32)
+    delta = gen_f - orig_f
+    cap = max(8.0, MOUTH_MAX_DELTA)
+    delta = np.clip(delta, -cap, cap)
+    mixed = orig_f + delta * float(np.clip(strength, 0.0, 1.0))
+    return np.clip(mixed, 0, 255).astype(np.uint8)
+
+
+def _talk_body_index(clip: "ClipAsset", whisper_idx: int) -> int:
+    span = max(1, clip.end_pose - clip.base_pose_frame + 1)
+    return clip.base_pose_frame + (int(whisper_idx) % span)
+
+
 # ---------------------------------------------------------------------------
-# Face bbox lock + moving average (stabilkan mulut antar clip)
+# Face bbox — per-frame materials only (jangan lock bbox ke pose lain)
 # ---------------------------------------------------------------------------
 class FaceCoordRegistry:
-    """Lock mask/bbox dari frame sumber; smooth dengan moving average."""
+    """Ambil mask/bbox milik frame yang sedang tampil. Tanpa lock lintas-pose."""
 
     def __init__(self, window: int = BBOX_SMOOTH_WINDOW):
-        self._window = max(3, window)
-        self._history: deque = deque(maxlen=self._window)
-        self._locked_mat: Optional[Tuple] = None
+        self._window = max(1, window)
 
     def lock_from_clip(self, clip: ClipAsset, frame_idx: int) -> None:
-        if not clip.mask_materials_cycle:
-            return
-        n = max(1, len(clip.frames))
-        forward_n = min(n, len(clip.mask_materials_cycle) // 2 or len(clip.mask_materials_cycle))
-        cidx = max(0, min(frame_idx, forward_n - 1))
-        mat = clip.mask_materials_cycle[cidx % len(clip.mask_materials_cycle)]
-        if not mat:
-            return
-        self._locked_mat = mat
-        self._history.clear()
-        self._history.append(tuple(int(v) for v in mat[2]))
-        print(f"[FaceCoord] Bbox locked ← {clip.name} @ frame {frame_idx}")
+        return
 
     def release_lock(self) -> None:
-        self._locked_mat = None
-        self._history.clear()
-
-    def _smooth_bbox(self, bbox) -> Tuple[int, int, int, int]:
-        box = tuple(int(v) for v in bbox)
-        self._history.append(box)
-        if len(self._history) < 2:
-            return box
-        smoothed = np.mean(list(self._history), axis=0)
-        return tuple(int(round(v)) for v in smoothed)
+        return
 
     def get_material(self, clip: ClipAsset, cidx: int) -> Optional[Tuple]:
-        if self._locked_mat is not None:
-            mask_array, crop_box, face_box = self._locked_mat
-            smooth = self._smooth_bbox(face_box)
-            return feather_mask(mask_array), crop_box, smooth
-        if clip.mask_materials_cycle:
-            mat = clip.mask_materials_cycle[cidx % len(clip.mask_materials_cycle)]
-            if mat:
-                mask_array, crop_box, face_box = mat
-                smooth = self._smooth_bbox(face_box)
-                return feather_mask(mask_array), crop_box, smooth
-        return None
+        if not clip.mask_materials_cycle:
+            return None
+        mat = clip.mask_materials_cycle[cidx % len(clip.mask_materials_cycle)]
+        if not mat:
+            return None
+        mask_array, crop_box, face_box = mat
+        return feather_mask(mask_array), crop_box, tuple(int(v) for v in face_box)
 
 
 @dataclass
@@ -385,7 +414,7 @@ class AssetBank:
         """Clip yang di-decode ke RAM saat init. Sisanya lazy saat dipakai."""
         raw = (
             os.environ.get("AI_WORKER_EAGER_CLIPS")
-            or "idle,talk_expressive,wave,nod"
+            or "idle,talk_expressive,wave,nod,laugh,point_up,point_down"
         ).strip()
         if raw.lower() in ("all", "*"):
             return list(self.clips.keys()) if self.clips else ["idle", "talk_expressive"]
@@ -442,25 +471,32 @@ class AssetBank:
             return False
 
     def _warm_one_clip(self, clip: "ClipAsset") -> None:
-        from inference import _get_avatar_materials
+        from inference import _get_avatar_materials, musetalk_visual_params
 
+        vis = musetalk_visual_params()
         vae = self.models["vae"]
         fp = self.models["fp"]
         mats = _get_avatar_materials(
             video_path=clip.path,
-            bbox_shift=0,
-            extra_margin=10,
+            bbox_shift=vis["bbox_shift"],
+            extra_margin=vis["extra_margin"],
             version="v15",
-            parsing_mode="jaw",
+            parsing_mode=vis["parsing_mode"],
             vae=vae,
             fp=fp,
             default_fps=TARGET_FPS,
+            upper_boundary_ratio=vis["upper_boundary_ratio"],
+            square_pad=vis["square_pad"],
         )
         clip.frame_list_cycle = mats["frame_list_cycle"]
         clip.coord_list_cycle = mats["coord_list_cycle"]
         clip.latent_list_cycle = mats["input_latent_list_cycle"]
         clip.mask_materials_cycle = mats["mask_materials_cycle"]
-        print(f"[AssetBank] MuseTalk materials ready: {clip.name}")
+        print(
+            f"[AssetBank] MuseTalk materials ready: {clip.name} "
+            f"(bbox_shift={vis['bbox_shift']}, extra_margin={vis['extra_margin']}, "
+            f"upper={vis['upper_boundary_ratio']}, square_pad={vis['square_pad']})"
+        )
 
     def _warm_musetalk_materials(self) -> None:
         targets = self._precache_clip_names()
@@ -549,7 +585,7 @@ class VideoStateMachine:
     ):
         self.bank = bank
         self.crossfade_frames = max(1, crossfade_frames)
-        self.overlap_frames = max(3, min(int(overlap_frames), 8))
+        self.overlap_frames = max(4, min(int(overlap_frames), 12))
         self._face_registry = face_registry
         self.state = PlayState.IDLE
         self.current_name = bank._idle_name
@@ -558,7 +594,7 @@ class VideoStateMachine:
         self._action_queue: deque = deque()
         self._overlap: Optional[_OverlapTransition] = None
         self._seq = 0
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._playthrough_lock = False
         self._utterance_active = False
         self._utterance_audio_done = False
@@ -720,6 +756,15 @@ class VideoStateMachine:
                 self.state = PlayState.IDLE
                 print("[StateMachine] Utterance selesai → transisi (end pose tercapai)")
 
+    def _clip_span(self, clip: ClipAsset) -> int:
+        return max(1, clip.end_pose - clip.base_pose_frame + 1)
+
+    def _wrapped_index(self, clip: ClipAsset, idx: int) -> int:
+        span = self._clip_span(clip)
+        if clip.loop:
+            return clip.base_pose_frame + (int(idx) - clip.base_pose_frame) % span
+        return max(clip.base_pose_frame, min(int(idx), clip.end_pose))
+
     def _begin_overlap_transition(
         self,
         from_clip: ClipAsset,
@@ -728,18 +773,17 @@ class VideoStateMachine:
         new_state: PlayState,
         lock_face: bool = False,
     ) -> None:
-        """Blend N frame terakhir sumber dengan N frame pertama target (addWeighted)."""
+        """Blend N frame sumber (wrap jika loop) dengan N frame pertama target."""
         to_clip = self.bank.get_clip(to_name)
         if to_clip is None:
             return
         n = self.overlap_frames
-        from_idx = max(from_clip.base_pose_frame, min(from_idx, from_clip.end_pose))
+        from_idx = self._wrapped_index(from_clip, from_idx)
         pairs: List[Tuple[np.ndarray, np.ndarray]] = []
         for i in range(n):
-            fi = max(from_clip.base_pose_frame, from_idx - (n - 1 - i))
-            fi = min(fi, from_clip.end_pose)
+            src_idx = self._wrapped_index(from_clip, from_idx - (n - 1 - i))
             ti = min(to_clip.base_pose_frame + i, to_clip.end_pose)
-            pairs.append((from_clip.frames[fi].copy(), to_clip.frames[ti].copy()))
+            pairs.append((from_clip.frames[src_idx].copy(), to_clip.frames[ti].copy()))
         resume = min(to_clip.base_pose_frame + n, to_clip.end_pose + 1)
         self._overlap = _OverlapTransition(pairs=pairs, step=0, resume_frame_idx=resume)
         self.current_name = to_name
@@ -748,7 +792,7 @@ class VideoStateMachine:
             lock_idx = min(to_clip.base_pose_frame, to_clip.end_pose)
             self._face_registry.lock_from_clip(to_clip, lock_idx)
         print(
-            f"[StateMachine] Overlap {n}f: {from_clip.name} → {to_name} "
+            f"[StateMachine] Overlap {n}f: {from_clip.name}@{from_idx} → {to_name} "
             f"(resume@{resume})"
         )
 
@@ -778,41 +822,45 @@ class VideoStateMachine:
                 self.pending_action = self._action_queue.popleft()
             else:
                 return False
-        target = self.bank.resolve_action(self.pending_action)
+        raw = self.pending_action
+        target = self.bank.resolve_action(raw)
         self.pending_action = None
         if target == self.current_name:
             return False
 
         at_base = self.frame_idx == clip.base_pose_frame
         at_end = self.frame_idx >= clip.end_pose
-        talk = self.bank.resolve_action("talk_expressive")
-        is_ambient = target not in (self.bank._idle_name, talk)
-        if self.state == PlayState.IDLE and not (at_base or at_end) and not is_ambient:
-            self.pending_action = target
+        # Gesture ambient / idle / talk: hanya pindah di batas pose agar tidak patah.
+        if not (at_base or at_end):
+            self.pending_action = raw
             return False
 
-        prev_idx = min(self.frame_idx, clip.end_pose)
-        new_state = PlayState.ACTION if target not in ("idle", "talk_expressive") else (
-            PlayState.TALK if target == "talk_expressive" else PlayState.IDLE
-        )
-        lock_face = target == self.bank.resolve_action("talk_expressive")
+        prev_idx = self._wrapped_index(clip, min(self.frame_idx, clip.end_pose))
+        idle_name = self.bank._idle_name
+        talk_name = self.bank.resolve_action("talk_expressive")
+        if target == talk_name:
+            new_state = PlayState.TALK
+        elif target in (idle_name, "idle"):
+            new_state = PlayState.IDLE
+        else:
+            new_state = PlayState.ACTION
+        lock_face = target == talk_name
         self._begin_overlap_transition(
             clip, prev_idx, target, new_state, lock_face=lock_face
         )
-        if target not in ("idle",):
+        if target not in (idle_name, "idle"):
             self._playthrough_lock = self.state in (PlayState.ACTION, PlayState.TALK)
         print(f"[StateMachine] → {target} (overlap={self.overlap_frames}f)")
         return True
 
     def _advance_frame_index(self, clip: ClipAsset, is_speech: bool) -> None:
-        """Advance index; seamless loop at base pose; never stop before end_pose."""
+        """Advance index; seamless loop at base pose; hold end pose then overlap ke idle."""
         self.frame_idx += 1
         end_pf = clip.end_pose
         base_pf = clip.base_pose_frame
 
         if self.state == PlayState.TALK and self._utterance_active:
             if is_speech and self.frame_idx > end_pf:
-                # Audio masih jalan — loop seamless (first pose == end pose)
                 self.frame_idx = base_pf
                 self._talk_loop_count += 1
             elif self._utterance_audio_done and self.frame_idx > end_pf:
@@ -822,12 +870,14 @@ class VideoStateMachine:
         if self.frame_idx > end_pf:
             if clip.loop and not self._playthrough_lock:
                 self.frame_idx = base_pf
-            elif not clip.loop:
-                print(f"[StateMachine] {clip.name} selesai → idle")
-                self.current_name = self.bank._idle_name
-                self.state = PlayState.IDLE
-                self.frame_idx = self.bank.idle_clip.base_pose_frame
-                self._playthrough_lock = False
+                return
+            # Clip sekali-putar selesai: tahan pose akhir, lepas lock, antri idle.
+            # Overlap ke idle terjadi di tick berikutnya — jangan hard-cut.
+            self.frame_idx = end_pf
+            self._playthrough_lock = False
+            if not self._utterance_active:
+                if not self.pending_action:
+                    self.pending_action = self.bank._idle_name
                 self._drain_action_queue()
 
     def _drain_action_queue(self) -> None:
@@ -839,6 +889,7 @@ class VideoStateMachine:
         audio_pcm: bytes,
         is_speech: bool,
         llm_action: Optional[str] = None,
+        whisper_idx: Optional[int] = None,
     ) -> RawFramePacket:
         with self._lock:
             if llm_action and not self._playthrough_lock and not self._utterance_active:
@@ -855,7 +906,8 @@ class VideoStateMachine:
             if self._overlap is not None and self._overlap.step < len(self._overlap.pairs):
                 from_f, to_f = self._overlap.pairs[self._overlap.step]
                 n = len(self._overlap.pairs)
-                alpha = (self._overlap.step + 1) / float(n)
+                t = (self._overlap.step + 1) / float(n)
+                alpha = _ease_in_out(t)
                 frame = blend_weighted(from_f, to_f, alpha)
                 cycle_idx = self._overlap.step
                 self._overlap.step += 1
@@ -868,14 +920,26 @@ class VideoStateMachine:
                 if clip is None:
                     raise RuntimeError(f"Clip missing: {self.current_name}")
 
-                if self.state == PlayState.IDLE:
+                drive_from_audio = (
+                    self._utterance_active
+                    and self.state == PlayState.TALK
+                    and whisper_idx is not None
+                    and not self._post_speech_gesture_active
+                    and is_speech
+                )
+                if drive_from_audio:
+                    self.frame_idx = _talk_body_index(clip, whisper_idx)
                     body, cycle_idx = clip.forward_at(self.frame_idx)
+                elif self.state == PlayState.IDLE:
+                    body, cycle_idx = clip.forward_at(self.frame_idx)
+                    self._advance_frame_index(clip, is_speech)
                 elif self._utterance_active and self.state == PlayState.TALK:
                     body, cycle_idx = clip.forward_at(self.frame_idx)
+                    self._advance_frame_index(clip, is_speech)
                 else:
                     body, cycle_idx = clip.material_at(self.frame_idx)
+                    self._advance_frame_index(clip, is_speech)
                 frame = body.copy()
-                self._advance_frame_index(clip, is_speech)
 
             needs_lipsync = is_speech and (
                 self._utterance_active or self.state == PlayState.TALK
@@ -898,10 +962,10 @@ class VideoStateMachine:
 
 
 # ---------------------------------------------------------------------------
-# MuseTalk streaming inference (Thread 2) — batch-ahead lip-sync
+# MuseTalk streaming inference (Thread 2) — mouth overlay on live body
 # ---------------------------------------------------------------------------
 class LipSyncEngine:
-    """Pre-render mouth frames ahead of playback using real Whisper chunks."""
+    """Generate mouth crops ahead of audio, then composite onto the live body frame."""
 
     def __init__(
         self,
@@ -919,22 +983,38 @@ class LipSyncEngine:
         self._lock = threading.Lock()
         self._utterance_id: Optional[str] = None
         self._whisper_chunks: Optional[torch.Tensor] = None
-        self._rendered: Dict[int, np.ndarray] = {}
+        self._mouths: Dict[int, np.ndarray] = {}
         self._infer_cursor = 0
         self._infer_stop = threading.Event()
         self._infer_thread: Optional[threading.Thread] = None
         self._talk_clip_name = "talk_expressive"
+        self._last_mouth_256: Optional[np.ndarray] = None
+        self._prev_composed: Optional[np.ndarray] = None
+        self._square_pad = True
+        try:
+            from inference import musetalk_visual_params
+
+            self._square_pad = bool(musetalk_visual_params().get("square_pad", True))
+        except Exception:
+            pass
 
     def set_utterance(self, job) -> None:
         """Mulai batch-ahead inference untuk satu utterance."""
+        if job is not None and self._utterance_id == getattr(job, "task_id", None):
+            return
         self.clear_utterance()
         if job is None or job.whisper_chunks is None:
             return
+        talk = self.bank.resolve_action("talk_expressive")
+        if talk in self.bank.clips:
+            self._talk_clip_name = talk
         with self._lock:
             self._utterance_id = job.task_id
             self._whisper_chunks = job.whisper_chunks
-            self._rendered = {}
+            self._mouths = {}
             self._infer_cursor = 0
+            self._last_mouth_256 = None
+            self._prev_composed = None
         self._infer_stop.clear()
         self._infer_thread = threading.Thread(
             target=self._batch_inference_loop,
@@ -942,10 +1022,31 @@ class LipSyncEngine:
             daemon=True,
         )
         self._infer_thread.start()
-        # Switch state machine ke talk clip
-        talk = self.bank.resolve_action("talk_expressive")
-        if talk in self.bank.clips:
-            self._talk_clip_name = talk
+        print(
+            f"[LipSync] Infer {job.task_id}: {int(job.whisper_chunks.shape[0])} frames, "
+            f"batch={self.batch_size}"
+        )
+
+    def wait_preroll(self, n: int = LIPSYNC_PREROLL_FRAMES, timeout: float = 2.0) -> bool:
+        """Tunggu mouth crop awal siap sebelum audio mulai — cegah mulut tertutup saat suara jalan."""
+        with self._lock:
+            chunks = self._whisper_chunks
+        if chunks is None:
+            return False
+        need = min(max(1, int(n)), int(chunks.shape[0]))
+        deadline = time.monotonic() + max(0.05, timeout)
+        while time.monotonic() < deadline:
+            with self._lock:
+                ready = sum(1 for i in range(need) if i in self._mouths)
+            if ready >= need:
+                return True
+            if self._infer_stop.is_set():
+                return False
+            time.sleep(0.008)
+        with self._lock:
+            ready = sum(1 for i in range(need) if i in self._mouths)
+        print(f"[LipSync] Preroll {ready}/{need} (timeout)")
+        return ready > 0
 
     def clear_utterance(self) -> None:
         self._infer_stop.set()
@@ -954,20 +1055,27 @@ class LipSyncEngine:
         with self._lock:
             self._utterance_id = None
             self._whisper_chunks = None
-            self._rendered = {}
+            self._mouths = {}
             self._infer_cursor = 0
+            self._last_mouth_256 = None
+            self._prev_composed = None
         self._infer_thread = None
 
-    def _batch_inference_loop(self) -> None:
-        from musetalk.utils.blending import get_image_blending, get_image
-        from musetalk.utils.preprocessing import coord_placeholder
+    def _latent_index(self, clip: ClipAsset, body_idx: int) -> int:
+        nlat = max(1, len(clip.latent_list_cycle))
+        nframes = max(1, len(clip.frames) or clip.num_frames)
+        forward_n = min(nframes, nlat // 2 or nlat)
+        return int(body_idx) % max(1, forward_n)
 
+    def _batch_inference_loop(self) -> None:
         vae = self.models["vae"]
         unet = self.models["unet"]
         pe = self.models["pe"]
-        fp = self.models["fp"]
         timesteps = self.models["timesteps"]
         clip = self.bank.get_clip(self._talk_clip_name) or self.bank.idle_clip
+        if not clip.latent_list_cycle:
+            print(f"[LipSync] No latents for {clip.name} — skip inference")
+            return
 
         while not self._infer_stop.is_set():
             with self._lock:
@@ -979,17 +1087,20 @@ class LipSyncEngine:
             end = min(cursor + self.batch_size, chunks.shape[0])
             whisper_batch = chunks[cursor:end].to(device=self.device, dtype=self.weight_dtype)
             latent_list = []
-            cycle_indices = []
             for i in range(cursor, end):
-                cidx = i % max(1, len(clip.frames))
-                cycle_indices.append(cidx)
-                lat = clip.latent_list_cycle[cidx]
+                body_idx = _talk_body_index(clip, i)
+                lat_idx = self._latent_index(clip, body_idx)
+                lat = clip.latent_list_cycle[lat_idx]
+                if lat is None:
+                    lat = clip.latent_list_cycle[0]
                 latent_list.append(lat.unsqueeze(0) if lat.dim() == 3 else lat)
 
             if not latent_list:
                 break
 
-            latent_batch = torch.cat(latent_list, dim=0).to(device=self.device, dtype=self.weight_dtype)
+            latent_batch = torch.cat(latent_list, dim=0).to(
+                device=self.device, dtype=self.weight_dtype
+            )
             metrics = get_telemetry()
             try:
                 with metrics.measure("musetalk_batch_ms"):
@@ -1006,68 +1117,109 @@ class LipSyncEngine:
 
             for local_i, res_frame in enumerate(recon):
                 frame_idx = cursor + local_i
-                cidx = cycle_indices[local_i]
-                ori, _ = clip.material_at(cidx)
-                blended = self._blend_mouth(ori, res_frame, clip, cidx, fp, coord_placeholder)
+                mouth_256 = np.ascontiguousarray(res_frame.astype(np.uint8))
                 with self._lock:
-                    self._rendered[frame_idx] = blended
+                    self._mouths[frame_idx] = mouth_256
+                    self._last_mouth_256 = mouth_256
 
             with self._lock:
                 self._infer_cursor = end
 
-    def _blend_mouth(
-        self, ori, res_frame, clip, cidx, fp, coord_placeholder
-    ) -> np.ndarray:
-        from musetalk.utils.blending import get_image_blending, get_image
+    def _wait_mouth(self, idx: int, timeout: float = LIPSYNC_WAIT_SEC) -> Optional[np.ndarray]:
+        deadline = time.perf_counter() + max(0.0, timeout)
+        while True:
+            with self._lock:
+                cached = self._mouths.get(idx)
+                last = self._last_mouth_256
+                cursor = self._infer_cursor
+            if cached is not None:
+                return cached
+            if cursor > idx and last is not None:
+                return last
+            if time.perf_counter() >= deadline:
+                return last
+            time.sleep(0.004)
 
-        mat = None
-        if self._face_registry:
+    def _material_for(self, clip: ClipAsset, cidx: int) -> Optional[Tuple]:
+        if self._face_registry is not None:
             mat = self._face_registry.get_material(clip, cidx)
-        if mat is None and clip.mask_materials_cycle:
+            if mat is not None:
+                return mat
+        if clip.mask_materials_cycle:
             raw = clip.mask_materials_cycle[cidx % len(clip.mask_materials_cycle)]
             if raw:
                 mask_array, crop_box, face_box = raw
-                mat = (feather_mask(mask_array), crop_box, face_box)
-        if mat is not None:
-            mask_array, crop_box, face_box = mat
-            x1, y1, x2, y2 = face_box
-            try:
-                mouth = cv2.resize(res_frame.astype(np.uint8), (x2 - x1, y2 - y1))
-                return get_image_blending(ori, mouth, face_box, mask_array, crop_box)
-            except Exception:
-                pass
-        if cidx < len(clip.coord_list_cycle):
-            bbox = clip.coord_list_cycle[cidx]
-            if bbox != coord_placeholder:
-                if self._face_registry:
-                    bbox = self._face_registry._smooth_bbox(bbox)
-                x1, y1, x2, y2 = bbox
-                y2 = min(y2 + 10, ori.shape[0])
-                try:
-                    mouth = cv2.resize(res_frame.astype(np.uint8), (x2 - x1, y2 - y1))
-                    return get_image(ori, mouth, [x1, y1, x2, y2], mode="jaw", fp=fp)
-                except Exception:
-                    pass
-        return ori
+                return feather_mask(mask_array), crop_box, tuple(int(v) for v in face_box)
+        return None
+
+    def _compose_mouth(
+        self,
+        body: np.ndarray,
+        mouth_256: np.ndarray,
+        clip: ClipAsset,
+        cidx: int,
+        pcm: bytes,
+    ) -> np.ndarray:
+        from musetalk.utils.blending import get_image_blending
+        from inference import resize_generated_to_bbox
+
+        mat = self._material_for(clip, cidx)
+        if mat is None:
+            return body
+        mask_array, crop_box, face_box = mat
+        x1, y1, x2, y2 = [int(v) for v in face_box]
+        if x2 <= x1 or y2 <= y1:
+            return body
+        x1 = max(0, min(x1, body.shape[1] - 2))
+        x2 = max(x1 + 1, min(x2, body.shape[1]))
+        y1 = max(0, min(y1, body.shape[0] - 2))
+        y2 = max(y1 + 1, min(y2, body.shape[0]))
+        face_box = (x1, y1, x2, y2)
+        try:
+            mouth = resize_generated_to_bbox(mouth_256, face_box, square_pad=self._square_pad)
+            orig = body[y1:y2, x1:x2]
+            if orig.size == 0:
+                return body
+            strength = _mouth_strength_for_pcm(pcm)
+            damped = _dampen_generated_mouth(orig, mouth, strength)
+            if (
+                self._prev_composed is not None
+                and self._prev_composed.shape == damped.shape
+                and 0.0 < MOUTH_TEMPORAL < 0.95
+            ):
+                damped = cv2.addWeighted(
+                    self._prev_composed,
+                    float(MOUTH_TEMPORAL),
+                    damped,
+                    1.0 - float(MOUTH_TEMPORAL),
+                    0,
+                )
+            self._prev_composed = damped
+            return get_image_blending(body, damped, list(face_box), mask_array, crop_box)
+        except Exception:
+            return body
 
     @torch.no_grad()
     def process(self, pkt: RawFramePacket, clip: ClipAsset) -> np.ndarray:
         metrics = get_telemetry()
-        if pkt.whisper_idx is not None:
-            with self._lock:
-                cached = self._rendered.get(pkt.whisper_idx)
-            if cached is not None:
-                metrics.inc("lipsync_cache_hit")
-                return cached
-            metrics.inc("lipsync_cache_miss")
-            # Belum siap — pakai body frame sambil menunggu batch-ahead
-            talk = self.bank.clips.get(self._talk_clip_name)
-            if talk:
-                body, cidx = talk.material_at(pkt.whisper_idx)
-                return body
-        if not pkt.needs_lipsync:
+        if pkt.whisper_idx is None or not pkt.needs_lipsync:
+            self._prev_composed = None
             return pkt.frame
-        return pkt.frame
+
+        mouth_idx = int(pkt.whisper_idx) + LIPSYNC_SYNC_SHIFT
+        with self._lock:
+            total = 0 if self._whisper_chunks is None else int(self._whisper_chunks.shape[0])
+        if total > 0:
+            mouth_idx = max(0, min(mouth_idx, total - 1))
+
+        mouth = self._wait_mouth(mouth_idx)
+        if mouth is None:
+            metrics.inc("lipsync_cache_miss")
+            return pkt.frame
+        metrics.inc("lipsync_cache_hit")
+
+        talk = self.bank.get_clip(self._talk_clip_name) or clip
+        return self._compose_mouth(pkt.frame, mouth, talk, int(pkt.cycle_idx), pkt.audio_pcm)
 
 
 def lipsync_worker_loop(
@@ -1091,7 +1243,13 @@ def lipsync_worker_loop(
                 else:
                     frame = pkt.frame
                 frame = fit_bgr(frame, CANVAS_W, CANVAS_H)
-            out = RenderedPacket(seq=pkt.seq, frame=frame, audio_pcm=pkt.audio_pcm)
+            out = RenderedPacket(
+                seq=pkt.seq,
+                frame=frame,
+                audio_pcm=pkt.audio_pcm,
+                clip_name=pkt.clip_name,
+                frame_idx=pkt.frame_idx,
+            )
             metrics.set_gauge("render_queue_depth", float(render_q.qsize()))
             try:
                 render_q.put(out, timeout=0.15)
@@ -1106,7 +1264,13 @@ def lipsync_worker_loop(
         except Exception as err:
             print(f"[LipSync] frame {pkt.seq} notice: {err}")
             render_q.put(
-                RenderedPacket(seq=pkt.seq, frame=pkt.frame, audio_pcm=pkt.audio_pcm),
+                RenderedPacket(
+                    seq=pkt.seq,
+                    frame=pkt.frame,
+                    audio_pcm=pkt.audio_pcm,
+                    clip_name=pkt.clip_name,
+                    frame_idx=pkt.frame_idx,
+                ),
                 block=False,
             )
         finally:
@@ -1177,7 +1341,7 @@ def frame_fetcher_loop(
         )
 
         action = action_fn()
-        pkt = sm.next_packet(pcm, is_speech, llm_action=action)
+        pkt = sm.next_packet(pcm, is_speech, llm_action=action, whisper_idx=whisper_idx)
         pkt.whisper_idx = whisper_idx
         if whisper_idx is not None:
             pkt.needs_lipsync = True
@@ -1198,7 +1362,7 @@ def frame_fetcher_loop(
 # Broadcaster (Thread 3) — strict FPS, never freeze on pipeline lag
 # ---------------------------------------------------------------------------
 class _IdleFallbackPlayer:
-    """Animasi idle mandiri saat render queue kosong — cegah frame beku di RTMP."""
+    """Lanjutkan clip yang sama saat render queue kosong — jangan loncat ke pose lain."""
 
     def __init__(self, bank: AssetBank):
         self._bank = bank
@@ -1213,6 +1377,14 @@ class _IdleFallbackPlayer:
         except Exception:
             self._clip = None
 
+    def sync(self, clip_name: str, frame_idx: int) -> None:
+        clip = self._bank.get_clip(clip_name) if clip_name else None
+        if clip is None:
+            self._reload()
+            return
+        self._clip = clip
+        self._idx = max(clip.base_pose_frame, min(int(frame_idx), clip.end_pose))
+
     def next_frame(self) -> np.ndarray:
         if self._clip is None or not self._clip.frames:
             self._reload()
@@ -1222,7 +1394,10 @@ class _IdleFallbackPlayer:
         frame = self._clip.frames[idx].copy()
         self._idx += 1
         if self._idx > self._clip.end_pose:
-            self._idx = self._clip.base_pose_frame
+            if self._clip.loop:
+                self._idx = self._clip.base_pose_frame
+            else:
+                self._idx = self._clip.end_pose
         return frame
 
 
@@ -1664,6 +1839,15 @@ def broadcaster_loop(
             bridge_ref is not None and bridge_ref.is_utterance_active()
         )
 
+        if pending and not utterance_active:
+            newest = max(pending.keys())
+            if newest - next_seq > BROADCAST_MAX_LAG:
+                target = max(next_seq, newest - 2)
+                for stale in [s for s in list(pending.keys()) if s < target]:
+                    pending.pop(stale, None)
+                    metrics.inc("broadcast_lag_catchup")
+                next_seq = target
+
         pkt = pending.pop(next_seq, None)
         if pkt is None and not pending and utterance_active:
             try:
@@ -1688,6 +1872,8 @@ def broadcaster_loop(
             last_pcm = pkt.audio_pcm
             pcm = pkt.audio_pcm
             stale_misses = 0
+            if pkt.clip_name:
+                idle_player.sync(pkt.clip_name, pkt.frame_idx)
         else:
             stale_misses += 1
             metrics.inc("frames_duplicated")
@@ -1801,8 +1987,31 @@ class AIVisualWorker:
         self._broadcaster: Optional[StreamBroadcaster] = None
         self._rtmp_connected = False
 
-    def _on_utterance_start(self, job) -> None:
+    def _on_utterance_ready(self, job) -> None:
+        """Mulai inferensi mulut di background — idle tetap jalan, tanpa freeze."""
         if self._engine:
+            self._engine.set_utterance(job)
+
+        def _mark_ready() -> None:
+            try:
+                if self._engine:
+                    self._engine.wait_preroll(
+                        LIPSYNC_PREROLL_FRAMES,
+                        timeout=LIPSYNC_PREROLL_TIMEOUT_SEC,
+                    )
+            finally:
+                ready = getattr(job, "lipsync_ready", None)
+                if ready is not None:
+                    ready.set()
+
+        threading.Thread(
+            target=_mark_ready,
+            name=f"Preroll-{getattr(job, 'task_id', '')[:16]}",
+            daemon=True,
+        ).start()
+
+    def _on_utterance_start(self, job) -> None:
+        if self._engine and getattr(self._engine, "_utterance_id", None) != getattr(job, "task_id", None):
             self._engine.set_utterance(job)
         if self._sm:
             self._sm.begin_utterance()
@@ -1826,17 +2035,18 @@ class AIVisualWorker:
             sys.path.insert(0, musetalk_dir)
 
         from gpu_compat import log_gpu_status, resolve_use_float16
-        from inference import _load_models_cached
+        from inference import _load_models_cached, musetalk_visual_params
 
         log_gpu_status(0)
         use_fp16 = resolve_use_float16(True, 0)
+        vis = musetalk_visual_params()
         models_root = os.path.join(musetalk_dir, "models")
         args = Namespace(
             gpu_id=0,
             use_float16=use_fp16,
             version="v15",
-            left_cheek_width=90,
-            right_cheek_width=90,
+            left_cheek_width=vis["left_cheek_width"],
+            right_cheek_width=vis["right_cheek_width"],
             unet_model_path=os.path.join(models_root, "musetalkV15", "unet.pth"),
             unet_config=os.path.join(models_root, "musetalkV15", "musetalk.json"),
             whisper_dir=os.path.join(models_root, "whisper"),
@@ -1861,7 +2071,7 @@ class AIVisualWorker:
         self._sm = VideoStateMachine(
             self._bank,
             face_registry=self._face_registry,
-            overlap_frames=OVERLAP_FRAMES,
+            overlap_frames=max(OVERLAP_FRAMES, CROSSFADE_FRAMES),
         )
         self._engine = LipSyncEngine(
             models,
@@ -1874,8 +2084,22 @@ class AIVisualWorker:
             self._bridge.set_callbacks(
                 on_start=self._on_utterance_start,
                 on_end=self._on_utterance_end,
+                on_ready=self._on_utterance_ready,
             )
         print(f"[AIVisualWorker] Ready — clips: {list(self._bank.clips.keys())}")
+        try:
+            from inference import musetalk_visual_params
+
+            vis = musetalk_visual_params()
+            print(
+                f"[AIVisualWorker] Lip-sync: fps={self.fps}, "
+                f"bbox_shift={vis['bbox_shift']}, extra_margin={vis['extra_margin']}, "
+                f"upper={vis['upper_boundary_ratio']}, strength={MOUTH_STRENGTH}, "
+                f"temporal={MOUTH_TEMPORAL}, max_delta={MOUTH_MAX_DELTA}, "
+                f"preroll={LIPSYNC_PREROLL_FRAMES}"
+            )
+        except Exception:
+            pass
 
     def enqueue_utterance(
         self,

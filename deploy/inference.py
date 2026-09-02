@@ -44,6 +44,83 @@ except ImportError:
         def fit_bgr(frame, width=CANVAS_W, height=CANVAS_H):
             return frame
 
+
+def _env_flag(name: str, default: str = "1") -> bool:
+    return (os.environ.get(name, default) or default).strip().lower() not in (
+        "0",
+        "false",
+        "off",
+        "no",
+        "none",
+    )
+
+
+def musetalk_visual_params():
+    """Parameter visual MuseTalk — kurangi mulut berlebihan & cegah stretch."""
+    return {
+        "bbox_shift": int(os.environ.get("MUSETALK_BBOX_SHIFT", "-5")),
+        "extra_margin": int(os.environ.get("MUSETALK_EXTRA_MARGIN", "4")),
+        "parsing_mode": (os.environ.get("MUSETALK_PARSING_MODE") or "jaw").strip() or "jaw",
+        "upper_boundary_ratio": float(os.environ.get("MUSETALK_UPPER_BOUNDARY", "0.58")),
+        "square_pad": _env_flag("MUSETALK_SQUARE_PAD", "1"),
+        "left_cheek_width": int(os.environ.get("MUSETALK_CHEEK_WIDTH", "80")),
+        "right_cheek_width": int(os.environ.get("MUSETALK_CHEEK_WIDTH", "80")),
+    }
+
+
+def square_pad_face(crop: np.ndarray):
+    """Pad crop wajah ke persegi sebelum di-resize 256 — cegah mulut ketarik vertikal."""
+    if crop is None or crop.size == 0:
+        return crop, (0, 0, 0, 0)
+    h, w = crop.shape[:2]
+    if h <= 0 or w <= 0:
+        return crop, (0, 0, 0, 0)
+    side = max(h, w)
+    top = (side - h) // 2
+    bottom = side - h - top
+    left = (side - w) // 2
+    right = side - w - left
+    if top == 0 and bottom == 0 and left == 0 and right == 0:
+        return crop, (0, 0, 0, 0)
+    padded = cv2.copyMakeBorder(
+        crop, top, bottom, left, right, cv2.BORDER_REPLICATE
+    )
+    return padded, (top, bottom, left, right)
+
+
+def unpad_generated_face(generated, bbox_w: int, bbox_h: int) -> np.ndarray:
+    """Resize hasil 256x256 ke persegi bbox, lalu crop kembali ke rasio asli."""
+    bw = max(1, int(bbox_w))
+    bh = max(1, int(bbox_h))
+    side = max(bw, bh)
+    square = cv2.resize(
+        generated.astype(np.uint8), (side, side), interpolation=cv2.INTER_CUBIC
+    )
+    top = (side - bh) // 2
+    left = (side - bw) // 2
+    return square[top : top + bh, left : left + bw]
+
+
+def encode_face_for_vae(crop: np.ndarray, square_pad: bool = True) -> np.ndarray:
+    """Siapkan crop wajah 256x256 untuk VAE tanpa merusak rasio aspek."""
+    src = crop
+    if square_pad:
+        src, _ = square_pad_face(crop)
+    return cv2.resize(src, (256, 256), interpolation=cv2.INTER_LANCZOS4)
+
+
+def resize_generated_to_bbox(
+    generated, bbox, square_pad: bool = True
+) -> np.ndarray:
+    x1, y1, x2, y2 = [int(v) for v in bbox]
+    bw, bh = max(1, x2 - x1), max(1, y2 - y1)
+    if square_pad:
+        return unpad_generated_face(generated, bw, bh)
+    return cv2.resize(
+        generated.astype(np.uint8), (bw, bh), interpolation=cv2.INTER_CUBIC
+    )
+
+
 def _extract_landmarks_from_frames(frames, bbox_shift=0):
     """
     Ekstraksi landmark dan bounding box langsung dari list frame array numpy (RAM).
@@ -250,11 +327,28 @@ def _load_models_cached(args):
     return _models_cache[cache_key]
 
 
-def _get_avatar_materials(video_path, bbox_shift, extra_margin, version, parsing_mode, vae, fp, default_fps=25):
+def _get_avatar_materials(
+    video_path,
+    bbox_shift,
+    extra_margin,
+    version,
+    parsing_mode,
+    vae,
+    fp,
+    default_fps=25,
+    upper_boundary_ratio=None,
+    square_pad=None,
+):
     """
     Pre-cache all decoded frames, landmark bounding boxes, VAE latents, and blending masks in RAM.
     Subsequent tasks for the same avatar will fetch materials instantly in 0 ms.
     """
+    global _avatar_assets_cache
+    vis = musetalk_visual_params()
+    if upper_boundary_ratio is None:
+        upper_boundary_ratio = vis["upper_boundary_ratio"]
+    if square_pad is None:
+        square_pad = vis["square_pad"]
     global _avatar_assets_cache
     cache_key = (
         os.path.abspath(video_path),
@@ -262,6 +356,8 @@ def _get_avatar_materials(video_path, bbox_shift, extra_margin, version, parsing
         extra_margin,
         version,
         parsing_mode,
+        round(float(upper_boundary_ratio), 3),
+        bool(square_pad),
         CANVAS_W,
         CANVAS_H,
     )
@@ -295,11 +391,14 @@ def _get_avatar_materials(video_path, bbox_shift, extra_margin, version, parsing
         
         frame_h, frame_w = frame_list[0].shape[:2]
         cache_signature = {
-            "format": 2,
+            "format": 3,
             "frames": len(frame_list),
             "width": frame_w,
             "height": frame_h,
             "bbox_shift": bbox_shift,
+            "extra_margin": extra_margin,
+            "upper_boundary_ratio": round(float(upper_boundary_ratio), 3),
+            "square_pad": bool(square_pad),
         }
 
         # Cache landmark disimpan sebagai koordinat piksel absolut, jadi cache
@@ -338,27 +437,59 @@ def _get_avatar_materials(video_path, bbox_shift, extra_margin, version, parsing
         # 3. Calculate VAE latents for cropped face frames
         input_latent_list = []
         mask_materials = []
-        
+        last_bbox = None
+
         for bbox, frame in zip(coord_list, frame_list):
+            use_bbox = bbox
             if bbox == coord_placeholder:
+                use_bbox = last_bbox
+            if use_bbox is None or use_bbox == coord_placeholder:
+                input_latent_list.append(None)
+                mask_materials.append(None)
                 continue
-            x1, y1, x2, y2 = bbox
+            last_bbox = use_bbox
+            x1, y1, x2, y2 = [int(v) for v in use_bbox]
+            x1 = max(0, min(x1, frame.shape[1] - 2))
+            x2 = max(x1 + 1, min(x2, frame.shape[1]))
+            y1 = max(0, min(y1, frame.shape[0] - 2))
             if version == "v15":
                 y2 = y2 + extra_margin
-                y2 = min(y2, frame.shape[0])
+            y2 = max(y1 + 1, min(y2, frame.shape[0]))
             crop_frame = frame[y1:y2, x1:x2]
-            crop_frame_resized = cv2.resize(crop_frame, (256, 256), interpolation=cv2.INTER_LANCZOS4)
+            if crop_frame.size == 0:
+                input_latent_list.append(None)
+                mask_materials.append(None)
+                continue
+            crop_frame_resized = encode_face_for_vae(crop_frame, square_pad=square_pad)
             latents = vae.get_latents_for_unet(crop_frame_resized)
             input_latent_list.append(latents)
 
-            # Pre-compute face blending mask and crop_box for instant blending during inference
             try:
                 mask_array, crop_box = get_image_prepare_material(
-                    frame, [x1, y1, x2, y2], fp=fp, mode=parsing_mode
+                    frame,
+                    [x1, y1, x2, y2],
+                    upper_boundary_ratio=float(upper_boundary_ratio),
+                    fp=fp,
+                    mode=parsing_mode,
                 )
                 mask_materials.append((mask_array, crop_box, [x1, y1, x2, y2]))
             except Exception:
                 mask_materials.append(None)
+
+        # Fill any missing latents from nearest neighbour so index == frame index
+        valid_idx = next((i for i, lat in enumerate(input_latent_list) if lat is not None), None)
+        if valid_idx is None:
+            raise ValueError(f"No face detected in avatar video: {video_path}")
+        last_lat = input_latent_list[valid_idx]
+        last_mat = mask_materials[valid_idx]
+        for i in range(len(input_latent_list)):
+            if input_latent_list[i] is None:
+                input_latent_list[i] = last_lat
+                mask_materials[i] = last_mat
+            else:
+                last_lat = input_latent_list[i]
+                if mask_materials[i] is not None:
+                    last_mat = mask_materials[i]
 
         # Smooth cycle (forward + backward)
         frame_list_cycle = frame_list + frame_list[::-1]
@@ -424,18 +555,26 @@ def main(args):
             os.makedirs(temp_dir, exist_ok=True)
             final_output_path = os.path.join(temp_dir, output_vid_name)
 
-            bbox_shift = 0 if args.version == "v15" else task_info.get("bbox_shift", args.bbox_shift)
+            vis = musetalk_visual_params()
+            bbox_shift = vis["bbox_shift"] if args.version == "v15" else task_info.get("bbox_shift", args.bbox_shift)
+            extra_margin = vis["extra_margin"]
+            if args.extra_margin != 10:
+                extra_margin = args.extra_margin
+            if args.version != "v15" and args.bbox_shift:
+                bbox_shift = args.bbox_shift
 
             # 3. Retrieve pre-cached avatar materials (0 ms)
             materials = _get_avatar_materials(
                 video_path=video_path,
                 bbox_shift=bbox_shift,
-                extra_margin=args.extra_margin,
+                extra_margin=extra_margin,
                 version=args.version,
                 parsing_mode=args.parsing_mode,
                 vae=vae,
                 fp=fp,
-                default_fps=args.fps
+                default_fps=args.fps,
+                upper_boundary_ratio=vis["upper_boundary_ratio"],
+                square_pad=vis["square_pad"],
             )
             frame_list_cycle = materials['frame_list_cycle']
             coord_list_cycle = materials['coord_list_cycle']
@@ -557,9 +696,10 @@ def main(args):
 
                 if mat is not None:
                     mask_array, crop_box, face_box = mat
-                    x1, y1, x2, y2 = face_box
                     try:
-                        res_frame_resized = cv2.resize(res_frame.astype(np.uint8), (x2 - x1, y2 - y1))
+                        res_frame_resized = resize_generated_to_bbox(
+                            res_frame, face_box, square_pad=vis["square_pad"]
+                        )
                         combine_frame = get_image_blending(ori_frame, res_frame_resized, face_box, mask_array, crop_box)
                     except Exception:
                         combine_frame = ori_frame
@@ -567,10 +707,19 @@ def main(args):
                     bbox = coord_list_cycle[cycle_idx]
                     x1, y1, x2, y2 = bbox
                     if args.version == "v15":
-                        y2 = min(y2 + args.extra_margin, ori_frame.shape[0])
+                        y2 = min(y2 + extra_margin, ori_frame.shape[0])
                     try:
-                        res_frame_resized = cv2.resize(res_frame.astype(np.uint8), (x2 - x1, y2 - y1))
-                        combine_frame = get_image(ori_frame, res_frame_resized, [x1, y1, x2, y2], mode=args.parsing_mode, fp=fp)
+                        res_frame_resized = resize_generated_to_bbox(
+                            res_frame, [x1, y1, x2, y2], square_pad=vis["square_pad"]
+                        )
+                        combine_frame = get_image(
+                            ori_frame,
+                            res_frame_resized,
+                            [x1, y1, x2, y2],
+                            upper_boundary_ratio=vis["upper_boundary_ratio"],
+                            mode=args.parsing_mode,
+                            fp=fp,
+                        )
                     except Exception:
                         combine_frame = ori_frame
 
