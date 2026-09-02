@@ -357,6 +357,66 @@ class AssetBank:
         if self.models:
             self._warm_musetalk_materials()
 
+    def _precache_clip_names(self) -> List[str]:
+        """Clips yang di-precompute MuseTalk (latent+mask). Default: talk saja — hindari OOM."""
+        raw = (os.environ.get("AI_WORKER_PRECACHE_CLIPS") or "talk_expressive").strip()
+        if raw.lower() in ("all", "*", "1", "true", "yes", "on"):
+            return list(self.clips.keys())
+        names = [n.strip() for n in raw.split(",") if n.strip()]
+        if "talk_expressive" in self.clips and "talk_expressive" not in names:
+            names.insert(0, "talk_expressive")
+        return [n for n in names if n in self.clips]
+
+    def ensure_musetalk_materials(self, name: str) -> bool:
+        """Lazy precache satu clip saat dibutuhkan (mis. gesture jarang dipakai)."""
+        clip = self.clips.get(name)
+        if clip is None or not self.models:
+            return False
+        if clip.latent_list_cycle and clip.mask_materials_cycle:
+            return True
+        try:
+            self._warm_one_clip(clip)
+            return bool(clip.latent_list_cycle)
+        except Exception as err:
+            print(f"[AssetBank] Lazy warmup gagal ({name}): {err}")
+            return False
+
+    def _warm_one_clip(self, clip: "ClipAsset") -> None:
+        from inference import _get_avatar_materials
+
+        vae = self.models["vae"]
+        fp = self.models["fp"]
+        mats = _get_avatar_materials(
+            video_path=clip.path,
+            bbox_shift=0,
+            extra_margin=10,
+            version="v15",
+            parsing_mode="jaw",
+            vae=vae,
+            fp=fp,
+            default_fps=TARGET_FPS,
+        )
+        clip.frame_list_cycle = mats["frame_list_cycle"]
+        clip.coord_list_cycle = mats["coord_list_cycle"]
+        clip.latent_list_cycle = mats["input_latent_list_cycle"]
+        clip.mask_materials_cycle = mats["mask_materials_cycle"]
+        print(f"[AssetBank] MuseTalk materials ready: {clip.name}")
+
+    def _warm_musetalk_materials(self) -> None:
+        targets = self._precache_clip_names()
+        print(
+            f"[AssetBank] MuseTalk precache ({len(targets)}/{len(self.clips)} clips): "
+            f"{targets}"
+        )
+        for name in targets:
+            clip = self.clips.get(name)
+            if clip is None:
+                continue
+            try:
+                self._warm_one_clip(clip)
+            except Exception as err:
+                print(f"[AssetBank] MuseTalk warmup notice ({name}): {err}")
+
     def _clip_name_from_file(self, fname: str) -> str:
         stem = os.path.splitext(fname)[0].lower()
         host_prefix = f"{self.host}_"
@@ -394,31 +454,6 @@ class AssetBank:
         if not frames:
             raise RuntimeError(f"Empty video: {path}")
         return frames
-
-    def _warm_musetalk_materials(self) -> None:
-        from inference import _get_avatar_materials
-
-        vae = self.models["vae"]
-        fp = self.models["fp"]
-        for name, clip in self.clips.items():
-            try:
-                mats = _get_avatar_materials(
-                    video_path=clip.path,
-                    bbox_shift=0,
-                    extra_margin=10,
-                    version="v15",
-                    parsing_mode="jaw",
-                    vae=vae,
-                    fp=fp,
-                    default_fps=TARGET_FPS,
-                )
-                clip.frame_list_cycle = mats["frame_list_cycle"]
-                clip.coord_list_cycle = mats["coord_list_cycle"]
-                clip.latent_list_cycle = mats["input_latent_list_cycle"]
-                clip.mask_materials_cycle = mats["mask_materials_cycle"]
-                print(f"[AssetBank] MuseTalk materials ready: {name}")
-            except Exception as err:
-                print(f"[AssetBank] MuseTalk warmup notice ({name}): {err}")
 
     def resolve_action(self, tag: Optional[str]) -> str:
         if not tag:

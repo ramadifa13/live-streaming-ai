@@ -128,7 +128,10 @@ else
 	echo "[INFO] LLM dipusatkan di Backend (Ollama RunPod dinonaktifkan untuk menghemat VRAM GPU)."
 fi
 
-if is_worker_healthy; then
+if [ "${FORCE_RESTART:-0}" = "1" ]; then
+	echo "[INFO] FORCE_RESTART=1 — restart api_server meski health OK."
+	stop_existing_worker
+elif is_worker_healthy; then
 	echo "[OK] AI Worker API sudah aktif di port ${WORKER_PORT} — tidak memulai duplikat."
 	API_PID="$(pgrep -f '[a]pi_server.py' | head -n 1 || true)"
 	if [ -z "${API_PID:-}" ]; then
