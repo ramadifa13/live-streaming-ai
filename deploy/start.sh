@@ -72,15 +72,41 @@ is_worker_healthy() {
 		|| curl -fsS "http://127.0.0.1:${WORKER_PORT}/" >/dev/null 2>&1
 }
 
-stop_existing_worker() {
-	echo "[INFO] Menghentikan api_server lama (jika ada) ..."
+stop_supervisor() {
+	local spid=""
+	if [ -f "$WORKER_DIR/.start_supervisor.pid" ]; then
+		spid="$(tr -d '[:space:]' < "$WORKER_DIR/.start_supervisor.pid" 2>/dev/null || true)"
+	fi
+	if [ -n "$spid" ] && [ "$spid" != "$$" ] && kill -0 "$spid" 2>/dev/null; then
+		echo "[INFO] Menghentikan supervisor start.sh lama (PID $spid) ..."
+		kill -TERM "$spid" 2>/dev/null || true
+		sleep 2
+		kill -9 "$spid" 2>/dev/null || true
+	fi
+	rm -f "$WORKER_DIR/.start_supervisor.pid"
+}
+
+cleanup_worker_stack() {
+	stop_supervisor
+	echo "[INFO] Membersihkan proses worker (api_server, broadcaster, ffmpeg RTMP) ..."
 	pkill -9 -f "[a]pi_server.py" 2>/dev/null || true
+	pkill -9 -f "[b]roadcaster.py" 2>/dev/null || true
+	pkill -9 -f "[f]rame_feed.py" 2>/dev/null || true
+	pkill -9 -f "ffmpeg.*rtmp" 2>/dev/null || true
 	if command -v fuser >/dev/null 2>&1; then
 		fuser -k "${WORKER_PORT}/tcp" 2>/dev/null || true
 	elif command -v lsof >/dev/null 2>&1; then
 		lsof -ti:"${WORKER_PORT}" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
 	fi
-	sleep 1
+	sleep 2
+	if command -v nvidia-smi >/dev/null 2>&1; then
+		echo "[INFO] GPU setelah cleanup:"
+		nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader 2>/dev/null || true
+	fi
+}
+
+stop_existing_worker() {
+	cleanup_worker_stack
 }
 
 if [ -f "$WORKER_DIR/env/bin/python" ]; then
@@ -130,7 +156,7 @@ fi
 
 if [ "${FORCE_RESTART:-0}" = "1" ]; then
 	echo "[INFO] FORCE_RESTART=1 — restart api_server meski health OK."
-	stop_existing_worker
+	cleanup_worker_stack
 elif is_worker_healthy; then
 	echo "[OK] AI Worker API sudah aktif di port ${WORKER_PORT} — tidak memulai duplikat."
 	API_PID="$(pgrep -f '[a]pi_server.py' | head -n 1 || true)"
@@ -143,13 +169,15 @@ elif is_worker_healthy; then
 		echo "Pantau log: tail -f $WORKER_DIR/api_server.log"
 		exit 0
 	fi
+else
+	cleanup_worker_stack
 fi
 
-stop_existing_worker
+export PYTHONUNBUFFERED=1
 
 echo "Memulai AI Worker API (port ${WORKER_PORT})..."
 : > "$WORKER_DIR/api_server.log"
-"$PYTHON_BIN" api_server.py >> "$WORKER_DIR/api_server.log" 2>&1 &
+"$PYTHON_BIN" -u api_server.py >> "$WORKER_DIR/api_server.log" 2>&1 &
 API_PID=$!
 
 for attempt in $(seq 1 300); do
@@ -160,8 +188,16 @@ for attempt in $(seq 1 300); do
 	sleep 1
 	if ! kill -0 "$API_PID" 2>/dev/null; then
 		echo "[ERROR] api_server.py gagal start (proses mati). Log:"
-		tail -50 "$WORKER_DIR/api_server.log" 2>/dev/null || true
+		tail -80 "$WORKER_DIR/api_server.log" 2>/dev/null || true
+		if command -v dmesg >/dev/null 2>&1; then
+			echo "[HINT] Cek OOM killer:"
+			dmesg 2>/dev/null | tail -5 | grep -i -E 'oom|killed' || true
+		fi
 		exit 1
+	fi
+	if [ "$((attempt % 15))" -eq 0 ]; then
+		echo "[INFO] Menunggu api_server... (${attempt}s, PID $API_PID masih hidup)"
+		tail -3 "$WORKER_DIR/api_server.log" 2>/dev/null || true
 	fi
 	if [ "$attempt" -eq 300 ]; then
 		echo "[ERROR] api_server.py timeout 300s. Log:"
@@ -183,8 +219,14 @@ echo "Log API: $WORKER_DIR/api_server.log"
 echo "Health: curl -s http://127.0.0.1:${WORKER_PORT}/health"
 echo "Pantau log: tail -f $WORKER_DIR/api_server.log"
 
+if [ "${SKIP_WATCHDOG:-0}" = "1" ]; then
+	echo "[INFO] SKIP_WATCHDOG=1 — api_server berjalan tanpa supervisor loop (untuk redeploy/CI)."
+	exit 0
+fi
+
 # Container Watchdog Supervisor: Pantau terus status api_server
-echo "[WATCHDOG] Memulai container supervisor monitor..."
+echo $$ > "$WORKER_DIR/.start_supervisor.pid"
+echo "[WATCHDOG] Memulai container supervisor monitor (PID $$)..."
 while true; do
 	sleep 10
 	if is_worker_healthy; then
@@ -192,8 +234,8 @@ while true; do
 		continue
 	fi
 	echo "[WATCHDOG ALERT] api_server tidak merespons di port ${WORKER_PORT} — restart..."
-	stop_existing_worker
-	"$PYTHON_BIN" api_server.py >> "$WORKER_DIR/api_server.log" 2>&1 &
+	cleanup_worker_stack
+	"$PYTHON_BIN" -u api_server.py >> "$WORKER_DIR/api_server.log" 2>&1 &
 	API_PID=$!
 	echo "[WATCHDOG] api_server di-restart (PID: $API_PID)"
 done

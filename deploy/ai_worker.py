@@ -134,6 +134,7 @@ class ClipAsset:
     frames: List[np.ndarray]
     base_pose_frame: int = 0
     end_pose_frame: int = -1
+    probed_frame_count: int = 0
     # MuseTalk materials (populated after warmup)
     frame_list_cycle: List[np.ndarray] = field(default_factory=list)
     coord_list_cycle: list = field(default_factory=list)
@@ -143,7 +144,7 @@ class ClipAsset:
 
     @property
     def num_frames(self) -> int:
-        return len(self.frames)
+        return len(self.frames) if self.frames else max(1, self.probed_frame_count)
 
     @property
     def end_pose(self) -> int:
@@ -325,21 +326,31 @@ class AssetBank:
         if not mp4s:
             raise FileNotFoundError(f"No .mp4 assets in {self.assets_dir}")
 
+        eager_names = set(self._eager_clip_names())
+        decode_all = (os.environ.get("AI_WORKER_EAGER_CLIPS") or "").strip().lower() in (
+            "all",
+            "*",
+        )
+
         for fname in mp4s:
             path = os.path.join(self.assets_dir, fname)
             name = self._clip_name_from_file(fname)
-            frames = self._decode_video(path)
-            base_pose, end_pose = self._load_pose_meta(name, len(frames))
+            num_frames = self._probe_frame_count(path)
+            base_pose, end_pose = self._load_pose_meta(name, num_frames)
+            decode_now = decode_all or name in eager_names
+            frames = self._decode_video(path) if decode_now else []
             self.clips[name] = ClipAsset(
                 name=name,
                 path=path,
                 frames=frames,
                 base_pose_frame=base_pose,
                 end_pose_frame=end_pose,
+                probed_frame_count=num_frames,
                 loop=name in ("idle", "talk_expressive"),
             )
+            status = f"{len(frames)} frames" if frames else f"lazy ({num_frames}f)"
             print(
-                f"[AssetBank] {name}: {len(frames)} frames, "
+                f"[AssetBank] {name}: {status}, "
                 f"base_pose={base_pose}, end_pose={self.clips[name].end_pose}"
             )
 
@@ -356,6 +367,39 @@ class AssetBank:
 
         if self.models:
             self._warm_musetalk_materials()
+
+    def _eager_clip_names(self) -> List[str]:
+        """Clip yang di-decode ke RAM saat init. Sisanya lazy saat dipakai."""
+        raw = (os.environ.get("AI_WORKER_EAGER_CLIPS") or "idle,talk_expressive").strip()
+        if raw.lower() in ("all", "*"):
+            return list(self.clips.keys()) if self.clips else ["idle", "talk_expressive"]
+        names = [n.strip() for n in raw.split(",") if n.strip()]
+        if "talk_expressive" not in names:
+            names.append("talk_expressive")
+        if "idle" not in names:
+            names.append("idle")
+        return names
+
+    def _probe_frame_count(self, path: str) -> int:
+        cap = cv2.VideoCapture(path)
+        if not cap.isOpened():
+            return 1
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+        cap.release()
+        return max(1, n)
+
+    def ensure_frames(self, clip: ClipAsset) -> None:
+        if clip.frames:
+            return
+        print(f"[AssetBank] Decoding {clip.name} ...", flush=True)
+        clip.frames = self._decode_video(clip.path)
+
+    def get_clip(self, name: str) -> Optional[ClipAsset]:
+        clip = self.clips.get(name)
+        if clip is None:
+            return None
+        self.ensure_frames(clip)
+        return clip
 
     def _precache_clip_names(self) -> List[str]:
         """Clips yang di-precompute MuseTalk (latent+mask). Default: talk saja — hindari OOM."""
@@ -468,7 +512,10 @@ class AssetBank:
 
     @property
     def idle_clip(self) -> ClipAsset:
-        return self.clips[self._idle_name]
+        clip = self.get_clip(self._idle_name)
+        if clip is None:
+            raise KeyError(f"Idle clip missing: {self._idle_name}")
+        return clip
 
 
 # ---------------------------------------------------------------------------
@@ -538,17 +585,20 @@ class VideoStateMachine:
             if talk not in self.bank.clips:
                 return
             if self.current_name != talk:
-                from_clip = self.bank.clips[self.current_name]
+                from_clip = self.bank.get_clip(self.current_name)
+                if from_clip is None:
+                    return
                 self._begin_overlap_transition(
                     from_clip, self.frame_idx, talk, PlayState.TALK, lock_face=True
                 )
             else:
                 self.state = PlayState.TALK
                 if self._face_registry:
-                    talk_clip = self.bank.clips[talk]
-                    self._face_registry.lock_from_clip(
-                        talk_clip, talk_clip.base_pose_frame
-                    )
+                    talk_clip = self.bank.get_clip(talk)
+                    if talk_clip is not None:
+                        self._face_registry.lock_from_clip(
+                            talk_clip, talk_clip.base_pose_frame
+                        )
 
     def mark_utterance_audio_done(self) -> None:
         with self._lock:
@@ -564,7 +614,7 @@ class VideoStateMachine:
         if target in (talk, self.bank._idle_name):
             self._scheduled_gesture = None
             return
-        clip = self.bank.clips.get(self.current_name)
+        clip = self.bank.get_clip(self.current_name)
         if clip is None or target not in self.bank.clips:
             self._scheduled_gesture = None
             return
@@ -578,7 +628,7 @@ class VideoStateMachine:
         print(f"[StateMachine] Post-speech gesture → {target}")
 
     def at_end_pose(self) -> bool:
-        clip = self.bank.clips.get(self.current_name)
+        clip = self.bank.get_clip(self.current_name)
         if clip is None:
             return True
         return self.frame_idx >= clip.end_pose
@@ -590,7 +640,7 @@ class VideoStateMachine:
         if not self._utterance_audio_done:
             return False
         if self._post_speech_gesture_active:
-            clip = self.bank.clips.get(self.current_name)
+            clip = self.bank.get_clip(self.current_name)
             if clip is None:
                 return True
             return self.frame_idx >= clip.end_pose
@@ -629,7 +679,9 @@ class VideoStateMachine:
         lock_face: bool = False,
     ) -> None:
         """Blend N frame terakhir sumber dengan N frame pertama target (addWeighted)."""
-        to_clip = self.bank.clips[to_name]
+        to_clip = self.bank.get_clip(to_name)
+        if to_clip is None:
+            return
         n = self.overlap_frames
         from_idx = max(from_clip.base_pose_frame, min(from_idx, from_clip.end_pose))
         pairs: List[Tuple[np.ndarray, np.ndarray]] = []
@@ -740,7 +792,9 @@ class VideoStateMachine:
             if llm_action and not self._playthrough_lock and not self._utterance_active:
                 self.request_action(llm_action)
 
-            clip = self.bank.clips[self.current_name]
+            clip = self.bank.get_clip(self.current_name)
+            if clip is None:
+                raise RuntimeError(f"Clip missing: {self.current_name}")
             cycle_idx = 0
             frame: np.ndarray
 
@@ -757,7 +811,9 @@ class VideoStateMachine:
                     self._overlap = None
             else:
                 self._try_consume_pending(clip)
-                clip = self.bank.clips[self.current_name]
+                clip = self.bank.get_clip(self.current_name)
+                if clip is None:
+                    raise RuntimeError(f"Clip missing: {self.current_name}")
 
                 if self.state == PlayState.IDLE:
                     body, cycle_idx = clip.forward_at(self.frame_idx)
@@ -858,7 +914,7 @@ class LipSyncEngine:
         pe = self.models["pe"]
         fp = self.models["fp"]
         timesteps = self.models["timesteps"]
-        clip = self.bank.clips.get(self._talk_clip_name) or self.bank.idle_clip
+        clip = self.bank.get_clip(self._talk_clip_name) or self.bank.idle_clip
 
         while not self._infer_stop.is_set():
             with self._lock:

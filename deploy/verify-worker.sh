@@ -43,6 +43,24 @@ else
 	bad "ai_worker.py belum ter-update (RTMP on_progress)"
 fi
 
+if grep -q "_precache_clip_names" "$WORKER_DIR/ai_worker.py" 2>/dev/null; then
+	ok "ai_worker.py: MuseTalk precache terbatas (anti-OOM)"
+else
+	bad "ai_worker.py belum ter-update (AI_WORKER_PRECACHE_CLIPS)"
+fi
+
+if grep -q "_eager_clip_names" "$WORKER_DIR/ai_worker.py" 2>/dev/null; then
+	ok "ai_worker.py: lazy decode clips"
+else
+	warn "ai_worker.py belum lazy decode (AI_WORKER_EAGER_CLIPS)"
+fi
+
+if grep -q "start_supervisor.pid" "$WORKER_DIR/start.sh" 2>/dev/null; then
+	ok "start.sh: supervisor lock (anti kill ganda)"
+else
+	warn "start.sh mungkin versi lama (supervisor)"
+fi
+
 if grep -q "MUSETALK_WARMUP_ON_START" "$WORKER_DIR/live_worker.py" 2>/dev/null; then
 	ok "live_worker.py: warmup deferred"
 else
@@ -60,6 +78,8 @@ if [ -f "$WORKER_DIR/.env" ]; then
 	ok ".env ada"
 	grep -q "^BROADCAST_MODE=ai_worker" "$WORKER_DIR/.env" && ok "BROADCAST_MODE=ai_worker" || warn "BROADCAST_MODE bukan ai_worker"
 	grep -q "^MUSETALK_WARMUP_ON_START=0" "$WORKER_DIR/.env" && ok "MUSETALK_WARMUP_ON_START=0" || warn "Set MUSETALK_WARMUP_ON_START=0"
+	grep -q "^AI_WORKER_PRECACHE_CLIPS=talk_expressive" "$WORKER_DIR/.env" && ok "AI_WORKER_PRECACHE_CLIPS=talk_expressive" || warn "Set AI_WORKER_PRECACHE_CLIPS=talk_expressive"
+	grep -q "^AI_WORKER_EAGER_CLIPS=" "$WORKER_DIR/.env" && ok "AI_WORKER_EAGER_CLIPS set" || warn "Set AI_WORKER_EAGER_CLIPS=idle,talk_expressive"
 	grep -q "^AI_WORKER_FPS=25" "$WORKER_DIR/.env" && ok "AI_WORKER_FPS=25" || warn "AI_WORKER_FPS tidak 25"
 else
 	bad ".env tidak ada — cp deploy/.env.example $WORKER_DIR/.env"

@@ -109,6 +109,21 @@ class AILiveWorker:
                 )
 
     def _resolve_use_float16(self) -> bool:
+        mode = (os.environ.get("BROADCAST_MODE") or "segment").strip().lower()
+        warmup = (os.environ.get("MUSETALK_WARMUP_ON_START") or "0").strip().lower()
+        if mode in ("ai_worker", "ai-worker", "realtime", "visual_worker") and warmup not in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            print(
+                "[GPU] BROADCAST_MODE=ai_worker + MUSETALK_WARMUP_ON_START=0 — "
+                "probe GPU ditunda ke AIVisualWorker.",
+                flush=True,
+            )
+            return False
+
         worker_dir = self.base_dir
         if worker_dir not in sys.path:
             sys.path.insert(0, worker_dir)

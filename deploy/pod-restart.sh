@@ -47,13 +47,9 @@ else
 	echo "[3/6] skip stop-broadcast (set STOP_BROADCAST=1 jika perlu)"
 fi
 
-echo "[4/6] Hentikan api_server lama ..."
-pkill -9 -f "api_server.py" 2>/dev/null || true
-sleep 2
-
-echo "[5/6] Start worker ..."
+echo "[4/6] Restart worker ..."
 cd "$WORKER_DIR"
-bash start.sh
+SKIP_WATCHDOG=1 FORCE_RESTART=1 bash start.sh
 
 echo "[6/6] Verifikasi ..."
 sleep 2

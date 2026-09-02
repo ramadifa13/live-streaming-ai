@@ -70,6 +70,35 @@ with open(dest, "a", encoding="utf-8") as fh:
         fh.write(src_data[key])
 print("[ENV] Ditambah ke worker .env:", ", ".join(missing))
 PY
+	dedupe_worker_env
+}
+
+dedupe_worker_env() {
+	local env_file="$WORKER_DIR/.env"
+	[ -f "$env_file" ] || return 0
+	python3 - "$env_file" <<'PY' || true
+import sys
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as fh:
+    lines = fh.readlines()
+seen = {}
+out = []
+for raw in lines:
+    line = raw.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        out.append(raw)
+        continue
+    key = line.split("=", 1)[0].strip()
+    if key.startswith("export "):
+        key = key[7:].strip().split("=", 1)[0].strip()
+    if key in seen:
+        out[seen[key]] = raw
+    else:
+        seen[key] = len(out)
+        out.append(raw)
+with open(path, "w", encoding="utf-8") as fh:
+    fh.writelines(out)
+PY
 }
 
 # Pulihkan pip di venv worker jika hilang/rusak.
