@@ -354,7 +354,25 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     const httpMediaOnly = (url?: string) =>
       url && /^https?:\/\//i.test(url) ? url : undefined;
 
-    // Mulai RTMP stream ke platform → worker tampilkan idle video
+    // Daftarkan orchestrator dulu agar pipeline-status bisa poll saat MuseTalk boot.
+    if (managedSession && liveSession && parsed.data.sessionId) {
+      liveHostOrchestrator.startPipelineBackground({
+        productId: liveSession.productId,
+        avatarName: managedSession.avatarName,
+        tone: managedSession.tone,
+        voice: liveSession.voice || undefined,
+        podId: managedSession.podId ?? podId ?? undefined,
+        sessionId: parsed.data.sessionId,
+        rtmpUrl,
+        streamKey,
+        plan: durationHoursToPlan(managedSession.durationHours ?? 2),
+        maxDurationMs: (managedSession.durationHours ?? 2) * 3600 * 1000,
+        product: managedSession.product,
+        catalog: managedSession.catalog,
+      });
+    }
+
+    // Kickoff RTMP — worker boot MuseTalk async; frontend poll pipeline-status.
     const result = await startRunPodBroadcast(podId, {
       rtmpUrl,
       streamKey,
@@ -369,10 +387,13 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         parsed.data.avatarName?.trim() ||
         managedSession?.avatarName ||
         "namira",
+      waitForReady: false,
     });
 
     if (!result.success) {
       reply.code(502);
+      if (parsed.data.sessionId)
+        liveHostOrchestrator.stop(parsed.data.sessionId);
       if (parsed.data.sessionId)
         await liveSessionManager
           .stopSession(parsed.data.sessionId)
@@ -389,25 +410,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
           .catch(() => {});
       }
       return { success: false, data: result };
-    }
-
-    // Langsung mulai pipeline background (V1, V2, V3... generate ke memory, belum ke GPU)
-    if (managedSession && liveSession) {
-      const hostConfig = {
-        productId: liveSession.productId,
-        avatarName: managedSession.avatarName,
-        tone: managedSession.tone,
-        voice: liveSession.voice || undefined,
-        podId: managedSession.podId,
-        sessionId: parsed.data.sessionId!,
-        rtmpUrl,
-        streamKey,
-        plan: durationHoursToPlan(managedSession.durationHours ?? 2),
-        maxDurationMs: (managedSession.durationHours ?? 2) * 3600 * 1000,
-        product: managedSession.product,
-        catalog: managedSession.catalog,
-      };
-      liveHostOrchestrator.startPipelineBackground(hostConfig);
     }
 
     // Update DB ke "pending" — menunggu konfirmasi Go Live
@@ -557,17 +559,21 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       status.stageText === "Session tidak ditemukan." &&
       liveSessionManager.getSession(sessionId)
     ) {
-      const workerIssue = Boolean(status.workerError) || Boolean(status.workerOffline);
       return {
-        ...status,
-        stageIndex: workerIssue ? 2 : 1,
-        stageText: workerIssue
-          ? status.workerError ||
-            "Worker GPU tidak merespons. Tunggu sebentar atau mulai ulang sesi."
-          : boot?.podReady
-            ? "Menghubungkan RTMP ke platform..."
-            : boot?.stageText || "Menghubungkan RTMP ke platform...",
-        podReady: boot?.podReady ?? false,
+        ready: false,
+        generationCount: 0,
+        videosQueued: 0,
+        pendingCount: 0,
+        isLive: false,
+        isBroadcasting: false,
+        isRtmpConnected: false,
+        workerOffline: false,
+        stageIndex: 1,
+        stageText:
+          boot?.podReady === false
+            ? boot.stageText || "Menghubungkan ke Cloud GPU..."
+            : "Memulai broadcast RTMP — memuat model MuseTalk ke GPU...",
+        podReady: boot?.podReady ?? true,
         podBooting: boot?.podBooting ?? false,
         podFailed: boot?.podFailed ?? false,
       };

@@ -149,6 +149,8 @@ interface QueueMetrics {
   broadcastMode: string;
   utteranceQueueCount: number;
   visualWorkerRunning: boolean;
+  visualWorkerInitializing: boolean;
+  broadcastBootState: string;
 }
 
 interface RuntimeCounters {
@@ -330,6 +332,8 @@ function emptyQueueMetrics(
     broadcastMode: "segment",
     utteranceQueueCount: 0,
     visualWorkerRunning: false,
+    visualWorkerInitializing: false,
+    broadcastBootState: "idle",
     ...partial,
   };
 }
@@ -1692,6 +1696,8 @@ class LiveHostOrchestrator {
       const readyVideos = Number(raw.ready_videos_count || 0);
       const activeProcessing = Number(raw.active_processing_count || 0);
       const visualWorkerRunning = Boolean(raw.visual_worker_running);
+      const visualWorkerInitializing = Boolean(raw.visual_worker_initializing);
+      const broadcastBootState = String(raw.broadcast_boot_state || "idle");
 
       let queuedVideos = Number(raw.queued_videos_count || 0);
       if (aiWorker) {
@@ -1759,6 +1765,8 @@ class LiveHostOrchestrator {
         broadcastMode,
         utteranceQueueCount,
         visualWorkerRunning,
+        visualWorkerInitializing,
+        broadcastBootState,
       };
 
       if (
@@ -1941,6 +1949,13 @@ class LiveHostOrchestrator {
     } else if (queue.rtmpError) {
       stageIndex = 3;
       stageText = queue.rtmpError;
+    } else if (
+      queue.broadcastBootState === "starting" ||
+      queue.visualWorkerInitializing
+    ) {
+      stageIndex = 1;
+      stageText =
+        "Memuat model MuseTalk ke GPU (1–3 menit pada broadcast pertama)...";
     } else if (!queue.warmedUp && queue.queuedVideos === 0 && state.counters.submitted === 0) {
       stageIndex = 1;
       stageText = "Memuat model AI Host ke Cloud GPU...";

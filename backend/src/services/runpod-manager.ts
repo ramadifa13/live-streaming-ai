@@ -42,6 +42,13 @@ export async function acquireGpuForJob(): Promise<string | null> {
   }
 }
 
+function isPodKeepWarm(): boolean {
+  const v = (process.env.RUNPOD_KEEP_POD_WARM ?? "false").trim().toLowerCase();
+  return v === "true" || v === "1" || v === "yes" || v === "on";
+}
+
+export { isPodKeepWarm };
+
 export async function releaseGpuForJob(podId?: string | null): Promise<void> {
   activeJobLeases = Math.max(0, activeJobLeases - 1);
   if (podId) {
@@ -616,9 +623,9 @@ export async function stopPod(podId: string): Promise<boolean> {
   if (!podId) return true;
 
   if (process.env.RUNPOD_POD_ID === podId) {
-    if ((process.env.RUNPOD_KEEP_POD_WARM ?? "false").toLowerCase() === "true") {
+    if (isPodKeepWarm()) {
       console.warn(
-        `[RunPodManager] Pod statis ${podId} DIBIARKAN MENYALA (RUNPOD_KEEP_POD_WARM=true). ` +
+        `[RunPodManager] Pod statis ${podId} DIBIARKAN MENYALA (RUNPOD_KEEP_POD_WARM=${process.env.RUNPOD_KEEP_POD_WARM}). ` +
           `GPU tetap ditagih walau tidak ada siaran.`,
       );
       return true;

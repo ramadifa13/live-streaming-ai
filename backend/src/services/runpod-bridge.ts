@@ -55,6 +55,8 @@ export interface RunPodQueueStatus {
   utterance_queue_count?: number;
   broadcast_mode?: string;
   visual_worker_running?: boolean;
+  visual_worker_initializing?: boolean;
+  broadcast_boot_state?: string;
 }
 
 import { getWorkerUrl } from "./runpod-manager.js";
@@ -179,6 +181,8 @@ export async function startRunPodBroadcast(
     stockCount?: number;
     ctaLabel?: string;
     hostName?: string;
+    /** Tunggu visual worker + RTMP siap (default: false — frontend poll pipeline-status). */
+    waitForReady?: boolean;
   },
 ): Promise<RunPodBroadcastResult> {
   const hostSlug = (params.hostName || "namira").trim().toLowerCase() || "namira";
@@ -221,6 +225,14 @@ export async function startRunPodBroadcast(
 
   if (kickoff.status === "already_running") {
     return { success: true, status: "already_running" };
+  }
+
+  if (params.waitForReady !== true) {
+    return {
+      success: true,
+      status: kickoff.status || "starting",
+      async: true,
+    } as RunPodBroadcastResult & { async?: boolean };
   }
 
   const bootTimeoutMs = broadcastBootTimeoutMs();

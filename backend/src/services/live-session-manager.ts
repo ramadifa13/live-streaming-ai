@@ -3,6 +3,7 @@ import {
   setLiveSessionActive,
   startPodAndWait,
   releaseGpuForJob,
+  isPodKeepWarm,
 } from "./runpod-manager.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
 import {
@@ -345,7 +346,8 @@ class LiveSessionManager {
 
     session.bootstrapAbort = true;
     const staticPodId = (process.env.RUNPOD_POD_ID || "").trim();
-    const podToTerminate = options?.keepGpu
+    const keepGpu = options?.keepGpu ?? isPodKeepWarm();
+    const podToTerminate = keepGpu
       ? null
       : session.podId || staticPodId || null;
 

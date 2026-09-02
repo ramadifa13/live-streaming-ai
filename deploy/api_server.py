@@ -712,19 +712,24 @@ async def get_queue_status():
     active_processing = [
         jid for jid, info in jobs.items() if info.get("status") == "processing"
     ]
+    visual_worker_running = visual_worker is not None and visual_worker.is_running
+    broadcast_booting = _broadcast_boot_state == "starting"
+    visual_worker_initializing = (
+        visual_worker is not None
+        and not visual_worker_running
+        and broadcast_booting
+    )
     is_broadcasting = (
         (broadcaster_process is not None and broadcaster_process.poll() is None)
-        or (visual_worker is not None and visual_worker.is_running)
+        or visual_worker_running
+        or broadcast_booting
     )
 
     utterance_pending = 0
-    visual_worker_running = False
     if is_ai_worker_mode():
         bridge = get_speech_bridge(output_dir)
         if bridge is not None:
             utterance_pending = bridge.pending_count()
-        visual_worker_running = visual_worker is not None and visual_worker.is_running
-
     playable_seconds = sum(_probe_duration_seconds(p) for p in playable_paths)
     in_flight_seconds = len(active_processing) * AVG_RENDER_SECONDS
     buffer_seconds = round(playable_seconds + in_flight_seconds, 2)
@@ -784,6 +789,8 @@ async def get_queue_status():
         "warmed_up": getattr(worker, "_warmed_up", False) or visual_worker_running,
         "utterance_queue_count": utterance_pending,
         "visual_worker_running": visual_worker_running,
+        "visual_worker_initializing": visual_worker_initializing,
+        "broadcast_boot_state": _broadcast_boot_state,
         "broadcast_mode": broadcast_mode,
     }
 
