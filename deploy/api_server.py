@@ -55,17 +55,25 @@ try:
         start_visual_broadcast,
         stop_visual_broadcast,
         is_ai_worker_mode,
+        TARGET_FPS as AI_WORKER_TARGET_FPS,
     )
     from speech_bridge import get_speech_bridge
 except ImportError:
     get_visual_worker = None  # type: ignore
     start_visual_broadcast = None  # type: ignore
     stop_visual_broadcast = None  # type: ignore
+    AI_WORKER_TARGET_FPS = 30
 
     def is_ai_worker_mode() -> bool:
         return False
 
     def get_speech_bridge(output_folder: str = ""):
+        return None
+
+try:
+    from worker_telemetry import get_telemetry
+except ImportError:
+    def get_telemetry():  # type: ignore
         return None
 
 # Init AI Worker (batch MuseTalk — fallback saat BROADCAST_MODE != ai_worker)
@@ -515,6 +523,26 @@ async def get_logs():
                 pass
     return {"status": "ok", "lines": logs_output[-50:]}
 
+
+@app.get("/stream/worker-metrics")
+async def worker_metrics():
+    """Runtime telemetry snapshot (P50/P95/P99 latencies, queue depths, counters)."""
+    tel = get_telemetry() if get_telemetry is not None else None
+    if tel is None:
+        return {"success": False, "error": "telemetry_unavailable"}
+    snap = tel.snapshot(target_fps=float(AI_WORKER_TARGET_FPS))
+    snap["success"] = True
+    snap["visual_worker_running"] = (
+        visual_worker is not None and visual_worker.is_running
+    )
+    snap["broadcast_mode"] = os.environ.get("BROADCAST_MODE", "segment")
+    if is_ai_worker_mode():
+        bridge = get_speech_bridge(output_dir)
+        if bridge is not None:
+            snap["utterance_queue_count"] = bridge.pending_count()
+    return snap
+
+
 async def process_video_task(req: GenerateVideoRequest, task_id: str):
     global total_videos_rendered, visual_worker
     audio_path = None
@@ -690,14 +718,26 @@ async def get_queue_status():
     )
 
     utterance_pending = 0
+    visual_worker_running = False
     if is_ai_worker_mode():
         bridge = get_speech_bridge(output_dir)
         if bridge is not None:
             utterance_pending = bridge.pending_count()
+        visual_worker_running = visual_worker is not None and visual_worker.is_running
 
     playable_seconds = sum(_probe_duration_seconds(p) for p in playable_paths)
     in_flight_seconds = len(active_processing) * AVG_RENDER_SECONDS
     buffer_seconds = round(playable_seconds + in_flight_seconds, 2)
+    queued_videos_count = len(video_files)
+
+    broadcast_mode = os.environ.get("BROADCAST_MODE", "segment")
+    if is_ai_worker_mode():
+        avg_utt_sec = 12.0
+        prep_sec = 3.0
+        playable_seconds = round(utterance_pending * avg_utt_sec, 2)
+        in_flight_seconds = round(len(active_processing) * prep_sec, 2)
+        buffer_seconds = round(playable_seconds + in_flight_seconds, 2)
+        queued_videos_count = max(utterance_pending, total_videos_rendered)
 
     rtmp_connected = False
     rtmp_error = ""
@@ -730,7 +770,7 @@ async def get_queue_status():
         "success": True,
         # Legacy counter — hanya untuk statistik render, BUKAN buffer playable.
         "ready_videos_count": total_videos_rendered,
-        "queued_videos_count": len(video_files),
+        "queued_videos_count": queued_videos_count,
         "ready_videos": video_files,
         "playable_buffer_seconds": round(playable_seconds, 2),
         "queued_videos_duration_seconds": round(playable_seconds, 2),
@@ -741,9 +781,10 @@ async def get_queue_status():
         "rtmp_connected": rtmp_connected,
         "rtmp_error": rtmp_error,
         "rtmp_state": rtmp_state,
-        "warmed_up": getattr(worker, "_warmed_up", False),
+        "warmed_up": getattr(worker, "_warmed_up", False) or visual_worker_running,
         "utterance_queue_count": utterance_pending,
-        "broadcast_mode": os.environ.get("BROADCAST_MODE", "segment"),
+        "visual_worker_running": visual_worker_running,
+        "broadcast_mode": broadcast_mode,
     }
 
 class BroadcastRequest(BaseModel):
@@ -765,6 +806,10 @@ class BroadcastRequest(BaseModel):
     platform: Optional[str] = None
     stock_count: Optional[Any] = None
     cta_label: Optional[str] = None
+    host_name: Optional[str] = None
+    hostName: Optional[str] = None
+    avatar_name: Optional[str] = None
+    avatarName: Optional[str] = None
 
 class PlaybackRequest(BaseModel):
     action: str
@@ -995,19 +1040,34 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
 
     if ai_mode and start_visual_broadcast is not None:
         os.environ["AI_WORKER_FPS"] = os.environ.get(
-            "AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "30")
+            "AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "25")
         )
+        host_raw = (
+            req.host_name
+            or req.hostName
+            or req.avatar_name
+            or req.avatarName
+            or "namira"
+        )
+        host_slug = str(host_raw).strip().lower() or "namira"
         visual_worker = start_visual_broadcast(
             publish_url,
             idle_video=resolved_idle or "",
             output_folder=output_dir,
-            host="namira",
+            host=host_slug,
         )
         bridge = get_speech_bridge(output_dir)
         if bridge is not None:
             bridge.output_folder = output_dir
+        flag_path = os.path.join(output_dir, "playback_active.flag")
+        try:
+            with open(flag_path, "w", encoding="utf-8") as fh:
+                fh.write("1")
+            print("[AI-Worker] playback_active.flag dibuat (audio TTS aktif)")
+        except Exception as flag_err:
+            print(f"[AI-Worker] playback_active notice: {flag_err}")
         print(
-            f"[AI-Worker] AIVisualWorker aktif @ {os.environ.get('AI_WORKER_FPS', '30')}fps "
+            f"[AI-Worker] AIVisualWorker aktif @ {os.environ.get('AI_WORKER_FPS', '25')}fps "
             f"(in-process, no subprocess)"
         )
         broadcaster_process = None

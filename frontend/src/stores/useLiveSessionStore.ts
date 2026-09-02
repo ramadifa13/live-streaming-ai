@@ -17,6 +17,9 @@ export interface PipelineStatus {
   ready: boolean;
   generationCount: number;
   videosQueued: number;
+  utteranceQueueCount?: number;
+  broadcastMode?: string;
+  visualWorkerRunning?: boolean;
   pendingCount: number;
   isLive?: boolean;
   isBroadcasting?: boolean;

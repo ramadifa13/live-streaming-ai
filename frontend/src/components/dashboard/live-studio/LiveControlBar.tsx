@@ -21,6 +21,7 @@ import { useProductStore } from "@/stores/useProductStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { liveSessionService, toLiveProductSnapshot } from "@/services/liveSessionService";
+import { avatarIdleVideoPath } from "@/app/dashboard/constants";
 import { oauthService } from "@/services/oauthService";
 import { copyToClipboard } from "@/utils/clipboard";
 import { formatTime } from "@/utils/formatters";
@@ -248,7 +249,7 @@ export const LiveControlBar: React.FC = () => {
             streamKey: normalizedKey,
             sessionId,
             avatarImage: selectedAvatar.image,
-            avatarVideo: "/avatars/namira.mp4",
+            avatarVideo: avatarIdleVideoPath(selectedAvatar.id),
             productName: activeFeaturedProduct.name,
             productPrice: String(activeFeaturedProduct.price).replace(/\D/g, ""),
             productImageUrl: httpMediaOnly(activeFeaturedProduct.image),
@@ -256,6 +257,7 @@ export const LiveControlBar: React.FC = () => {
             platform: selectedPlatform,
             stockCount: activeFeaturedProduct.stock,
             ctaLabel: selectedPlatform === "Instagram Live" ? "DM Sekarang" : "Beli Sekarang",
+            avatarName: selectedAvatar.name,
           },
           controller.signal,
         );

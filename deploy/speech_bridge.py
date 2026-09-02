@@ -25,6 +25,17 @@ try:
 except ImportError:
     audio_to_pcm_s16le = None  # type: ignore
 
+try:
+    from worker_telemetry import get_telemetry
+except ImportError:
+    class _NoopTelemetry:
+        def measure(self, _name: str):
+            from contextlib import nullcontext
+            return nullcontext()
+
+    def get_telemetry():  # type: ignore
+        return _NoopTelemetry()
+
 TARGET_FPS = int(os.environ.get("AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "30")))
 SAMPLE_RATE = 44100
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
@@ -171,6 +182,8 @@ class SpeechBridge:
 
     def _prepare_job(self, job: UtteranceJob) -> None:
         wav_16k = None
+        metrics = get_telemetry()
+        prep_start = time.perf_counter()
         try:
             pcm = _extract_pcm_stereo(job.audio_path)
             job.pcm_frames = _split_pcm_frames(pcm)
@@ -178,8 +191,12 @@ class SpeechBridge:
 
             if self._models and job.num_frames > 0:
                 wav_16k = _normalize_to_16k_wav(job.audio_path)
-                job.whisper_chunks = self._compute_whisper_chunks(wav_16k, job.num_frames)
+                with metrics.measure("utterance_whisper_ms"):
+                    job.whisper_chunks = self._compute_whisper_chunks(wav_16k, job.num_frames)
             job.ready.set()
+            metrics.record_latency(
+                "utterance_prep_ms", (time.perf_counter() - prep_start) * 1000.0
+            )
             print(
                 f"[SpeechBridge] Ready {job.task_id}: "
                 f"{job.num_frames} frames @ {TARGET_FPS}fps"
@@ -187,6 +204,10 @@ class SpeechBridge:
         except Exception as err:
             job.error = str(err)
             job.ready.set()
+            metrics.record_latency(
+                "utterance_prep_ms", (time.perf_counter() - prep_start) * 1000.0
+            )
+            metrics.inc("utterance_prep_failed")
             print(f"[SpeechBridge] Prep failed {job.task_id}: {err}")
         finally:
             if wav_16k and os.path.exists(wav_16k):
@@ -331,6 +352,14 @@ class SpeechBridge:
     def pending_count(self) -> int:
         with self._lock:
             return len(self._pending) + (1 if self._current else 0)
+
+    def has_ready_pending(self) -> bool:
+        """True jika ada utterance berikutnya yang sudah siap diputar."""
+        with self._lock:
+            for job in self._pending:
+                if job.ready.is_set() and not job.error and job.num_frames > 0:
+                    return True
+        return False
 
     def is_speaking(self) -> bool:
         return self._current is not None

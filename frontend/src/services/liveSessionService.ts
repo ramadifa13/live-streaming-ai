@@ -70,6 +70,7 @@ export interface BroadcastParams {
   platform: string;
   stockCount: number;
   ctaLabel: string;
+  avatarName?: string;
 }
 
 export const liveSessionService = {

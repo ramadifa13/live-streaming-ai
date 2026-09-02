@@ -1,5 +1,10 @@
 import { Avatar } from "./types";
 
+export function avatarIdleVideoPath(avatarId: string): string {
+  const id = (avatarId || "namira").toLowerCase();
+  return `/avatars/${id}_idle.mp4`;
+}
+
 export const avatars: Avatar[] = [
   {
     id: "namira",

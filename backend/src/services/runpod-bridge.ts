@@ -52,9 +52,22 @@ export interface RunPodQueueStatus {
   rtmp_error?: string;
   rtmp_state?: string;
   warmed_up?: boolean;
+  utterance_queue_count?: number;
+  broadcast_mode?: string;
+  visual_worker_running?: boolean;
 }
 
 import { getWorkerUrl } from "./runpod-manager.js";
+
+function isAiWorkerBroadcastMode(mode: string): boolean {
+  const m = (mode || "").trim().toLowerCase();
+  return (
+    m === "ai_worker" ||
+    m === "ai-worker" ||
+    m === "realtime" ||
+    m === "visual_worker"
+  );
+}
 
 function isDemoFallbackAllowed() {
   return (process.env.ALLOW_MEDIA_FALLBACK ?? "false").toLowerCase() === "true";
@@ -137,8 +150,10 @@ export async function startRunPodBroadcast(
     platform?: string;
     stockCount?: number;
     ctaLabel?: string;
+    hostName?: string;
   },
 ): Promise<RunPodBroadcastResult> {
+  const hostSlug = (params.hostName || "namira").trim().toLowerCase() || "namira";
   // ACK cepat dari worker — boot broadcaster berjalan async + polling status.
   const kickoff = (await workerRequestWithRetry(
     podId,
@@ -158,6 +173,10 @@ export async function startRunPodBroadcast(
         platform: params.platform,
         stock_count: params.stockCount,
         cta_label: params.ctaLabel,
+        host_name: hostSlug,
+        hostName: hostSlug,
+        avatar_name: hostSlug,
+        avatarName: hostSlug,
       }),
       signal: AbortSignal.timeout(20_000),
     },
@@ -291,6 +310,14 @@ export async function triggerWorkerPlayback(
   podId: string | null | undefined,
 ): Promise<void> {
   try {
+    const queue = await getRunPodQueueStatus(podId).catch(() => null);
+    if (queue && isAiWorkerBroadcastMode(String(queue.broadcast_mode || ""))) {
+      console.log(
+        "[RunPodBridge] ▶️  skip start-playback — mode ai_worker (playback_active otomatis)",
+      );
+      return;
+    }
+
     await workerRequestWithRetry(
       podId,
       "/stream/start-playback",

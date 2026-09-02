@@ -93,6 +93,7 @@ const broadcastSchema = z.object({
   platform: z.string().optional(),
   stockCount: z.number().optional(),
   ctaLabel: z.string().optional(),
+  avatarName: z.string().optional(),
 });
 
 export async function liveSessionRoutes(server: FastifyInstance) {
@@ -362,6 +363,10 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       platform,
       stockCount,
       ctaLabel,
+      hostName:
+        parsed.data.avatarName?.trim() ||
+        managedSession?.avatarName ||
+        "namira",
     });
 
     if (!result.success) {
@@ -460,9 +465,15 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         await liveHostOrchestrator.getPipelineStatus(sessionId);
       if (!pipelineStatus.ready) {
         reply.code(400);
+        const realtime = /ai_worker|ai-worker|realtime|visual_worker/i.test(
+          String(pipelineStatus.broadcastMode || ""),
+        );
+        const bufferLabel = realtime
+          ? `buffer ucapan ${pipelineStatus.utteranceQueueCount ?? pipelineStatus.videosQueued}/2`
+          : `video ${pipelineStatus.generationCount}/2`;
         return {
           success: false,
-          error: `Belum siap untuk Go Live: Pastikan RTMP sudah terhubung dan 2 video pembuka selesai dirender (Status saat ini: ${pipelineStatus.generationCount}/2 video selesai, RTMP: ${pipelineStatus.isRtmpConnected ? "Terhubung" : "Belum Terhubung"}).`,
+          error: `Belum siap untuk Go Live: pastikan RTMP terhubung dan ${bufferLabel} siap (RTMP: ${pipelineStatus.isRtmpConnected ? "Terhubung" : "Belum Terhubung"}, buffer: ${pipelineStatus.bufferSeconds ?? 0}s).`,
         };
       }
 

@@ -57,9 +57,33 @@ BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2  # stereo s16le
 CROSSFADE_FRAMES = int(os.environ.get("AI_WORKER_CROSSFADE", "4"))
 OVERLAP_FRAMES = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "5"))
 BBOX_SMOOTH_WINDOW = int(os.environ.get("AI_WORKER_BBOX_SMOOTH", "7"))
-RAW_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RAW_QUEUE", "6"))
-RENDER_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RENDER_QUEUE", "12"))
+RAW_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RAW_QUEUE", "12"))
+RENDER_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RENDER_QUEUE", "24"))
+RAW_QUEUE_BLOCK_SEC = float(os.environ.get("AI_WORKER_RAW_BLOCK_SEC", "0.1"))
 MASK_FEATHER_PX = int(os.environ.get("AI_WORKER_MASK_FEATHER", "9"))
+
+try:
+    from worker_telemetry import get_telemetry
+except ImportError:
+    class _NoopTelemetry:
+        def measure(self, _name: str):
+            from contextlib import nullcontext
+            return nullcontext()
+
+        def inc(self, *_a, **_k) -> None:
+            pass
+
+        def set_gauge(self, *_a, **_k) -> None:
+            pass
+
+        def note_broadcast_frame(self) -> None:
+            pass
+
+        def maybe_log_summary(self, **_k) -> None:
+            pass
+
+    def get_telemetry():  # type: ignore
+        return _NoopTelemetry()
 
 
 # ---------------------------------------------------------------------------
@@ -441,6 +465,18 @@ class VideoStateMachine:
         self._utterance_active = False
         self._utterance_audio_done = False
         self._talk_loop_count = 0
+        self._scheduled_gesture: Optional[str] = None
+        self._post_speech_gesture_active = False
+
+    def set_utterance_gesture(self, tag: Optional[str]) -> None:
+        """Gesture diputar segera setelah audio habis (bukan setelah talk loop end_pose)."""
+        with self._lock:
+            if not tag:
+                return
+            key = tag.lower().strip()
+            if key in ("none", "null", "idle", "talk", "talk_expressive"):
+                return
+            self._scheduled_gesture = tag
 
     def request_action(self, tag: Optional[str]) -> None:
         with self._lock:
@@ -473,11 +509,38 @@ class VideoStateMachine:
                 )
             else:
                 self.state = PlayState.TALK
+                if self._face_registry:
+                    talk_clip = self.bank.clips[talk]
+                    self._face_registry.lock_from_clip(
+                        talk_clip, talk_clip.base_pose_frame
+                    )
 
     def mark_utterance_audio_done(self) -> None:
         with self._lock:
             if self._utterance_active:
                 self._utterance_audio_done = True
+                self._try_start_post_speech_gesture()
+
+    def _try_start_post_speech_gesture(self) -> None:
+        if not self._scheduled_gesture or self._post_speech_gesture_active:
+            return
+        talk = self.bank.resolve_action("talk_expressive")
+        target = self.bank.resolve_action(self._scheduled_gesture)
+        if target in (talk, self.bank._idle_name):
+            self._scheduled_gesture = None
+            return
+        clip = self.bank.clips.get(self.current_name)
+        if clip is None or target not in self.bank.clips:
+            self._scheduled_gesture = None
+            return
+        prev_idx = min(self.frame_idx, clip.end_pose)
+        self._begin_overlap_transition(
+            clip, prev_idx, target, PlayState.ACTION, lock_face=False
+        )
+        self._post_speech_gesture_active = True
+        self._playthrough_lock = True
+        self._scheduled_gesture = None
+        print(f"[StateMachine] Post-speech gesture → {target}")
 
     def at_end_pose(self) -> bool:
         clip = self.bank.clips.get(self.current_name)
@@ -486,26 +549,41 @@ class VideoStateMachine:
         return self.frame_idx >= clip.end_pose
 
     def utterance_visual_complete(self) -> bool:
-        """True when audio selesai DAN clip talk sudah sampai end_pose."""
+        """True when audio+visual selesai (termasuk post-speech gesture jika ada)."""
         if not self._utterance_active:
             return False
         if not self._utterance_audio_done:
             return False
+        if self._post_speech_gesture_active:
+            clip = self.bank.clips.get(self.current_name)
+            if clip is None:
+                return True
+            return self.frame_idx >= clip.end_pose
+        if self._scheduled_gesture:
+            return False
         return self.at_end_pose()
 
-    def end_utterance(self) -> None:
+    def end_utterance(self, *, another_utterance_ready: bool = False) -> None:
         with self._lock:
             self._utterance_active = False
             self._utterance_audio_done = False
             self._playthrough_lock = False
             self._talk_loop_count = 0
+            self._scheduled_gesture = None
+            self._post_speech_gesture_active = False
             if self._face_registry:
                 self._face_registry.release_lock()
             self._drain_action_queue()
-            if not self.pending_action:
-                self.pending_action = self.bank._idle_name
-            self.state = PlayState.IDLE
-            print("[StateMachine] Utterance selesai → transisi (end pose tercapai)")
+            talk = self.bank.resolve_action("talk_expressive")
+            if another_utterance_ready and self.current_name == talk:
+                self.pending_action = None
+                self.state = PlayState.TALK
+                print("[StateMachine] Utterance selesai → hold talk (utterance berikutnya siap)")
+            else:
+                if not self.pending_action:
+                    self.pending_action = self.bank._idle_name
+                self.state = PlayState.IDLE
+                print("[StateMachine] Utterance selesai → transisi (end pose tercapai)")
 
     def _begin_overlap_transition(
         self,
@@ -530,7 +608,8 @@ class VideoStateMachine:
         self.current_name = to_name
         self.state = new_state
         if lock_face and self._face_registry:
-            self._face_registry.lock_from_clip(from_clip, from_idx)
+            lock_idx = min(to_clip.base_pose_frame, to_clip.end_pose)
+            self._face_registry.lock_from_clip(to_clip, lock_idx)
         print(
             f"[StateMachine] Overlap {n}f: {from_clip.name} → {to_name} "
             f"(resume@{resume})"
@@ -541,7 +620,13 @@ class VideoStateMachine:
         if clip.loop and self.state != PlayState.TALK:
             return False
         if self.state == PlayState.TALK and self._utterance_active:
-            return not self._utterance_audio_done or self.frame_idx < clip.end_pose
+            if self._post_speech_gesture_active:
+                return self.frame_idx < clip.end_pose
+            if not self._utterance_audio_done:
+                return True
+            if self._scheduled_gesture:
+                return True
+            return self.frame_idx < clip.end_pose
         if self.state == PlayState.ACTION and not clip.loop:
             return self.frame_idx < clip.end_pose
         return False
@@ -761,12 +846,14 @@ class LipSyncEngine:
                 break
 
             latent_batch = torch.cat(latent_list, dim=0).to(device=self.device, dtype=self.weight_dtype)
+            metrics = get_telemetry()
             try:
-                audio_feature_batch = pe(whisper_batch)
-                pred = unet.model(
-                    latent_batch, timesteps, encoder_hidden_states=audio_feature_batch
-                ).sample
-                recon = vae.decode_latents(pred)
+                with metrics.measure("musetalk_batch_ms"):
+                    audio_feature_batch = pe(whisper_batch)
+                    pred = unet.model(
+                        latent_batch, timesteps, encoder_hidden_states=audio_feature_batch
+                    ).sample
+                    recon = vae.decode_latents(pred)
             except Exception as err:
                 print(f"[LipSync] batch infer notice: {err}")
                 with self._lock:
@@ -821,11 +908,14 @@ class LipSyncEngine:
 
     @torch.no_grad()
     def process(self, pkt: RawFramePacket, clip: ClipAsset) -> np.ndarray:
+        metrics = get_telemetry()
         if pkt.whisper_idx is not None:
             with self._lock:
                 cached = self._rendered.get(pkt.whisper_idx)
             if cached is not None:
+                metrics.inc("lipsync_cache_hit")
                 return cached
+            metrics.inc("lipsync_cache_miss")
             # Belum siap — pakai body frame sambil menunggu batch-ahead
             talk = self.bank.clips.get(self._talk_clip_name)
             if talk:
@@ -843,6 +933,7 @@ def lipsync_worker_loop(
     render_q: queue.Queue,
     stop_event: threading.Event,
 ) -> None:
+    metrics = get_telemetry()
     while not stop_event.is_set():
         try:
             pkt: RawFramePacket = raw_q.get(timeout=0.05)
@@ -850,16 +941,19 @@ def lipsync_worker_loop(
             continue
         try:
             clip = bank.clips.get(pkt.clip_name) or bank.idle_clip
-            if pkt.whisper_idx is not None or pkt.needs_lipsync:
-                frame = engine.process(pkt, clip)
-            else:
-                frame = pkt.frame
-            frame = fit_bgr(frame, CANVAS_W, CANVAS_H)
+            with metrics.measure("lipsync_process_ms"):
+                if pkt.whisper_idx is not None or pkt.needs_lipsync:
+                    frame = engine.process(pkt, clip)
+                else:
+                    frame = pkt.frame
+                frame = fit_bgr(frame, CANVAS_W, CANVAS_H)
             out = RenderedPacket(seq=pkt.seq, frame=frame, audio_pcm=pkt.audio_pcm)
+            metrics.set_gauge("render_queue_depth", float(render_q.qsize()))
             try:
-                render_q.put(out, timeout=0.1)
+                render_q.put(out, timeout=0.15)
             except queue.Full:
                 # Drop oldest — broadcaster must never stall
+                metrics.inc("render_queue_dropped")
                 try:
                     render_q.get_nowait()
                 except queue.Empty:
@@ -878,6 +972,25 @@ def lipsync_worker_loop(
 # ---------------------------------------------------------------------------
 # Frame fetcher (Thread 1)
 # ---------------------------------------------------------------------------
+def _put_raw_frame(
+    raw_q: queue.Queue,
+    pkt: RawFramePacket,
+    metrics,
+    stop_event: threading.Event,
+    block_sec: float = RAW_QUEUE_BLOCK_SEC,
+) -> None:
+    """Backpressure: tunggu slot queue sebelum drop (hindari gap sequence)."""
+    deadline = time.perf_counter() + max(0.01, block_sec)
+    while not stop_event.is_set():
+        try:
+            raw_q.put(pkt, timeout=0.01)
+            return
+        except queue.Full:
+            if time.perf_counter() >= deadline:
+                metrics.inc("raw_queue_dropped")
+                return
+
+
 def frame_fetcher_loop(
     sm: VideoStateMachine,
     raw_q: queue.Queue,
@@ -890,8 +1003,10 @@ def frame_fetcher_loop(
     period = 1.0 / float(TARGET_FPS)
     deadline = time.perf_counter()
     was_speaking = False
+    metrics = get_telemetry()
 
     while not stop_event.is_set():
+        tick_start = time.perf_counter()
         whisper_idx = None
         if audio_fn_ext is not None:
             pcm, is_speech, whisper_idx = audio_fn_ext()
@@ -905,7 +1020,10 @@ def frame_fetcher_loop(
             elif not is_speech and was_speaking and bridge.is_audio_exhausted():
                 sm.mark_utterance_audio_done()
             if sm.utterance_visual_complete():
-                sm.end_utterance()
+                another_ready = (
+                    bridge.has_ready_pending() if hasattr(bridge, "has_ready_pending") else False
+                )
+                sm.end_utterance(another_utterance_ready=another_ready)
                 bridge.signal_visual_complete()
 
         was_speaking = is_speech or (
@@ -919,10 +1037,11 @@ def frame_fetcher_loop(
         pkt.whisper_idx = whisper_idx
         if whisper_idx is not None:
             pkt.needs_lipsync = True
-        try:
-            raw_q.put(pkt, timeout=0.05)
-        except queue.Full:
-            pass
+        metrics.set_gauge("raw_queue_depth", float(raw_q.qsize()))
+        if bridge is not None:
+            metrics.set_gauge("utterance_queue_depth", float(bridge.pending_count()))
+        _put_raw_frame(raw_q, pkt, metrics, stop_event)
+        metrics.record_latency("frame_fetch_tick_ms", (time.perf_counter() - tick_start) * 1000.0)
         deadline += period
         sleep_for = deadline - time.perf_counter()
         if sleep_for > 0:
@@ -1081,7 +1200,10 @@ def broadcaster_loop(
             print(f"[Broadcaster] RTMP init notice: {err} — dry-run mode")
 
     frames_written = 0
+    metrics = get_telemetry()
+    metrics.set_gauge("target_fps", float(TARGET_FPS))
     while not stop_event.is_set():
+        tick_start = time.perf_counter()
         # Hot-swap overlay
         if out_dir:
             update_file = os.path.join(out_dir, "update_overlay.json")
@@ -1111,17 +1233,24 @@ def broadcaster_loop(
             except queue.Empty:
                 break
 
+        metrics.set_gauge("render_queue_depth", float(render_q.qsize()))
         if next_seq in pending:
             pkt = pending.pop(next_seq)
             last_good = pkt.frame
             pcm = pkt.audio_pcm
         else:
             pcm = silence
+            metrics.inc("frames_duplicated")
 
         frame_out = _apply_overlay(last_good)
         if bc:
-            if bc.write(frame_out, pcm):
+            write_start = time.perf_counter()
+            wrote = bc.write(frame_out, pcm)
+            metrics.record_latency("ffmpeg_write_ms", (time.perf_counter() - write_start) * 1000.0)
+            if wrote:
                 frames_written += 1
+                metrics.inc("frames_written")
+                metrics.note_broadcast_frame()
                 if frames_written == 30 and out_dir:
                     try:
                         from rtmp_utils import write_rtmp_status as _wrs
@@ -1130,12 +1259,15 @@ def broadcaster_loop(
                         pass
         next_seq += 1
 
+        metrics.record_latency("broadcast_tick_ms", (time.perf_counter() - tick_start) * 1000.0)
+        metrics.maybe_log_summary(target_fps=TARGET_FPS)
         deadline += period
         sleep_for = deadline - time.perf_counter()
         if sleep_for > 0:
             time.sleep(sleep_for)
         elif sleep_for < -period * 2:
             deadline = time.perf_counter()
+            metrics.inc("broadcast_pacer_reset")
 
     if bc:
         bc.shutdown()
@@ -1188,8 +1320,8 @@ class AIVisualWorker:
             self._engine.set_utterance(job)
         if self._sm:
             self._sm.begin_utterance()
-            if job.action and job.action.lower() not in ("talk_expressive", "talk", "none"):
-                self._sm.request_action(job.action)
+            if job.action:
+                self._sm.set_utterance_gesture(job.action)
 
     def _on_utterance_end(self, _job) -> None:
         if self._engine:

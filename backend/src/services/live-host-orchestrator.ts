@@ -146,6 +146,9 @@ interface QueueMetrics {
   rtmpConnected: boolean;
   rtmpError: string;
   warmedUp: boolean;
+  broadcastMode: string;
+  utteranceQueueCount: number;
+  visualWorkerRunning: boolean;
 }
 
 interface RuntimeCounters {
@@ -300,6 +303,36 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
 /** Estimasi durasi clip pendek (speech 20–35 kata ≈ 8–14 detik). */
 const FALLBACK_SPEECH_SECONDS = 12;
 const IN_FLIGHT_RENDER_SECONDS = 10;
+
+function isAiWorkerBroadcastMode(mode: string): boolean {
+  const m = (mode || "").trim().toLowerCase();
+  return (
+    m === "ai_worker" ||
+    m === "ai-worker" ||
+    m === "realtime" ||
+    m === "visual_worker"
+  );
+}
+
+function emptyQueueMetrics(
+  partial: Partial<QueueMetrics> = {},
+): QueueMetrics {
+  return {
+    readyVideos: 0,
+    queuedVideos: 0,
+    activeProcessing: 0,
+    bufferSeconds: 0,
+    workerOffline: false,
+    broadcasting: false,
+    rtmpConnected: false,
+    rtmpError: "",
+    warmedUp: false,
+    broadcastMode: "segment",
+    utteranceQueueCount: 0,
+    visualWorkerRunning: false,
+    ...partial,
+  };
+}
 const PRODUCT_CACHE_TTL_MS = 30_000;
 const QUEUE_POLL_MS = 800;
 const COMMENT_SCAN_MS = 400;
@@ -701,17 +734,7 @@ class LiveHostOrchestrator {
         duplicateResponsesPrevented: 0,
         fallbackResponses: 0,
       },
-      lastQueue: {
-        readyVideos: 0,
-        queuedVideos: 0,
-        activeProcessing: 0,
-        bufferSeconds: 0,
-        workerOffline: false,
-        broadcasting: false,
-        rtmpConnected: false,
-        rtmpError: "",
-        warmedUp: false,
-      },
+      lastQueue: emptyQueueMetrics(),
       estimatedBufferSeconds: 0,
       scriptBank: emptyScriptBank(config.productId),
       rtmpFailedAt: 0,
@@ -1639,32 +1662,14 @@ class LiveHostOrchestrator {
   private async refreshQueueMetrics(sessionId: string): Promise<QueueMetrics> {
     const state = this.sessions.get(sessionId);
     if (!state) {
-      return {
-        readyVideos: 0,
-        queuedVideos: 0,
-        activeProcessing: 0,
-        bufferSeconds: 0,
-        workerOffline: true,
-        broadcasting: false,
-        rtmpConnected: false,
-        rtmpError: "",
-        warmedUp: false,
-      };
+      return emptyQueueMetrics({ workerOffline: true });
     }
 
     const podId = state.config.podId || process.env.RUNPOD_POD_ID;
     if (!podId) {
-      state.lastQueue = {
-        readyVideos: 0,
-        queuedVideos: 0,
-        activeProcessing: 0,
+      state.lastQueue = emptyQueueMetrics({
         bufferSeconds: state.estimatedBufferSeconds,
-        workerOffline: false,
-        broadcasting: false,
-        rtmpConnected: false,
-        rtmpError: "",
-        warmedUp: false,
-      };
+      });
       return state.lastQueue;
     }
 
@@ -1681,9 +1686,24 @@ class LiveHostOrchestrator {
 
       state.workerOfflineSince = 0;
 
-      const readyVideos = Number(raw.queued_videos_count || 0);
-      const queuedVideos = readyVideos;
+      const broadcastMode = String(raw.broadcast_mode || "segment");
+      const aiWorker = isAiWorkerBroadcastMode(broadcastMode);
+      const utteranceQueueCount = Number(raw.utterance_queue_count ?? 0);
+      const readyVideos = Number(raw.ready_videos_count || 0);
       const activeProcessing = Number(raw.active_processing_count || 0);
+      const visualWorkerRunning = Boolean(raw.visual_worker_running);
+
+      let queuedVideos = Number(raw.queued_videos_count || 0);
+      if (aiWorker) {
+        queuedVideos = Math.max(
+          utteranceQueueCount,
+          readyVideos,
+          state.counters.generated,
+          state.counters.submitted > 0 ? 1 : 0,
+        );
+      } else {
+        queuedVideos = Math.max(queuedVideos, readyVideos);
+      }
 
       const playableSeconds = Number(
         raw.playable_buffer_seconds ??
@@ -1691,17 +1711,25 @@ class LiveHostOrchestrator {
           NaN,
       );
       const inFlightSeconds = Number(raw.in_flight_buffer_seconds ?? NaN);
-
       const explicitTotal = Number(raw.buffer_seconds ?? NaN);
 
       let bufferSeconds: number;
-      if (Number.isFinite(explicitTotal)) {
+      if (Number.isFinite(explicitTotal) && explicitTotal > 0) {
         bufferSeconds = Math.max(0, explicitTotal);
       } else if (Number.isFinite(playableSeconds)) {
         bufferSeconds = Math.max(
           0,
           playableSeconds +
-            (Number.isFinite(inFlightSeconds) ? inFlightSeconds : activeProcessing * IN_FLIGHT_RENDER_SECONDS),
+            (Number.isFinite(inFlightSeconds)
+              ? inFlightSeconds
+              : activeProcessing * IN_FLIGHT_RENDER_SECONDS),
+        );
+      } else if (aiWorker) {
+        bufferSeconds = Math.max(
+          0,
+          utteranceQueueCount * FALLBACK_SPEECH_SECONDS +
+            activeProcessing * 3 +
+            state.counters.generated * FALLBACK_SPEECH_SECONDS,
         );
       } else {
         bufferSeconds = Math.max(
@@ -1721,7 +1749,16 @@ class LiveHostOrchestrator {
         broadcasting: Boolean(raw.broadcasting),
         rtmpConnected: Boolean(raw.rtmp_connected),
         rtmpError: String(raw.rtmp_error || ""),
-        warmedUp: Boolean(raw.warmed_up || bufferSeconds > 0 || queuedVideos > 0),
+        warmedUp: Boolean(
+          raw.warmed_up ||
+            visualWorkerRunning ||
+            bufferSeconds > 0 ||
+            queuedVideos > 0 ||
+            state.counters.submitted > 0,
+        ),
+        broadcastMode,
+        utteranceQueueCount,
+        visualWorkerRunning,
       };
 
       if (
@@ -1914,7 +1951,9 @@ class LiveHostOrchestrator {
       !state.pipelineReady
     ) {
       stageIndex = 2;
-      stageText = "Menyiapkan segmen pembuka AI Host...";
+      stageText = isAiWorkerBroadcastMode(queue.broadcastMode)
+        ? "Menyiapkan buffer ucapan AI Host (realtime)..."
+        : "Menyiapkan segmen pembuka AI Host...";
     } else if (rtmpRequired && !queue.rtmpConnected) {
       stageIndex = 3;
       stageText = queue.broadcasting
@@ -1932,7 +1971,10 @@ class LiveHostOrchestrator {
       ready,
       generationCount: state.counters.generated,
       videosQueued: queue.queuedVideos,
-      pendingCount: 0,
+      utteranceQueueCount: queue.utteranceQueueCount,
+      broadcastMode: queue.broadcastMode,
+      visualWorkerRunning: queue.visualWorkerRunning,
+      pendingCount: queue.utteranceQueueCount,
       pendingCommentCount: state.pendingComments.length,
       isLive: state.isLive,
       isBroadcasting: queue.broadcasting,
