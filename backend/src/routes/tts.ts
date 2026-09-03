@@ -69,7 +69,7 @@ export async function ttsRoutes(server: FastifyInstance) {
     },
   );
 
-  // POST /api/tts/synthesize — LIVE ONLY (Piper di pod)
+  // POST /api/tts/synthesize — LIVE ONLY (Piper CPU di backend)
   server.post("/api/tts/synthesize", async (request, reply) => {
     const parsed = synthesizeSchema.safeParse(request.body);
 

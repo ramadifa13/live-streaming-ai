@@ -7,7 +7,9 @@
     "dev": "tsx watch src/server.ts",
     "build": "node ./scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "piper:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File piper_tts/setup.ps1",
+    "tts:test": "tsx test-tts.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",

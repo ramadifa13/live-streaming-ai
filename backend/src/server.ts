@@ -12,6 +12,7 @@ import { ttsRoutes } from "./routes/tts.js";
 import { avatarVideoRoutes } from "./routes/avatar-video.js";
 import { chatStreamRoutes } from "./routes/chat-stream.js";
 import { oauthRoutes } from "./routes/oauth.js";
+import { stopLocalPiper } from "./services/piper-local.js";
 
 dotenv.config();
 
@@ -96,12 +97,14 @@ try {
   }
   await server.listen({ port, host });
   console.log(`Backend ready at http://${host}:${port}`);
+  console.log("[TTS] Piper CPU di-spawn on-demand (stdin), bukan port 8090.");
 
-  // Start GPU idle monitor
   import("./services/runpod-manager.js").then((m) => m.startIdleMonitor());
-
-  // Piper-TTS dipakai offline — tidak perlu warmup network seperti Edge-TTS.
-  // Model akan di-load otomatis pada request TTS pertama.
+  const shutdown = () => {
+    stopLocalPiper();
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 } catch (error) {
   server.log.error(error);
   process.exit(1);

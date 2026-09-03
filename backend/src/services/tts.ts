@@ -3,7 +3,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { randomBytes } from "crypto";
 import fs from "fs";
-import { getWorkerUrl } from "./runpod-manager.js";
+import { synthesizeWithLocalPiper } from "./piper-local.js";
 
 export interface HostVoice {
   /** Host id (= Piper host), e.g. namira */
@@ -41,8 +41,8 @@ export interface SynthesizeRequest {
   emotion?: string;
   podId?: string | null;
   /**
-   * true = wajib sesi live + Piper di pod.
-   * false = hanya untuk tool internal; API publik default live-only.
+   * true = boleh synth tanpa sesi live (tool internal).
+   * false = API publik default live-only.
    */
   allowOfflineSynth?: boolean;
 }
@@ -272,32 +272,18 @@ export function getHostSampleUrl(hostId: string): string {
   return host?.sampleAudioUrl || `/avatars/${resolveHostId(hostId)}_voice_sample.mp3`;
 }
 
-function resolvePiperEndpoints(podId?: string | null): string[] {
+function piperSynthesizeUrl(base: string): string {
+  const url = base.replace(/\/$/, "");
+  return url.endsWith("/synthesize") ? url : `${url}/synthesize`;
+}
+
+/** Cadangan HTTP opsional (PIPER_TTS_URL). Default: spawn lokal tanpa port. */
+function resolvePiperEndpoints(): string[] {
   const endpoints: string[] = [];
   const explicit = (process.env.PIPER_TTS_URL || "").trim().replace(/\/$/, "");
-  const explicitIsLocal =
-    explicit.includes("127.0.0.1") || explicit.includes("localhost");
-  const onVpsProduction =
-    process.env.NODE_ENV === "production" &&
-    !(process.env.GPU_PROVIDER || "").toLowerCase().includes("mock");
-
-  if (explicit && !(onVpsProduction && explicitIsLocal)) {
-    endpoints.push(
-      explicit.endsWith("/synthesize") ? explicit : `${explicit}/synthesize`,
-    );
+  if (explicit) {
+    endpoints.push(piperSynthesizeUrl(explicit));
   }
-
-  const worker =
-    getWorkerUrl(podId || process.env.RUNPOD_POD_ID || null) ||
-    (process.env.RUNPOD_WORKER_URL || "").trim().replace(/\/$/, "");
-  if (worker) {
-    endpoints.push(`${worker}/tts/synthesize`);
-  }
-
-  if (!onVpsProduction) {
-    endpoints.push("http://127.0.0.1:8090/synthesize");
-  }
-
   return [...new Set(endpoints)];
 }
 
@@ -313,6 +299,21 @@ async function synthesizeWithPiper(
   if (!cleanText) throw new Error("Teks kosong setelah sanitasi");
 
   const lengthScale = getPiperLengthScale(tone, speed, emotion);
+  let localErr: Error | null = null;
+
+  try {
+    const local = await synthesizeWithLocalPiper({
+      text: cleanText,
+      host: hostId,
+      length_scale: lengthScale,
+      sample_rate: 16000,
+    });
+    if (local.length >= 44) return await ensureWav16kMono(local);
+  } catch (err) {
+    localErr = err as Error;
+    console.warn(`[TTS] Piper lokal (tanpa port): ${localErr.message}`);
+  }
+
   const body = JSON.stringify({
     text: cleanText,
     host: hostId,
@@ -321,7 +322,7 @@ async function synthesizeWithPiper(
     sample_rate: 16000,
   });
 
-  const endpoints = resolvePiperEndpoints(podId);
+  const endpoints = resolvePiperEndpoints();
   let lastErr: Error | null = null;
 
   for (const url of endpoints) {
@@ -345,7 +346,7 @@ async function synthesizeWithPiper(
     }
   }
 
-  throw lastErr || new Error("Semua endpoint Piper gagal");
+  throw lastErr || localErr || new Error("Piper gagal");
 }
 
 async function synthesizeWithGoogleTTS(text: string): Promise<Buffer> {
@@ -412,7 +413,7 @@ export async function synthesizeSpeech(
   }
 
   let audioBuffer: Buffer | undefined;
-  let engineUsed = "Piper TTS (host, live)";
+  let engineUsed = "Piper TTS (CPU backend)";
 
   try {
     audioBuffer = await synthesizeWithPiper(
@@ -447,7 +448,7 @@ export async function synthesizeSpeech(
     engine: engineUsed,
     message: audioBuffer
       ? `TTS synthesis success (${engineUsed})`
-      : "TTS synthesis failed — pastikan Piper :8090 jalan di pod",
+      : "TTS synthesis failed — jalankan npm run piper:setup di backend",
     audioBuffer,
     sampleAudioUrl,
   };
@@ -455,6 +456,6 @@ export async function synthesizeSpeech(
 
 export async function warmUpTTS(): Promise<void> {
   console.log(
-    `[TTS] Host voices: ${HOST_VOICES.map((h) => h.id).join(", ")} — Piper live-only via worker /tts`,
+    `[TTS] Host voices: ${HOST_VOICES.map((h) => h.id).join(", ")} — Piper CPU di-spawn backend (tanpa port)`,
   );
 }
