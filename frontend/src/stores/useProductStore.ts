@@ -91,7 +91,9 @@ export const PRODUCT_STORAGE_QUOTA_EVENT = "livio-storage-quota";
 /** Buang field besar dari produk sebelum ditulis ke localStorage. */
 function slimProductForPersist(product: Product): Product {
   if (!product || product.id === "loading") return product;
-  const { scriptBank: _sb, faqPack: _faq, ...rest } = product;
+  const { scriptBank, faqPack, ...rest } = product;
+  void scriptBank;
+  void faqPack;
   return rest;
 }
 

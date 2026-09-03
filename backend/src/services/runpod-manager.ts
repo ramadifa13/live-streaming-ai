@@ -12,6 +12,18 @@ let idleMonitorInterval: NodeJS.Timeout | null = null;
 let liveSessionActive = false;
 let activeJobLeases = 0;
 
+function isProdLike(): boolean {
+  return (process.env.NODE_ENV || "").toLowerCase() === "production";
+}
+
+function resolveProvider(): string {
+  return (
+    process.env.GPU_PROVIDER ??
+    process.env.AVATAR_PROVIDER ??
+    "mock"
+  ).toLowerCase();
+}
+
 export function setLiveSessionActive(active: boolean) {
   liveSessionActive = active;
   if (active) updateGpuActivity();
@@ -24,11 +36,12 @@ export function isLiveSessionActive(): boolean {
 export async function acquireGpuForJob(): Promise<string | null> {
   activeJobLeases += 1;
   try {
-    const provider = (
-      process.env.GPU_PROVIDER ??
-      process.env.AVATAR_PROVIDER ??
-      "mock"
-    ).toLowerCase();
+    const provider = resolveProvider();
+    if (isProdLike() && provider === "mock") {
+      throw new Error(
+        "GPU_PROVIDER=mock tidak diizinkan di production. Set GPU_PROVIDER=runpod.",
+      );
+    }
     if (provider === "mock") {
       console.log(
         "[RunPodManager] GPU/Avatar provider is mock. Skipping GPU acquisition.",
@@ -497,11 +510,12 @@ export async function startPodAndWait(
   }
 
   // Skip pod start if using mock provider
-  const currentProvider = (
-    process.env.GPU_PROVIDER ??
-    process.env.AVATAR_PROVIDER ??
-    "mock"
-  ).toLowerCase();
+  const currentProvider = resolveProvider();
+  if (isProdLike() && currentProvider === "mock") {
+    throw new Error(
+      "GPU_PROVIDER=mock tidak diizinkan di production. Set GPU_PROVIDER=runpod.",
+    );
+  }
   if (currentProvider === "mock") {
     console.log(
       ` GPU/Avatar provider is mock. Skipping pod start.`,

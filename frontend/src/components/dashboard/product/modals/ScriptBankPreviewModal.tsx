@@ -39,7 +39,10 @@ export const ScriptBankPreviewModal: React.FC = () => {
   const [filterTopic, setFilterTopic] = useState<string>("ALL");
 
   const bankMeta = getScriptBankMeta(activeFeaturedProduct, scriptBankPreparingIds);
-  const lines = activeFeaturedProduct.scriptBank || [];
+  const lines = useMemo(
+    () => activeFeaturedProduct.scriptBank || [],
+    [activeFeaturedProduct.scriptBank],
+  );
   const productLabel =
     activeFeaturedProduct.id === "loading" || !activeFeaturedProduct.name
       ? "Pilih produk dulu"
