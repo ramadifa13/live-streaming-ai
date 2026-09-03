@@ -113,8 +113,8 @@ async def get_logs():
 async def process_video_task(req: GenerateVideoRequest, task_id: str):
     audio_path = None
     try:
-        host_type = "3d"
-        host_name = "namira"
+        host_type = "2d"
+        host_name = req.avatar_name or req.avatarName or "namira"
 
         if req.audio_base64:
             try:

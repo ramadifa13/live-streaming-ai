@@ -84,18 +84,6 @@ echo "Memulai AI Worker API (Port 8000)..."
 "$PYTHON_BIN" api_server.py > "$WORKER_DIR/api_server.log" 2>&1 &
 API_PID=$!
 
-if [ -d "$WORKER_DIR/chatterbox_service/env-chatterbox" ]; then
-	echo "Memulai Chatterbox-TTS-Indonesian microservice (Port 8090, venv terpisah)..."
-	(
-		source "$WORKER_DIR/chatterbox_service/env-chatterbox/bin/activate"
-		cd "$WORKER_DIR/chatterbox_service"
-		"$WORKER_DIR/chatterbox_service/env-chatterbox/bin/python" server.py > "$WORKER_DIR/chatterbox_service.log" 2>&1
-	) &
-	CHATTERBOX_PID=$!
-else
-	echo "[INFO] chatterbox_service/env-chatterbox tidak ditemukan — voice cloning live dilewati (lihat deploy/chatterbox_service/requirements-chatterbox.txt untuk setup)."
-fi
-
 for attempt in $(seq 1 120); do
 	if curl -fsS "http://127.0.0.1:8000/health" >/dev/null 2>&1 || curl -fsS "http://127.0.0.1:8000/" >/dev/null 2>&1; then
 		echo "[OK] AI Worker API aktif dan merespon!"
@@ -118,25 +106,6 @@ if ! kill -0 "$API_PID" 2>/dev/null; then
 	echo "[ERROR] api_server.py gagal start. Lihat log:"
 	echo "        tail -50 $WORKER_DIR/api_server.log"
 	exit 1
-fi
-
-if [ -n "${CHATTERBOX_PID:-}" ]; then
-	echo "Menunggu Chatterbox-TTS (Port 8090) inisialisasi..."
-	for attempt in $(seq 1 120); do
-		if curl -fsS "http://127.0.0.1:8090/health" >/dev/null 2>&1 || curl -fsS "http://127.0.0.1:8090/" >/dev/null 2>&1; then
-			echo "[OK] Chatterbox-TTS aktif dan merespon!"
-			break
-		fi
-		sleep 2
-		if ! kill -0 "$CHATTERBOX_PID" 2>/dev/null; then
-			echo "[WARN] Chatterbox proses mati (non-fatal, live jalan tanpa voice clone)."
-			break
-		fi
-		if [ "$attempt" -eq 120 ]; then
-			echo "[WARN] Chatterbox timeout 240s (non-fatal)."
-			break
-		fi
-	done
 fi
 
 echo "Broadcaster menunggu perintah backend melalui /stream/start-broadcast."
