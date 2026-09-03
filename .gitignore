@@ -10,6 +10,9 @@ frontend/*.tsbuildinfo
 
 # Backend Build & Local SQLite
 backend/dist/
+backend/piper_data/
+backend/tts-test.wav
+backend/test.wav
 *.db
 *.db-journal
 dev.db

@@ -21,20 +21,7 @@ export PIP_NO_CACHE_DIR=1
 
 if [ -f "$WORKER_DIR/.setup_complete" ] && [ -d "$WORKER_DIR/env" ] && [ -d "$WORKER_DIR/models" ]; then
     echo "[INFO] MuseTalk sudah complete — lewati install MuseTalk."
-    # Tetap pastikan Piper ada (venv terpisah).
-    PIPER_SETUP="$SCRIPT_DIR/piper_tts/setup.sh"
-    if [ "${SKIP_PIPER_SETUP:-0}" = "1" ]; then
-        echo "[INFO] SKIP_PIPER_SETUP=1 — selesai."
-        exit 0
-    fi
-    if [ -f "$PIPER_SETUP" ]; then
-        echo "[INFO] Melanjutkan setup Piper TTS saja..."
-        bash "$PIPER_SETUP"
-        echo ""
-        echo "Start: cd /workspace/ai_live_worker && bash start.sh"
-    else
-        echo "[WARN] piper_tts/setup.sh tidak ditemukan."
-    fi
+    echo "Start: cd /workspace/ai_live_worker && bash start.sh"
     exit 0
 fi
 
@@ -491,10 +478,10 @@ if [ -f "$WORKER_DIR/requirements-worker.txt" ]; then
 fi
 
 # ------------------------------------------------------------
-# 10. TTS note — Piper dijalankan SETELAH MuseTalk lolos verifikasi
+# 10. TTS — hanya di backend CPU, bukan di pod GPU
 # ------------------------------------------------------------
 echo ""
-echo "[INFO] Piper TTS akan di-setup otomatis di akhir (venv terpisah /workspace/piper_tts)."
+echo "[INFO] Piper/TTS tidak diinstall di worker. Audio datang dari backend (WAV)."
 echo "[INFO] MuseTalk env ($VENV_DIR) tidak akan di-install piper/onnxruntime."
 
 
@@ -738,51 +725,14 @@ echo "Model files count:"
 find "$WORKER_DIR/MuseTalk/models" -type f | wc -l
 echo ""
 
-# ------------------------------------------------------------
-# 12. PIPER TTS — hanya setelah MuseTalk aman (venv TERPISAH)
-# ------------------------------------------------------------
-echo "============================================================"
-echo " [TTS] Setup Piper (setelah MuseTalk OK)"
-echo "============================================================"
-PIPER_SETUP="$SCRIPT_DIR/piper_tts/setup.sh"
-if [ "${SKIP_PIPER_SETUP:-0}" = "1" ]; then
-    echo "[INFO] SKIP_PIPER_SETUP=1 — lewati Piper."
-elif [ ! -f "$PIPER_SETUP" ]; then
-    echo "[WARN] $PIPER_SETUP tidak ada — lewati Piper."
-else
-    # Pastikan MuseTalk venv masih sehat sebelum/sesudah Piper
-    if ! "$PYTHON_BIN" -c "import torch; assert torch.__version__.startswith('2.1.')" 2>/dev/null; then
-        echo "[ERROR] MuseTalk torch pin rusak sebelum Piper — abort TTS setup."
-        exit 1
-    fi
-    echo "[INFO] Menjalankan Piper setup (CPU venv terpisah)..."
-    if bash "$PIPER_SETUP"; then
-        echo "[OK] Piper TTS siap di /workspace/piper_tts"
-    else
-        echo "[ERROR] Piper setup gagal. MuseTalk tetap OK (.setup_complete sudah ada)."
-        echo "        Coba manual: bash $PIPER_SETUP"
-        exit 1
-    fi
-    # Re-cek pin MuseTalk tidak berubah (Piper tidak boleh menyentuh env ini)
-    if ! "$PYTHON_BIN" -c "import torch; assert torch.__version__.startswith('2.1.')" 2>/dev/null; then
-        echo "[ERROR] MuseTalk torch berubah setelah Piper — ini tidak seharusnya terjadi."
-        exit 1
-    fi
-    echo "[OK] Verifikasi: MuseTalk torch pin tetap aman setelah Piper."
-fi
-
 echo ""
 echo "============================================================"
-echo " SETUP LENGKAP (MuseTalk + Piper)"
+echo " SETUP LENGKAP (MuseTalk worker — tanpa TTS)"
 echo "============================================================"
 echo ""
-echo "Start worker (Piper auto-start di dalamnya):"
+echo "Start worker:"
 echo "  cd /workspace/ai_live_worker && bash start.sh"
 echo ""
 echo "Health:"
 echo "  curl -s http://127.0.0.1:8000/health"
-echo "  curl -s http://127.0.0.1:8000/tts/health"
-echo "  curl -s http://127.0.0.1:8090/health"
-echo ""
-echo "Skip Piper lain kali: SKIP_PIPER_SETUP=1 bash setup.sh"
 echo "============================================================"

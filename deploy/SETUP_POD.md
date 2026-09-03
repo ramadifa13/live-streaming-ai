@@ -1,12 +1,22 @@
-# AI Worker Pod — Setup (satu perintah)
+# AI Worker Pod — Setup cepat
 
-## Network Volume
+Worker GPU hanya MuseTalk + RTMP. TTS Piper di backend CPU.
 
+Panduan lengkap: [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md).
+
+## Pod yang sudah ada (bersihkan TTS lama)
+
+```bash
+pkill -f 'piper_tts/server.py|uvicorn.*8090' || true
+rm -rf /workspace/piper_tts
+cd /workspace/live-streaming-ai
+git pull origin main
+bash deploy/sync.sh --pull --restart
+curl -s http://127.0.0.1:8000/health
+ls /workspace/piper_tts 2>/dev/null || echo "OK: Piper di pod sudah dihapus"
 ```
-RunPod → Storage → Network Volume → Mount: /workspace
-```
 
-## Setup penuh (MuseTalk → lalu Piper otomatis)
+## Setup MuseTalk baru
 
 ```bash
 cd /workspace
@@ -14,48 +24,7 @@ git clone https://github.com/ramadifa13/live-streaming-ai.git live-streaming-ai
 cd /workspace/live-streaming-ai/deploy
 export HF_TOKEN="hf_xxx"
 bash setup.sh
-```
-
-```bash
-# kalau repo sudah ada:
-cd /workspace/live-streaming-ai && git pull origin main
-cd deploy && export HF_TOKEN="hf_xxx" && bash setup.sh
-```
-
-## Env + start
-
-```bash
-cp -n /workspace/live-streaming-ai/deploy/.env.example /workspace/ai_live_worker/.env
-FORCE_ASSETS=1 bash /workspace/live-streaming-ai/deploy/sync.sh --restart
-```
-
-## Health
-
-```bash
+cp -n .env.example /workspace/ai_live_worker/.env
+FORCE_ASSETS=1 bash sync.sh --restart
 curl -s http://127.0.0.1:8000/health
-curl -s http://127.0.0.1:8000/tts/health
-curl -s http://127.0.0.1:8090/health
-```
-
-## Test TTS host=namira
-
-```bash
-curl -s -X POST http://127.0.0.1:8000/tts/synthesize \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Halo kak, selamat datang di live.","host":"namira"}' \
-  --output /tmp/namira_test.wav
-ls -la /tmp/namira_test.wav
-```
-
-## Opsi
-
-```bash
-SKIP_PIPER_SETUP=1 bash setup.sh
-FORCE_PIPER=1 bash piper_tts/setup.sh
-```
-
-## Redeploy
-
-```bash
-bash /workspace/live-streaming-ai/deploy/sync.sh --pull --restart
 ```

@@ -52,6 +52,7 @@ if [ -f "$SYNC_SCRIPT" ]; then
 	# shellcheck source=sync.sh
 	source "$SYNC_SCRIPT"
 	bootstrap_worker_env
+	purge_legacy_tts
 fi
 
 # Load worker .env (BROADCAST_MODE / MuseTalk flags)
@@ -65,33 +66,6 @@ fi
 WORKER_PORT="${PORT:-8000}"
 echo "[INFO] BROADCAST_MODE=${BROADCAST_MODE:-segment}"
 echo "[INFO] PORT=${WORKER_PORT}"
-
-# Piper TTS (venv terpisah) — start sebelum API worker
-ensure_piper_tts() {
-	local piper_dir="${PIPER_DIR:-/workspace/piper_tts}"
-	local piper_port="${PIPER_PORT:-8090}"
-	local deploy_piper="${DEPLOY_DIR}/piper_tts"
-	if curl -sf "http://127.0.0.1:${piper_port}/health" >/dev/null 2>&1; then
-		echo "[OK] Piper TTS sudah aktif di :${piper_port}"
-		return 0
-	fi
-	if [ ! -f "$piper_dir/.setup_complete" ] && [ -f "$deploy_piper/setup.sh" ]; then
-		echo "[INFO] Setup Piper TTS (venv terpisah, CPU)..."
-		bash "$deploy_piper/setup.sh" || {
-			echo "[WARN] Setup Piper gagal — TTS live akan error sampai Piper siap."
-			return 1
-		}
-	fi
-	if [ -f "$piper_dir/start.sh" ]; then
-		bash "$piper_dir/start.sh" || echo "[WARN] Start Piper gagal"
-	elif [ -f "$deploy_piper/start.sh" ]; then
-		bash "$deploy_piper/start.sh" || echo "[WARN] Start Piper gagal"
-	else
-		echo "[WARN] Piper start.sh tidak ditemukan"
-		return 1
-	fi
-}
-ensure_piper_tts || true
 
 # DNS pod RunPod kadang gagal resolve fbcdn.net → RTMP Instagram tidak pernah connect.
 ensure_worker_dns() {

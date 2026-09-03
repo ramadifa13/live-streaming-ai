@@ -17,6 +17,38 @@ DEPLOY_DIR="${DEPLOY_DIR:-$REPO_DIR/deploy}"
 # 0 = jangan timpa asset yang sudah ada (start biasa), 1 = timpa semua asset (redeploy)
 FORCE_ASSETS="${FORCE_ASSETS:-0}"
 
+# Hapus Piper/TTS lama di GPU: proses :8090, folder /workspace/piper_tts, env PIPER_*.
+purge_legacy_tts() {
+	echo "[TTS] Membersihkan sisa Piper di pod (TTS hanya di backend CPU)..."
+	pkill -f "[p]iper_tts/server.py|uvicorn.*8090" 2>/dev/null || true
+	if [ -f /workspace/piper_tts/piper.pid ]; then
+		old="$(cat /workspace/piper_tts/piper.pid 2>/dev/null || true)"
+		if [ -n "${old:-}" ]; then
+			kill "$old" 2>/dev/null || true
+		fi
+	fi
+	sleep 0.3
+	rm -rf /workspace/piper_tts \
+		"${DEPLOY_DIR:-}/piper_tts" \
+		"${WORKER_DIR:-}/piper_tts" \
+		2>/dev/null || true
+
+	_strip_piper_env() {
+		local envf="$1"
+		[ -f "$envf" ] || return 0
+		if grep -qE '^(export[[:space:]]+)?(PIPER_|TTS_PIPER|PIPER_TTS)' "$envf" 2>/dev/null; then
+			grep -vE '^(export[[:space:]]+)?(PIPER_|TTS_PIPER|PIPER_TTS)' "$envf" > "${envf}.notts" || true
+			if [ -s "${envf}.notts" ] || [ -f "${envf}.notts" ]; then
+				mv -f "${envf}.notts" "$envf"
+				echo "[TTS] Variabel Piper dihapus dari $envf"
+			fi
+		fi
+	}
+	_strip_piper_env "${WORKER_DIR:-}/.env"
+	_strip_piper_env "${DEPLOY_DIR:-}/.env"
+	echo "[TTS] Sisa Piper di pod sudah dihapus."
+}
+
 bootstrap_worker_env() {
 	mkdir -p "$WORKER_DIR"
 
@@ -209,18 +241,7 @@ sync_worker_files() {
 		cp -f "$DEPLOY_DIR/requirements-worker.txt" "$WORKER_DIR/requirements-worker.txt" 2>/dev/null || true
 	fi
 
-	# Piper TTS — salin ke /workspace/piper_tts (JANGAN ke MuseTalk env)
-	if [ -d "$DEPLOY_DIR/piper_tts" ]; then
-		PIPER_DIR="${PIPER_DIR:-/workspace/piper_tts}"
-		mkdir -p "$PIPER_DIR" "$PIPER_DIR/models" "$PIPER_DIR/logs"
-		cp -f "$DEPLOY_DIR/piper_tts/server.py" "$PIPER_DIR/server.py" 2>/dev/null || true
-		cp -f "$DEPLOY_DIR/piper_tts/requirements.txt" "$PIPER_DIR/requirements.txt" 2>/dev/null || true
-		cp -f "$DEPLOY_DIR/piper_tts/setup.sh" "$PIPER_DIR/setup.sh" 2>/dev/null || true
-		cp -f "$DEPLOY_DIR/piper_tts/start.sh" "$PIPER_DIR/start.sh" 2>/dev/null || true
-		sed -i 's/\r$//' "$PIPER_DIR"/*.sh 2>/dev/null || true
-		chmod +x "$PIPER_DIR"/*.sh 2>/dev/null || true
-		echo "[SYNC] Piper TTS scripts → $PIPER_DIR"
-	fi
+	purge_legacy_tts
 	if [ -f "$DEPLOY_DIR/.env.example" ]; then
 		cp -f "$DEPLOY_DIR/.env.example" "$WORKER_DIR/.env.example" 2>/dev/null || true
 	fi

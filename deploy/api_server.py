@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 import uvicorn
 
 try:
@@ -567,67 +567,6 @@ async def health():
         or (visual_worker is not None and visual_worker.is_running),
         "visual_worker_pipeline_active": _visual_worker_pipeline_active(),
     }
-
-
-def _piper_base_url() -> str:
-    return (os.environ.get("PIPER_TTS_URL") or "http://127.0.0.1:8090").rstrip("/")
-
-
-class PiperProxyBody(BaseModel):
-    text: str = Field(..., min_length=1)
-    host: Optional[str] = None
-    voice: Optional[str] = None
-    avatar: Optional[str] = None
-    length_scale: Optional[float] = None
-    noise_scale: Optional[float] = None
-    noise_w: Optional[float] = None
-    sample_rate: int = 16000
-
-
-@app.get("/tts/health")
-async def tts_health_proxy():
-    """Proxy ke Piper (:8090). Dipakai saat LIVE saja (bukan preview FE)."""
-    import urllib.request
-
-    url = f"{_piper_base_url()}/health"
-    try:
-        with urllib.request.urlopen(url, timeout=5) as resp:
-            raw = resp.read().decode("utf-8", errors="ignore")
-            return json.loads(raw) if raw else {"ok": False}
-    except Exception as err:
-        return {"ok": False, "engine": "piper", "error": str(err), "url": url}
-
-
-@app.post("/tts/synthesize")
-async def tts_synthesize_proxy(body: PiperProxyBody):
-    """Proxy TTS live → Piper venv terpisah (CPU). Jangan dipakai untuk preview dashboard."""
-    import urllib.error
-    import urllib.request
-
-    url = f"{_piper_base_url()}/synthesize"
-    payload = json.dumps(body.model_dump(exclude_none=True)).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            audio = resp.read()
-            content_type = resp.headers.get("Content-Type", "audio/wav")
-            from fastapi.responses import Response
-
-            return Response(content=audio, media_type=content_type)
-    except urllib.error.HTTPError as err:
-        detail = err.read().decode("utf-8", errors="ignore")[:500]
-        raise HTTPException(err.code, f"Piper error: {detail}") from err
-    except Exception as err:
-        raise HTTPException(
-            503,
-            f"Piper TTS tidak tersedia di {_piper_base_url()}: {err}. "
-            "Jalankan: bash /workspace/piper_tts/start.sh",
-        ) from err
 
 
 @app.get("/logs")
