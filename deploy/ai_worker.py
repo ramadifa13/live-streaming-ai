@@ -555,6 +555,7 @@ class AssetBank:
         vis = musetalk_visual_params()
         vae = self.models["vae"]
         fp = self.models["fp"]
+        print(f"[AssetBank] Preparing MuseTalk materials for {clip.name} ({clip.num_frames} frames)...")
         mats = _get_avatar_materials(
             video_path=clip.path,
             bbox_shift=vis["bbox_shift"],
@@ -567,13 +568,30 @@ class AssetBank:
             upper_boundary_ratio=vis["upper_boundary_ratio"],
             square_pad=vis["square_pad"],
         )
+        
+        # Validate materials
+        if not mats.get("input_latent_list_cycle"):
+            raise RuntimeError(f"No latents generated for {clip.name}")
+        if not mats.get("mask_materials_cycle"):
+            raise RuntimeError(f"No mask materials generated for {clip.name}")
+        
         clip.frame_list_cycle = mats["frame_list_cycle"]
         clip.coord_list_cycle = mats["coord_list_cycle"]
         clip.latent_list_cycle = mats["input_latent_list_cycle"]
         clip.mask_materials_cycle = mats["mask_materials_cycle"]
+        
+        # Check for None values in critical arrays
+        none_latents = sum(1 for l in clip.latent_list_cycle if l is None)
+        none_masks = sum(1 for m in clip.mask_materials_cycle if m is None)
+        if none_latents > 0:
+            print(f"[AssetBank] WARNING: {none_latents}/{len(clip.latent_list_cycle)} latents are None for {clip.name}")
+        if none_masks > 0:
+            print(f"[AssetBank] WARNING: {none_masks}/{len(clip.mask_materials_cycle)} masks are None for {clip.name}")
+        
         print(
-            f"[AssetBank] MuseTalk materials ready: {clip.name} "
-            f"(bbox_shift={vis['bbox_shift']}, extra_margin={vis['extra_margin']}, "
+            f"[AssetBank] ✅ MuseTalk materials ready: {clip.name} "
+            f"(latents={len(clip.latent_list_cycle)}, masks={len(clip.mask_materials_cycle)}, "
+            f"bbox_shift={vis['bbox_shift']}, extra_margin={vis['extra_margin']}, "
             f"upper={vis['upper_boundary_ratio']}, square_pad={vis['square_pad']})"
         )
 
@@ -590,7 +608,11 @@ class AssetBank:
             try:
                 self._warm_one_clip(clip)
             except Exception as err:
-                print(f"[AssetBank] MuseTalk warmup notice ({name}): {err}")
+                import traceback
+                print(f"[AssetBank] ERROR: MuseTalk warmup failed for {name}: {err}")
+                traceback.print_exc()
+                # Don't silently continue - re-raise to fail fast
+                raise
 
     def _clip_name_from_file(self, fname: str) -> str:
         stem = os.path.splitext(fname)[0].lower()
@@ -1252,9 +1274,11 @@ class LipSyncEngine:
         timesteps = self.models["timesteps"]
         clip = self.bank.get_clip(self._talk_clip_name) or self.bank.idle_clip
         if not clip.latent_list_cycle:
-            print(f"[LipSync] No latents for {clip.name} — skip inference")
+            print(f"[LipSync] ERROR: No latents for {clip.name} — lip-sync disabled")
             return
 
+        print(f"[LipSync] Starting batch inference for {clip.name}, {len(clip.latent_list_cycle)} latents")
+        batch_count = 0
         while not self._infer_stop.is_set():
             with self._lock:
                 chunks = self._whisper_chunks
@@ -1276,6 +1300,7 @@ class LipSyncEngine:
                 latent_list.append(lat.unsqueeze(0) if lat.dim() == 3 else lat)
 
             if not latent_list:
+                print(f"[LipSync] ERROR: Empty latent list at cursor {cursor}")
                 break
 
             latent_batch = torch.cat(latent_list, dim=0).to(
@@ -1292,7 +1317,9 @@ class LipSyncEngine:
                     ).sample
                     recon = vae.decode_latents(pred)
             except Exception as err:
-                print(f"[LipSync] batch infer notice: {err}")
+                import traceback
+                print(f"[LipSync] ERROR batch infer cursor={cursor}-{end}: {err}")
+                traceback.print_exc()
                 with self._lock:
                     self._infer_cursor = end
                 continue
@@ -1306,11 +1333,17 @@ class LipSyncEngine:
 
             with self._lock:
                 self._infer_cursor = end
+            batch_count += 1
+            if batch_count % 10 == 0:
+                print(f"[LipSync] Processed {self._infer_cursor}/{chunks.shape[0]} frames")
+
+        print(f"[LipSync] Batch inference complete: {batch_count} batches, {self._infer_cursor} frames")
 
     def _wait_mouth(
         self, idx: int, timeout: float = LIPSYNC_WAIT_SEC
     ) -> Optional[np.ndarray]:
         deadline = time.perf_counter() + max(0.0, timeout)
+        attempt = 0
         while True:
             with self._lock:
                 cached = self._mouths.get(idx)
@@ -1319,10 +1352,15 @@ class LipSyncEngine:
             if cached is not None:
                 return cached
             if cursor > idx and last is not None:
+                if attempt == 0:
+                    print(f"[LipSync] WARNING: Using last mouth for idx={idx} (cursor={cursor})")
                 return last
             if time.perf_counter() >= deadline:
+                if attempt == 0:
+                    print(f"[LipSync] ERROR: Timeout waiting for mouth idx={idx} (cursor={cursor}, last={'yes' if last is not None else 'no'})")
                 return last
             time.sleep(0.004)
+            attempt += 1
 
     def _material_for(self, clip: ClipAsset, cidx: int) -> Optional[Tuple]:
         if self._face_registry is not None:
@@ -1353,10 +1391,12 @@ class LipSyncEngine:
 
         mat = self._material_for(clip, cidx)
         if mat is None:
+            print(f"[LipSync] ERROR: No material for clip={clip.name} cidx={cidx}")
             return body
         mask_array, crop_box, face_box = mat
         x1, y1, x2, y2 = [int(v) for v in face_box]
         if x2 <= x1 or y2 <= y1:
+            print(f"[LipSync] ERROR: Invalid face_box {face_box}")
             return body
         x1 = max(0, min(x1, body.shape[1] - 2))
         x2 = max(x1 + 1, min(x2, body.shape[1]))
@@ -1369,6 +1409,7 @@ class LipSyncEngine:
             )
             orig = body[y1:y2, x1:x2]
             if orig.size == 0:
+                print(f"[LipSync] ERROR: Empty orig crop for face_box={face_box}")
                 return body
             strength = _mouth_strength_for_pcm(pcm)
             damped = _dampen_generated_mouth(orig, mouth, strength)
@@ -1385,16 +1426,24 @@ class LipSyncEngine:
                     0,
                 )
             self._prev_composed = damped
-            return get_image_blending(
+            blended = get_image_blending(
                 body, damped, list(face_box), mask_array, crop_box
             )
-        except Exception:
+            return blended
+        except Exception as err:
+            import traceback
+            print(f"[LipSync] ERROR composing mouth: {err}")
+            traceback.print_exc()
             return body
 
     @torch.no_grad()
     def process(self, pkt: RawFramePacket, clip: ClipAsset) -> np.ndarray:
         metrics = get_telemetry()
         if pkt.whisper_idx is None or not pkt.needs_lipsync:
+            if pkt.whisper_idx is None:
+                metrics.inc("lipsync_skipped_no_whisper_idx")
+            else:
+                metrics.inc("lipsync_skipped_no_needs_lipsync")
             self._prev_composed = None
             return pkt.frame
 
@@ -1403,6 +1452,7 @@ class LipSyncEngine:
             and pkt.clip_name != self._talk_clip_name
             and not _is_idle_clip_name(pkt.clip_name)
         ):
+            metrics.inc("lipsync_skipped_wrong_clip")
             self._prev_composed = None
             return pkt.frame
 
@@ -1419,6 +1469,7 @@ class LipSyncEngine:
         mouth = self._wait_mouth(mouth_idx)
         if mouth is None:
             metrics.inc("lipsync_cache_miss")
+            print(f"[LipSync] WARNING: No mouth for idx={mouth_idx} (total={total}) - skipping lip-sync")
             return pkt.frame
         metrics.inc("lipsync_cache_hit")
 
@@ -1438,6 +1489,7 @@ def lipsync_worker_loop(
     stop_event: threading.Event,
 ) -> None:
     metrics = get_telemetry()
+    frame_count = 0
     while not stop_event.is_set():
         try:
             pkt: RawFramePacket = raw_q.get(timeout=0.05)
@@ -1468,8 +1520,13 @@ def lipsync_worker_loop(
                 except queue.Empty:
                     pass
                 render_q.put(out, block=False)
+            frame_count += 1
+            if frame_count % 300 == 0:
+                print(f"[LipSync] Processed {frame_count} frames, queue depth: {render_q.qsize()}")
         except Exception as err:
-            print(f"[LipSync] frame {pkt.seq} notice: {err}")
+            import traceback
+            print(f"[LipSync] ERROR frame {pkt.seq}: {err}")
+            traceback.print_exc()
             render_q.put(
                 RenderedPacket(
                     seq=pkt.seq,
@@ -2328,6 +2385,22 @@ class AIVisualWorker:
         use_fp16 = resolve_use_float16(True, 0)
         vis = musetalk_visual_params()
         models_root = os.path.join(musetalk_dir, "models")
+        
+        # Verify model files exist before loading
+        required_files = [
+            (os.path.join(models_root, "musetalkV15", "unet.pth"), "UNet weights"),
+            (os.path.join(models_root, "musetalkV15", "musetalk.json"), "UNet config"),
+            (os.path.join(models_root, "whisper", "config.json"), "Whisper config"),
+            (os.path.join(models_root, "sd-vae-ft-mse", "config.json"), "VAE config"),
+            (os.path.join(models_root, "face-parse-bisent", "79999_iter.pth"), "Face parsing model"),
+            (os.path.join(models_root, "dwpose", "dw-ll_ucoco_384.pth"), "DWPose model"),
+        ]
+        for path, name in required_files:
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"Required model file missing: {name} at {path}")
+        
+        print(f"[AIVisualWorker] All model files verified, loading models...")
+        
         args = Namespace(
             gpu_id=0,
             use_float16=use_fp16,
@@ -2345,6 +2418,12 @@ class AIVisualWorker:
         os.chdir(musetalk_dir)
         try:
             self._models = _load_models_cached(args)
+            print(f"[AIVisualWorker] Models loaded successfully: {list(self._models.keys())}")
+        except Exception as e:
+            import traceback
+            print(f"[AIVisualWorker] ERROR loading models: {e}")
+            traceback.print_exc()
+            raise
         finally:
             os.chdir(original_cwd)
         return self._models
@@ -2380,6 +2459,19 @@ class AIVisualWorker:
         models = self._load_models()
         self._bank = AssetBank(self.assets_dir, host=self.host, models_bundle=models)
         self._bank.discover_and_load()
+        
+        # Validate that the talk clip has MuseTalk materials
+        talk_clip_name = self._bank.talk_clip_name()
+        talk_clip = self._bank.clips.get(talk_clip_name)
+        if talk_clip is None:
+            raise RuntimeError(f"Talk clip '{talk_clip_name}' not found in assets")
+        if not talk_clip.latent_list_cycle:
+            raise RuntimeError(f"Talk clip '{talk_clip_name}' has no MuseTalk latents - lip-sync will not work")
+        if not talk_clip.mask_materials_cycle:
+            raise RuntimeError(f"Talk clip '{talk_clip_name}' has no MuseTalk masks - lip-sync will not work")
+        
+        print(f"[AIVisualWorker] Talk clip validated: {talk_clip_name} (latents={len(talk_clip.latent_list_cycle)}, masks={len(talk_clip.mask_materials_cycle)})")
+        
         self._face_registry = FaceCoordRegistry(BBOX_SMOOTH_WINDOW)
         self._sm = VideoStateMachine(
             self._bank,

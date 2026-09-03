@@ -251,17 +251,27 @@ class SpeechBridge:
         device = self._models["device"]
         weight_dtype = self._models["weight_dtype"]
 
-        features, librosa_len = ap.get_audio_feature(wav_16k_path, weight_dtype=weight_dtype)
-        chunks = ap.get_whisper_chunk(
-            features,
-            device,
-            weight_dtype,
-            whisper,
-            librosa_len,
-            fps=TARGET_FPS,
-            audio_padding_length_left=2,
-            audio_padding_length_right=2,
-        )
+        print(f"[SpeechBridge] Computing whisper chunks for {num_frames} frames...")
+        try:
+            features, librosa_len = ap.get_audio_feature(wav_16k_path, weight_dtype=weight_dtype)
+            print(f"[SpeechBridge] Audio features: shape={features.shape}, librosa_len={librosa_len}")
+            chunks = ap.get_whisper_chunk(
+                features,
+                device,
+                weight_dtype,
+                whisper,
+                librosa_len,
+                fps=TARGET_FPS,
+                audio_padding_length_left=2,
+                audio_padding_length_right=2,
+            )
+            print(f"[SpeechBridge] Whisper chunks: shape={chunks.shape}, device={chunks.device}")
+        except Exception as e:
+            import traceback
+            print(f"[SpeechBridge] ERROR computing whisper chunks: {e}")
+            traceback.print_exc()
+            raise
+        
         # Sesuaikan panjang dengan PCM frames.
         # Jangan pad dengan viseme terakhir — mulut akan tertahan terbuka di akhir audio.
         if chunks.shape[0] > num_frames:

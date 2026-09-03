@@ -134,8 +134,10 @@ def _extract_landmarks_from_frames(frames, bbox_shift=0):
         from mmpose.apis import inference_topdown
         from mmpose.structures import merge_data_samples
 
+        print(f"[Landmarks] Extracting landmarks for {len(frames)} frames (bbox_shift={bbox_shift})")
         coords_list = []
-        for frame in frames:
+        failed_frames = 0
+        for i, frame in enumerate(frames):
             try:
                 results = inference_topdown(dwpose_model, frame)
                 results = merge_data_samples(results)
@@ -146,6 +148,7 @@ def _extract_landmarks_from_frames(frames, bbox_shift=0):
                 f = bbox[0] if bbox else None
                 if f is None:
                     coords_list.append(coord_placeholder)
+                    failed_frames += 1
                     continue
 
                 half_face_coord = face_land_mark[29].copy()
@@ -166,18 +169,29 @@ def _extract_landmarks_from_frames(frames, bbox_shift=0):
                     coords_list.append(tuple(map(int, f)))
                 else:
                     coords_list.append(f_landmark)
-            except Exception:
+            except Exception as e:
+                failed_frames += 1
+                if failed_frames <= 3:
+                    print(f"[Landmarks] Frame {i} landmark extraction failed: {e}")
                 try:
                     bbox = face_align_model.get_detections_for_batch(np.asarray([frame]))
                     if bbox and bbox[0] is not None:
                         coords_list.append(tuple(map(int, bbox[0])))
                     else:
                         coords_list.append(coord_placeholder)
-                except Exception:
+                except Exception as e2:
+                    if failed_frames <= 3:
+                        print(f"[Landmarks] Frame {i} face_align fallback failed: {e2}")
                     coords_list.append(coord_placeholder)
+        
+        if failed_frames > 0:
+            print(f"[Landmarks] WARNING: {failed_frames}/{len(frames)} frames failed landmark extraction")
         return coords_list
     except Exception as e:
-        print(f"[Landmarks] Fallback center bbox: {e}")
+        import traceback
+        print(f"[Landmarks] ERROR: Failed to initialize landmark models: {e}")
+        traceback.print_exc()
+        print("[Landmarks] CRITICAL: Falling back to center bbox - lip-sync will NOT work correctly!")
         h, w = frames[0].shape[:2]
         cx, cy = w // 2, h // 2
         fw, fh = int(w * 0.45), int(h * 0.55)
@@ -283,6 +297,15 @@ def _load_models_cached(args):
                 device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu")
                 print(f"[MuseTalk-Cache] 🚀 Loading all models to {device} (fp16={use_float16})...")
                 
+                # Verify model files exist
+                for model_path, name in [
+                    (args.unet_model_path, "UNet"),
+                    (args.unet_config, "UNet config"),
+                    (args.whisper_dir, "Whisper"),
+                ]:
+                    if not os.path.exists(model_path):
+                        raise FileNotFoundError(f"{name} not found at {model_path}")
+                
                 vae, unet, pe = load_all_model(
                     unet_model_path=args.unet_model_path,
                     vae_type=args.vae_type,
@@ -314,6 +337,15 @@ def _load_models_cached(args):
                 else:
                     fp = FaceParsing()
 
+                # Validate models
+                print(f"[MuseTalk-Cache] Validating models...")
+                print(f"  - VAE: {vae.__class__.__name__}, device={next(vae.vae.parameters()).device}")
+                print(f"  - UNet: {unet.model.__class__.__name__}, device={next(unet.model.parameters()).device}")
+                print(f"  - PE: {pe.__class__.__name__}, device={next(pe.parameters()).device}")
+                print(f"  - Whisper: {whisper.__class__.__name__}, device={next(whisper.parameters()).device}")
+                print(f"  - FaceParsing: {fp.__class__.__name__}")
+                print(f"  - dtype: {weight_dtype}")
+
                 _models_cache[cache_key] = {
                     'vae': vae,
                     'unet': unet,
@@ -325,7 +357,7 @@ def _load_models_cached(args):
                     'weight_dtype': weight_dtype,
                     'timesteps': timesteps,
                 }
-                print("[MuseTalk-Cache] ✅ All models resident in VRAM. Ready for sub-second inference.")
+                print("[MuseTalk-Cache] ✅ All models loaded and validated successfully")
 
     return _models_cache[cache_key]
 
@@ -476,7 +508,8 @@ def _get_avatar_materials(
                     mode=parsing_mode,
                 )
                 mask_materials.append((mask_array, crop_box, [x1, y1, x2, y2]))
-            except Exception:
+            except Exception as e:
+                print(f"[AvatarCache] Frame {len(input_latent_list)-1}: mask generation failed: {e}")
                 mask_materials.append(None)
 
         # Fill any missing latents from nearest neighbour so index == frame index
