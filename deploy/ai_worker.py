@@ -76,7 +76,7 @@ MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.62"))
 MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0.32"))
 MOUTH_MAX_DELTA = float(os.environ.get("MUSETALK_MAX_DELTA", "30"))
 LIPSYNC_PREROLL_FRAMES = int(os.environ.get("MUSETALK_PREROLL_FRAMES", "6"))
-LIPSYNC_WAIT_SEC = float(os.environ.get("MUSETALK_MOUTH_WAIT_SEC", "0.02"))
+LIPSYNC_WAIT_SEC = float(os.environ.get("MUSETALK_MOUTH_WAIT_SEC", "0.15"))
 LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "0"))
 LIPSYNC_PREROLL_TIMEOUT_SEC = float(
     os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.0")
@@ -1202,6 +1202,10 @@ class LipSyncEngine:
             return
         self.clear_utterance()
         if job is None or job.whisper_chunks is None:
+            print(
+                f"[LipSync] Skip infer {getattr(job, 'task_id', '?')}: "
+                "whisper_chunks kosong — mulut tidak akan bergerak"
+            )
             return
         talk = self.bank.talk_clip_name()
         if talk in self.bank.clips:
@@ -2519,8 +2523,6 @@ class AIVisualWorker:
             raise RuntimeError("SpeechBridge tidak tersedia")
         if not self._bank:
             self.initialize()
-        if not self._pipeline_active and not self._running:
-            raise RuntimeError("Pipeline belum aktif — panggil start() dulu")
         return self._bridge.enqueue(
             audio_path,
             task_id=task_id,
@@ -2686,7 +2688,7 @@ class AIVisualWorker:
         self._running = True
         print("[AIVisualWorker] Pipeline running (3 threads, RTMP ready)")
 
-    def stop(self) -> None:
+    def stop(self, *, clear_queue: bool = True) -> None:
         self._stop.set()
         if self._engine:
             self._engine.clear_utterance()
@@ -2712,7 +2714,7 @@ class AIVisualWorker:
 
         if self._sm is not None:
             self._sm.reset_after_stop()
-        if self._bridge is not None:
+        if clear_queue and self._bridge is not None:
             self._bridge.clear_pending()
 
         self._running = False
@@ -2794,7 +2796,7 @@ def stop_visual_broadcast(*, destroy: bool = True) -> None:
     global _visual_worker_singleton
     with _visual_lock:
         if _visual_worker_singleton is not None:
-            _visual_worker_singleton.stop()
+            _visual_worker_singleton.stop(clear_queue=destroy)
             if destroy:
                 _visual_worker_singleton = None
 

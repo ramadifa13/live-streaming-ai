@@ -222,13 +222,21 @@ class SpeechBridge:
                 wav_16k = _normalize_to_16k_wav(job.audio_path)
                 with metrics.measure("utterance_whisper_ms"):
                     job.whisper_chunks = self._compute_whisper_chunks(wav_16k, job.num_frames)
+                if job.whisper_chunks is None:
+                    job.error = "whisper_chunks kosong"
+            elif job.num_frames > 0 and not self._models:
+                print(
+                    f"[SpeechBridge] {job.task_id}: PCM siap, Whisper ditunda "
+                    "(model MuseTalk belum load)"
+                )
             job.ready.set()
             metrics.record_latency(
                 "utterance_prep_ms", (time.perf_counter() - prep_start) * 1000.0
             )
             print(
                 f"[SpeechBridge] Ready {job.task_id}: "
-                f"{job.num_frames} frames @ {TARGET_FPS}fps"
+                f"{job.num_frames} frames @ {TARGET_FPS}fps "
+                f"whisper={'ok' if job.whisper_chunks is not None else 'MISSING'}"
             )
         except Exception as err:
             job.error = str(err)
@@ -301,6 +309,21 @@ class SpeechBridge:
                 if nxt.error or nxt.num_frames <= 0:
                     print(f"[SpeechBridge] Skip {nxt.task_id}: {nxt.error or 'empty'}")
                     continue
+                if nxt.whisper_chunks is None:
+                    if self._models:
+                        print(
+                            f"[SpeechBridge] {nxt.task_id}: Whisper belum siap — "
+                            "re-prep, tidak diputar dulu"
+                        )
+                        nxt.ready.clear()
+                        threading.Thread(
+                            target=self._prepare_job,
+                            args=(nxt,),
+                            name=f"RePrep-{nxt.task_id[:20]}",
+                            daemon=True,
+                        ).start()
+                    self._pending.appendleft(nxt)
+                    return
                 candidate = nxt
                 break
         if candidate is None:

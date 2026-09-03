@@ -1304,7 +1304,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     if stop_visual_broadcast is not None:
         if _keep_warm:
             try:
-                # Restart broadcast: stop threads, keep model warm (bukan soft-pause).
+                # Restart broadcast: stop threads, keep model + antrian ucapan.
                 stop_visual_broadcast(destroy=False)
             except TypeError:
                 stop_visual_broadcast()
@@ -1315,9 +1315,10 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         else:
             stop_visual_broadcast()
             visual_worker = None
+            _clear_speech_bridge_queue()
     else:
         visual_worker = None
-    _clear_speech_bridge_queue()
+        _clear_speech_bridge_queue()
     if write_rtmp_status is not None:
         write_rtmp_status(output_dir, "connecting")
     _broadcast_started_at = time.time()

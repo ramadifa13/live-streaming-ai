@@ -62,6 +62,21 @@ function isPodKeepWarm(): boolean {
 
 export { isPodKeepWarm };
 
+/** ID pod yang sudah ada di .env. Kosong = mode on-demand (create pod baru). */
+export function getStaticPodId(): string {
+  const raw = (process.env.RUNPOD_POD_ID || "")
+    .trim()
+    .replace(/^["']+|["']+$/g, "");
+  if (!raw || raw === "---" || raw.toLowerCase() === "none") return "";
+  return raw;
+}
+
+export function isStaticPodId(podId?: string | null): boolean {
+  const staticId = getStaticPodId();
+  const id = (podId || "").trim();
+  return Boolean(staticId && id && staticId === id);
+}
+
 export async function releaseGpuForJob(podId?: string | null): Promise<void> {
   activeJobLeases = Math.max(0, activeJobLeases - 1);
   if (podId) {
@@ -371,8 +386,7 @@ async function throwIfBootAborted(
   shouldAbort?: () => boolean,
 ): Promise<void> {
   if (!shouldAbort?.() || !podId) return;
-  const staticPodId = (process.env.RUNPOD_POD_ID || "").trim();
-  if (staticPodId && podId === staticPodId) {
+  if (isStaticPodId(podId)) {
     // stopSession yang memutuskan pause/terminate pod statis.
     throw new Error("Pod bootstrap dibatalkan (sesi dihentikan)");
   }
@@ -462,47 +476,28 @@ export async function startPodAndWait(
   const shouldAbort = options.shouldAbort;
   updateGpuActivity();
 
-  if (process.env.RUNPOD_POD_ID) {
-    const staticPodId = process.env.RUNPOD_POD_ID.trim();
-    if (staticPodId.length > 0) {
+  const staticPodId = getStaticPodId();
+  if (staticPodId) {
+    console.log(
+      `[RunPodManager] Mode pod statis — pakai ${staticPodId} langsung (tanpa find/create).`,
+    );
+    options.onPodCreated?.(staticPodId);
+    onProgress?.("Menghubungkan ke pod GPU statis...");
+
+    const quickHealthMs = Math.min(24_000, timeoutMs);
+    try {
+      return await waitForWorkerHealth(staticPodId, quickHealthMs, options);
+    } catch {
       console.log(
-        `Memeriksa status Pod statis di .env (${staticPodId})...`,
+        `[RunPodManager] Worker ${staticPodId} belum merespons — kirim resume, lalu health lagi.`,
       );
-
-      let status = await getPodStatus(staticPodId).catch(() => null);
-
-      if (!status || status.desiredStatus !== "RUNNING") {
-        console.log(
-          ` Pod statis ${staticPodId} dalam kondisi mati/berhenti (${status?.desiredStatus || "UNKNOWN"}). Menghidupkan pod otomatis...`,
-        );
-        await resumePod(staticPodId);
-
-        // Tunggu status desiredStatus menjadi RUNNING
-        const resumeStart = Date.now();
-        while (Date.now() - resumeStart < timeoutMs) {
-          await throwIfBootAborted(staticPodId, shouldAbort);
-          status = await getPodStatus(staticPodId).catch(() => null);
-          if (status && status.desiredStatus === "RUNNING") {
-            console.log(
-              ` Pod statis ${staticPodId} kini RUNNING (dalam ${Math.round((Date.now() - resumeStart) / 1000)}s)!`,
-            );
-            break;
-          }
-          await new Promise((r) => setTimeout(r, 3000));
-        }
-      } else {
-        console.log(
-          ` Pod statis ${staticPodId} sudah dalam kondisi RUNNING.`,
-        );
-      }
-
-      onProgress?.("Menghidupkan pod GPU...");
-      return await waitForWorkerHealth(staticPodId, timeoutMs, options);
+      await resumePod(staticPodId);
     }
+    return await waitForWorkerHealth(staticPodId, timeoutMs, options);
   }
 
-  // ── Skenario 2: PRODUCTION PHASE — Buat Pod Baru On-Demand Otomatis ────────
-  if (!process.env.RUNPOD_NETWORK_VOLUME_ID && !process.env.RUNPOD_POD_ID) {
+  // ── On-demand: RUNPOD_POD_ID kosong → buat pod baru ────────
+  if (!process.env.RUNPOD_NETWORK_VOLUME_ID && !getStaticPodId()) {
     console.log(
       ` No RUNPOD_NETWORK_VOLUME_ID or RUNPOD_POD_ID. Skipping start.`,
     );
@@ -636,7 +631,7 @@ export async function pausePod(podId: string): Promise<boolean> {
 export async function stopPod(podId: string): Promise<boolean> {
   if (!podId) return true;
 
-  if (process.env.RUNPOD_POD_ID === podId) {
+  if (isStaticPodId(podId)) {
     if (isPodKeepWarm()) {
       console.warn(
         `[RunPodManager] Pod statis ${podId} DIBIARKAN MENYALA (RUNPOD_KEEP_POD_WARM=${process.env.RUNPOD_KEEP_POD_WARM}). ` +
@@ -679,9 +674,9 @@ export async function getGpuControlStatus(podId: string | null) {
   const pod = podId ? await getPodStatus(podId) : null;
   return {
     configured: Boolean(
-      process.env.RUNPOD_NETWORK_VOLUME_ID || process.env.RUNPOD_POD_ID,
+      process.env.RUNPOD_NETWORK_VOLUME_ID || getStaticPodId(),
     ),
-    podId: podId || process.env.RUNPOD_POD_ID || null,
+    podId: podId || getStaticPodId() || null,
     desiredStatus: pod?.desiredStatus || "UNKNOWN",
     liveSessionActive,
     activeJobLeases,
@@ -694,29 +689,40 @@ export async function getGpuControlStatus(podId: string | null) {
  * jangan override dengan RUNPOD_WORKER_URL=localhost di VPS.
  */
 export function getWorkerUrl(podId?: string | null): string | null {
-  const resolvedPodId =
-    podId?.trim() || process.env.RUNPOD_POD_ID?.trim() || null;
+  const staticPodId = getStaticPodId();
+  const resolvedPodId = podId?.trim() || staticPodId || null;
+  const configuredUrl = (
+    process.env.RUNPOD_WORKER_URL ||
+    process.env.AVATAR_WORKER_URL ||
+    ""
+  ).replace(/\/$/, "");
+  const configuredIsLocal =
+    configuredUrl.includes("localhost") || configuredUrl.includes("127.0.0.1");
+
+  // Pod statis: pakai RUNPOD_WORKER_URL jika diisi. Pod on-demand baru: selalu proxy ID baru.
+  const useConfiguredUrl =
+    Boolean(configuredUrl) &&
+    Boolean(staticPodId) &&
+    (!resolvedPodId || resolvedPodId === staticPodId) &&
+    (!configuredIsLocal || !isProdLike());
+
+  if (useConfiguredUrl) {
+    return configuredUrl;
+  }
 
   if (resolvedPodId) {
     return `https://${resolvedPodId}-8000.proxy.runpod.net`;
   }
 
-  const staticUrl = (
-    process.env.RUNPOD_WORKER_URL ||
-    process.env.AVATAR_WORKER_URL ||
-    ""
-  ).replace(/\/$/, "");
-
   if (
-    staticUrl &&
-    !staticUrl.includes("localhost") &&
-    !staticUrl.includes("127.0.0.1")
+    configuredUrl &&
+    !configuredIsLocal
   ) {
-    return staticUrl;
+    return configuredUrl;
   }
 
   if (process.env.NODE_ENV !== "production") {
-    return staticUrl || "http://localhost:8000";
+    return configuredUrl || "http://localhost:8000";
   }
 
   return null;

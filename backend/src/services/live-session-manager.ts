@@ -4,6 +4,7 @@ import {
   startPodAndWait,
   releaseGpuForJob,
   isPodKeepWarm,
+  getStaticPodId,
 } from "./runpod-manager.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
 import {
@@ -92,7 +93,7 @@ class LiveSessionManager {
     catalog?: ProductSnapshot[];
   }): Promise<{ sessionId: string; state: SessionState }> {
     const previousIds = Array.from(this.activeSessions.keys());
-    const staticPodId = (process.env.RUNPOD_POD_ID || "").trim();
+    const staticPodId = getStaticPodId();
     const keepGpu = Boolean(staticPodId);
     for (const id of previousIds) {
       console.log(
@@ -144,9 +145,11 @@ class LiveSessionManager {
       avatarName: params.avatarName || "Namira",
       voice: params.voice || this.pendingVoicePreference || undefined,
       tone: params.tone || "Persuasif",
-      podId: null,
+      podId: staticPodId || null,
       podBootStatus: "booting",
-      podBootMessage: "Mengalokasikan Cloud GPU RTX 4090...",
+      podBootMessage: staticPodId
+        ? `Menghubungkan ke pod statis ${staticPodId}...`
+        : "Mengalokasikan Cloud GPU (pod baru)...",
       liveDetectionAttempts: 0,
       onStateChange: undefined,
       product,
@@ -205,7 +208,9 @@ class LiveSessionManager {
 
     try {
       managed.podBootStatus = "booting";
-      managed.podBootMessage = "Mengalokasikan Cloud GPU RTX 4090...";
+      managed.podBootMessage = getStaticPodId()
+        ? `Menghubungkan ke pod statis ${getStaticPodId()}...`
+        : "Mengalokasikan Cloud GPU (pod baru)...";
       const podIdStr = await startPodAndWait(360_000, {
         onProgress: (message) => {
           const current = this.activeSessions.get(sessionId);
@@ -227,7 +232,7 @@ class LiveSessionManager {
       const podId = typeof podIdStr === "string" ? podIdStr.trim() : "";
       if (!this.activeSessions.has(sessionId)) {
         if (podId) {
-          const staticId = (process.env.RUNPOD_POD_ID || "").trim();
+          const staticId = getStaticPodId();
           const reused = Array.from(this.activeSessions.values()).some(
             (item) => item.podId === podId,
           );
@@ -367,7 +372,7 @@ class LiveSessionManager {
     }
 
     session.bootstrapAbort = true;
-    const staticPodId = (process.env.RUNPOD_POD_ID || "").trim();
+    const staticPodId = getStaticPodId();
     const keepGpu = options?.keepGpu ?? isPodKeepWarm();
     const podToTerminate = keepGpu
       ? null
