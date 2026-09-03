@@ -271,6 +271,7 @@ class SpeechBridge:
             zeros = torch.zeros(
                 (pad_n,) + tuple(chunks.shape[1:]),
                 dtype=chunks.dtype,
+                device=chunks.device,
             )
             chunks = torch.cat([chunks, zeros], dim=0)
         return chunks.cpu()

@@ -74,6 +74,9 @@ bash /workspace/live-streaming-ai/deploy/sync.sh --restart
 
 ```bash
 tail -f /workspace/ai_live_worker/api_server.log
+tail -f /workspace/ai_live_worker/output/broadcaster.log
+tail -f /workspace/ai_live_worker/logs/master_ffmpeg.log
+tail -f /workspace/ai_live_worker/api_server.log /workspace/ai_live_worker/output/broadcaster.log
 ```
 
 ```bash

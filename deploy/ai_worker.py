@@ -955,7 +955,7 @@ class VideoStateMachine:
         from_idx = self._wrapped_index(from_clip, from_idx)
         pairs: List[Tuple[np.ndarray, np.ndarray]] = []
         for i in range(n):
-            src_idx = self._wrapped_index(from_clip, from_idx - (n - 1 - i))
+            src_idx = self._wrapped_index(from_clip, from_idx + i)
             ti = min(to_clip.base_pose_frame + i, to_clip.end_pose)
             pairs.append((from_clip.frames[src_idx].copy(), to_clip.frames[ti].copy()))
         resume = min(to_clip.base_pose_frame + n, to_clip.end_pose + 1)
