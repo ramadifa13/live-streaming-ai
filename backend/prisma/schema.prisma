@@ -8,16 +8,19 @@ datasource db {
 }
 
 model Avatar {
-  id          String   @id @default(cuid())
-  name        String
-  type        String
-  style       String?
-  language    String?
-  voice       String?
-  isActive    Boolean  @default(true)
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(cuid())
+  name           String
+  type           String
+  style          String?
+  language       String?
+  /// Host id untuk Piper live TTS (contoh: namira) — bukan Edge Neural id.
+  voice          String?
+  /// Sample pra-live (FE play lokal). Jangan hit pod TTS untuk preview.
+  sampleAudioUrl String?
+  isActive       Boolean  @default(true)
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   liveSessions LiveSession[]
 }

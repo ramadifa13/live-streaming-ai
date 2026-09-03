@@ -20,6 +20,7 @@ export async function avatarsRoutes(server: FastifyInstance) {
       style?: string;
       language?: string;
       voice?: string;
+      sampleAudioUrl?: string;
       image?: string;
       modelUrl3d?: string;
     };
@@ -29,13 +30,20 @@ export async function avatarsRoutes(server: FastifyInstance) {
       return { error: "name and type are required" };
     }
 
+    const hostSlug = (body.voice || body.name || "namira")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "_");
+
     const avatar = await prisma.avatar.create({
       data: {
         name: body.name,
         type: body.type,
         style: body.style ?? "neutral",
         language: body.language ?? "Indonesia",
-        voice: body.voice ?? "Natural",
+        voice: body.voice ?? hostSlug,
+        sampleAudioUrl:
+          body.sampleAudioUrl ?? `/avatars/${hostSlug}_voice_sample.mp3`,
       },
     });
 

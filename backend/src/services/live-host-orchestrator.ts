@@ -153,6 +153,9 @@ interface QueueMetrics {
   warmedUp: boolean;
   broadcastMode: string;
   utteranceQueueCount: number;
+  /** Utterance yang sudah prepared (siap play). */
+  readyUtteranceCount: number;
+  playbackArmed: boolean;
   visualWorkerRunning: boolean;
   visualWorkerInitializing: boolean;
   broadcastBootState: string;
@@ -174,6 +177,8 @@ interface HostRuntimeState {
   abortController: AbortController;
   isLive: boolean;
   pipelineReady: boolean;
+  /** Soft pause — hold generasi + speech; RTMP tetap. */
+  isPaused: boolean;
   generationRunning: boolean;
   /** Monotonic id — recovery loop tidak bentrok dengan finally lama. */
   generationLoopId: number;
@@ -240,6 +245,8 @@ interface PlanPolicy {
 }
 
 const LIVE_MIN_BUFFER = Number(process.env.LIVE_MIN_BUFFER_SECONDS || 6);
+/** Minimal ucapan playable siap sebelum tombol Go Live. */
+const GO_LIVE_MIN_UTTERANCES = Number(process.env.GO_LIVE_MIN_UTTERANCES || 2);
 
 const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   // Buffer realtime ai_worker: default 6s (bukan 10–18) supaya Go confirm lebih cepat.
@@ -342,6 +349,8 @@ function emptyQueueMetrics(
     warmedUp: false,
     broadcastMode: "segment",
     utteranceQueueCount: 0,
+    readyUtteranceCount: 0,
+    playbackArmed: false,
     visualWorkerRunning: false,
     visualWorkerInitializing: false,
     broadcastBootState: "idle",
@@ -647,6 +656,15 @@ class LiveHostOrchestrator {
     this.sessions.clear();
   }
 
+  public setPaused(sessionId: string, paused: boolean): void {
+    const state = this.sessions.get(sessionId);
+    if (!state) return;
+    state.isPaused = paused;
+    console.log(
+      `[LiveHost] Session ${sessionId} soft-${paused ? "paused" : "resumed"}`,
+    );
+  }
+
   public switchProduct(sessionId: string, productId: string, snapshot?: ProductSnapshot): void {
     const state = this.sessions.get(sessionId);
     if (!state) return;
@@ -715,6 +733,7 @@ class LiveHostOrchestrator {
       abortController: new AbortController(),
       isLive: false,
       pipelineReady: false,
+      isPaused: false,
       generationRunning: false,
       generationLoopId: 0,
       preliveRunning: false,
@@ -790,7 +809,7 @@ class LiveHostOrchestrator {
       await forwardToRunPodGPU(state.config.podId, {
         avatarImagePath: `avatars/${avatarFileName}`,
         text: "baik",
-        voice: state.config.voice || "id-ID-GadisNeural",
+        voice: state.config.voice || "namira",
         tone: state.config.tone,
         requireWorker: false,
         wait: false,
@@ -910,9 +929,12 @@ class LiveHostOrchestrator {
         }
 
         const policy = this.getPolicy(s);
+        const playableDepth = isAiWorkerBroadcastMode(queue.broadcastMode)
+          ? queue.utteranceQueueCount
+          : queue.queuedVideos;
         if (
-          queue.bufferSeconds >= policy.minBufferSeconds &&
-          queue.queuedVideos >= 1
+          playableDepth >= GO_LIVE_MIN_UTTERANCES &&
+          queue.bufferSeconds >= policy.minBufferSeconds
         ) {
           await sleep(1200);
           continue;
@@ -969,6 +991,10 @@ class LiveHostOrchestrator {
         }
 
         await this.refreshQueueMetrics(sessionId);
+        if (s.isPaused) {
+          await sleep(800);
+          continue;
+        }
         if (s.lastQueue.rtmpError) {
           console.log(
             `[LiveHost] RTMP fatal saat live — menghentikan generasi: ${sessionId}`,
@@ -1501,11 +1527,13 @@ class LiveHostOrchestrator {
       try {
         const ttsResult = await synthesizeSpeech({
           text: seg.text,
-          voice: state.config.voice || "id-ID-GadisNeural",
+          host: state.config.avatarName || state.config.voice || "namira",
+          voice: state.config.avatarName || state.config.voice || "namira",
           avatarName: state.config.avatarName,
           tone: state.config.tone,
           emotion: response.emotion,
           podId: state.config.podId || process.env.RUNPOD_POD_ID || null,
+          allowOfflineSynth: true,
         });
         if (ttsResult.success && ttsResult.audioBuffer) {
           audioBase64 = ttsResult.audioBuffer.toString("base64");
@@ -1842,6 +1870,9 @@ class LiveHostOrchestrator {
       const broadcastMode = String(raw.broadcast_mode || "segment");
       const aiWorker = isAiWorkerBroadcastMode(broadcastMode);
       const utteranceQueueCount = Number(raw.utterance_queue_count ?? 0);
+      const readyUtteranceCount = Number(
+        raw.ready_utterance_count ?? utteranceQueueCount,
+      );
       const readyVideos = Number(raw.ready_videos_count || 0);
       const activeProcessing = Number(raw.active_processing_count || 0);
       const visualWorkerRunning = Boolean(raw.visual_worker_running);
@@ -1855,14 +1886,8 @@ class LiveHostOrchestrator {
 
       let queuedVideos = Number(raw.queued_videos_count || 0);
       if (aiWorker) {
-        // Jangan pakai counters.generated (lifetime) — itu membuat buffer "penuh" palsu.
-        queuedVideos = Math.max(utteranceQueueCount, readyVideos);
-        if (activeProcessing > 0) {
-          queuedVideos = Math.max(queuedVideos, 1);
-        } else if (queuedVideos < 1 && state.estimatedBufferSeconds >= 2) {
-          // Soft floor singkat setelah submit lokal, sebelum worker update.
-          queuedVideos = 1;
-        }
+        // Hanya antrian playable saat ini — bukan lifetime ready_videos_count.
+        queuedVideos = utteranceQueueCount;
       } else {
         queuedVideos = Math.max(queuedVideos, readyVideos);
       }
@@ -1892,13 +1917,6 @@ class LiveHostOrchestrator {
           utteranceQueueCount * FALLBACK_SPEECH_SECONDS +
             activeProcessing * 3,
         );
-        // Soft floor dari estimasi submit lokal (bukan lifetime counter).
-        if (bufferSeconds <= 0 && state.estimatedBufferSeconds > 0) {
-          bufferSeconds = Math.min(
-            state.estimatedBufferSeconds,
-            this.getPolicy(state).maxBufferSeconds,
-          );
-        }
       } else {
         bufferSeconds = Math.max(
           0,
@@ -1907,6 +1925,7 @@ class LiveHostOrchestrator {
         );
       }
 
+      // Jangan sticky-rewrite buffer kosong dengan estimasi lokal.
       state.estimatedBufferSeconds = bufferSeconds;
       state.lastQueue = {
         readyVideos,
@@ -1926,6 +1945,8 @@ class LiveHostOrchestrator {
         ),
         broadcastMode,
         utteranceQueueCount,
+        readyUtteranceCount,
+        playbackArmed: Boolean(raw.playback_armed),
         visualWorkerRunning,
         visualWorkerInitializing,
         broadcastBootState,
@@ -1975,7 +1996,7 @@ class LiveHostOrchestrator {
       await forwardToRunPodGPU(state.config.podId || process.env.RUNPOD_POD_ID, {
         avatarImagePath: `avatars/${avatarFileName}`,
         text: taggedText,
-        voice: state.config.voice || "id-ID-GadisNeural",
+        voice: state.config.voice || "namira",
         tone: state.config.tone,
         audioBase64,
         rtmpUrl: state.config.rtmpUrl,
@@ -2040,8 +2061,15 @@ class LiveHostOrchestrator {
     const policy = this.getPolicy(state);
     const rtmpRequired = Boolean(state.config.rtmpUrl);
     const rtmpOk = !rtmpRequired || queue.rtmpConnected;
-    const bufferReady =
-      queue.bufferSeconds >= policy.minBufferSeconds && queue.queuedVideos >= 1;
+    const aiWorker = isAiWorkerBroadcastMode(queue.broadcastMode);
+    const playableReady = aiWorker
+      ? queue.readyUtteranceCount >= GO_LIVE_MIN_UTTERANCES ||
+        queue.utteranceQueueCount >= GO_LIVE_MIN_UTTERANCES
+      : queue.queuedVideos >= GO_LIVE_MIN_UTTERANCES &&
+        queue.bufferSeconds >= policy.minBufferSeconds;
+    const bufferReady = aiWorker
+      ? playableReady
+      : playableReady && queue.bufferSeconds >= policy.minBufferSeconds;
 
     // Recompute tiap poll (hysteresis: jangan sticky forever).
     if (bufferReady && rtmpOk && !queue.rtmpError) {
@@ -2049,8 +2077,10 @@ class LiveHostOrchestrator {
     } else if (
       queue.rtmpError ||
       !rtmpOk ||
-      queue.bufferSeconds < policy.minBufferSeconds * 0.5 ||
-      (queue.queuedVideos < 1 && queue.bufferSeconds < 2)
+      (aiWorker
+        ? queue.utteranceQueueCount < 1 && queue.readyUtteranceCount < 1
+        : queue.bufferSeconds < policy.minBufferSeconds * 0.5 ||
+          (queue.queuedVideos < 1 && queue.bufferSeconds < 2))
     ) {
       state.pipelineReady = false;
     }
@@ -2126,14 +2156,16 @@ class LiveHostOrchestrator {
       stageIndex = 1;
       stageText = "Memuat model AI Host ke Cloud GPU...";
     } else if (
-      queue.bufferSeconds < policy.minBufferSeconds &&
-      queue.queuedVideos < 2 &&
-      state.counters.generated < 2 &&
+      (aiWorker
+        ? queue.utteranceQueueCount < GO_LIVE_MIN_UTTERANCES &&
+          queue.readyUtteranceCount < GO_LIVE_MIN_UTTERANCES
+        : queue.bufferSeconds < policy.minBufferSeconds &&
+          queue.queuedVideos < GO_LIVE_MIN_UTTERANCES) &&
       !state.pipelineReady
     ) {
       stageIndex = 2;
-      stageText = isAiWorkerBroadcastMode(queue.broadcastMode)
-        ? "Menyiapkan buffer ucapan AI Host (realtime)..."
+      stageText = aiWorker
+        ? `Menyiapkan buffer ucapan AI Host (${Math.max(queue.readyUtteranceCount, queue.utteranceQueueCount)}/${GO_LIVE_MIN_UTTERANCES})...`
         : "Menyiapkan segmen pembuka AI Host...";
     } else if (rtmpRequired && !queue.rtmpConnected) {
       stageIndex = 3;
@@ -2160,8 +2192,12 @@ class LiveHostOrchestrator {
     return {
       ready,
       generationCount: state.counters.generated,
+      lifetimeGenerated: state.counters.generated,
       videosQueued: queue.queuedVideos,
       utteranceQueueCount: queue.utteranceQueueCount,
+      readyUtteranceCount: queue.readyUtteranceCount,
+      playbackArmed: queue.playbackArmed,
+      goLiveMinUtterances: GO_LIVE_MIN_UTTERANCES,
       broadcastMode: queue.broadcastMode,
       visualWorkerRunning: queue.visualWorkerRunning,
       visualWorkerInitializing: queue.visualWorkerInitializing,

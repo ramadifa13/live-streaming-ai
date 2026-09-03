@@ -187,7 +187,7 @@ export async function startInstagramBroadcast(
     const relativePath = assetPath.replace(/^[/\\]+/, "");
     return path.resolve(publicRoot, relativePath);
   };
-  const defaultVideo = path.resolve(publicRoot, "avatars/namira_idle.mp4");
+  const defaultVideo = path.resolve(publicRoot, "avatars/namira_idle_1.mp4");
   const mediaToUse =
     resolvePublicAsset(avatarVideoPath) ||
     resolvePublicAsset(avatarImagePath) ||

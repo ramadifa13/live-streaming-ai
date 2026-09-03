@@ -50,6 +50,8 @@ export interface StartSessionParams {
   autoModeration: boolean;
   avatarName: string;
   tone: string;
+  /** Host id (namira) — Piper live TTS. */
+  voice?: string;
   accessToken?: string;
   liveChatId?: string;
   liveVideoId?: string;
@@ -159,22 +161,64 @@ export const liveSessionService = {
     await this.stopSession({ sessionId });
   },
 
-  async pauseStream(): Promise<boolean> {
-    const res = await fetch("/api/live-stream/pause", { method: "POST" });
+  async pauseStream(sessionId?: string | null): Promise<boolean> {
+    const res = await fetch("/api/live-stream/pause", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: sessionId || undefined }),
+    });
     const json = await res.json();
     if (!res.ok || !json.success) {
-      throw new Error(json.data?.message || "Perubahan status stream gagal");
+      throw new Error(
+        json.data?.error || json.data?.message || json.error || "Pause stream gagal",
+      );
     }
     return true;
   },
 
-  async resumeStream(): Promise<boolean> {
-    const res = await fetch("/api/live-stream/resume", { method: "POST" });
+  async resumeStream(sessionId?: string | null): Promise<boolean> {
+    const res = await fetch("/api/live-stream/resume", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: sessionId || undefined }),
+    });
     const json = await res.json();
     if (!res.ok || !json.success) {
-      throw new Error(json.data?.message || "Perubahan status stream gagal");
+      throw new Error(
+        json.data?.error || json.data?.message || json.error || "Resume stream gagal",
+      );
     }
     return true;
+  },
+
+  async sendTestComment(params: {
+    comment: string;
+    sessionId?: string | null;
+    sender?: string;
+    avatarName?: string;
+    tone?: string;
+    voice?: string;
+  }): Promise<{
+    mode: "live" | "prelive";
+    speech?: string;
+    sampleAudioUrl?: string;
+    note?: string;
+  }> {
+    const res = await fetch("/api/live-session/test-comment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || "Gagal mengirim komentar uji");
+    }
+    return {
+      mode: json.mode,
+      speech: json.data?.speech,
+      sampleAudioUrl: json.data?.sampleAudioUrl,
+      note: json.data?.note,
+    };
   },
 
   async fetchMetrics(sessionId?: string | null) {

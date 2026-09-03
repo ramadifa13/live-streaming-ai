@@ -14,6 +14,8 @@ import {
   stopRunPodBroadcast,
   warmupWorker,
   ensureWorkerReachable,
+  pauseRunPodBroadcast,
+  resumeRunPodBroadcast,
 } from "../services/runpod-bridge.js";
 import { livePlatformConnector } from "../services/live-platform-connector.js";
 import { setLiveSessionActive, stopPod } from "../services/runpod-manager.js";
@@ -477,20 +479,27 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     try {
-      // Pastikan status pipeline sudah siap (RTMP terhubung dan 2 video selesai di-render)
+      // Pastikan RTMP + minimal 2 ucapan playable siap (bukan lifetime counter).
       const pipelineStatus =
         await liveHostOrchestrator.getPipelineStatus(sessionId);
-      if (!pipelineStatus.ready) {
-        reply.code(400);
-        const realtime = /ai_worker|ai-worker|realtime|visual_worker/i.test(
-          String(pipelineStatus.broadcastMode || ""),
-        );
+      const realtime = /ai_worker|ai-worker|realtime|visual_worker/i.test(
+        String(pipelineStatus.broadcastMode || ""),
+      );
+      const minUtt = Number(pipelineStatus.goLiveMinUtterances || 2);
+      const playable = realtime
+        ? Math.max(
+            Number(pipelineStatus.readyUtteranceCount || 0),
+            Number(pipelineStatus.utteranceQueueCount || 0),
+          )
+        : Number(pipelineStatus.videosQueued || 0);
+      if (!pipelineStatus.ready || playable < minUtt) {
+        reply.code(409);
         const bufferLabel = realtime
-          ? `buffer ucapan ${pipelineStatus.utteranceQueueCount ?? pipelineStatus.videosQueued}/2`
-          : `video ${pipelineStatus.generationCount}/2`;
+          ? `ucapan siap ${playable}/${minUtt}`
+          : `video ${playable}/${minUtt}`;
         return {
           success: false,
-          error: `Belum siap untuk Go Live: pastikan RTMP terhubung dan ${bufferLabel} siap (RTMP: ${pipelineStatus.isRtmpConnected ? "Terhubung" : "Belum Terhubung"}, buffer: ${pipelineStatus.bufferSeconds ?? 0}s).`,
+          error: `Belum siap untuk Go Live: pastikan RTMP terhubung dan ${bufferLabel} (RTMP: ${pipelineStatus.isRtmpConnected ? "Terhubung" : "Belum Terhubung"}, buffer: ${pipelineStatus.bufferSeconds ?? 0}s).`,
         };
       }
 
@@ -502,7 +511,9 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       );
       return {
         success: true,
-        message: "AI Host aktif! V1+V2 sudah diputar, pipeline terus berjalan.",
+        message: realtime
+          ? `AI Host aktif! ${playable} ucapan di antrian mulai diputar.`
+          : "AI Host aktif! Segmen pembuka mulai diputar, pipeline terus berjalan.",
         sessionId,
         startedAt: new Date().toISOString(),
         pipelineStatus: await liveHostOrchestrator.getPipelineStatus(sessionId),
@@ -621,36 +632,147 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  // POST /api/live-stream/pause — FFmpeg lokal saja; AI worker RunPod tidak support pause.
-  server.post("/api/live-stream/pause", async () => {
+  // POST /api/live-stream/pause — local FFmpeg ATAU soft-pause AI worker.
+  server.post("/api/live-stream/pause", async (request) => {
+    const body = (request.body || {}) as { sessionId?: string };
+    const managed = body.sessionId
+      ? liveSessionManager.getSession(body.sessionId)
+      : liveSessionManager.getLatestActiveSession();
+
     const local = getStreamStatus();
     if (local.status === "streaming" || local.status === "connecting") {
       const result = pauseBroadcast();
+      if (managed?.sessionId) liveHostOrchestrator.setPaused(managed.sessionId, true);
       return { success: result.success, data: result };
     }
+
+    const podId = managed?.podId || process.env.RUNPOD_POD_ID || null;
+    if (podId) {
+      const result = await pauseRunPodBroadcast(podId);
+      if (result.success && managed?.sessionId) {
+        liveHostOrchestrator.setPaused(managed.sessionId, true);
+      }
+      return {
+        success: result.success,
+        data: result.success
+          ? { success: true, message: "AI worker soft-paused (speech hold)." }
+          : { success: false, error: result.error || "Pause worker gagal" },
+      };
+    }
+
     return {
       success: false,
       data: {
         success: false,
-        error:
-          "Pause tidak didukung untuk AI worker RunPod. Gunakan End Live.",
+        error: "Tidak ada stream aktif untuk di-pause.",
       },
     };
   });
 
   // POST /api/live-stream/resume
-  server.post("/api/live-stream/resume", async () => {
+  server.post("/api/live-stream/resume", async (request) => {
+    const body = (request.body || {}) as { sessionId?: string };
+    const managed = body.sessionId
+      ? liveSessionManager.getSession(body.sessionId)
+      : liveSessionManager.getLatestActiveSession();
+
     const local = getStreamStatus();
     if (local.paused || local.status === "streaming") {
       const result = await resumeBroadcast();
+      if (managed?.sessionId) liveHostOrchestrator.setPaused(managed.sessionId, false);
       return { success: result.success, data: result };
     }
+
+    const podId = managed?.podId || process.env.RUNPOD_POD_ID || null;
+    if (podId) {
+      const result = await resumeRunPodBroadcast(podId);
+      if (result.success && managed?.sessionId) {
+        liveHostOrchestrator.setPaused(managed.sessionId, false);
+      }
+      return {
+        success: result.success,
+        data: result.success
+          ? { success: true, message: "AI worker resumed." }
+          : { success: false, error: result.error || "Resume worker gagal" },
+      };
+    }
+
     return {
       success: false,
       data: {
         success: false,
-        error:
-          "Resume tidak didukung untuk AI worker RunPod. Mulai broadcast ulang.",
+        error: "Tidak ada stream aktif untuk di-resume.",
+      },
+    };
+  });
+
+  // POST /api/live-session/test-comment — prelive testing ATAU inject ke live orchestrator
+  server.post("/api/live-session/test-comment", async (request, reply) => {
+    const schema = z.object({
+      comment: z.string().min(1),
+      sessionId: z.string().optional(),
+      sender: z.string().optional().default("Tester"),
+      avatarName: z.string().optional().default("Namira"),
+      tone: z.string().optional().default("Persuasif"),
+      voice: z.string().optional().default("namira"),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { success: false, error: parsed.error.flatten() };
+    }
+
+    const { comment, sender, avatarName, tone, voice } = parsed.data;
+    const managed = parsed.data.sessionId
+      ? liveSessionManager.getSession(parsed.data.sessionId)
+      : liveSessionManager.getLatestActiveSession();
+    const sessionId = managed?.sessionId || parsed.data.sessionId || "";
+    const isLive = managed?.state === "live";
+
+    if (isLive && sessionId) {
+      const commentId = `test-${Date.now()}`;
+      await livePlatformConnector.ingestEvent(
+        sessionId,
+        managed?.platform || "manual",
+        "comment",
+        {
+          id: commentId,
+          text: comment,
+          message: comment,
+          from: { username: sender },
+          sender,
+        },
+      );
+      return {
+        success: true,
+        mode: "live",
+        data: {
+          speech: null,
+          note: "Komentar diantrikan ke AI Host live (Piper + lipsync).",
+          commentId,
+        },
+      };
+    }
+
+    // Prelive / studio testing — LLM + sample (bukan Piper pod).
+    const { generateLunaResponse } = await import("../services/groq-brain.js");
+    const { getHostSampleUrl, resolveHostId } = await import("../services/tts.js");
+    const luna = await generateLunaResponse(
+      comment,
+      managed?.product || null,
+      avatarName,
+      tone,
+    );
+    const host = resolveHostId(voice, avatarName);
+    return {
+      success: true,
+      mode: "prelive",
+      data: {
+        speech: luna.speech,
+        action: luna.action,
+        emotion: luna.emotion,
+        sampleAudioUrl: getHostSampleUrl(host),
+        host,
       },
     };
   });

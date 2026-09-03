@@ -45,7 +45,7 @@ const handlePlayAudioPreview = async (
         : `Halo semuanya! Selamat datang di live streaming. Saya ${selectedAvatar.name}. Yuk langsung cek penawaran dan voucher spesial hari ini ya!`;
 
     showToast(
-      `Memutar suara ${selectedAvatar.name} (${tone} ${speed}x)...`,
+      `Memutar sample suara ${selectedAvatar.name} (pra-live)...`,
     );
     try {
       await speakText(previewText, {

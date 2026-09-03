@@ -437,12 +437,9 @@ class LiveSessionManager {
         durationSeconds,
         durationFormatted: `${Math.floor(durationSeconds / 3600)}j ${Math.floor((durationSeconds % 3600) / 60)}m ${durationSeconds % 60}d`,
         totalViewers: finalViewers,
-        peakViewers: Math.round(finalViewers * 1.25),
-        totalComments: finalComments,
-        aiRepliesCount: Math.max(
-          metrics.aiReplies,
-          Math.round(finalComments * 0.95),
-        ),
+          peakViewers: Math.max(metrics.peakViewers || 0, finalViewers),
+          totalComments: finalComments,
+          aiRepliesCount: metrics.aiReplies || 0,
         totalClicks: finalClicks,
         totalProductSold: finalProductSold,
         grossRevenue: finalSales,
@@ -459,6 +456,18 @@ class LiveSessionManager {
 
   public getSession(sessionId: string): ManagedSession | null {
     return this.activeSessions.get(sessionId) || null;
+  }
+
+  /** Sesi aktif terbaru (live > pending > starting). */
+  public getLatestActiveSession(): ManagedSession | null {
+    const all = Array.from(this.activeSessions.values());
+    return (
+      all.find((s) => s.state === "live") ||
+      all.find((s) => s.state === "pending") ||
+      all.find((s) => s.state === "starting") ||
+      all[0] ||
+      null
+    );
   }
 
   public setPendingVoicePreference(voice: string | null) {
@@ -506,12 +515,14 @@ class LiveSessionManager {
         session.liveStartedAt + session.durationHours * 3600 * 1000;
       this.startDurationWatchdog(sessionId);
       if (session.podId) {
-        triggerWorkerPlayback(session.podId).catch((err) =>
+        try {
+          await triggerWorkerPlayback(session.podId);
+        } catch (err) {
           console.warn(
             "[LiveSessionManager] triggerWorkerPlayback notice:",
             err,
-          ),
-        );
+          );
+        }
       }
       liveHostOrchestrator
         .startLivePipeline(sessionId)

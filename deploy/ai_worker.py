@@ -39,9 +39,7 @@ import cv2
 import numpy as np
 import torch
 
-# ---------------------------------------------------------------------------
-# Canvas / env
-# ---------------------------------------------------------------------------
+
 try:
     from video_canvas import CANVAS_H, CANVAS_W, fit_bgr
 except ImportError:
@@ -52,10 +50,12 @@ except ImportError:
         return frame
 
 
-TARGET_FPS = int(os.environ.get("AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "30")))
+TARGET_FPS = int(
+    os.environ.get("AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "30"))
+)
 SAMPLE_RATE = 44100
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
-BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2  # stereo s16le
+BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2
 CROSSFADE_FRAMES = int(os.environ.get("AI_WORKER_CROSSFADE", "8"))
 OVERLAP_FRAMES = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "10"))
 BBOX_SMOOTH_WINDOW = int(os.environ.get("AI_WORKER_BBOX_SMOOTH", "7"))
@@ -65,25 +65,29 @@ RAW_QUEUE_BLOCK_SEC = float(os.environ.get("AI_WORKER_RAW_BLOCK_SEC", "0.25"))
 MASK_FEATHER_PX = int(os.environ.get("AI_WORKER_MASK_FEATHER", "15"))
 AMBIENT_MIN_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MIN_SEC", "4"))
 AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "6"))
-# Probabilitas sisip idle_1 (nafas) saat rotasi variant — biar tidak terus gerak tangan.
+
 IDLE_BREATH_CHANCE = float(os.environ.get("AI_WORKER_IDLE_BREATH_CHANCE", "0.18"))
 IDLE_FALLBACK_AFTER = int(os.environ.get("AI_WORKER_IDLE_FALLBACK_AFTER", "2"))
 BROADCAST_MAX_LAG = int(os.environ.get("AI_WORKER_BROADCAST_MAX_LAG", "8"))
-BROADCAST_RENDER_WAIT_SEC = float(os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.10"))
+BROADCAST_RENDER_WAIT_SEC = float(
+    os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.10")
+)
 MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.62"))
 MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0.32"))
 MOUTH_MAX_DELTA = float(os.environ.get("MUSETALK_MAX_DELTA", "30"))
 LIPSYNC_PREROLL_FRAMES = int(os.environ.get("MUSETALK_PREROLL_FRAMES", "6"))
 LIPSYNC_WAIT_SEC = float(os.environ.get("MUSETALK_MOUTH_WAIT_SEC", "0.02"))
 LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "0"))
-LIPSYNC_PREROLL_TIMEOUT_SEC = float(os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.0"))
+LIPSYNC_PREROLL_TIMEOUT_SEC = float(
+    os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.0")
+)
 
 
-# Post-speech CTA gestures — disabled for now (focus multi-idle only).
-# Re-enable later: frozenset({"point_up", "point_down"})
 ALLOWED_GESTURES: frozenset = frozenset()
-# Body during speech: idle_1 = rest diam (tanpa gerak tangan). Fallback idle / idle_*.
-TALK_CLIP_DEFAULT = (os.environ.get("AI_WORKER_TALK_CLIP") or "idle_1").strip().lower() or "idle_1"
+
+TALK_CLIP_DEFAULT = (
+    os.environ.get("AI_WORKER_TALK_CLIP") or "idle_1"
+).strip().lower() or "idle_1"
 
 
 def _ambient_gesture_names() -> List[str]:
@@ -130,12 +134,15 @@ def _is_allowed_gesture(tag: Optional[str]) -> bool:
     key = tag.lower().strip().replace("-", "_")
     return key in ALLOWED_GESTURES
 
+
 try:
     from worker_telemetry import get_telemetry
 except ImportError:
+
     class _NoopTelemetry:
         def measure(self, _name: str):
             from contextlib import nullcontext
+
             return nullcontext()
 
         def inc(self, *_a, **_k) -> None:
@@ -150,19 +157,16 @@ except ImportError:
         def maybe_log_summary(self, **_k) -> None:
             pass
 
-    def get_telemetry():  # type: ignore
+    def get_telemetry():
         return _NoopTelemetry()
 
 
-# ---------------------------------------------------------------------------
-# Speech bridge hooks (wired by api_server in ai_worker broadcast mode)
-# ---------------------------------------------------------------------------
 try:
     from speech_bridge import SpeechBridge, get_speech_bridge, is_ai_worker_mode
 except ImportError:
-    SpeechBridge = None  # type: ignore
+    SpeechBridge = None
 
-    def get_speech_bridge(output_folder: str = ""):  # type: ignore
+    def get_speech_bridge(output_folder: str = ""):
         return None
 
     def is_ai_worker_mode() -> bool:
@@ -186,9 +190,6 @@ def get_llm_action() -> Optional[str]:
     return None
 
 
-# ---------------------------------------------------------------------------
-# Data structures
-# ---------------------------------------------------------------------------
 class PlayState(Enum):
     IDLE = auto()
     ACTION = auto()
@@ -203,7 +204,7 @@ class ClipAsset:
     base_pose_frame: int = 0
     end_pose_frame: int = -1
     probed_frame_count: int = 0
-    # MuseTalk materials (populated after warmup)
+
     frame_list_cycle: List[np.ndarray] = field(default_factory=list)
     coord_list_cycle: list = field(default_factory=list)
     latent_list_cycle: list = field(default_factory=list)
@@ -236,8 +237,9 @@ class ClipAsset:
         n = max(1, len(self.frames))
         fi = idx % n
         if self.frame_list_cycle and fi < len(self.frame_list_cycle):
-            # MuseTalk cache is forward+reverse; use forward half only
-            forward_n = min(n, len(self.frame_list_cycle) // 2 or len(self.frame_list_cycle))
+            forward_n = min(
+                n, len(self.frame_list_cycle) // 2 or len(self.frame_list_cycle)
+            )
             cidx = fi % max(1, forward_n)
             return self.frame_list_cycle[cidx], cidx
         return self.frames[fi], fi
@@ -268,9 +270,6 @@ class RenderedPacket:
     frame_idx: int = 0
 
 
-# ---------------------------------------------------------------------------
-# Mask feathering
-# ---------------------------------------------------------------------------
 def feather_mask(mask_array: np.ndarray, kernel: int = MASK_FEATHER_PX) -> np.ndarray:
     """Extra Gaussian feather on MuseTalk jaw mask edges."""
     if mask_array is None:
@@ -321,13 +320,17 @@ def _mouth_strength_for_pcm(pcm: bytes) -> float:
     return base * (0.50 + 0.50 * t)
 
 
-def _dampen_generated_mouth(original: np.ndarray, generated: np.ndarray, strength: float) -> np.ndarray:
+def _dampen_generated_mouth(
+    original: np.ndarray, generated: np.ndarray, strength: float
+) -> np.ndarray:
     """Campur hasil MuseTalk dengan crop asli + clamp delta agar rahang tidak tertarik."""
     if original is None or generated is None:
         return generated if generated is not None else original
     if original.shape != generated.shape:
         generated = cv2.resize(
-            generated, (original.shape[1], original.shape[0]), interpolation=cv2.INTER_CUBIC
+            generated,
+            (original.shape[1], original.shape[0]),
+            interpolation=cv2.INTER_CUBIC,
         )
     orig_f = original.astype(np.float32)
     gen_f = generated.astype(np.float32)
@@ -343,9 +346,6 @@ def _talk_body_index(clip: "ClipAsset", whisper_idx: int) -> int:
     return clip.base_pose_frame + (int(whisper_idx) % span)
 
 
-# ---------------------------------------------------------------------------
-# Face bbox — per-frame materials only (jangan lock bbox ke pose lain)
-# ---------------------------------------------------------------------------
 class FaceCoordRegistry:
     """Ambil mask/bbox milik frame yang sedang tampil. Tanpa lock lintas-pose."""
 
@@ -377,9 +377,6 @@ class _OverlapTransition:
     resume_frame_idx: int = 0
 
 
-# ---------------------------------------------------------------------------
-# Asset bank — zero disk I/O after init
-# ---------------------------------------------------------------------------
 class AssetBank:
     """Decode all host clips into RAM and precompute MuseTalk materials."""
 
@@ -388,16 +385,15 @@ class AssetBank:
         "talk_expressive": "idle_1",
         "expressive": "idle_1",
         "idle": "idle_1",
-        "idle_1": "idle_1",  # nafas / body bicara / fallback crash
-        "idle_2": "idle_2",  # gerak tangan A
-        "idle_3": "idle_3",  # gerak tangan B
-        "idle_4": "idle_4",  # gerak tangan C
+        "idle_1": "idle_1",
+        "idle_2": "idle_2",
+        "idle_3": "idle_3",
+        "idle_4": "idle_4",
         "wave": "idle_1",
         "raise_hand": "idle_1",
         "nod": "idle_1",
         "laugh": "idle_1",
         "think": "idle_1",
-        # Point CTA ditunda — map ke rest sampai asset + policy diaktifkan lagi.
         "point_up": "idle_1",
         "point_down": "idle_1",
     }
@@ -435,14 +431,17 @@ class AssetBank:
             raise FileNotFoundError(f"Assets dir missing: {self.assets_dir}")
 
         mp4s = sorted(
-            f for f in os.listdir(self.assets_dir)
+            f
+            for f in os.listdir(self.assets_dir)
             if f.endswith(".mp4") and not f.startswith("temp_")
         )
         if not mp4s:
             raise FileNotFoundError(f"No .mp4 assets in {self.assets_dir}")
 
         eager_names = set(self._eager_clip_names())
-        decode_all = (os.environ.get("AI_WORKER_EAGER_CLIPS") or "").strip().lower() in (
+        decode_all = (
+            os.environ.get("AI_WORKER_EAGER_CLIPS") or ""
+        ).strip().lower() in (
             "all",
             "*",
         )
@@ -597,7 +596,7 @@ class AssetBank:
         stem = os.path.splitext(fname)[0].lower()
         host_prefix = f"{self.host}_"
         if stem.startswith(host_prefix):
-            stem = stem[len(host_prefix):]
+            stem = stem[len(host_prefix) :]
         return stem or "clip"
 
     def _load_pose_meta(self, name: str, num_frames: int) -> Tuple[int, int]:
@@ -642,8 +641,11 @@ class AssetBank:
         if not tag:
             return self._idle_name
         raw = tag.lower().strip().replace("-", "_")
-        if raw not in ALLOWED_GESTURES and not _is_idle_clip_name(raw) and raw not in self.ACTION_ALIASES:
-            # Unknown / retired gestures → primary idle
+        if (
+            raw not in ALLOWED_GESTURES
+            and not _is_idle_clip_name(raw)
+            and raw not in self.ACTION_ALIASES
+        ):
             if raw not in self.clips:
                 return self._idle_name
         key = self.ACTION_ALIASES.get(raw, raw)
@@ -662,9 +664,6 @@ class AssetBank:
         return clip
 
 
-# ---------------------------------------------------------------------------
-# State machine — playthrough lock (no mid-clip interruption)
-# ---------------------------------------------------------------------------
 class VideoStateMachine:
     """Forward-only playback; transitions only at base/end pose boundaries."""
 
@@ -699,7 +698,7 @@ class VideoStateMachine:
         self._schedule_next_ambient()
 
     def _schedule_next_ambient(self) -> None:
-        # Backup timer: rotasi utama di akhir clip (~4s). Timer ini untuk idle_1 → variant.
+
         if not self._idle_variants and not self._ambient_names:
             self._next_ambient_at = 0.0
             return
@@ -717,7 +716,7 @@ class VideoStateMachine:
             for c in self._idle_variants
             if c in self.bank.clips and c not in (talk, cur)
         ]
-        # Kadang sisip idle_1 (nafas) biar ritme natural, tapi jangan stuck di sana terus.
+
         if (
             primary in self.bank.clips
             and primary != cur
@@ -726,7 +725,7 @@ class VideoStateMachine:
             return primary
         if variants:
             return random.choice(variants)
-        # Kalau cuma 1 variant & sedang di situ → balik idle_1
+
         if primary in self.bank.clips and primary != cur:
             return primary
         return None
@@ -742,8 +741,12 @@ class VideoStateMachine:
         self._schedule_next_ambient()
         if self.pending_action or self._action_queue:
             return
-        # Hanya kick dari idle_1/primary — variant diganti di akhir clip.
-        if self.current_name not in (self.bank._idle_name, "idle", self.bank.talk_clip_name()):
+
+        if self.current_name not in (
+            self.bank._idle_name,
+            "idle",
+            self.bank.talk_clip_name(),
+        ):
             return
         tag = self._choose_next_idle_variant()
         if not tag:
@@ -779,7 +782,7 @@ class VideoStateMachine:
             if not _is_allowed_gesture(tag):
                 return
             self._scheduled_gesture = tag
-            # Decode point clip sekarang (bukan di tick 70%) supaya FrameFetcher tidak hitch.
+
             try:
                 resolved = self.bank.resolve_action(tag)
                 clip = self.bank.get_clip(resolved)
@@ -796,7 +799,7 @@ class VideoStateMachine:
             if _is_neutral_action(tag):
                 self._action_queue.append(self.bank._idle_name)
                 return
-            # Idle variant switch (idle_2 / idle_3)
+
             if _is_idle_clip_name(key):
                 target = self.bank.resolve_action(key)
                 if self._playthrough_lock or self._utterance_active:
@@ -918,7 +921,9 @@ class VideoStateMachine:
             if another_utterance_ready and self.current_name == talk:
                 self.pending_action = None
                 self.state = PlayState.TALK
-                print("[StateMachine] Utterance selesai → hold talk (utterance berikutnya siap)")
+                print(
+                    "[StateMachine] Utterance selesai → hold talk (utterance berikutnya siap)"
+                )
             else:
                 if not self.pending_action:
                     self.pending_action = self.bank._idle_name
@@ -999,7 +1004,7 @@ class VideoStateMachine:
 
         at_base = self.frame_idx == clip.base_pose_frame
         at_end = self.frame_idx >= clip.end_pose
-        # Gesture ambient / idle / talk: hanya pindah di batas pose agar tidak patah.
+
         if not (at_base or at_end):
             self.pending_action = raw
             return False
@@ -1021,7 +1026,9 @@ class VideoStateMachine:
             self._playthrough_lock = True
         else:
             self._playthrough_lock = False
-        print(f"[StateMachine] → {target} (overlap={self.overlap_frames}f, state={new_state.name})")
+        print(
+            f"[StateMachine] → {target} (overlap={self.overlap_frames}f, state={new_state.name})"
+        )
         return True
 
     def _advance_frame_index(self, clip: ClipAsset, is_speech: bool) -> None:
@@ -1040,7 +1047,6 @@ class VideoStateMachine:
 
         if self.frame_idx > end_pf:
             if clip.loop and not self._playthrough_lock:
-                # Idle variant (~4s): satu putaran selesai → ganti clip lain (bukan 2→2).
                 if (
                     self.state == PlayState.IDLE
                     and not self._utterance_active
@@ -1055,8 +1061,7 @@ class VideoStateMachine:
                         return
                 self.frame_idx = base_pf
                 return
-            # Clip sekali-putar selesai: tahan pose akhir, lepas lock, antri idle.
-            # Overlap ke idle terjadi di tick berikutnya — jangan hard-cut.
+
             self.frame_idx = end_pf
             self._playthrough_lock = False
             if not self._utterance_active:
@@ -1077,8 +1082,6 @@ class VideoStateMachine:
         whisper_idx: Optional[int] = None,
     ) -> RawFramePacket:
         with self._lock:
-            # Peek gesture disabled — CTA point only via set_utterance_gesture (post-speech).
-            # Avoids starting point before speech then cutting mid-clip.
             self._maybe_queue_ambient_gesture()
 
             clip = self.bank.get_clip(self.current_name)
@@ -1087,8 +1090,9 @@ class VideoStateMachine:
             cycle_idx = 0
             frame: np.ndarray
 
-            # --- Overlap blend: idle[-N:] + talk[0:N] via cv2.addWeighted ---
-            if self._overlap is not None and self._overlap.step < len(self._overlap.pairs):
+            if self._overlap is not None and self._overlap.step < len(
+                self._overlap.pairs
+            ):
                 from_f, to_f = self._overlap.pairs[self._overlap.step]
                 n = len(self._overlap.pairs)
                 t = (self._overlap.step + 1) / float(n)
@@ -1105,7 +1109,6 @@ class VideoStateMachine:
                 if clip is None:
                     raise RuntimeError(f"Clip missing: {self.current_name}")
 
-                # Sequential body during talk (no whisper scrub) — prevents pose teleport.
                 if self.state == PlayState.IDLE:
                     body, cycle_idx = clip.forward_at(self.frame_idx)
                     self._advance_frame_index(clip, is_speech)
@@ -1137,9 +1140,6 @@ class VideoStateMachine:
             return pkt
 
 
-# ---------------------------------------------------------------------------
-# MuseTalk streaming inference (Thread 2) — mouth overlay on live body
-# ---------------------------------------------------------------------------
 class LipSyncEngine:
     """Generate mouth crops ahead of audio, then composite onto the live body frame."""
 
@@ -1203,7 +1203,9 @@ class LipSyncEngine:
             f"batch={self.batch_size}, body={self._talk_clip_name}"
         )
 
-    def wait_preroll(self, n: int = LIPSYNC_PREROLL_FRAMES, timeout: float = 2.0) -> bool:
+    def wait_preroll(
+        self, n: int = LIPSYNC_PREROLL_FRAMES, timeout: float = 2.0
+    ) -> bool:
         """Tunggu mouth crop awal siap sebelum audio mulai — cegah mulut tertutup saat suara jalan."""
         with self._lock:
             chunks = self._whisper_chunks
@@ -1261,7 +1263,9 @@ class LipSyncEngine:
                 break
 
             end = min(cursor + self.batch_size, chunks.shape[0])
-            whisper_batch = chunks[cursor:end].to(device=self.device, dtype=self.weight_dtype)
+            whisper_batch = chunks[cursor:end].to(
+                device=self.device, dtype=self.weight_dtype
+            )
             latent_list = []
             for i in range(cursor, end):
                 body_idx = _talk_body_index(clip, i)
@@ -1282,7 +1286,9 @@ class LipSyncEngine:
                 with metrics.measure("musetalk_batch_ms"):
                     audio_feature_batch = pe(whisper_batch)
                     pred = unet.model(
-                        latent_batch, timesteps, encoder_hidden_states=audio_feature_batch
+                        latent_batch,
+                        timesteps,
+                        encoder_hidden_states=audio_feature_batch,
                     ).sample
                     recon = vae.decode_latents(pred)
             except Exception as err:
@@ -1301,7 +1307,9 @@ class LipSyncEngine:
             with self._lock:
                 self._infer_cursor = end
 
-    def _wait_mouth(self, idx: int, timeout: float = LIPSYNC_WAIT_SEC) -> Optional[np.ndarray]:
+    def _wait_mouth(
+        self, idx: int, timeout: float = LIPSYNC_WAIT_SEC
+    ) -> Optional[np.ndarray]:
         deadline = time.perf_counter() + max(0.0, timeout)
         while True:
             with self._lock:
@@ -1325,7 +1333,11 @@ class LipSyncEngine:
             raw = clip.mask_materials_cycle[cidx % len(clip.mask_materials_cycle)]
             if raw:
                 mask_array, crop_box, face_box = raw
-                return feather_mask(mask_array), crop_box, tuple(int(v) for v in face_box)
+                return (
+                    feather_mask(mask_array),
+                    crop_box,
+                    tuple(int(v) for v in face_box),
+                )
         return None
 
     def _compose_mouth(
@@ -1352,7 +1364,9 @@ class LipSyncEngine:
         y2 = max(y1 + 1, min(y2, body.shape[0]))
         face_box = (x1, y1, x2, y2)
         try:
-            mouth = resize_generated_to_bbox(mouth_256, face_box, square_pad=self._square_pad)
+            mouth = resize_generated_to_bbox(
+                mouth_256, face_box, square_pad=self._square_pad
+            )
             orig = body[y1:y2, x1:x2]
             if orig.size == 0:
                 return body
@@ -1371,7 +1385,9 @@ class LipSyncEngine:
                     0,
                 )
             self._prev_composed = damped
-            return get_image_blending(body, damped, list(face_box), mask_array, crop_box)
+            return get_image_blending(
+                body, damped, list(face_box), mask_array, crop_box
+            )
         except Exception:
             return body
 
@@ -1382,16 +1398,21 @@ class LipSyncEngine:
             self._prev_composed = None
             return pkt.frame
 
-        # Jangan overlay mulut talk-materials ke body point_* (early CTA) — hasilnya patah.
-        if pkt.clip_name and pkt.clip_name != self._talk_clip_name and not _is_idle_clip_name(
+        if (
             pkt.clip_name
+            and pkt.clip_name != self._talk_clip_name
+            and not _is_idle_clip_name(pkt.clip_name)
         ):
             self._prev_composed = None
             return pkt.frame
 
         mouth_idx = int(pkt.whisper_idx) + LIPSYNC_SYNC_SHIFT
         with self._lock:
-            total = 0 if self._whisper_chunks is None else int(self._whisper_chunks.shape[0])
+            total = (
+                0
+                if self._whisper_chunks is None
+                else int(self._whisper_chunks.shape[0])
+            )
         if total > 0:
             mouth_idx = max(0, min(mouth_idx, total - 1))
 
@@ -1402,7 +1423,7 @@ class LipSyncEngine:
         metrics.inc("lipsync_cache_hit")
 
         talk = self.bank.get_clip(self._talk_clip_name) or clip
-        # Compose memakai material frame body yang tampil (idle talk), bukan clip lain.
+
         body_clip = clip if pkt.clip_name == talk.name else talk
         return self._compose_mouth(
             pkt.frame, mouth, body_clip, int(pkt.cycle_idx), pkt.audio_pcm
@@ -1441,7 +1462,6 @@ def lipsync_worker_loop(
             try:
                 render_q.put(out, timeout=0.15)
             except queue.Full:
-                # Drop oldest — broadcaster must never stall
                 metrics.inc("render_queue_dropped")
                 try:
                     render_q.get_nowait()
@@ -1464,9 +1484,6 @@ def lipsync_worker_loop(
             raw_q.task_done()
 
 
-# ---------------------------------------------------------------------------
-# Frame fetcher (Thread 1)
-# ---------------------------------------------------------------------------
 def _put_raw_frame(
     raw_q: queue.Queue,
     pkt: RawFramePacket,
@@ -1508,16 +1525,17 @@ def frame_fetcher_loop(
         else:
             pcm, is_speech = audio_fn()
 
-        # Utterance lifecycle — jangan potong sebelum end_pose
         if bridge is not None and bridge.is_utterance_active():
             if is_speech and not was_speaking:
                 sm.begin_utterance()
-            # Early CTA point dinonaktifkan (ALLOWED_GESTURES kosong).
+
             elif not is_speech and was_speaking and bridge.is_audio_exhausted():
                 sm.mark_utterance_audio_done()
             if sm.utterance_visual_complete():
                 another_ready = (
-                    bridge.has_ready_pending() if hasattr(bridge, "has_ready_pending") else False
+                    bridge.has_ready_pending()
+                    if hasattr(bridge, "has_ready_pending")
+                    else False
                 )
                 sm.end_utterance(another_utterance_ready=another_ready)
                 bridge.signal_visual_complete()
@@ -1537,7 +1555,9 @@ def frame_fetcher_loop(
         if bridge is not None:
             metrics.set_gauge("utterance_queue_depth", float(bridge.pending_count()))
         _put_raw_frame(raw_q, pkt, metrics, stop_event)
-        metrics.record_latency("frame_fetch_tick_ms", (time.perf_counter() - tick_start) * 1000.0)
+        metrics.record_latency(
+            "frame_fetch_tick_ms", (time.perf_counter() - tick_start) * 1000.0
+        )
         deadline += period
         sleep_for = deadline - time.perf_counter()
         if sleep_for > 0:
@@ -1546,9 +1566,6 @@ def frame_fetcher_loop(
             deadline = time.perf_counter()
 
 
-# ---------------------------------------------------------------------------
-# Broadcaster (Thread 3) — strict FPS, never freeze on pipeline lag
-# ---------------------------------------------------------------------------
 class _IdleFallbackPlayer:
     """Lanjutkan clip yang sama saat render queue kosong — jangan loncat ke pose lain."""
 
@@ -1594,7 +1611,13 @@ class StreamBroadcaster:
 
     _ffmpeg_ipv4_supported: Optional[bool] = None
 
-    def __init__(self, rtmp_url: str, width: int = CANVAS_W, height: int = CANVAS_H, fps: int = TARGET_FPS):
+    def __init__(
+        self,
+        rtmp_url: str,
+        width: int = CANVAS_W,
+        height: int = CANVAS_H,
+        fps: int = TARGET_FPS,
+    ):
         self.rtmp_url = (rtmp_url or "").strip()
         self.width = width
         self.height = height
@@ -1629,8 +1652,14 @@ class StreamBroadcaster:
                 capture_output=True,
                 timeout=8,
             )
-            err = (proc.stderr or proc.stdout or b"").decode("utf-8", errors="ignore").lower()
-            cls._ffmpeg_ipv4_supported = proc.returncode == 0 and "unrecognized" not in err
+            err = (
+                (proc.stderr or proc.stdout or b"")
+                .decode("utf-8", errors="ignore")
+                .lower()
+            )
+            cls._ffmpeg_ipv4_supported = (
+                proc.returncode == 0 and "unrecognized" not in err
+            )
         except Exception:
             cls._ffmpeg_ipv4_supported = False
         return cls._ffmpeg_ipv4_supported
@@ -1644,35 +1673,95 @@ class StreamBroadcaster:
     ) -> list:
         gop = self.fps * 2
         cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "info", "-y",
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "info",
+            "-y",
         ]
         if force_ipv4:
             cmd.append("-4")
-        cmd.extend([
-            "-fflags", "+nobuffer+genpts",
-            "-thread_queue_size", "1024",
-            "-f", "rawvideo", "-pix_fmt", "bgr24",
-            "-s", f"{self.width}x{self.height}", "-r", str(self.fps),
-            "-probesize", "32", "-analyzeduration", "0",
-            "-i", v_in,
-            "-thread_queue_size", "1024",
-            "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "2",
-            "-probesize", "32", "-analyzeduration", "0",
-            "-i", a_in,
-            "-map", "0:v", "-map", "1:a",
-            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-            "-pix_fmt", "yuv420p", "-profile:v", "main", "-level", "4.0",
-            "-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0",
-            "-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "6000k",
-            "-vsync", "cfr",
-            "-c:a", "aac", "-b:a", "128k",
-            "-flvflags", "no_duration_filesize",
-            "-f", "flv",
-            "-rtmp_live", "live",
-            "-stimeout", "15000000",
-            "-rw_timeout", "15000000",
-            self.rtmp_url,
-        ])
+        cmd.extend(
+            [
+                "-fflags",
+                "+nobuffer+genpts",
+                "-thread_queue_size",
+                "1024",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "bgr24",
+                "-s",
+                f"{self.width}x{self.height}",
+                "-r",
+                str(self.fps),
+                "-probesize",
+                "32",
+                "-analyzeduration",
+                "0",
+                "-i",
+                v_in,
+                "-thread_queue_size",
+                "1024",
+                "-f",
+                "s16le",
+                "-ar",
+                str(SAMPLE_RATE),
+                "-ac",
+                "2",
+                "-probesize",
+                "32",
+                "-analyzeduration",
+                "0",
+                "-i",
+                a_in,
+                "-map",
+                "0:v",
+                "-map",
+                "1:a",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-tune",
+                "zerolatency",
+                "-pix_fmt",
+                "yuv420p",
+                "-profile:v",
+                "main",
+                "-level",
+                "4.0",
+                "-g",
+                str(gop),
+                "-keyint_min",
+                str(gop),
+                "-sc_threshold",
+                "0",
+                "-b:v",
+                "2500k",
+                "-maxrate",
+                "3000k",
+                "-bufsize",
+                "6000k",
+                "-vsync",
+                "cfr",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-flvflags",
+                "no_duration_filesize",
+                "-f",
+                "flv",
+                "-rtmp_live",
+                "live",
+                "-stimeout",
+                "15000000",
+                "-rw_timeout",
+                "15000000",
+                self.rtmp_url,
+            ]
+        )
         return cmd
 
     @staticmethod
@@ -1790,7 +1879,9 @@ class StreamBroadcaster:
         if self._proc is None or self._proc.stderr is None:
             os.close(video_r)
             os.close(audio_r)
-            self._fail_start(out_dir, "FFmpeg RTMP gagal start (proses tidak hidup)", last_stderr)
+            self._fail_start(
+                out_dir, "FFmpeg RTMP gagal start (proses tidak hidup)", last_stderr
+            )
 
         if out_dir:
             try:
@@ -1853,7 +1944,9 @@ class StreamBroadcaster:
         with self._lock:
             if self._closed or self._v_fh is None or self._a_fh is None:
                 return False
-            if getattr(self._v_fh, "closed", False) or getattr(self._a_fh, "closed", False):
+            if getattr(self._v_fh, "closed", False) or getattr(
+                self._a_fh, "closed", False
+            ):
                 return False
             if not self.is_alive():
                 return False
@@ -1955,7 +2048,7 @@ def broadcaster_loop(
         try:
             from rtmp_utils import write_rtmp_status
         except ImportError:
-            write_rtmp_status = None  # type: ignore
+            write_rtmp_status = None
         for candidate in (
             os.path.join(out_dir, "overlay_live.png"),
             os.path.join(out_dir, "tmp_assets", "live_overlay.png"),
@@ -1993,7 +2086,7 @@ def broadcaster_loop(
     metrics.set_gauge("target_fps", float(TARGET_FPS))
     while not stop_event.is_set():
         tick_start = time.perf_counter()
-        # Hot-swap overlay
+
         if out_dir:
             update_file = os.path.join(out_dir, "update_overlay.json")
             if os.path.exists(update_file):
@@ -2009,7 +2102,9 @@ def broadcaster_loop(
                                 if ov.shape[0] != CANVAS_H or ov.shape[1] != CANVAS_W:
                                     ov = cv2.resize(ov, (CANVAS_W, CANVAS_H))
                                 if ov.shape[2] == 4:
-                                    overlay_alpha = ov[:, :, 3:4].astype(np.float32) / 255.0
+                                    overlay_alpha = (
+                                        ov[:, :, 3:4].astype(np.float32) / 255.0
+                                    )
                                     overlay_rgb = ov[:, :, :3].astype(np.float32)
                             break
                 except Exception:
@@ -2023,9 +2118,7 @@ def broadcaster_loop(
                 break
 
         metrics.set_gauge("render_queue_depth", float(render_q.qsize()))
-        utterance_active = (
-            bridge_ref is not None and bridge_ref.is_utterance_active()
-        )
+        utterance_active = bridge_ref is not None and bridge_ref.is_utterance_active()
 
         if pending and not utterance_active:
             newest = max(pending.keys())
@@ -2039,9 +2132,7 @@ def broadcaster_loop(
         pkt = pending.pop(next_seq, None)
         if pkt is None and not pending and utterance_active:
             try:
-                fresh: RenderedPacket = render_q.get(
-                    timeout=BROADCAST_RENDER_WAIT_SEC
-                )
+                fresh: RenderedPacket = render_q.get(timeout=BROADCAST_RENDER_WAIT_SEC)
                 pending[fresh.seq] = fresh
             except queue.Empty:
                 pass
@@ -2077,6 +2168,7 @@ def broadcaster_loop(
                 if write_fail_streak >= 25 and out_dir:
                     try:
                         from rtmp_utils import write_rtmp_status as _wrs
+
                         _wrs(
                             out_dir,
                             "failed",
@@ -2091,7 +2183,9 @@ def broadcaster_loop(
                 except Exception as write_err:
                     print(f"[Broadcaster] write error: {write_err}", flush=True)
                     wrote = False
-                metrics.record_latency("ffmpeg_write_ms", (time.perf_counter() - write_start) * 1000.0)
+                metrics.record_latency(
+                    "ffmpeg_write_ms", (time.perf_counter() - write_start) * 1000.0
+                )
                 if wrote:
                     frames_written += 1
                     write_fail_streak = 0
@@ -2100,6 +2194,7 @@ def broadcaster_loop(
                     if frames_written == 2 and out_dir:
                         try:
                             from rtmp_utils import write_rtmp_status as _wrs
+
                             _wrs(out_dir, "connected")
                         except Exception:
                             pass
@@ -2108,6 +2203,7 @@ def broadcaster_loop(
                     if write_fail_streak >= 50 and out_dir:
                         try:
                             from rtmp_utils import write_rtmp_status as _wrs
+
                             _wrs(
                                 out_dir,
                                 "failed",
@@ -2117,7 +2213,9 @@ def broadcaster_loop(
                             pass
         next_seq += 1
 
-        metrics.record_latency("broadcast_tick_ms", (time.perf_counter() - tick_start) * 1000.0)
+        metrics.record_latency(
+            "broadcast_tick_ms", (time.perf_counter() - tick_start) * 1000.0
+        )
         metrics.maybe_log_summary(target_fps=TARGET_FPS)
         deadline += period
         sleep_for = deadline - time.perf_counter()
@@ -2127,18 +2225,15 @@ def broadcaster_loop(
             deadline = time.perf_counter()
             metrics.inc("broadcast_pacer_reset")
 
-    # StreamBroadcaster dimatikan oleh AIVisualWorker.stop() — jangan shutdown di sini.
     if out_dir:
         try:
             from rtmp_utils import write_rtmp_status as _wrs
+
             _wrs(out_dir, "disconnected")
         except Exception:
             pass
 
 
-# ---------------------------------------------------------------------------
-# Orchestrator
-# ---------------------------------------------------------------------------
 class AIVisualWorker:
     """Top-level visual engine — start/stop the 3-thread pipeline."""
 
@@ -2165,7 +2260,9 @@ class AIVisualWorker:
         self._bank: Optional[AssetBank] = None
         self._sm: Optional[VideoStateMachine] = None
         self._engine: Optional[LipSyncEngine] = None
-        self._bridge = get_speech_bridge(self.output_folder) if get_speech_bridge else None
+        self._bridge = (
+            get_speech_bridge(self.output_folder) if get_speech_bridge else None
+        )
         self._raw_q: queue.Queue = queue.Queue(maxsize=RAW_QUEUE_SIZE)
         self._render_q: queue.Queue = queue.Queue(maxsize=RENDER_QUEUE_SIZE)
         self._stop = threading.Event()
@@ -2199,7 +2296,9 @@ class AIVisualWorker:
         ).start()
 
     def _on_utterance_start(self, job) -> None:
-        if self._engine and getattr(self._engine, "_utterance_id", None) != getattr(job, "task_id", None):
+        if self._engine and getattr(self._engine, "_utterance_id", None) != getattr(
+            job, "task_id", None
+        ):
             self._engine.set_utterance(job)
         if self._sm:
             self._sm.begin_utterance()
@@ -2374,7 +2473,8 @@ class AIVisualWorker:
             if self._broadcaster is not None and not self._broadcaster.is_alive():
                 state, err = read_rtmp_status(self.output_folder)
                 raise RuntimeError(
-                    err or "FFmpeg RTMP berhenti saat handshake — gunakan Stream Key baru."
+                    err
+                    or "FFmpeg RTMP berhenti saat handshake — gunakan Stream Key baru."
                 )
             time.sleep(0.5)
 
@@ -2403,14 +2503,17 @@ class AIVisualWorker:
                 "Pipeline lama masih berhenti — tunggu lalu coba lagi, atau restart api_server."
             )
 
-        # Event baru agar thread zombie (jika ada) tidak hidup lagi saat clear.
         self._stop = threading.Event()
 
         self._broadcaster = None
         self._rtmp_connected = False
         if self.rtmp_url:
             try:
-                from rtmp_utils import preflight_rtmp_publish, validate_publish_url, write_rtmp_status
+                from rtmp_utils import (
+                    preflight_rtmp_publish,
+                    validate_publish_url,
+                    write_rtmp_status,
+                )
 
                 self.rtmp_url = validate_publish_url(self.rtmp_url)
                 preflight_rtmp_publish(self.rtmp_url)
@@ -2451,7 +2554,13 @@ class AIVisualWorker:
             ),
             threading.Thread(
                 target=lipsync_worker_loop,
-                args=(self._bank, self._engine, self._raw_q, self._render_q, self._stop),
+                args=(
+                    self._bank,
+                    self._engine,
+                    self._raw_q,
+                    self._render_q,
+                    self._stop,
+                ),
                 name="LipSync",
                 daemon=True,
             ),
@@ -2555,7 +2664,9 @@ def get_visual_worker(output_folder: str = "") -> AIVisualWorker:
     global _visual_worker_singleton
     with _visual_lock:
         if _visual_worker_singleton is None:
-            _visual_worker_singleton = AIVisualWorker(output_folder=output_folder or None)
+            _visual_worker_singleton = AIVisualWorker(
+                output_folder=output_folder or None
+            )
         elif output_folder:
             _visual_worker_singleton.output_folder = output_folder
         return _visual_worker_singleton
@@ -2569,7 +2680,11 @@ def start_visual_broadcast(
     host: str = "namira",
 ) -> AIVisualWorker:
     """Mulai pipeline visual in-process (menggantikan subprocess frame_feed)."""
-    assets_dir = os.path.dirname(idle_video) if idle_video and os.path.exists(idle_video) else None
+    assets_dir = (
+        os.path.dirname(idle_video)
+        if idle_video and os.path.exists(idle_video)
+        else None
+    )
     vw = get_visual_worker(output_folder)
     vw.rtmp_url = rtmp_url
     if assets_dir:
@@ -2592,21 +2707,79 @@ def stop_visual_broadcast(*, destroy: bool = True) -> None:
                 _visual_worker_singleton = None
 
 
-def pause_visual_broadcast() -> None:
-    """Stop RTMP/threads saja — model + AssetBank tetap hangat."""
-    stop_visual_broadcast(destroy=False)
+def pause_visual_broadcast(output_folder: str = "") -> dict:
+    """Soft pause: hold speech (hapus playback_active), RTMP + idle tetap jalan."""
+    out = output_folder or (
+        _visual_worker_singleton.output_folder if _visual_worker_singleton else ""
+    )
+    if not out:
+        out = os.environ.get("OUTPUT_FOLDER", "")
+    os.makedirs(out, exist_ok=True) if out else None
+    playback = os.path.join(out, "playback_active.flag") if out else ""
+    paused_flag = os.path.join(out, "stream_paused.flag") if out else ""
+    was_armed = False
+    if playback and os.path.exists(playback):
+        was_armed = True
+        try:
+            os.remove(playback)
+        except OSError:
+            pass
+    if paused_flag:
+        try:
+            with open(paused_flag, "w", encoding="utf-8") as fh:
+                fh.write("1" if was_armed else "0")
+        except OSError:
+            pass
+    print("[AIVisualWorker] Soft pause — speech hold, RTMP/idle tetap")
+    return {"success": True, "paused": True, "was_armed": was_armed}
 
 
-# ---------------------------------------------------------------------------
-# CLI / dry-run
-# ---------------------------------------------------------------------------
+def resume_visual_broadcast(output_folder: str = "") -> dict:
+    """Resume soft pause: restore playback_active jika sebelumnya armed."""
+    out = output_folder or (
+        _visual_worker_singleton.output_folder if _visual_worker_singleton else ""
+    )
+    if not out:
+        out = os.environ.get("OUTPUT_FOLDER", "")
+    if not out:
+        return {"success": False, "error": "output_folder unknown"}
+    os.makedirs(out, exist_ok=True)
+    playback = os.path.join(out, "playback_active.flag")
+    paused_flag = os.path.join(out, "stream_paused.flag")
+    restore_arm = True
+    if os.path.exists(paused_flag):
+        try:
+            with open(paused_flag, "r", encoding="utf-8") as fh:
+                restore_arm = fh.read().strip() != "0"
+        except OSError:
+            restore_arm = True
+        try:
+            os.remove(paused_flag)
+        except OSError:
+            pass
+    if restore_arm:
+        try:
+            with open(playback, "w", encoding="utf-8") as fh:
+                fh.write("1")
+        except OSError as err:
+            return {"success": False, "error": str(err)}
+    print("[AIVisualWorker] Soft resume — speech playback armed kembali")
+    return {"success": True, "paused": False, "playback_armed": restore_arm}
+
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="AI Visual Worker — 30 FPS pipeline")
-    parser.add_argument("--assets", default=None, help="Path to host video assets (3d/)")
+    parser.add_argument(
+        "--assets", default=None, help="Path to host video assets (3d/)"
+    )
     parser.add_argument("--host", default="namira")
-    parser.add_argument("--rtmp", default=os.environ.get("RTMP_URL", ""), help="RTMP publish URL (optional)")
+    parser.add_argument(
+        "--rtmp",
+        default=os.environ.get("RTMP_URL", ""),
+        help="RTMP publish URL (optional)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="No RTMP — log only")
     args = parser.parse_args()
 

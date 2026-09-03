@@ -2,13 +2,6 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import dotenv from "dotenv";
-import {
-  dashboardSummary,
-  hostOptions,
-  inventoryRows,
-  liveWorkflowSteps,
-  pricing,
-} from "./data/mock.js";
 import prisma from "./lib/prisma.js";
 
 import { avatarsRoutes } from "./routes/avatars.js";
@@ -45,26 +38,6 @@ server.get("/health", async () => ({
   timestamp: new Date().toISOString(),
 }));
 
-server.get("/api/hosts", async () => ({
-  data: hostOptions,
-  total: hostOptions.length,
-}));
-
-server.get("/api/pricing", async () => ({
-  data: pricing,
-}));
-
-server.get("/api/dashboard", async () => ({
-  data: {
-    ...dashboardSummary,
-    inventoryRows,
-  },
-}));
-
-server.get("/api/workflow", async () => ({
-  data: liveWorkflowSteps,
-}));
-
 await avatarsRoutes(server);
 await liveSessionRoutes(server);
 await providersRoutes(server);
@@ -84,10 +57,26 @@ async function seedDatabase() {
           type: "3D",
           style: "Energetic",
           language: "Indonesia",
-          voice: "id-ID-GadisNeural",
+          voice: "namira",
+          sampleAudioUrl: "/avatars/namira_voice_sample.mp3",
           description: "AI host utama untuk demo live streaming",
         },
       ],
+    });
+  } else {
+    await prisma.avatar.updateMany({
+      where: {
+        OR: [
+          { name: { contains: "Namira" } },
+          { voice: { contains: "Gadis" } },
+          { voice: { contains: "Neural" } },
+          { sampleAudioUrl: null },
+        ],
+      },
+      data: {
+        voice: "namira",
+        sampleAudioUrl: "/avatars/namira_voice_sample.mp3",
+      },
     });
   }
 }

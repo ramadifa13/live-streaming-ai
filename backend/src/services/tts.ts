@@ -5,71 +5,52 @@ import { randomBytes } from "crypto";
 import fs from "fs";
 import { getWorkerUrl } from "./runpod-manager.js";
 
-export interface TTSVoice {
+export interface HostVoice {
+  /** Host id (= Piper host), e.g. namira */
   id: string;
   name: string;
   gender: "female" | "male";
   locale: string;
   style: string;
-  avatarMatch: string;
-  engine: "piper" | "google";
+  /** Sample pra-live (static / CDN). */
+  sampleAudioUrl: string;
 }
 
-/** Voice list untuk UI — id lama Edge di-map ke Piper ID di server. */
-export const INDONESIAN_VOICES: TTSVoice[] = [
+/** Host voices — id = host slug untuk Piper live. */
+export const HOST_VOICES: HostVoice[] = [
   {
-    id: "id_ID-news_tts-medium",
-    name: "Namira / Gadis (Piper ID — natural, lokal)",
-    gender: "female",
-    locale: "id-ID",
-    style: "Friendly",
-    avatarMatch: "Namira",
-    engine: "piper",
-  },
-  {
-    id: "id-ID-GadisNeural",
-    name: "Gadis (alias → Piper ID)",
-    gender: "female",
-    locale: "id-ID",
-    style: "Friendly",
-    avatarMatch: "Namira",
-    engine: "piper",
-  },
-  {
-    id: "id-ID-SitiNeural",
-    name: "Siti (alias → Piper ID)",
+    id: "namira",
+    name: "Namira",
     gender: "female",
     locale: "id-ID",
     style: "Energetic",
-    avatarMatch: "Siti",
-    engine: "piper",
-  },
-  {
-    id: "id-ID-ArdiNeural",
-    name: "Ardi (alias → Piper ID)",
-    gender: "male",
-    locale: "id-ID",
-    style: "Confident",
-    avatarMatch: "Ardi",
-    engine: "piper",
+    sampleAudioUrl: "/avatars/namira_voice_sample.mp3",
   },
 ];
 
+
 export interface SynthesizeRequest {
   text: string;
+  /** Host id (namira). Field voice/avatarName juga diterima sebagai alias. */
+  host?: string;
   voice?: string;
   avatarName?: string;
   speed?: number;
   pitch?: number;
   tone?: string;
   emotion?: string;
-  /** Pod RunPod sesi live — supaya /tts/synthesize kena worker yang benar. */
   podId?: string | null;
+  /**
+   * true = wajib sesi live + Piper di pod.
+   * false = hanya untuk tool internal; API publik default live-only.
+   */
+  allowOfflineSynth?: boolean;
 }
 
 export interface SynthesizeResponse {
   success: boolean;
   voice: string;
+  host: string;
   avatar: string;
   text: string;
   durationEstimateSeconds: number;
@@ -77,6 +58,7 @@ export interface SynthesizeResponse {
   engine: string;
   message: string;
   audioBuffer?: Buffer;
+  sampleAudioUrl?: string;
 }
 
 export function sanitizeForLiveTTS(text: string): string {
@@ -115,7 +97,6 @@ export function sanitizeForLiveTTS(text: string): string {
   );
 }
 
-/** Piper length_scale: >1 lebih lambat. Map tone/emotion → scale. */
 export function getPiperLengthScale(
   tone?: string,
   baseSpeed = 1.0,
@@ -140,25 +121,9 @@ export function getPiperLengthScale(
     speed *= 0.96;
   }
 
-  // Piper: length_scale 1.0 = normal; lebih besar = lebih lambat
-  const lengthScale = 1.0 / speed;
-  return Math.max(0.75, Math.min(1.45, lengthScale));
+  return Math.max(0.75, Math.min(1.45, 1.0 / speed));
 }
 
-/** Legacy Edge prosody — tetap diekspor jika ada caller lama. */
-export function getProsodyOptions(
-  tone?: string,
-  baseSpeed = 1.0,
-  emotion?: string,
-): { rate: string; pitch: string; volume: string } {
-  const length = getPiperLengthScale(tone, baseSpeed, emotion);
-  const ratePct = Math.round((1 / length - 1) * 100);
-  return {
-    rate: `${ratePct >= 0 ? "+" : ""}${ratePct}%`,
-    pitch: "+2Hz",
-    volume: "+8%",
-  };
-}
 
 function resolveFfmpegBinary(): string {
   if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH;
@@ -176,7 +141,6 @@ async function ensureWav16kMono(input: Buffer): Promise<Buffer> {
     input.toString("ascii", 0, 4) === "RIFF" &&
     input.toString("ascii", 8, 12) === "WAVE"
   ) {
-    // Cek sample rate di header (byte 24-27 little-endian)
     const rate = input.readUInt32LE(24);
     const channels = input.readUInt16LE(22);
     if (rate === 16000 && channels === 1) return input;
@@ -186,7 +150,6 @@ async function ensureWav16kMono(input: Buffer): Promise<Buffer> {
     const inFile = path.join(tmpdir(), `tts_in_${randomBytes(4).toString("hex")}.wav`);
     const outFile = path.join(tmpdir(), `tts_out_${randomBytes(4).toString("hex")}.wav`);
     fs.writeFileSync(inFile, input);
-
     const proc = spawn(FFMPEG_BIN, [
       "-hide_banner",
       "-loglevel",
@@ -202,7 +165,6 @@ async function ensureWav16kMono(input: Buffer): Promise<Buffer> {
       "-y",
       outFile,
     ]);
-
     const errors: Buffer[] = [];
     proc.stderr.on("data", (c: Buffer) => errors.push(c));
     proc.on("error", reject);
@@ -282,32 +244,37 @@ async function convertMp3ToWav(mp3Buffer: Buffer): Promise<Buffer> {
   });
 }
 
-export function resolvePiperVoiceId(voice?: string, avatarName?: string): string {
-  const defaultVoice =
-    (process.env.PIPER_VOICE || "id_ID-news_tts-medium").trim() ||
-    "id_ID-news_tts-medium";
-  if (voice && /^id_ID[-_]/i.test(voice)) return voice.replace(/-/g, "_");
-  if (voice && INDONESIAN_VOICES.some((v) => v.id === voice)) {
-    // Legacy Edge ids → default Piper ID voice
-    return defaultVoice;
+/** Resolve ke host id (namira). Edge Neural ids diabaikan. */
+export function resolveHostId(
+  voiceOrHost?: string,
+  avatarName?: string,
+): string {
+  const defaultHost = (process.env.PIPER_DEFAULT_HOST || "namira").trim() || "namira";
+  const raw = String(voiceOrHost || avatarName || defaultHost)
+    .trim()
+    .toLowerCase()
+    .replace(/\.(png|jpg|jpeg|mp4|onnx)$/i, "");
+  const base = raw.includes("/") ? raw.split("/").pop()! : raw;
+
+  if (!base || base.startsWith("id-id-") || base.startsWith("id_id_")) {
+    return defaultHost;
   }
-  const av = (avatarName || "").toLowerCase();
-  if (av.includes("budi") || av.includes("ardi") || av.includes("siti") || av.includes("namira")) {
-    return defaultVoice;
-  }
-  return defaultVoice;
+  if (HOST_VOICES.some((h) => h.id === base)) return base;
+  if (base.includes("namira")) return "namira";
+  if (base.includes("siti")) return "namira"; // single host for now
+  if (base.includes("ardi") || base.includes("budi")) return "namira";
+  return defaultHost;
 }
 
-/** Alias lama untuk caller yang masih pakai resolveEdgeVoiceId. */
-export function resolveEdgeVoiceId(voice?: string, avatarName?: string): string {
-  return resolvePiperVoiceId(voice, avatarName);
+
+export function getHostSampleUrl(hostId: string): string {
+  const host = HOST_VOICES.find((h) => h.id === resolveHostId(hostId));
+  return host?.sampleAudioUrl || `/avatars/${resolveHostId(hostId)}_voice_sample.mp3`;
 }
 
 function resolvePiperEndpoints(podId?: string | null): string[] {
   const endpoints: string[] = [];
   const explicit = (process.env.PIPER_TTS_URL || "").trim().replace(/\/$/, "");
-  // PIPER_TTS_URL=http://127.0.0.1:8090 hanya valid di dalam pod.
-  // Di VPS production jangan set ke localhost — biarkan lewat worker proxy.
   const explicitIsLocal =
     explicit.includes("127.0.0.1") || explicit.includes("localhost");
   const onVpsProduction =
@@ -336,7 +303,7 @@ function resolvePiperEndpoints(podId?: string | null): string[] {
 
 async function synthesizeWithPiper(
   text: string,
-  voice: string,
+  hostId: string,
   tone?: string,
   speed = 1.0,
   emotion?: string,
@@ -348,7 +315,8 @@ async function synthesizeWithPiper(
   const lengthScale = getPiperLengthScale(tone, speed, emotion);
   const body = JSON.stringify({
     text: cleanText,
-    voice,
+    host: hostId,
+    avatar: hostId,
     length_scale: lengthScale,
     sample_rate: 16000,
   });
@@ -358,31 +326,28 @@ async function synthesizeWithPiper(
 
   for (const url of endpoints) {
     try {
-      const ctrl = AbortSignal.timeout(90_000);
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body,
-        signal: ctrl,
+        signal: AbortSignal.timeout(90_000),
       });
       if (!res.ok) {
         const detail = (await res.text().catch(() => "")).slice(0, 240);
         throw new Error(`HTTP ${res.status} ${detail}`);
       }
-      const ab = await res.arrayBuffer();
-      const buf = Buffer.from(ab);
+      const buf = Buffer.from(await res.arrayBuffer());
       if (buf.length < 44) throw new Error("Piper WAV kosong/pendek");
       return await ensureWav16kMono(buf);
     } catch (err) {
       lastErr = err as Error;
-      console.warn(`[TTS] Piper endpoint gagal (${url}): ${lastErr.message}`);
+      console.warn(`[TTS] Piper gagal (${url}): ${lastErr.message}`);
     }
   }
 
   throw lastErr || new Error("Semua endpoint Piper gagal");
 }
 
-/** Fail-safe gratis (bukan Edge): Google Indonesia Speech API */
 async function synthesizeWithGoogleTTS(text: string): Promise<Buffer> {
   const cleanText = sanitizeForLiveTTS(text);
   if (!cleanText) throw new Error("Teks kosong");
@@ -419,7 +384,8 @@ export async function synthesizeSpeech(
   req: SynthesizeRequest,
 ): Promise<SynthesizeResponse> {
   const { text, avatarName = "Namira", speed = 1.0, tone, emotion } = req;
-  const selectedVoice = resolvePiperVoiceId(req.voice, avatarName);
+  const hostId = resolveHostId(req.host || req.voice, avatarName || req.avatarName);
+  const sampleAudioUrl = getHostSampleUrl(hostId);
 
   const wordCount = text.trim().split(/\s+/).length;
   const estimatedSeconds = Math.max(
@@ -427,13 +393,31 @@ export async function synthesizeSpeech(
     Math.round((wordCount / ((140 * speed) / 60)) * 10) / 10,
   );
 
+  // Live-only: tanpa podId / allowOffline, jangan panggil Piper (preview pakai sample).
+  const liveOk = Boolean(req.podId) || req.allowOfflineSynth === true;
+  if (!liveOk) {
+    return {
+      success: false,
+      voice: hostId,
+      host: hostId,
+      avatar: avatarName,
+      text,
+      durationEstimateSeconds: estimatedSeconds,
+      audioFormat: "audio/mpeg",
+      engine: "sample",
+      message:
+        "Pra-live: gunakan sampleAudioUrl. Piper hanya saat live (butuh podId).",
+      sampleAudioUrl,
+    };
+  }
+
   let audioBuffer: Buffer | undefined;
-  let engineUsed = "Piper TTS (id_ID, open-source, CPU)";
+  let engineUsed = "Piper TTS (host, live)";
 
   try {
     audioBuffer = await synthesizeWithPiper(
       text,
-      selectedVoice,
+      hostId,
       tone,
       speed,
       emotion,
@@ -441,7 +425,7 @@ export async function synthesizeSpeech(
     );
   } catch (primaryErr) {
     console.warn(
-      `[TTS] Piper gagal: ${(primaryErr as Error).message}. Fail-safe Google TTS...`,
+      `[TTS] Piper gagal: ${(primaryErr as Error).message}. Fail-safe Google...`,
     );
     try {
       audioBuffer = await synthesizeWithGoogleTTS(text);
@@ -454,7 +438,8 @@ export async function synthesizeSpeech(
 
   return {
     success: !!audioBuffer && audioBuffer.length > 0,
-    voice: selectedVoice,
+    voice: hostId,
+    host: hostId,
     avatar: avatarName,
     text,
     durationEstimateSeconds: estimatedSeconds,
@@ -464,29 +449,12 @@ export async function synthesizeSpeech(
       ? `TTS synthesis success (${engineUsed})`
       : "TTS synthesis failed — pastikan Piper :8090 jalan di pod",
     audioBuffer,
+    sampleAudioUrl,
   };
 }
 
 export async function warmUpTTS(): Promise<void> {
-  try {
-    const endpoints = resolvePiperEndpoints().map((u) =>
-      u.replace(/\/synthesize$/, "/health").replace(/\/tts\/synthesize$/, "/tts/health"),
-    );
-    for (const url of endpoints) {
-      try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(5_000) });
-        if (res.ok) {
-          console.log(`[TTS] Piper ready via ${url}`);
-          return;
-        }
-      } catch {
-        /* try next */
-      }
-    }
-    console.warn(
-      "[TTS] Piper belum siap — jalankan bash /workspace/piper_tts/setup.sh && start.sh di pod",
-    );
-  } catch (e) {
-    console.warn("[TTS] Warmup notice:", (e as Error).message);
-  }
+  console.log(
+    `[TTS] Host voices: ${HOST_VOICES.map((h) => h.id).join(", ")} — Piper live-only via worker /tts`,
+  );
 }

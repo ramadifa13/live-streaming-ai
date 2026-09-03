@@ -7,7 +7,6 @@ import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { oauthService } from "@/services/oauthService";
 import { liveSessionService, toLiveProductSnapshot } from "@/services/liveSessionService";
-import { parsePriceToNumber } from "@/utils/formatters";
 import { ChatMessage } from "./types";
 
 import { ToastNotification } from "@/components/dashboard/shared/ToastNotification";
@@ -26,7 +25,6 @@ export default function Dashboard() {
   const setShowSummaryModal = useDashboardUIStore((state) => state.setShowSummaryModal);
   const loadProducts = useProductStore((state) => state.loadProducts);
   const products = useProductStore((state) => state.products);
-  const activeFeaturedProduct = useProductStore((state) => state.activeFeaturedProduct);
   const setActiveFeaturedProduct = useProductStore((state) => state.setActiveFeaturedProduct);
   const selectedAvatar = useAiHostStore((state) => state.selectedAvatar);
   const stopAudio = useAiHostStore((state) => state.stopAudio);
@@ -244,32 +242,6 @@ export default function Dashboard() {
         }
         return nextSec;
       });
-
-      if (Math.random() > 0.55) {
-        const deltaViewers = Math.floor(Math.random() * 7) - 2;
-        const hasNewComment = Math.random() > 0.7;
-        const hasClick = Math.random() > 0.75;
-        const hasPurchase = Math.random() > 0.88;
-
-        setMetrics((prev) => {
-          const newViewers = Math.max(120, prev.viewers + deltaViewers);
-          const newComments = hasNewComment ? prev.comments + 1 : prev.comments;
-          const newClicks = hasClick ? prev.clicks + 1 : prev.clicks;
-          const priceNum = parsePriceToNumber(activeFeaturedProduct.price) || 99000;
-          const newSales = hasPurchase ? prev.sales + priceNum : prev.sales;
-          const newActiveClicks = hasClick ? prev.activeProductClicks + 1 : prev.activeProductClicks;
-          const newActiveSold = hasPurchase ? prev.activeProductSold + 1 : prev.activeProductSold;
-
-          return {
-            viewers: newViewers,
-            comments: newComments,
-            clicks: newClicks,
-            sales: newSales,
-            activeProductClicks: newActiveClicks,
-            activeProductSold: newActiveSold,
-          };
-        });
-      }
     }, 1000);
 
     return () => clearInterval(timer);
@@ -277,7 +249,6 @@ export default function Dashboard() {
     isLiveActive,
     isLivePaused,
     selectedDuration,
-    activeFeaturedProduct,
     currentLiveSessionId,
     setIsLiveActive,
     setIsLivePaused,
@@ -286,14 +257,13 @@ export default function Dashboard() {
     showToast,
     setSessionSummary,
     setLiveSeconds,
-    setMetrics,
   ]);
 
   useEffect(() => {
     if (!isLiveActive || isLivePaused) return;
 
     const interval = setInterval(async () => {
-      const json = await liveSessionService.fetchMetrics();
+      const json = await liveSessionService.fetchMetrics(currentLiveSessionId);
       if (!json) return;
 
       const backendMetrics = json.data?.metrics;
@@ -310,19 +280,51 @@ export default function Dashboard() {
       }
 
       if (backendMetrics) {
-        setMetrics((prev) => ({
-          viewers: backendMetrics.viewers > 0 ? backendMetrics.viewers : prev.viewers,
-          comments: Math.max(prev.comments, backendMetrics.comments || 0),
-          clicks: Math.max(prev.clicks, backendMetrics.clicks || 0),
-          sales: Math.max(prev.sales, backendMetrics.sales || 0),
-          activeProductClicks: Math.max(prev.activeProductClicks, backendMetrics.clicks || 0),
-          activeProductSold: Math.max(prev.activeProductSold, backendMetrics.orders || 0),
-        }));
+        setMetrics({
+          viewers: Number(backendMetrics.viewers || 0),
+          comments: Number(backendMetrics.comments || 0),
+          clicks: Number(backendMetrics.clicks || 0),
+          sales: Number(backendMetrics.sales || 0),
+          activeProductClicks: Number(backendMetrics.clicks || 0),
+          activeProductSold: Number(backendMetrics.orders || 0),
+        });
+
+        const recent = backendMetrics.recentComments as
+          | Array<{ id: string; sender: string; text: string; time: string; aiReply?: string }>
+          | undefined;
+        if (recent?.length) {
+          const existing = useLiveSessionStore.getState().chatMessages;
+          const known = new Set(existing.map((m) => m.id));
+          for (const c of recent) {
+            if (!known.has(c.id)) {
+              addChatMessage({
+                id: c.id,
+                sender: c.sender || "Penonton",
+                isAi: false,
+                avatarColor: "bg-amber-600",
+                text: c.text,
+                time: c.time,
+              });
+              known.add(c.id);
+            }
+            if (c.aiReply && !known.has(`${c.id}-ai`)) {
+              addChatMessage({
+                id: `${c.id}-ai`,
+                sender: `AI Host`,
+                isAi: true,
+                avatarColor: "bg-[#4148e2]",
+                text: c.aiReply,
+                time: c.time,
+              });
+              known.add(`${c.id}-ai`);
+            }
+          }
+        }
       }
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [isLiveActive, isLivePaused, liveSessionPhase, setIsLiveActive, setIsLivePaused, setLiveSessionPhase, setMetrics]);
+  }, [isLiveActive, isLivePaused, liveSessionPhase, currentLiveSessionId, setIsLiveActive, setIsLivePaused, setLiveSessionPhase, setMetrics, addChatMessage]);
 
   useEffect(() => {
     if (!isConnectingLive || !currentLiveSessionId) return;

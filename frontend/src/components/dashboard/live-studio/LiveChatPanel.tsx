@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useRef, useEffect } from "react";
-import { MessageSquare, Send } from "lucide-react";
+import React, { useRef, useEffect, useState } from "react";
+import { MessageSquare, Send, Loader2 } from "lucide-react";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
-import { useProductStore } from "@/stores/useProductStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { ChatMessage } from "@/app/dashboard/types";
+import { liveSessionService } from "@/services/liveSessionService";
 
 export const LiveChatPanel: React.FC = () => {
   const chatMessages = useLiveSessionStore((state) => state.chatMessages);
@@ -15,17 +15,22 @@ export const LiveChatPanel: React.FC = () => {
   const isAiAutoReplyOn = useLiveSessionStore((state) => state.isAiAutoReplyOn);
   const setIsAiAutoReplyOn = useLiveSessionStore((state) => state.setIsAiAutoReplyOn);
   const addChatMessage = useLiveSessionStore((state) => state.addChatMessage);
+  const isLiveActive = useLiveSessionStore((state) => state.isLiveActive);
+  const liveSessionPhase = useLiveSessionStore((state) => state.liveSessionPhase);
+  const currentLiveSessionId = useLiveSessionStore(
+    (state) => state.currentLiveSessionId,
+  );
 
   const selectedAvatar = useAiHostStore((state) => state.selectedAvatar);
   const selectedTone = useAiHostStore((state) => state.selectedTone);
   const selectedVoice = useAiHostStore((state) => state.selectedVoice);
-  const speechSpeed = useAiHostStore((state) => state.speechSpeed);
   const speakText = useAiHostStore((state) => state.speakText);
 
-  const activeFeaturedProduct = useProductStore((state) => state.activeFeaturedProduct);
   const showToast = useDashboardUIStore((state) => state.showToast);
+  const [isSending, setIsSending] = useState(false);
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const isLive = isLiveActive && liveSessionPhase === "live";
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -33,10 +38,11 @@ export const LiveChatPanel: React.FC = () => {
     }
   }, [chatMessages]);
 
-  const handleSendChat = (e: React.FormEvent) => {
+  const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputChat.trim()) return;
+    if (!inputChat.trim() || isSending) return;
 
+    const text = inputChat.trim();
     const now = new Date().toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
@@ -44,10 +50,10 @@ export const LiveChatPanel: React.FC = () => {
 
     const userMsg: ChatMessage = {
       id: String(Date.now()),
-      sender: "Anda (Penonton)",
+      sender: isLive ? "Tester (live inject)" : "Anda (uji prelive)",
       isAi: false,
       avatarColor: "bg-blue-500",
-      text: inputChat,
+      text,
       time: now,
     };
 
@@ -56,29 +62,53 @@ export const LiveChatPanel: React.FC = () => {
 
     if (!isAiAutoReplyOn) return;
 
-    const prodName =
-      activeFeaturedProduct?.name &&
-      activeFeaturedProduct.name !== "Memuat Produk..."
-        ? activeFeaturedProduct.name
-        : "produk kami";
-    const replyText = `Halo kak! Terima kasih atas pertanyaannya. Mengenai ${prodName}, produk ini sudah ready stock dan ada diskon spesial buat yang langsung checkout sekarang juga ya!`;
+    setIsSending(true);
+    try {
+      const result = await liveSessionService.sendTestComment({
+        comment: text,
+        sessionId: currentLiveSessionId,
+        sender: "Tester",
+        avatarName: selectedAvatar.name,
+        tone: selectedTone,
+        voice: selectedVoice || selectedAvatar.voice || "namira",
+      });
 
-    const aiMsg: ChatMessage = {
-      id: String(Date.now() + 1),
-      sender: `AI Host (${selectedAvatar.name})`,
-      isAi: true,
-      avatarColor: "bg-[#4148e2]",
-      text: replyText,
-      time: now,
-    };
+      if (result.mode === "live") {
+        addChatMessage({
+          id: String(Date.now() + 1),
+          sender: "Sistem",
+          isAi: true,
+          avatarColor: "bg-emerald-700",
+          text:
+            result.note ||
+            "Komentar masuk antrian AI Host live — balasan akan tayang di stream.",
+          time: now,
+        });
+        showToast("Komentar dikirim ke pipeline live");
+        return;
+      }
 
-    addChatMessage(aiMsg);
-    speakText(replyText, {
-      avatar: selectedAvatar.name,
-      tone: selectedTone,
-      voice: selectedVoice,
-      speed: speechSpeed,
-    }).catch(() => {});
+      const replyText = result.speech || "(AI tidak merespons)";
+      addChatMessage({
+        id: String(Date.now() + 1),
+        sender: `AI Host (${selectedAvatar.name}) · uji`,
+        isAi: true,
+        avatarColor: "bg-[#4148e2]",
+        text: replyText,
+        time: now,
+      });
+
+      // Prelive: sample suara host (bukan Piper live).
+      await speakText(replyText, {
+        avatar: selectedAvatar.name,
+        tone: selectedTone,
+        voice: selectedVoice,
+      }).catch(() => {});
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Gagal uji komentar");
+    } finally {
+      setIsSending(false);
+    }
   };
 
   return (
@@ -87,6 +117,9 @@ export const LiveChatPanel: React.FC = () => {
         <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
           <MessageSquare className="w-3.5 h-3.5 text-blue-400" />
           <span>Live Chat</span>
+          <span className="text-[9px] font-normal text-slate-500">
+            {isLive ? "· live inject" : "· uji prelive"}
+          </span>
         </span>
         <button
           type="button"
@@ -110,9 +143,15 @@ export const LiveChatPanel: React.FC = () => {
       >
         {chatMessages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center py-8 text-center text-slate-500 text-[11px]">
-            <span>Belum ada chat simulasi</span>
+            <span>
+              {isLive
+                ? "Komentar platform & uji inject muncul di sini"
+                : "Belum ada chat uji"}
+            </span>
             <span className="text-[10px] text-slate-600 mt-0.5">
-              Ketik pesan di bawah untuk uji respons AI
+              {isLive
+                ? "Ketik untuk inject komentar ke AI Host live"
+                : "Prelive: uji respons LLM + sample suara (bukan Piper)"}
             </span>
           </div>
         ) : (
@@ -137,9 +176,7 @@ export const LiveChatPanel: React.FC = () => {
                   {msg.time}
                 </span>
               </div>
-              <p className="text-[11px] leading-snug break-words">
-                {msg.text}
-              </p>
+              <p className="text-[11px] leading-snug break-words">{msg.text}</p>
             </div>
           ))
         )}
@@ -148,17 +185,27 @@ export const LiveChatPanel: React.FC = () => {
       <form onSubmit={handleSendChat} className="mt-2.5 relative">
         <input
           type="text"
-          placeholder="Ketik komentar simulasi..."
+          placeholder={
+            isLive
+              ? "Inject komentar ke live AI Host..."
+              : "Ketik komentar uji prelive..."
+          }
           value={inputChat}
           onChange={(e) => setInputChat(e.target.value)}
-          className="w-full rounded-xl bg-[#0b101e] py-2 pl-3 pr-9 text-xs text-slate-200 placeholder-slate-500 outline-none border border-[#232c42] focus:border-blue-500 transition shadow-inner"
+          disabled={isSending}
+          className="w-full rounded-xl bg-[#0b101e] py-2 pl-3 pr-9 text-xs text-slate-200 placeholder-slate-500 outline-none border border-[#232c42] focus:border-blue-500 transition shadow-inner disabled:opacity-60"
         />
         <button
           type="submit"
-          className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-lg bg-blue-600 text-white hover:bg-blue-500 transition text-xs active:scale-95 cursor-pointer"
+          disabled={isSending}
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-lg bg-blue-600 text-white hover:bg-blue-500 transition text-xs active:scale-95 cursor-pointer disabled:opacity-60"
           title="Kirim Komentar"
         >
-          <Send className="w-3 h-3" />
+          {isSending ? (
+            <Loader2 className="w-3 h-3 animate-spin" />
+          ) : (
+            <Send className="w-3 h-3" />
+          )}
         </button>
       </form>
     </div>

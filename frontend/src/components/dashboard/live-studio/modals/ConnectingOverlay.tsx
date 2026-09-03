@@ -3,7 +3,6 @@
 import React from "react";
 import { Wifi, Loader2, Radio, AlertTriangle } from "lucide-react";
 import { PlatformIcon } from "@/components/shared/PlatformIcon";
-import { avatarIdleVideoPath } from "@/app/dashboard/constants";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
@@ -27,16 +26,15 @@ export const ConnectingOverlay: React.FC = () => {
     pipelineStatus?.broadcastMode === "ai_worker" ||
     pipelineStatus?.broadcastMode === "ai-worker" ||
     pipelineStatus?.visualWorkerRunning === true;
+  const minUtterances = pipelineStatus?.goLiveMinUtterances ?? 2;
+  // Playable-only — jangan pakai generationCount (lifetime).
   const bufferCount = isRealtimeWorker
     ? Math.max(
+        pipelineStatus?.readyUtteranceCount ?? 0,
         pipelineStatus?.utteranceQueueCount ?? 0,
-        pipelineStatus?.videosQueued ?? 0,
-        pipelineStatus?.generationCount ?? 0,
       )
     : pipelineStatus?.videosQueued ?? 0;
-  const videosReady = isRealtimeWorker
-    ? bufferCount >= 1 || pipelineStatus?.ready === true
-    : bufferCount >= 2 || (pipelineStatus?.generationCount ?? 0) >= 2;
+  const videosReady = bufferCount >= minUtterances;
   const rtmpConnected = pipelineStatus?.isRtmpConnected === true;
   const podBooting = pipelineStatus?.podBooting === true;
   const rtmpFailed = Boolean(pipelineStatus?.rtmpError);
@@ -48,7 +46,7 @@ export const ConnectingOverlay: React.FC = () => {
     pipelineStatus?.podReady !== false &&
     rtmpConnected &&
     videosReady &&
-    (pipelineStatus?.ready === true || stageIndex >= 4);
+    pipelineStatus?.ready === true;
 
   const handleConfirmGoLive = async () => {
     if (!currentLiveSessionId || isSubmittingGoLive || !canGoLive) return;
@@ -152,7 +150,7 @@ export const ConnectingOverlay: React.FC = () => {
                 {isRealtimeWorker ? "Buffer ucapan" : "Video AI"}
               </span>
               <span className={videosReady ? "text-emerald-400 font-semibold" : "text-amber-400"}>
-                {bufferCount}/2
+                {bufferCount}/{minUtterances}
               </span>
             </div>
             {isRealtimeWorker && (
@@ -275,8 +273,8 @@ export const ConnectingOverlay: React.FC = () => {
                 {rtmpConnected
                   ? "Preview Instagram terhubung — menunggu buffer AI..."
                   : isRealtimeWorker
-                    ? `Menyiapkan buffer ucapan (${bufferCount}/2)...`
-                    : `Pipeline sedang diproses (${bufferCount}/2 video siap)`}
+                    ? `Menyiapkan buffer ucapan (${bufferCount}/${minUtterances})...`
+                    : `Pipeline sedang diproses (${bufferCount}/${minUtterances} video siap)`}
               </div>
               <p className="mt-1 text-[10px] text-slate-400 leading-snug">
                 {rtmpConnected

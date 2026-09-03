@@ -11,14 +11,22 @@ async function fix() {
         type: "3d",
         style: "realistic",
         language: "id",
-        voice: "id-ID-GadisNeural",
+        voice: "namira",
+        sampleAudioUrl: "/avatars/namira_voice_sample.mp3",
         isActive: true,
         description: "Host 3D dinamis - Namira",
       },
     });
     console.log("Created avatar id=1 (Namira)");
   } else {
-    console.log("Avatar id=1 already exists");
+    await prisma.avatar.update({
+      where: { id: "1" },
+      data: {
+        voice: "namira",
+        sampleAudioUrl: "/avatars/namira_voice_sample.mp3",
+      },
+    });
+    console.log("Updated avatar id=1 voice + sampleAudioUrl");
   }
 
   const all = await prisma.avatar.findMany();

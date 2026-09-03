@@ -2,14 +2,14 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { generateLunaResponse } from "../services/groq-brain.js";
 import { generateVisemesFromText } from "../services/viseme-generator.js";
-import { synthesizeSpeech } from "../services/tts.js";
+import { getHostSampleUrl, resolveHostId } from "../services/tts.js";
 
 const chatStreamRequestSchema = z.object({
   comment: z.string().min(1, "Comment is required"),
   activeProduct: z.any().optional(),
   avatarName: z.string().optional().default("Namira"),
   tone: z.string().optional().default("Persuasif"),
-  voice: z.string().optional().default("id-ID-GadisNeural"),
+  voice: z.string().optional().default("namira"),
   mode: z.literal("3D").default("3D"),
   avatarImagePath: z.string().optional().default("avatars/namira.png"),
 });
@@ -43,17 +43,10 @@ export async function chatStreamRoutes(server: FastifyInstance) {
         linkedProduct = activeProduct;
       }
 
-      const tts = await synthesizeSpeech({
-        text: lunaResponse.speech,
-        avatarName,
-        voice: voice || "id-ID-GadisNeural",
-        tone,
-      });
-      const audioBase64 = tts.audioBuffer
-        ? tts.audioBuffer.toString("base64")
-        : undefined;
+      const host = resolveHostId(voice, avatarName);
+      const sampleAudioUrl = getHostSampleUrl(host);
 
-      // Step 5: Return unified structured response
+      // Pra-live / studio chat: jangan hit Piper. FE putar sampleAudioUrl.
       return {
         success: true,
         data: {
@@ -64,9 +57,11 @@ export async function chatStreamRoutes(server: FastifyInstance) {
           product: linkedProduct,
           audio: {
             text: lunaResponse.speech,
-            voice: voice || "id-ID-GadisNeural",
+            voice: host,
+            host,
             durationMs: visemeData.durationMs,
-            audioBase64: audioBase64 || undefined,
+            sampleAudioUrl,
+            audioBase64: undefined,
           },
           visemes: visemeData.visemes,
           mode,
@@ -78,8 +73,7 @@ export async function chatStreamRoutes(server: FastifyInstance) {
       reply.code(500);
       return {
         success: false,
-        error: "Failed to process chat stream",
-        details: err?.message || String(err),
+        error: err?.message || "chat-stream failed",
       };
     }
   });

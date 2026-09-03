@@ -45,10 +45,8 @@ class AIBroadcaster:
         self.banner_image_url = banner_image_url
         self.silence_threshold = 90
         self.last_new_video_time = time.time()
-        # Smooth transitions — tunable via env on RunPod
         self.crossfade_seconds = float(os.environ.get("BROADCAST_CROSSFADE_SECONDS", "0.5"))
         self.fade_seconds = float(os.environ.get("BROADCAST_FADE_SECONDS", "0.4"))
-        # Chunk idle pendek = jeda senyap lebih singkat sebelum segmen AI berikutnya.
         self.idle_chunk_seconds = float(os.environ.get("BROADCAST_IDLE_CHUNK_SECONDS", "1.5"))
         self.max_onair_idle_seconds = float(os.environ.get("BROADCAST_MAX_IDLE_SECONDS", "6.0"))
         self.idle_streak_started_at = None
@@ -77,7 +75,6 @@ class AIBroadcaster:
         tmp_dir = os.path.join(self.output_folder, "tmp_assets")
         os.makedirs(tmp_dir, exist_ok=True)
 
-        # 1. Product Image (Optional): support base64, remote URL, local path
         if self.product_image_url and self.product_image_url.strip():
             p_url = self.product_image_url.strip()
             if p_url.startswith("data:image/"):
@@ -109,7 +106,6 @@ class AIBroadcaster:
             elif os.path.exists(p_url):
                 self.local_product_img = p_url
 
-        # 2. Banner Image (Optional): support base64, remote URL, local path
         if self.banner_image_url and self.banner_image_url.strip():
             b_url = self.banner_image_url.strip()
             if b_url.startswith("data:image/"):
@@ -141,11 +137,9 @@ class AIBroadcaster:
             elif os.path.exists(b_url):
                 self.local_banner_img = b_url
 
-        # 3. Generate PIL Ultra-Modern Overlay PNG
         self._render_pil_overlay(tmp_dir)
 
     def _render_pil_overlay(self, tmp_dir):
-        """Generate true-rounded, anti-aliased, soft-shadow overlay with Python Pillow (PIL)."""
         canvas_w, canvas_h = 720, 1280
         overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
 
@@ -156,7 +150,6 @@ class AIBroadcaster:
             self.overlay_png_path = None
             return
 
-        # A. Top Banner — synced with LivePreviewBoard (w-[75%], h-20, top-1) on 720×1280
         if has_banner:
             try:
                 banner_max_w, banner_max_h, banner_y = 540, 245, 12
@@ -166,14 +159,12 @@ class AIBroadcaster:
                 bx = (canvas_w - bw) // 2
                 by = banner_y
 
-                # Soft drop shadow behind banner
                 shadow_banner = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
                 sb_draw = ImageDraw.Draw(shadow_banner)
                 sb_draw.rounded_rectangle((bx, by + 4, bx + bw, by + bh + 4), radius=20, fill=(0, 0, 0, 90))
                 shadow_banner = shadow_banner.filter(ImageFilter.GaussianBlur(radius=8))
                 overlay = Image.alpha_composite(overlay, shadow_banner)
 
-                # Rounded mask for banner
                 b_mask = Image.new("L", (bw, bh), 0)
                 b_draw = ImageDraw.Draw(b_mask)
                 b_draw.rounded_rectangle((0, 0, bw, bh), radius=20, fill=255)
@@ -183,15 +174,12 @@ class AIBroadcaster:
             except Exception as e:
                 print(f"[PIL ERROR] Gagal merender banner: {e}")
 
-        # B. Bottom Modern Floating Card (Foto + Nama + Harga + Harga Dicoret Auto - OPTIONAL)
-        # Posisi diangkat 220px dari bawah (y=920px) agar 100% aman dari kolom chat, gift, like, & keranjang belanja
         if has_product:
             card_w, card_h = 630, 138
             card_x = (canvas_w - card_w) // 2
             card_y = canvas_h - card_h - 150
             radius = 24
 
-            # 1. Soft Gaussian Drop Shadow for Card
             shadow_card = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
             sc_draw = ImageDraw.Draw(shadow_card)
             sc_draw.rounded_rectangle(
@@ -202,7 +190,6 @@ class AIBroadcaster:
             shadow_card = shadow_card.filter(ImageFilter.GaussianBlur(radius=14))
             overlay = Image.alpha_composite(overlay, shadow_card)
 
-            # 2. Pure White Card Body (Rounded 24px)
             card_img = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
             card_draw = ImageDraw.Draw(card_img)
             card_draw.rounded_rectangle(
@@ -215,7 +202,6 @@ class AIBroadcaster:
             overlay.paste(card_img, (card_x, card_y), card_img)
             draw = ImageDraw.Draw(overlay)
 
-            # 3. Product Thumbnail (Rounded 16px)
             thumb_size = 106
             thumb_x = card_x + 18
             thumb_y = card_y + 17
@@ -239,7 +225,6 @@ class AIBroadcaster:
                 except Exception as e:
                     print(f"[PIL] Error rendering thumbnail: {e}")
 
-            # 4. Typography & Pricing
             text_x = thumb_x + thumb_size + 20
 
             font_name = None
@@ -266,12 +251,10 @@ class AIBroadcaster:
                 font_price = ImageFont.load_default()
                 font_strike = ImageFont.load_default()
 
-            # Product Name (Dark Slate Bold)
             if self.product_name:
                 clean_name = self.product_name[:26]
                 draw.text((text_x, card_y + 26), clean_name, font=font_name, fill=(15, 23, 42, 255))
 
-            # Prices Calculation (Discounted Price + Auto System Strikethrough Price)
             raw_price = 0
             if self.product_price:
                 digits = re.sub(r"[^0-9]", "", str(self.product_price))
@@ -280,24 +263,19 @@ class AIBroadcaster:
 
             if raw_price > 0:
                 current_price_str = f"Rp{raw_price:,}".replace(",", ".")
-                # Auto Strikethrough Original Price: ~35% higher rounded to nearest thousand
                 auto_orig_price = int(math.ceil((raw_price * 1.35) / 5000.0) * 5000)
                 strikethrough_str = f"Rp{auto_orig_price:,}".replace(",", ".")
 
-                # Draw Current Price (Rose Bold)
                 draw.text((text_x, card_y + 70), current_price_str, font=font_price, fill=(225, 29, 72, 255))
 
-                # Measure width to place strikethrough price right next to it
                 bbox = font_price.getbbox(current_price_str)
                 price_w = bbox[2] - bbox[0] if bbox else 150
 
                 strike_x = text_x + price_w + 16
                 strike_y = card_y + 80
 
-                # Draw Original Strikethrough Text (Muted Slate Gray)
                 draw.text((strike_x, strike_y), strikethrough_str, font=font_strike, fill=(148, 163, 184, 255))
 
-                # Draw Strikethrough Line
                 s_bbox = font_strike.getbbox(strikethrough_str)
                 strike_w = s_bbox[2] - s_bbox[0] if s_bbox else 80
                 line_y = strike_y + 11
@@ -336,8 +314,6 @@ class AIBroadcaster:
                 self.master_process.wait(timeout=2)
             except Exception:
                 pass
-            # Instagram/Facebook mematikan session setelah I/O error —
-            # jangan publish ulang ke stream key yang sudah hangus.
             self._rtmp_fatal = True
             self._rtmp_fatal_hint = (
                 self._rtmp_fatal_hint
@@ -487,9 +463,6 @@ class AIBroadcaster:
             return 12.0
 
     def _encode_output_args(self):
-        # Master FFmpeg memakai -c:v copy, sehingga SETIAP segmen yang masuk pipe
-        # wajib punya parameter stream identik (resolusi, fps, GOP, kanal audio).
-        # Perbedaan sekecil 720x1276 vs 720x1280 akan merusak muxer FLV.
         gop = self.output_fps * 2
         return [
             "-c:v", "libx264",
@@ -583,8 +556,6 @@ class AIBroadcaster:
             overlay_idx = next_input_idx
             next_input_idx += 1
 
-        # Idle memakai sumber senyap eksplisit agar audio asli clip tidak
-        # pernah tersiar, apa pun isi file aset yang dipasang operator.
         silence_idx = None
         if silent_audio:
             cmd.extend(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"])
@@ -620,7 +591,6 @@ class AIBroadcaster:
         return cmd
 
     def _build_crossfade_command(self, from_path, to_path):
-        """FFmpeg xfade + acrossfade untuk transisi natural antar clip."""
         fade = self.crossfade_seconds
         from_dur = self._probe_duration(from_path)
         offset = max(0.08, from_dur - fade)
@@ -688,13 +658,6 @@ class AIBroadcaster:
             return None
 
     def shutdown(self):
-        """Matikan worker dan master FFmpeg secara eksplisit.
-
-        Tanpa ini, SIGTERM hanya menghentikan proses Python sementara FFmpeg
-        master tetap hidup dan terus memegang koneksi publish RTMP. Broadcaster
-        berikutnya lalu publish ke stream key yang sama dan ditolak platform,
-        sehingga siaran mati permanen meski watchdog terus me-restart.
-        """
         if self._shutting_down:
             return
         self._shutting_down = True
@@ -734,7 +697,6 @@ class AIBroadcaster:
         loop_input=False,
         silent_audio=False,
     ):
-        """Putar satu clip dengan optional fade in/out di awal/akhir."""
         if not video_path or not os.path.exists(video_path):
             print(f"[ERROR] File video tidak ditemukan: {video_path}")
             return None
@@ -749,13 +711,10 @@ class AIBroadcaster:
         return self._spawn_worker(worker_command)
 
     def _stream_crossfade_async(self, from_path, to_path):
-        """Crossfade halus antar dua clip (visual + audio)."""
         if not from_path or not os.path.exists(from_path):
             return self._stream_file_async(to_path, fade_in=self.fade_seconds)
         if not to_path or not os.path.exists(to_path):
             return self._stream_file_async(from_path, fade_out=self.fade_seconds)
-        # acrossfade menuntut kedua input punya stream audio; tanpa penjagaan ini
-        # satu aset tanpa audio membuat FFmpeg langsung mati dan siaran nge-gap.
         if not (self._has_audio(from_path) and self._has_audio(to_path)):
             print(
                 f"[BROADCASTER] Crossfade dilewati — {os.path.basename(from_path)} "
@@ -771,12 +730,6 @@ class AIBroadcaster:
         return self._spawn_worker(self._build_crossfade_command(from_path, to_path))
 
     def _stream_idle_chunk(self):
-        """Idle chunk: input di-loop, audio senyap, tanpa fade.
-
-        `-stream_loop -1` membuat clip idle 5 detik mengisi penuh chunk tanpa
-        sambungan, dan fade dihapus supaya penonton tidak melihat kedip berkala
-        setiap kali chunk berganti.
-        """
         return self._stream_file_async(
             self.idle_video,
             max_duration=self.idle_chunk_seconds,
@@ -785,17 +738,6 @@ class AIBroadcaster:
         )
 
     def _sequence_key(self, path):
-        """Urutan tayang = urutan SUBMIT, bukan urutan selesai render.
-
-        Nama file worker berbentuk `[prio_]task_<epoch_ms>_<hex>.mp4`, dan
-        epoch_ms ditetapkan saat job diterima API sehingga mencerminkan urutan
-        yang dimaksud orchestrator. Mengurutkan dengan ctime salah karena
-        beberapa job berjalan bersamaan dan lock inferensi GPU tidak menjamin
-        FIFO, sehingga host bisa menyinggung hal yang belum diucapkan.
-
-        Prefix `prio_` dipakai untuk jawaban komentar dan selalu naik ke depan
-        antrian agar interaksi tidak terasa tertunda.
-        """
         basename = os.path.basename(path)
         match = re.match(r"^(prio_)?task_(\d{10,})_", basename)
         if match:
@@ -846,7 +788,6 @@ class AIBroadcaster:
         fade_in=0.0,
         use_crossfade=True,
     ):
-        """Mulai segmen berikutnya — crossfade jika ada clip sebelumnya."""
         if (
             use_crossfade
             and from_path
@@ -886,7 +827,6 @@ class AIBroadcaster:
                     self._ensure_master_process()
                     if self._rtmp_fatal:
                         break
-                # 0. Hot-Swap Video Overlay
                 update_file = os.path.join(self.output_folder, "update_overlay.json")
                 if os.path.exists(update_file):
                     try:
@@ -917,7 +857,6 @@ class AIBroadcaster:
                     os.path.abspath(self.idle_video) if self.idle_video else ""
                 )
 
-                # Kumpulkan video AI baru ke antrian (tanpa interrupt kasar)
                 if playback_active:
                     queue_changed = False
                     for path in self._collect_ai_queue(last_spoken_video, idle_abs):
@@ -925,15 +864,10 @@ class AIBroadcaster:
                             pending_ai_queue.append(path)
                             queue_changed = True
                     if queue_changed:
-                        # Urut ulang seluruh antrian, bukan hanya batch baru:
-                        # jawaban komentar (prefix prio_) sering muncul setelah
-                        # beberapa segmen otonom sudah mengantre, dan append
-                        # biasa akan menaruhnya di belakang.
                         reordered = sorted(pending_ai_queue, key=self._sequence_key)
                         pending_ai_queue.clear()
                         pending_ai_queue.extend(reordered)
 
-                # Worker selesai → transisi halus ke segmen berikutnya
                 if current_worker and current_worker.poll() is not None:
                     finished_path = current_path
                     finished_idle = is_playing_idle
@@ -956,8 +890,6 @@ class AIBroadcaster:
                         print(
                             f"[>] TRANSISI → AI: {os.path.basename(next_ai)}"
                         )
-                        # Idle hanya diputar sebagai chunk — crossfade dari file
-                        # idle penuh akan salah offset; gunakan fade-in saja.
                         worker, path, idle_flag = self._start_next_segment(
                             from_path=(
                                 finished_path if not finished_idle else None
@@ -999,7 +931,6 @@ class AIBroadcaster:
                     else:
                         self.idle_streak_started_at = None
 
-                # Mulai segmen jika idle
                 if current_worker is None:
                     next_ai = (
                         pending_ai_queue.popleft()
@@ -1061,7 +992,6 @@ class AIBroadcaster:
                 traceback.print_exc()
                 time.sleep(1)
 
-# --- KONFIGURASI DAN EKSEKUSI ---
 if __name__ == "__main__":
     import json
 
@@ -1083,7 +1013,6 @@ if __name__ == "__main__":
     PRODUCT_IMAGE_URL = os.environ.get("PRODUCT_IMAGE_URL", "")
     BANNER_IMAGE_URL = os.environ.get("BANNER_IMAGE_URL", "")
 
-    # Load configuration JSON file (mencegah Linux Errno 7: Argument list too long akibat base64 image yang besar)
     config_file = os.environ.get("CONFIG_PATH") or os.path.join(OUTPUT_FOLDER, "broadcast_config.json")
     if os.path.exists(config_file):
         try:
@@ -1112,8 +1041,6 @@ if __name__ == "__main__":
             print(f"\n[BROADCASTER] Sinyal {signum} diterima — menutup siaran.")
             broadcaster.shutdown()
 
-        # Tanpa handler ini, SIGTERM dari api_server meninggalkan FFmpeg master
-        # hidup sebagai proses yatim yang masih memegang slot publish RTMP.
         signal.signal(signal.SIGTERM, _handle_termination)
         signal.signal(signal.SIGINT, _handle_termination)
 
@@ -1134,7 +1061,6 @@ def prepare_overlay_files(
     product_image_url="",
     banner_image_url="",
 ):
-    """Render overlay PNG tanpa membuka koneksi RTMP (dipakai frame_feed)."""
     dummy = object.__new__(AIBroadcaster)
     dummy.output_folder = output_folder
     dummy.product_name = product_name or ""

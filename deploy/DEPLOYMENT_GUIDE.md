@@ -27,7 +27,7 @@ tail -f /workspace/piper_tts/logs/piper.log
 cd /workspace
 git clone https://github.com/ramadifa13/live-streaming-ai.git live-streaming-ai
 cd /workspace/live-streaming-ai/deploy
-export HF_TOKEN="hf_YourHuggingFaceTokenHere"
+export HF_TOKEN="---key---"
 bash setup.sh
 cp -n .env.example /workspace/ai_live_worker/.env
 FORCE_ASSETS=1 bash sync.sh --restart
@@ -65,6 +65,7 @@ nohup bash /workspace/live-streaming-ai/deploy/sync.sh --pull --restart > /works
 ## Edit Env Worker
 
 ```bash
+apt install nano -y
 nano /workspace/ai_live_worker/.env
 bash /workspace/live-streaming-ai/deploy/sync.sh --restart
 ```

@@ -1,4 +1,5 @@
 import { LiveSalesScript, Product } from "@/app/dashboard/types";
+import { hostSampleAudioPath } from "@/app/dashboard/constants";
 
 export interface SynthesizeTTSOptions {
   text: string;
@@ -6,6 +7,8 @@ export interface SynthesizeTTSOptions {
   avatarName: string;
   speed: number;
   tone: string;
+  /** Hanya untuk live — FE pra-live jangan panggil synthesizeTTS. */
+  sessionId?: string;
 }
 
 export interface VideoScriptData {
@@ -16,17 +19,47 @@ export interface VideoScriptData {
   fullVoiceover?: string;
 }
 
+function resolveHostId(voiceOrName?: string): string {
+  const raw = (voiceOrName || "namira").trim().toLowerCase();
+  if (!raw || raw.includes("gadis") || raw.includes("neural") || raw.includes("edge")) {
+    return "namira";
+  }
+  if (raw.includes("namira")) return "namira";
+  return raw.replace(/\s+/g, "_");
+}
+
 export const aiService = {
+  /** Pra-live: URL sample host (static). Tidak hit Piper. */
+  getHostSampleUrl(hostOrVoice?: string, sampleFromAvatar?: string | null): string {
+    if (sampleFromAvatar) return sampleFromAvatar;
+    return hostSampleAudioPath(resolveHostId(hostOrVoice));
+  },
+
+  /**
+   * Live-only Piper TTS. Pra-live harus pakai getHostSampleUrl / play sample.
+   * Akan 403 tanpa session live + pod.
+   */
   async synthesizeTTS(options: SynthesizeTTSOptions): Promise<Blob> {
+    const host = resolveHostId(options.voice || options.avatarName);
     const res = await fetch("/api/tts/synthesize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(options),
+      body: JSON.stringify({
+        text: options.text,
+        host,
+        voice: host,
+        avatarName: options.avatarName,
+        speed: options.speed,
+        tone: options.tone,
+        sessionId: options.sessionId,
+      }),
     });
 
     if (!res.ok) {
       const errJson = await res.json().catch(() => null);
-      const errorMsg = errJson?.error || `HTTP ${res.status}: Gagal memproses audio TTS dari backend.`;
+      const errorMsg =
+        errJson?.error ||
+        `HTTP ${res.status}: TTS Piper hanya saat live. Pra-live pakai sample.`;
       throw new Error(errorMsg);
     }
 

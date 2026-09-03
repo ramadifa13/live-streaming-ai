@@ -57,7 +57,7 @@ let videoPollingInterval: ReturnType<typeof setInterval> | null = null;
 export const useAiHostStore = create<AiHostState>((set, get) => ({
   selectedAvatar: avatars[0],
   selectedTone: "Energetic",
-  selectedVoice: "id-ID-GadisNeural",
+  selectedVoice: "namira",
   selectedLang: "Bahasa Indonesia",
   speechSpeed: 1.0,
 
@@ -83,7 +83,11 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
   renderProgress: 0,
   hasRenderedVideo: false,
 
-  setSelectedAvatar: (avatar) => set({ selectedAvatar: avatar }),
+  setSelectedAvatar: (avatar) =>
+    set({
+      selectedAvatar: avatar,
+      selectedVoice: avatar.voice || avatar.id || "namira",
+    }),
   setSelectedTone: (tone) => set({ selectedTone: tone }),
   setSelectedVoice: (voice) => set({ selectedVoice: voice }),
   setSelectedLang: (lang) => set({ selectedLang: lang }),
@@ -106,34 +110,34 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
     });
   },
 
-  speakText: async (text, opts) => {
+  speakText: async (_text, opts) => {
     if (get().isPlayingAudio) {
       get().stopAudio();
       return;
     }
 
+    // Pra-live / studio: putar sample host — jangan hit Piper di pod.
     set({ isSynthesizingAudio: true, isAvatarSpeaking: true });
 
     const state = get();
-    const ttsOptions = {
-      text,
-      voice: opts?.voice || state.selectedVoice,
-      avatarName: opts?.avatar || state.selectedAvatar.name,
-      speed: opts?.speed ?? state.speechSpeed,
-      tone: opts?.tone || state.selectedTone,
-    };
+    const host =
+      opts?.voice ||
+      state.selectedVoice ||
+      state.selectedAvatar.voice ||
+      state.selectedAvatar.id ||
+      "namira";
+    const sampleUrl = aiService.getHostSampleUrl(
+      host,
+      state.selectedAvatar.sampleAudioUrl,
+    );
 
     try {
-      const blob = await aiService.synthesizeTTS(ttsOptions);
-
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
+      const audio = new Audio(sampleUrl);
       activeAudio = audio;
 
       set({ isPlayingAudio: true, isSynthesizingAudio: false });
 
       audio.onended = () => {
-        URL.revokeObjectURL(url);
         set({ isPlayingAudio: false, isAvatarSpeaking: false });
         activeAudio = null;
       };
@@ -150,7 +154,7 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
       await audio.play().catch(() => {});
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      console.warn("[speakText] Audio playback notice:", errorMessage);
+      console.warn("[speakText] Sample playback notice:", errorMessage);
       set({
         isPlayingAudio: false,
         isAvatarSpeaking: false,

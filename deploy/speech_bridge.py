@@ -444,11 +444,23 @@ class SpeechBridge:
 
     def has_ready_pending(self) -> bool:
         """True jika ada utterance berikutnya yang sudah siap diputar."""
+        return self.ready_pending_count() > 0
+
+    def ready_pending_count(self) -> int:
+        """Jumlah job di antrian yang sudah prepared (siap play setelah Go Live)."""
         with self._lock:
+            n = 0
             for job in self._pending:
                 if job.ready.is_set() and not job.error and job.num_frames > 0:
-                    return True
-        return False
+                    n += 1
+            if (
+                self._current is not None
+                and self._current.ready.is_set()
+                and not self._current.error
+                and self._current.num_frames > 0
+            ):
+                n += 1
+            return n
 
     def is_speaking(self) -> bool:
         return self._current is not None

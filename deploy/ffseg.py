@@ -1,12 +1,3 @@
-"""Raw frame-feed segment (.ffseg) — handoff MuseTalk → broadcaster tanpa H264.
-
-Layout (atomic rename dari *.partial):
-  task_xxx.ffseg/
-    meta.json     {width, height, fps, frames, sample_rate, channels, bytes_per_frame}
-    video.bgr     frames * width * height * 3 (uint8 BGR interleaved)
-    audio.s16le   PCM stereo little-endian @ sample_rate
-"""
-
 from __future__ import annotations
 
 import json
@@ -87,7 +78,6 @@ def write_ffseg(
     sample_rate: int = 44100,
     channels: int = 2,
 ) -> str:
-    """Tulis segmen raw secara atomik. Return path final .ffseg."""
     writer = FfsegWriter(
         dest_dir,
         width=width,
@@ -102,7 +92,6 @@ def write_ffseg(
 
 
 class FfsegWriter:
-    """Streaming writer — frame-per-frame tanpa menahan seluruh clip di RAM."""
 
     def __init__(
         self,
@@ -200,8 +189,7 @@ class FfsegWriter:
 
 def iter_ffseg_frames(
     path: str,
-) -> Tuple[dict, Iterable[Tuple[np.ndarray, bytes]]]:
-    """Yield (frame_bgr, pcm_chunk) untuk setiap frame, pacing di caller."""
+) -> Tuple[dict, Iterable[Tuple[np.ndarray, bytes]]]:  
     meta = read_meta(path)
     if not meta:
         raise RuntimeError(f"ffseg meta hilang: {path}")

@@ -53,6 +53,8 @@ export interface RunPodQueueStatus {
   rtmp_state?: string;
   warmed_up?: boolean;
   utterance_queue_count?: number;
+  ready_utterance_count?: number;
+  playback_armed?: boolean;
   broadcast_mode?: string;
   visual_worker_running?: boolean;
   visual_worker_initializing?: boolean;
@@ -61,16 +63,6 @@ export interface RunPodQueueStatus {
 }
 
 import { getWorkerUrl } from "./runpod-manager.js";
-
-function isAiWorkerBroadcastMode(mode: string): boolean {
-  const m = (mode || "").trim().toLowerCase();
-  return (
-    m === "ai_worker" ||
-    m === "ai-worker" ||
-    m === "realtime" ||
-    m === "visual_worker"
-  );
-}
 
 function isDemoFallbackAllowed() {
   return (process.env.ALLOW_MEDIA_FALLBACK ?? "false").toLowerCase() === "true";
@@ -358,14 +350,6 @@ export async function triggerWorkerPlayback(
   podId: string | null | undefined,
 ): Promise<void> {
   try {
-    const queue = await getRunPodQueueStatus(podId).catch(() => null);
-    if (queue && isAiWorkerBroadcastMode(String(queue.broadcast_mode || ""))) {
-      console.log(
-        "[RunPodBridge] ▶️  skip start-playback — mode ai_worker (playback_active otomatis)",
-      );
-      return;
-    }
-
     await workerRequestWithRetry(
       podId,
       "/stream/start-playback",
@@ -376,15 +360,41 @@ export async function triggerWorkerPlayback(
       2,
     );
     console.log(
-      "[RunPodBridge] ▶️  Worker playback triggered — idle loop berhenti, queue mulai diputar.",
+      "[RunPodBridge] ▶️  Worker playback armed — idle hold selesai, antrian mulai diputar.",
     );
   } catch (err: any) {
-    // Worker mungkin belum support endpoint ini — tidak fatal.
-    // Video di queue akan tetap diputar oleh worker.
     console.warn(
       "[RunPodBridge] /stream/start-playback tidak didukung worker (non-fatal):",
       err?.message ?? err,
     );
+  }
+}
+
+export async function pauseRunPodBroadcast(
+  podId: string | null | undefined,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const data = await workerRequestWithRetry(podId, "/stream/pause-broadcast", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    return { success: data?.success !== false, error: data?.error };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+export async function resumeRunPodBroadcast(
+  podId: string | null | undefined,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const data = await workerRequestWithRetry(podId, "/stream/resume-broadcast", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    return { success: data?.success !== false, error: data?.error };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
   }
 }
 
@@ -480,11 +490,13 @@ export async function forwardToRunPodGPU(
         const { synthesizeSpeech } = await import("./tts.js");
         const ttsRes = await synthesizeSpeech({
           text: stripActionTagsForTts(params.text),
-          voice: params.voice,
+          host: params.voice || avatarName,
+          voice: params.voice || avatarName,
           avatarName,
           tone: params.tone,
           speed: params.speed,
           podId,
+          allowOfflineSynth: true,
         });
         if (ttsRes.success && ttsRes.audioBuffer) {
           audioBase64 = ttsRes.audioBuffer.toString("base64");
@@ -505,7 +517,7 @@ export async function forwardToRunPodGPU(
           avatar_name: avatarName,
           avatar_image_path: params.avatarImagePath || "avatars/namira.png",
           text: params.text,
-          voice: params.voice || "EXAVITQu4vr4xnSDxMaL",
+          voice: params.voice || "namira",
           speed: params.speed || 1.0,
           tone: params.tone || "Casual",
           rtmp_url: params.rtmpUrl || "",

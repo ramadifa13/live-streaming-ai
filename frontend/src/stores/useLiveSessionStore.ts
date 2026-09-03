@@ -16,8 +16,12 @@ export interface LiveMetrics {
 export interface PipelineStatus {
   ready: boolean;
   generationCount: number;
+  lifetimeGenerated?: number;
   videosQueued: number;
   utteranceQueueCount?: number;
+  readyUtteranceCount?: number;
+  playbackArmed?: boolean;
+  goLiveMinUtterances?: number;
   broadcastMode?: string;
   visualWorkerRunning?: boolean;
   pendingCount: number;
@@ -196,19 +200,11 @@ export const useLiveSessionStore = create<LiveSessionState>()(
       setSessionSummary: (sum) => set({ sessionSummary: sum }),
       setPipelineStatus: (status) =>
         set((state) => {
-          const previousError = state.pipelineStatus?.rtmpError;
-          const merged =
-            status && previousError && !status.rtmpError
-              ? {
-                  ...status,
-                  rtmpError: previousError,
-                  stageText: status.stageText || previousError,
-                }
-              : status;
+          // Jangan sticky-hold rtmpError lama — biarkan status baru menghapus error.
           return {
-            pipelineStatus: merged,
-            connectingStageIndex: merged?.stageIndex ?? state.connectingStageIndex,
-            connectingStageText: merged?.stageText ?? state.connectingStageText,
+            pipelineStatus: status,
+            connectingStageIndex: status?.stageIndex ?? state.connectingStageIndex,
+            connectingStageText: status?.stageText ?? state.connectingStageText,
           };
         }),
       setIsLiveActive: (active) => set({ isLiveActive: active }),
@@ -285,9 +281,9 @@ export const useLiveSessionStore = create<LiveSessionState>()(
           durationSeconds: state.liveSeconds,
           durationFormatted: `${Math.floor(state.liveSeconds / 3600).toString().padStart(2, "0")}:${Math.floor((state.liveSeconds % 3600) / 60).toString().padStart(2, "0")}:${Math.floor(state.liveSeconds % 60).toString().padStart(2, "0")}`,
           totalViewers: state.metrics.viewers,
-          peakViewers: Math.round(state.metrics.viewers * 1.25),
+          peakViewers: state.metrics.viewers,
           totalComments: state.metrics.comments,
-          aiRepliesCount: Math.round(state.metrics.comments * 0.95),
+          aiRepliesCount: 0,
           totalClicks: state.metrics.clicks,
           totalProductSold: state.metrics.activeProductSold,
           grossRevenue: state.metrics.sales,

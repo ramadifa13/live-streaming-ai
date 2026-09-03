@@ -1,5 +1,4 @@
 import os
-import sys
 import json
 import glob
 import traceback
@@ -34,7 +33,6 @@ try:
 except ImportError:
     prefer_idle_clip = None
 
-# Muat .env worker sebelum init AILiveWorker / MuseTalk flags.
 if load_env_files is not None:
     _here = os.path.dirname(os.path.abspath(__file__))
     _loaded = load_env_files(
@@ -59,9 +57,9 @@ try:
     )
     from speech_bridge import get_speech_bridge
 except ImportError:
-    get_visual_worker = None  # type: ignore
-    start_visual_broadcast = None  # type: ignore
-    stop_visual_broadcast = None  # type: ignore
+    get_visual_worker = None
+    start_visual_broadcast = None
+    stop_visual_broadcast = None
     AI_WORKER_TARGET_FPS = 30
 
     def is_ai_worker_mode() -> bool:
@@ -70,22 +68,23 @@ except ImportError:
     def get_speech_bridge(output_folder: str = ""):
         return None
 
+
 try:
     from worker_telemetry import get_telemetry
 except ImportError:
-    def get_telemetry():  # type: ignore
+
+    def get_telemetry():
         return None
 
-# Init AI Worker (batch MuseTalk — fallback saat BROADCAST_MODE != ai_worker)
+
 worker = AILiveWorker()
 os.environ.setdefault("WORKER_TEMP", worker.temp_dir)
-visual_worker = None  # AIVisualWorker in-process saat mode ai_worker
 
-# In-memory jobs tracking with TTL cleanup
+visual_worker = None
 jobs: Dict[str, Dict[str, Any]] = {}
 total_videos_rendered = 0
 MAX_JOBS_STORE = 200
-JOB_TTL_SECONDS = 3600  # 1 hour TTL
+JOB_TTL_SECONDS = 3600
 AVG_RENDER_SECONDS = 10.0
 IDLE_CLIP_BASENAMES = {
     "namira_idle_1.mp4",
@@ -161,9 +160,10 @@ def _probe_duration_uncached(path: str) -> float:
     except Exception:
         return 12.0
 
+
 def _collect_playable_videos(output_folder: str, idle_abs: str = ""):
     playable = []
-    # Raw frame-feed packs
+
     for path in glob.glob(os.path.join(output_folder, "**", "*.ffseg"), recursive=True):
         if not os.path.isdir(path):
             continue
@@ -173,7 +173,7 @@ def _collect_playable_videos(output_folder: str, idle_abs: str = ""):
         if not os.path.exists(os.path.join(path, "ready.flag")):
             continue
         playable.append(path)
-    # Legacy / segment MP4
+
     for path in glob.glob(os.path.join(output_folder, "**", "*.mp4"), recursive=True):
         base = os.path.basename(path)
         if base.startswith("temp_") or base.endswith(".tmp"):
@@ -189,6 +189,7 @@ def _collect_playable_videos(output_folder: str, idle_abs: str = ""):
             continue
         playable.append(path)
     return playable
+
 
 def _cleanup_playable_outputs(folder: str, idle_abs: str = "") -> None:
     """Hapus sisa MP4 + .ffseg dari sesi sebelumnya (kecuali idle asset)."""
@@ -222,10 +223,13 @@ def _cleanup_playable_outputs(folder: str, idle_abs: str = "") -> None:
                     except Exception:
                         pass
 
-    # Fallback: recursive scan hanya bila masih ada artefak besar di subfolder lain.
     try:
-        remaining_mp4 = glob.glob(os.path.join(folder, "**", "task_*.mp4"), recursive=True)
-        remaining_mp4 += glob.glob(os.path.join(folder, "**", "prio_*.mp4"), recursive=True)
+        remaining_mp4 = glob.glob(
+            os.path.join(folder, "**", "task_*.mp4"), recursive=True
+        )
+        remaining_mp4 += glob.glob(
+            os.path.join(folder, "**", "prio_*.mp4"), recursive=True
+        )
         for f in remaining_mp4[:200]:
             if idle_abs and os.path.abspath(f) == idle_abs:
                 continue
@@ -236,21 +240,25 @@ def _cleanup_playable_outputs(folder: str, idle_abs: str = "") -> None:
     except Exception:
         pass
 
+
 def prune_old_jobs():
     """Prune expired jobs to prevent memory leaks during 24/7 streaming."""
     now = time.time()
     if len(jobs) > MAX_JOBS_STORE:
         expired_keys = [
-            jid for jid, data in jobs.items()
+            jid
+            for jid, data in jobs.items()
             if now - data.get("created_at", now) > JOB_TTL_SECONDS
         ]
         for key in expired_keys:
             jobs.pop(key, None)
-        # If still over limit, drop oldest
         if len(jobs) > MAX_JOBS_STORE:
-            sorted_keys = sorted(jobs.keys(), key=lambda k: jobs[k].get("created_at", 0))
+            sorted_keys = sorted(
+                jobs.keys(), key=lambda k: jobs[k].get("created_at", 0)
+            )
             for key in sorted_keys[: len(jobs) - MAX_JOBS_STORE]:
                 jobs.pop(key, None)
+
 
 broadcaster_process: Optional[subprocess.Popen] = None
 current_broadcast_env: Optional[Dict[str, str]] = None
@@ -260,7 +268,7 @@ broadcaster_restarts = 0
 broadcaster_next_restart_at = 0.0
 MAX_BROADCASTER_RESTARTS = 8
 _broadcast_boot_task: Optional[asyncio.Task] = None
-_broadcast_boot_state = "idle"  # idle | starting | running | error
+_broadcast_boot_state = "idle"
 _broadcast_boot_error = ""
 _broadcast_started_at: float = 0.0
 
@@ -290,15 +298,18 @@ def _clear_speech_bridge_queue() -> None:
 def _broadcaster_script_path(mode: Optional[str] = None) -> str:
     resolved = (mode or os.environ.get("BROADCAST_MODE") or "segment").strip().lower()
     if resolved in ("ai_worker", "ai-worker", "realtime", "visual_worker"):
-        return ""  # in-process — tidak spawn subprocess
-    name = "frame_feed.py" if resolved in ("frame_feed", "frame-feed", "continuous") else "broadcaster.py"
+        return ""
+    name = (
+        "frame_feed.py"
+        if resolved in ("frame_feed", "frame-feed", "continuous")
+        else "broadcaster.py"
+    )
     candidate = os.path.join(os.path.dirname(__file__), name)
     if os.path.exists(candidate):
         return candidate
     fallback = f"/workspace/ai_live_worker/{name}"
     if os.path.exists(fallback):
         return fallback
-    # Fallback aman ke segment bila frame_feed belum tersinkron.
     legacy = os.path.join(os.path.dirname(__file__), "broadcaster.py")
     if os.path.exists(legacy):
         return legacy
@@ -315,9 +326,17 @@ def _spawn_broadcaster(env: Dict[str, str]) -> subprocess.Popen:
     """
     global broadcaster_log_handle
 
-    mode = (env.get("BROADCAST_MODE") or os.environ.get("BROADCAST_MODE") or "segment").strip().lower()
+    mode = (
+        (env.get("BROADCAST_MODE") or os.environ.get("BROADCAST_MODE") or "segment")
+        .strip()
+        .lower()
+    )
     script = _broadcaster_script_path(mode)
-    log_name = "frame_feed.log" if "frame_feed" in os.path.basename(script) else "broadcaster.log"
+    log_name = (
+        "frame_feed.log"
+        if "frame_feed" in os.path.basename(script)
+        else "broadcaster.log"
+    )
     log_path = os.path.join(worker.output_dir, log_name)
     print(f"[AI-Worker] Spawn broadcast mode={mode} script={os.path.basename(script)}")
 
@@ -381,6 +400,7 @@ def _terminate_broadcaster(timeout: float = 8.0) -> None:
             pass
         broadcaster_log_handle = None
 
+
 async def periodic_cleanup_and_watchdog():
     """Background supervisor: auto-restarts crashed broadcaster and cleans up temp files."""
     global broadcaster_process, current_broadcast_env, visual_worker
@@ -388,7 +408,6 @@ async def periodic_cleanup_and_watchdog():
     while True:
         try:
             await asyncio.sleep(5)
-            # 1. Watchdog for subprocess broadcaster
             if current_broadcast_env and broadcaster_process is not None:
                 rtmp_state, rtmp_err = ("disconnected", "")
                 if read_rtmp_status is not None:
@@ -421,9 +440,7 @@ async def periodic_cleanup_and_watchdog():
                         current_broadcast_env = None
                         _terminate_broadcaster()
                     elif now >= broadcaster_next_restart_at:
-                        # Exponential backoff mencegah restart beruntun tiap 5 detik
-                        # ketika penyebabnya permanen, misalnya stream key salah.
-                        backoff = min(60.0, 5.0 * (2 ** broadcaster_restarts))
+                        backoff = min(60.0, 5.0 * (2**broadcaster_restarts))
                         broadcaster_restarts += 1
                         broadcaster_next_restart_at = now + backoff
                         print(
@@ -432,12 +449,16 @@ async def periodic_cleanup_and_watchdog():
                         )
                         _terminate_broadcaster(timeout=2.0)
                         try:
-                            broadcaster_process = _spawn_broadcaster(current_broadcast_env)
+                            broadcaster_process = _spawn_broadcaster(
+                                current_broadcast_env
+                            )
                             print(
                                 f"[WATCHDOG SUCCESS] Broadcaster di-restart (PID: {broadcaster_process.pid})"
                             )
                         except Exception as restart_err:
-                            print(f"[WATCHDOG ERROR] Gagal me-restart broadcaster: {restart_err}")
+                            print(
+                                f"[WATCHDOG ERROR] Gagal me-restart broadcaster: {restart_err}"
+                            )
             elif current_broadcast_env and is_ai_worker_mode():
                 rtmp_state, rtmp_err = ("disconnected", "")
                 if read_rtmp_status is not None:
@@ -457,19 +478,21 @@ async def periodic_cleanup_and_watchdog():
                     and not visual_worker.is_running
                     and _broadcast_boot_state != "starting"
                 ):
-                    print("[WATCHDOG ALERT] AIVisualWorker berhenti — siaran perlu di-start ulang.")
+                    print(
+                        "[WATCHDOG ALERT] AIVisualWorker berhenti — siaran perlu di-start ulang."
+                    )
                     current_broadcast_env = None
             elif broadcaster_process is not None and broadcaster_process.poll() is None:
-                # Siaran sudah dihentikan tetapi proses masih hidup.
                 _terminate_broadcaster()
 
-            # 2. Cleanup orphaned temp files older than 30 minutes
             now = time.time()
             if os.path.exists(worker.temp_dir):
                 for fname in os.listdir(worker.temp_dir):
                     fpath = os.path.join(worker.temp_dir, fname)
                     try:
-                        if os.path.isfile(fpath) and (now - os.path.getmtime(fpath) > 1800):
+                        if os.path.isfile(fpath) and (
+                            now - os.path.getmtime(fpath) > 1800
+                        ):
                             os.remove(fpath)
                     except Exception:
                         pass
@@ -478,13 +501,13 @@ async def periodic_cleanup_and_watchdog():
         except Exception as e:
             print(f"[WATCHDOG NOTICE] Background supervisor error: {e}")
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     print("[AI-Worker] FastAPI Server starting up. Initializing directories...")
     os.makedirs(worker.output_dir, exist_ok=True)
     os.makedirs(worker.temp_dir, exist_ok=True)
-    
+
     global watchdog_task
     watchdog_task = asyncio.create_task(periodic_cleanup_and_watchdog())
     yield
@@ -499,7 +522,9 @@ async def lifespan(app: FastAPI):
         stop_visual_broadcast()
     visual_worker = None
 
+
 app = FastAPI(title="LiveStreamer AI Worker", lifespan=lifespan)
+
 
 class GenerateVideoRequest(BaseModel):
     text: str
@@ -522,10 +547,11 @@ class GenerateVideoRequest(BaseModel):
     action: Optional[str] = None
     priority: Optional[bool] = False
 
-# Mount output folder to serve the generated video files
+
 output_dir = worker.output_dir
 os.makedirs(output_dir, exist_ok=True)
 app.mount("/output", StaticFiles(directory=output_dir), name="output")
+
 
 @app.get("/")
 @app.get("/health")
@@ -646,12 +672,13 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
     global total_videos_rendered, visual_worker
     audio_path = None
     try:
-        # Resolve host_name & host_type dynamically with safe fallbacks
-        raw_name = req.host_name or req.hostName or req.avatar_name or req.avatarName or ""
+        raw_name = (
+            req.host_name or req.hostName or req.avatar_name or req.avatarName or ""
+        )
         if not raw_name and (req.avatar_image_path or req.avatarImagePath):
             img_p = req.avatar_image_path or req.avatarImagePath or ""
             raw_name = os.path.splitext(os.path.basename(img_p))[0]
-        
+
         host_name = raw_name.strip().lower() if raw_name else "namira"
         host_type = (req.host_type or req.hostType or "3d").strip().lower()
 
@@ -659,7 +686,11 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
         if audio_b64:
             try:
                 raw_audio = base64.b64decode(audio_b64)
-                suffix = ".wav" if len(raw_audio) >= 4 and raw_audio[:4] == b"RIFF" else ".mp3"
+                suffix = (
+                    ".wav"
+                    if len(raw_audio) >= 4 and raw_audio[:4] == b"RIFF"
+                    else ".mp3"
+                )
                 audio_path = os.path.join(worker.temp_dir, f"audio_{task_id}{suffix}")
                 with open(audio_path, "wb") as audio_file:
                     audio_file.write(raw_audio)
@@ -672,8 +703,6 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                 return
         elif req.audio_url or req.audioUrl:
             audio_path = req.audio_url or req.audioUrl
-
-        # --- Mode ai_worker: antri utterance ke pipeline real-time ---
         if is_ai_worker_mode() and get_visual_worker is not None:
             if not audio_path or not os.path.exists(audio_path):
                 jobs[task_id] = {
@@ -687,7 +716,12 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                     bridge = get_speech_bridge(output_dir)
                     if bridge is not None:
                         action_tag = (req.action or "idle").strip().lower()
-                        if not action_tag or action_tag in ("none", "null", "talk", "talk_expressive"):
+                        if not action_tag or action_tag in (
+                            "none",
+                            "null",
+                            "talk",
+                            "talk_expressive",
+                        ):
                             action_tag = "idle"
                         bridge.enqueue(
                             audio_path,
@@ -712,7 +746,12 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                 }
                 return
             action_tag = (req.action or "idle").strip().lower()
-            if not action_tag or action_tag in ("none", "null", "talk", "talk_expressive"):
+            if not action_tag or action_tag in (
+                "none",
+                "null",
+                "talk",
+                "talk_expressive",
+            ):
                 action_tag = "idle"
             visual_worker.enqueue_utterance(
                 audio_path,
@@ -733,7 +772,6 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
             print(f"[API SUCCESS] Utterance queued {task_id} action={action_tag}")
             return
 
-        # Apply timeout safety to avoid stuck tasks (5 minutes timeout for cold-start / warmup)
         final_video_path = await asyncio.wait_for(
             worker.run_pipeline(
                 host_type=host_type,
@@ -767,7 +805,9 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
             "lip_sync_active": True,
             "created_at": time.time(),
         }
-        print(f"[API SUCCESS] Video berhasil dibuat untuk {task_id}: {video_url} (total_rendered={total_videos_rendered})")
+        print(
+            f"[API SUCCESS] Video berhasil dibuat untuk {task_id}: {video_url} (total_rendered={total_videos_rendered})"
+        )
     except asyncio.TimeoutError:
         print(f"[API TIMEOUT] Video generation timed out for {task_id}")
         jobs[task_id] = {
@@ -783,7 +823,6 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
             "created_at": time.time(),
         }
     finally:
-        # Bersihkan audio temp — kecuali ai_worker masih memakai file untuk prep
         if (
             audio_path
             and os.path.exists(audio_path)
@@ -795,13 +834,11 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
             except Exception:
                 pass
 
+
 @app.post("/stream/generate-neural-video")
 @app.post("/stream/live-utterance")
 async def generate_neural_video(req: GenerateVideoRequest, wait: bool = False):
     prune_old_jobs()
-    # Prefix `prio_` menandai jawaban komentar. Broadcaster mengurutkan file
-    # ber-prefix ini lebih dulu supaya jawaban tidak mengantre di belakang
-    # seluruh buffer segmen otonom.
     prefix = "prio_" if req.priority else ""
     task_id = f"{prefix}task_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
     jobs[task_id] = {
@@ -814,7 +851,9 @@ async def generate_neural_video(req: GenerateVideoRequest, wait: bool = False):
         await process_video_task(req, task_id)
         job_result = jobs.get(task_id, {})
         if job_result.get("status") == "error":
-            raise HTTPException(status_code=500, detail=job_result.get("error", "Video render failed"))
+            raise HTTPException(
+                status_code=500, detail=job_result.get("error", "Video render failed")
+            )
         return {
             "success": True,
             "job_id": task_id,
@@ -822,9 +861,9 @@ async def generate_neural_video(req: GenerateVideoRequest, wait: bool = False):
             "video_url": job_result.get("video_url"),
         }
 
-    # Start the task in background
     asyncio.create_task(process_video_task(req, task_id))
     return {"success": True, "job_id": task_id, "status": "processing"}
+
 
 @app.get("/stream/queue-status")
 async def get_queue_status():
@@ -839,9 +878,7 @@ async def get_queue_status():
     )
     broadcast_booting = _broadcast_boot_state == "starting"
     visual_worker_initializing = (
-        visual_worker is not None
-        and not visual_worker_running
-        and broadcast_booting
+        visual_worker is not None and not visual_worker_running and broadcast_booting
     )
     is_broadcasting = (
         (broadcaster_process is not None and broadcaster_process.poll() is None)
@@ -850,10 +887,24 @@ async def get_queue_status():
     )
 
     utterance_pending = 0
+    ready_utterance_count = 0
+    playback_armed = False
     if is_ai_worker_mode():
         bridge = get_speech_bridge(output_dir)
         if bridge is not None:
             utterance_pending = bridge.pending_count()
+            ready_fn = getattr(bridge, "ready_pending_count", None)
+            ready_utterance_count = (
+                int(ready_fn()) if callable(ready_fn) else utterance_pending
+            )
+        playback_armed = os.path.exists(
+            os.path.join(output_dir, "playback_active.flag")
+        )
+        stream_paused = os.path.exists(
+            os.path.join(output_dir, "stream_paused.flag")
+        )
+    else:
+        stream_paused = False
     playable_seconds = sum(_probe_duration_seconds(p) for p in playable_paths)
     in_flight_seconds = len(active_processing) * AVG_RENDER_SECONDS
     buffer_seconds = round(playable_seconds + in_flight_seconds, 2)
@@ -866,7 +917,7 @@ async def get_queue_status():
         playable_seconds = round(utterance_pending * avg_utt_sec, 2)
         in_flight_seconds = round(len(active_processing) * prep_sec, 2)
         buffer_seconds = round(playable_seconds + in_flight_seconds, 2)
-        queued_videos_count = max(utterance_pending, total_videos_rendered)
+        queued_videos_count = utterance_pending
 
     rtmp_connected = False
     rtmp_error = ""
@@ -904,7 +955,7 @@ async def get_queue_status():
             if os.path.exists(legacy_flag):
                 try:
                     with open(legacy_flag, "r") as f:
-                        rtmp_connected = (f.read().strip() == "connected")
+                        rtmp_connected = f.read().strip() == "connected"
                 except Exception:
                     pass
         if (
@@ -920,7 +971,6 @@ async def get_queue_status():
 
     return {
         "success": True,
-        # Legacy counter — hanya untuk statistik render, BUKAN buffer playable.
         "ready_videos_count": total_videos_rendered,
         "queued_videos_count": queued_videos_count,
         "ready_videos": video_files,
@@ -940,6 +990,9 @@ async def get_queue_status():
         ),
         "warmed_up": getattr(worker, "_warmed_up", False) or visual_worker_running,
         "utterance_queue_count": utterance_pending,
+        "ready_utterance_count": ready_utterance_count,
+        "playback_armed": playback_armed,
+        "stream_paused": stream_paused,
         "visual_worker_running": visual_worker_running,
         "visual_worker_pipeline_active": _visual_worker_pipeline_active(),
         "visual_worker_initializing": visual_worker_initializing,
@@ -947,6 +1000,7 @@ async def get_queue_status():
         "broadcast_boot_error": _broadcast_boot_error,
         "broadcast_mode": broadcast_mode,
     }
+
 
 class BroadcastRequest(BaseModel):
     model_config = {"extra": "ignore"}
@@ -984,16 +1038,22 @@ async def rtmp_preflight(req: BroadcastRequest):
         .strip()
     )
     if not final_rtmp_url or not final_stream_key:
-        raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
+        raise HTTPException(
+            status_code=400, detail="rtmp_url dan stream_key wajib diisi"
+        )
     try:
-        from rtmp_utils import join_rtmp_url, preflight_rtmp_publish, validate_publish_url
+        from rtmp_utils import (
+            join_rtmp_url,
+            preflight_rtmp_publish,
+            validate_publish_url,
+        )
     except ImportError:
-        join_rtmp_url = lambda base, key: f"{base.rstrip('/')}/{key}"  # type: ignore
+        join_rtmp_url = lambda base, key: f"{base.rstrip('/')}/{key}"  
 
-        def validate_publish_url(u):  # type: ignore
+        def validate_publish_url(u):  
             return u
 
-        def preflight_rtmp_publish(_u):  # type: ignore
+        def preflight_rtmp_publish(_u): 
             return None
 
     publish_url = join_rtmp_url(final_rtmp_url, final_stream_key)
@@ -1005,15 +1065,53 @@ async def rtmp_preflight(req: BroadcastRequest):
 class PlaybackRequest(BaseModel):
     action: str
 
+
 @app.post("/stream/start-playback")
 async def start_playback(req: PlaybackRequest):
+    """Arm speech playback (Go Live). Prefive boleh enqueue+prep tanpa flag ini."""
     os.makedirs(output_dir, exist_ok=True)
     flag_path = os.path.join(output_dir, "playback_active.flag")
+    paused_flag = os.path.join(output_dir, "stream_paused.flag")
     if req.action == "start_playback":
-        with open(flag_path, "w") as f:
+        if os.path.exists(paused_flag):
+            try:
+                os.remove(paused_flag)
+            except OSError:
+                pass
+        with open(flag_path, "w", encoding="utf-8") as f:
             f.write("1")
-        return {"success": True, "message": "Playback flag created, queue will be played."}
+        print("[AI-Worker] STAGE: playback_armed (Go Live) — antrian mulai diputar")
+        return {
+            "success": True,
+            "message": "Playback armed — queued utterances will start playing.",
+            "playback_armed": True,
+        }
     return {"success": False, "message": "Unknown action"}
+
+
+@app.post("/stream/pause-broadcast")
+async def pause_broadcast_soft():
+    """Soft pause: speech hold, RTMP + idle animation tetap."""
+    try:
+        from ai_worker import pause_visual_broadcast
+
+        result = pause_visual_broadcast(output_dir)
+        return result if isinstance(result, dict) else {"success": True, "paused": True}
+    except Exception as err:
+        return {"success": False, "error": str(err)}
+
+
+@app.post("/stream/resume-broadcast")
+async def resume_broadcast_soft():
+    """Resume setelah soft pause."""
+    try:
+        from ai_worker import resume_visual_broadcast
+
+        result = resume_visual_broadcast(output_dir)
+        return result if isinstance(result, dict) else {"success": True, "paused": False}
+    except Exception as err:
+        return {"success": False, "error": str(err)}
+
 
 @app.post("/stream/start-broadcast")
 async def start_broadcast(req: BroadcastRequest):
@@ -1027,10 +1125,15 @@ async def start_broadcast(req: BroadcastRequest):
         .strip()
     )
     if not final_rtmp_url or not final_stream_key:
-        raise HTTPException(status_code=400, detail="rtmp_url dan stream_key wajib diisi")
+        raise HTTPException(
+            status_code=400, detail="rtmp_url dan stream_key wajib diisi"
+        )
 
-    # Idempoten cepat — ai_worker sudah jalan + RTMP connected.
-    if is_ai_worker_mode() and visual_worker is not None and _visual_worker_pipeline_active():
+    if (
+        is_ai_worker_mode()
+        and visual_worker is not None
+        and _visual_worker_pipeline_active()
+    ):
         rtmp_state = "disconnected"
         if read_rtmp_status is not None:
             rtmp_state, _ = read_rtmp_status(output_dir)
@@ -1052,7 +1155,6 @@ async def start_broadcast(req: BroadcastRequest):
                     "mode": "ai_worker",
                 }
 
-    # Idempoten cepat — RTMP sudah connected dengan target yang sama.
     if (
         broadcaster_process is not None
         and broadcaster_process.poll() is None
@@ -1074,10 +1176,7 @@ async def start_broadcast(req: BroadcastRequest):
                 "pid": broadcaster_process.pid,
             }
 
-    print(
-        "[AI-Worker] start-broadcast diterima (async) "
-        f"rtmp={final_rtmp_url[:60]}..."
-    )
+    print(f"[AI-Worker] start-broadcast diterima (async) rtmp={final_rtmp_url[:60]}...")
 
     async def _boot() -> None:
         global _broadcast_boot_state, _broadcast_boot_error, visual_worker
@@ -1143,12 +1242,8 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
             write_rtmp_status(output_dir, "failed", str(preflight_err))
         raise
 
-    # Idempoten HANYA jika RTMP benar-benar connected.
     already_connected = False
-    mode = (
-        os.environ.get("BROADCAST_MODE")
-        or "segment"
-    ).strip().lower()
+    mode = (os.environ.get("BROADCAST_MODE") or "segment").strip().lower()
     ai_mode = mode in ("ai_worker", "ai-worker", "realtime", "visual_worker")
 
     if ai_mode and visual_worker is not None and _visual_worker_pipeline_active():
@@ -1180,8 +1275,6 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         }
 
     os.makedirs(output_dir, exist_ok=True)
-
-    # Resolusi path idle video — utamakan namira_idle_1.mp4
     resolved_idle = req.idle_video or req.idleVideo or ""
     if not resolved_idle or not os.path.exists(resolved_idle):
         for candidate in [
@@ -1201,19 +1294,21 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     if resolved_idle and prefer_idle_clip is not None:
         resolved_idle = prefer_idle_clip(resolved_idle)
 
-    # Hentikan broadcaster lama jika ada agar tidak bentrok RTMP URL
     _terminate_broadcaster(timeout=2.0)
-    # ai_worker: stop threads/RTMP tapi JANGAN buang model (Go ulang cepat)
-    _keep_warm = (
-        (os.environ.get("BROADCAST_MODE") or "").strip().lower()
-        in ("ai_worker", "ai-worker", "realtime", "visual_worker")
+    _keep_warm = (os.environ.get("BROADCAST_MODE") or "").strip().lower() in (
+        "ai_worker",
+        "ai-worker",
+        "realtime",
+        "visual_worker",
     )
     if stop_visual_broadcast is not None:
         if _keep_warm:
             try:
-                from ai_worker import pause_visual_broadcast
-
-                pause_visual_broadcast()
+                # Restart broadcast: stop threads, keep model warm (bukan soft-pause).
+                stop_visual_broadcast(destroy=False)
+            except TypeError:
+                stop_visual_broadcast()
+                visual_worker = None
             except Exception:
                 stop_visual_broadcast()
                 visual_worker = None
@@ -1227,12 +1322,11 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         write_rtmp_status(output_dir, "connecting")
     _broadcast_started_at = time.time()
 
-    # Reset counter dan state watchdog saat siaran baru dimulai
     total_videos_rendered = 0
     broadcaster_restarts = 0
     broadcaster_next_restart_at = 0.0
 
-    # Bersihkan flag lama sebelum mulai siaran baru
+
     flag_path = os.path.join(output_dir, "playback_active.flag")
     if os.path.exists(flag_path):
         try:
@@ -1256,7 +1350,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config_data, f)
 
-    # Minimal environment variables to prevent Linux [Errno 7] Argument list too long
+
     env = os.environ.copy()
     env.pop("PRODUCT_IMAGE_URL", None)
     env.pop("BANNER_IMAGE_URL", None)
@@ -1266,14 +1360,14 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     env["OUTPUT_FOLDER"] = output_dir
     env["CONFIG_PATH"] = config_path
     env["WORKER_REQUIRE_AUDIO"] = "1"
-    # Mode siaran: segment (default) | frame_feed (kontinu, idle interruptible)
+
     mode = (
-        os.environ.get("BROADCAST_MODE")
-        or env.get("BROADCAST_MODE")
-        or "segment"
-    ).strip().lower()
+        (os.environ.get("BROADCAST_MODE") or env.get("BROADCAST_MODE") or "segment")
+        .strip()
+        .lower()
+    )
     env["BROADCAST_MODE"] = mode
-    # Pastikan proses API (MuseTalk) juga menulis .ffseg saat frame_feed aktif.
+
     if mode in ("frame_feed", "frame-feed", "continuous"):
         os.environ["BROADCAST_MODE"] = mode
         os.environ.setdefault("MUSETALK_RAW_FEED", "1")
@@ -1282,9 +1376,10 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         env["MUSETALK_SKIP_MP4"] = os.environ.get("MUSETALK_SKIP_MP4", "1")
     current_broadcast_env = env
 
-    # Render overlay produk sekali (dipakai ai_worker & frame_feed)
+
     try:
         from broadcaster import prepare_overlay_files
+
         prepare_overlay_files(
             output_dir,
             product_name=config_data.get("product_name", ""),
@@ -1326,13 +1421,6 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         )
         vw.initialize()
         print("[AI-Worker] STAGE: model READY — mulai RTMP handshake")
-        flag_path = os.path.join(output_dir, "playback_active.flag")
-        try:
-            with open(flag_path, "w", encoding="utf-8") as fh:
-                fh.write("1")
-            print("[AI-Worker] STAGE: playback_active — antrian TTS boleh masuk")
-        except Exception as flag_err:
-            print(f"[AI-Worker] playback_active notice: {flag_err}")
         try:
             vw.start(wait_rtmp=True)
         except Exception as start_err:
@@ -1357,7 +1445,12 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
             f"(RTMP connected / handshake selesai)"
         )
         broadcaster_process = None
-        return {"success": True, "status": "starting", "pid": os.getpid(), "mode": "ai_worker"}
+        return {
+            "success": True,
+            "status": "starting",
+            "pid": os.getpid(),
+            "mode": "ai_worker",
+        }
 
     if ai_mode and get_visual_worker is None:
         raise RuntimeError(
@@ -1380,10 +1473,15 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     threading.Thread(target=_deferred_cleanup, daemon=True).start()
     return {"success": True, "status": "starting", "pid": broadcaster_process.pid}
 
+
 @app.post("/stream/stop-broadcast")
 async def stop_broadcast():
     global broadcaster_process, total_videos_rendered, current_broadcast_env
-    global _broadcast_boot_state, _broadcast_boot_error, _broadcast_boot_task, visual_worker
+    global \
+        _broadcast_boot_state, \
+        _broadcast_boot_error, \
+        _broadcast_boot_task, \
+        visual_worker
     global _broadcast_started_at
     current_broadcast_env = None
     _broadcast_boot_state = "idle"
@@ -1397,10 +1495,9 @@ async def stop_broadcast():
     visual_worker = None
     _clear_speech_bridge_queue()
 
-    # Reset monotonic counter saat siaran selesai
+
     total_videos_rendered = 0
 
-    # Reset playback flag
     flag_path = os.path.join(output_dir, "playback_active.flag")
     if os.path.exists(flag_path):
         try:
@@ -1408,10 +1505,10 @@ async def stop_broadcast():
         except Exception:
             pass
 
-    # Bersihkan file video sisa dari sesi sebelumnya (kecuali idle video default)
     _cleanup_playable_outputs(output_dir)
 
     return {"success": True, "status": "stopped"}
+
 
 class UpdateProductRequest(BaseModel):
     product_name: Optional[str] = None
@@ -1422,6 +1519,7 @@ class UpdateProductRequest(BaseModel):
     productImageUrl: Optional[str] = None
     banner_image_url: Optional[str] = None
     bannerImageUrl: Optional[str] = None
+
 
 @app.post("/stream/update-product")
 async def update_stream_product(req: UpdateProductRequest):
@@ -1436,6 +1534,7 @@ async def update_stream_product(req: UpdateProductRequest):
         json.dump(payload, f)
     return {"success": True, "message": "Product overlay update queued for hot-swap"}
 
+
 @app.get("/stream/broadcast-status")
 async def broadcast_status():
     vw_running = visual_worker is not None and (
@@ -1447,9 +1546,8 @@ async def broadcast_status():
         and _broadcast_boot_state == "starting"
     )
     running = (
-        (broadcaster_process is not None and broadcaster_process.poll() is None)
-        or vw_running
-    )
+        broadcaster_process is not None and broadcaster_process.poll() is None
+    ) or vw_running
     rtmp_connected = False
     rtmp_state = "disconnected"
     rtmp_error = ""
@@ -1496,11 +1594,13 @@ async def broadcast_status():
         "rtmp_error": rtmp_error,
     }
 
+
 @app.get("/stream/status/{job_id}")
 async def get_job_status(job_id: str):
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
     return jobs[job_id]
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8000"))

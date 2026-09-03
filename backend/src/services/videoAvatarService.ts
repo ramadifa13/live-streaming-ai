@@ -203,8 +203,12 @@ async function runLivePortrait(
     try {
       const ttsRes = await synthesizeSpeech({
         text: params.scriptText,
+        host: "namira",
+        voice: "namira",
         avatarName: finalAvatarFileName,
         tone: params.tone,
+        podId: process.env.RUNPOD_POD_ID || null,
+        allowOfflineSynth: true,
       });
       if (ttsRes.audioBuffer) {
         audioBase64 = ttsRes.audioBuffer.toString("base64");
@@ -217,7 +221,7 @@ async function runLivePortrait(
       avatar_name: finalAvatarFileName,
       avatar_image_path: avatarImagePath,
       text: params.scriptText,
-      voice: "id-ID-GadisNeural",
+      voice: "namira",
       speed:
         params.tone === "Energetic" || params.tone === "Semangat" ? 1.1 : 1.0,
       tone: params.tone || "Persuasif",

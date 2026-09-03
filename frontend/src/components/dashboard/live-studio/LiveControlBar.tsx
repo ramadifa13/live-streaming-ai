@@ -37,6 +37,7 @@ export const LiveControlBar: React.FC = () => {
 
   const selectedAvatar = useAiHostStore((state) => state.selectedAvatar);
   const selectedTone = useAiHostStore((state) => state.selectedTone);
+  const selectedVoice = useAiHostStore((state) => state.selectedVoice);
 
   const products = useProductStore((state) => state.products);
   const activeFeaturedProduct = useProductStore((state) => state.activeFeaturedProduct);
@@ -182,6 +183,7 @@ export const LiveControlBar: React.FC = () => {
           autoModeration: automations.autoModeration,
           avatarName: selectedAvatar.name,
           tone: selectedTone,
+          voice: selectedVoice || selectedAvatar.voice || selectedAvatar.id || "namira",
           accessToken: connectedAccount?.accessToken,
           liveChatId: connectedAccount?.liveChatId,
           liveVideoId: connectedAccount?.liveVideoId,
@@ -785,9 +787,9 @@ export const LiveControlBar: React.FC = () => {
               const nextPause = !isLivePaused;
               try {
                 if (nextPause) {
-                  await liveSessionService.pauseStream();
+                  await liveSessionService.pauseStream(currentLiveSessionId);
                 } else {
-                  await liveSessionService.resumeStream();
+                  await liveSessionService.resumeStream(currentLiveSessionId);
                 }
                 setIsLivePaused(nextPause);
                 showToast(nextPause ? "Live Streaming dijeda" : "Live Streaming dilanjutkan");
