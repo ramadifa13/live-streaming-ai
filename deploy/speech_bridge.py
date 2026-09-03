@@ -394,6 +394,18 @@ class SpeechBridge:
             return False, None
         return True, self._frame_cursor
 
+    def audio_progress(self) -> float:
+        """0..1 progress audio utterance aktif (untuk early CTA gesture)."""
+        with self._lock:
+            job = self._current
+        if job is None or job.num_frames <= 0:
+            return 0.0
+        return min(1.0, float(self._frame_cursor) / float(job.num_frames))
+
+    def current_action(self) -> Optional[str]:
+        job = self._current
+        return (job.action or None) if job else None
+
     def get_audio_chunk(self) -> Tuple[bytes, bool, Optional[int]]:
         """Return (pcm_stereo, is_speech, whisper_frame_index).
 
@@ -420,17 +432,7 @@ class SpeechBridge:
         return pcm, True, idx
 
     def get_llm_action(self) -> Optional[str]:
-        """Gesture hanya di-queue — tidak memotong utterance yang sedang jalan."""
-        with self._lock:
-            if self._current is not None:
-                return None
-            if self._pending:
-                nxt = self._pending[0]
-                if nxt.action and nxt.ready.is_set():
-                    tag = nxt.action.strip().lower()
-                    if tag in ("none", "null", "idle", "talk", "talk_expressive"):
-                        return None
-                    return nxt.action
+        """Peek disabled — CTA point dijadwalkan di on_start (post-speech saja)."""
         return None
 
     def current_utterance(self) -> Optional[UtteranceJob]:

@@ -1,23 +1,41 @@
 # ==========================================
-# RUNPOD WORKER DEPENDENCIES (Pinned & Tested)
+# RUNPOD AI WORKER — pinned (harus cocok setup.sh / setup-safe.sh)
+# JANGAN pakai MuseTalk/requirements.txt upstream (numpy/torch/transformers beda).
+# Torch + torchvision + torchaudio diinstall TERPISAH di setup (cu118).
+# MMCV / MMDet / MMPose diinstall via `mim` di setup (bukan pip di file ini).
 # ==========================================
-fastapi>=0.104.0
-uvicorn>=0.24.0
-pydantic>=2.0.0
+
+# API
+fastapi==0.115.6
+uvicorn==0.32.1
+pydantic==2.10.3
+
+# Core numerik / vision (kunci keras — MuseTalk + OpenMMLab)
 numpy==1.26.4
 opencv-python-headless==4.8.0.76
+Pillow>=9.0,<11.0
+
+# Diffusers / HF stack (MuseTalk v1.5)
 transformers==4.38.2
 diffusers==0.27.2
 accelerate==0.28.0
+huggingface_hub>=0.25.0,<0.26.0
+safetensors>=0.4.0
 omegaconf>=2.3.0
-ffmpeg-python
-librosa
-soundfile
-einops
-timm
-huggingface_hub<0.26.0,>=0.25.0
-PyYAML
-moviepy
-imageio[ffmpeg]
-openmim
-mmengine
+einops==0.7.0
+timm==0.9.16
+
+# Audio
+librosa==0.10.2.post1
+soundfile==0.12.1
+ffmpeg-python==0.2.0
+
+# Utils
+PyYAML==6.0.2
+requests>=2.31.0
+imageio[ffmpeg]==2.36.1
+moviepy==1.0.3
+
+# OpenMMLab helpers (mmcv/mmdet/mmpose via mim di setup.sh)
+openmim==0.3.9
+mmengine==0.10.7

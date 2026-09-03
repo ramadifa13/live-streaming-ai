@@ -1,0 +1,5 @@
+{
+  "base_pose_frame": 0,
+  "end_pose_frame": 233,
+  "comment": "idle_2 = variasi tangan bergerak. Rest start harus = idle_1. end=233 MSE~18."
+}

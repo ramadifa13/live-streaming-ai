@@ -166,7 +166,8 @@ source "$VENV_DIR/bin/activate"
 
 # Update tools di dalam venv
 "$PYTHON_BIN" -m ensurepip --upgrade 2>/dev/null || true
-"$PYTHON_BIN" -m pip install --no-cache-dir --upgrade pip setuptools wheel
+# openmim still imports pkg_resources; setuptools 82+ dropped it.
+"$PYTHON_BIN" -m pip install --no-cache-dir --upgrade pip "setuptools<81" wheel
 
 echo "[OK] Virtual Environment siap: $($PYTHON_BIN --version) at $VENV_DIR"
 
@@ -283,6 +284,7 @@ cd "$WORKER_DIR"
 
 echo ""
 echo "[7/10] Installing dependency utama worker..."
+echo "NOTE: Jangan install MuseTalk/requirements.txt upstream (numpy/torch/transformers bentrok)."
 
 "$PIP_BIN" install \
     --no-cache-dir \
@@ -441,7 +443,8 @@ cd "$WORKER_DIR"
 
 "$PIP_BIN" install \
     --no-cache-dir \
-    -U openmim
+    -U openmim \
+    "setuptools<81"
 
 # Kunci numpy 1.26.4 agar OpenMIM tidak memakai NumPy 2.x
 "$PIP_BIN" install --no-cache-dir "numpy==1.26.4"
@@ -456,18 +459,24 @@ echo "Installing chumpy & mmpose..."
 "$PIP_BIN" install --no-cache-dir --no-build-isolation "chumpy" || true
 "$PYTHON_BIN" -m mim install "mmpose>=1.1.0" --no-build-isolation || "$PIP_BIN" install --no-cache-dir "mmpose>=1.1.0" --no-build-isolation
 
+# Pastikan torch/numpy tidak ter-upgrade oleh requirements / mim
 "$PIP_BIN" install \
     --no-cache-dir \
     --no-deps \
+    "numpy==1.26.4" \
     "torch==2.1.0+cu118" \
     "torchvision==0.16.0+cu118" \
     "torchaudio==2.1.0+cu118" \
     --index-url https://download.pytorch.org/whl/cu118
 
-"$PIP_BIN" install \
-    --no-cache-dir \
-    --no-deps \
-    "numpy==1.26.4"
+# Pin ulang stack worker setelah mim (hindari drift dari MuseTalk upstream reqs)
+if [ -f "$WORKER_DIR/requirements-worker.txt" ]; then
+    echo "Re-pin requirements-worker.txt setelah OpenMMLab..."
+    "$PIP_BIN" install --no-cache-dir -r "$WORKER_DIR/requirements-worker.txt"
+    "$PIP_BIN" install --no-cache-dir --no-deps "numpy==1.26.4" \
+        "torch==2.1.0+cu118" "torchvision==0.16.0+cu118" "torchaudio==2.1.0+cu118" \
+        --index-url https://download.pytorch.org/whl/cu118
+fi
 
 # ------------------------------------------------------------
 # 10. TTS ARCHITECTURE NOTE

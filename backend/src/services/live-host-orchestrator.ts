@@ -11,6 +11,8 @@ import {
   liveBrainDuringLive,
   liveBrainRefillOnExhaust,
   liveBrainRefillWhenLow,
+  normalizeLunaAction,
+  splitSpeechIntoGestureSegments,
   type HostIntent,
   type HostMode,
   type HostResponse,
@@ -232,14 +234,13 @@ interface PlanPolicy {
   scriptBankLlmRefillCooldownMs: number;
 }
 
+const LIVE_MIN_BUFFER = Number(process.env.LIVE_MIN_BUFFER_SECONDS || 6);
+
 const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
-  // Buffer 1H disamakan dengan 2H, bukan diperkecil. Ukuran buffer melindungi
-  // syarat "tanpa idle" dan tidak bergantung pada panjang sesi; yang diperkecil
-  // hanya kapasitas memori dan rotasi mode, karena sesi sependek ini tidak
-  // pernah mengulang topik sebanyak sesi panjang.
+  // Buffer realtime ai_worker: default 6s (bukan 10–18) supaya Go confirm lebih cepat.
   "1H": {
     durationMs: 60 * 60 * 1000,
-    minBufferSeconds: 10,
+    minBufferSeconds: LIVE_MIN_BUFFER,
     targetBufferSeconds: 22,
     maxBufferSeconds: 40,
     commentTtlMs: 20_000,
@@ -256,7 +257,7 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   },
   "2H": {
     durationMs: 2 * 60 * 60 * 1000,
-    minBufferSeconds: 10,
+    minBufferSeconds: LIVE_MIN_BUFFER,
     targetBufferSeconds: 22,
     maxBufferSeconds: 40,
     commentTtlMs: 25_000,
@@ -762,7 +763,11 @@ class LiveHostOrchestrator {
       `[LiveHost] 🎬 Background pipeline start: session=${config.sessionId}, plan=${state.config.plan}`,
     );
 
-    void this.warmupWorkerModel(config.sessionId);
+    // Warmup GPU job default OFF untuk ai_worker (berebut VRAM dengan init).
+    // Aktifkan: LIVE_WORKER_WARMUP=1
+    if (process.env.LIVE_WORKER_WARMUP === "1") {
+      void this.warmupWorkerModel(config.sessionId);
+    }
     void this.runPreLivePipeline(config.sessionId);
   }
 
@@ -900,7 +905,7 @@ class LiveHostOrchestrator {
         const policy = this.getPolicy(s);
         if (
           queue.bufferSeconds >= policy.minBufferSeconds &&
-          queue.queuedVideos >= 2
+          queue.queuedVideos >= 1
         ) {
           await sleep(1200);
           continue;
@@ -1424,37 +1429,40 @@ class LiveHostOrchestrator {
       return false;
     }
 
-    let finalText = speech;
-    let audioBase64: string | undefined;
+    // Pecah CTA jadi segmen pendek: IDLE … → POINT di frasa CTA → IDLE …
+    // supaya gesture natural (bukan nunggu audio panjang selesai).
+    const segments = splitSpeechIntoGestureSegments(speech, response.action);
+    const priority = source === "comment";
 
-    try {
-      const ttsResult = await synthesizeSpeech({
-        text: finalText,
-        voice: state.config.voice || "id-ID-GadisNeural",
-        avatarName: state.config.avatarName,
-        tone: state.config.tone,
-        emotion: response.emotion,
-      });
-      if (ttsResult.success && ttsResult.audioBuffer) {
-        audioBase64 = ttsResult.audioBuffer.toString("base64");
+    for (const seg of segments) {
+      let audioBase64: string | undefined;
+      try {
+        const ttsResult = await synthesizeSpeech({
+          text: seg.text,
+          voice: state.config.voice || "id-ID-GadisNeural",
+          avatarName: state.config.avatarName,
+          tone: state.config.tone,
+          emotion: response.emotion,
+        });
+        if (ttsResult.success && ttsResult.audioBuffer) {
+          audioBase64 = ttsResult.audioBuffer.toString("base64");
+        }
+      } catch (err: any) {
+        console.warn(
+          `[LiveHost] TTS error (seg action=${seg.action}): ${err?.message || err}`,
+        );
       }
-    } catch (err: any) {
-      console.warn(`[LiveHost] TTS error; fallback audio unavailable: ${err?.message || err}`);
-    }
 
-    // Bila TTS gagal, submit tetap dilakukan bila worker mampu menghasilkan audio/video
-    // dari text; ini mempertahankan jalur fallback lama.
-    //
-    // Jawaban komentar ditandai prioritas agar broadcaster memutarnya sebelum
-    // sisa buffer otonom. Tanpa ini jawaban harus mengantre di belakang
-    // targetBufferSeconds penuh, sehingga terasa ~30 detik terlambat.
-    await this.submitToGPU(
-      sessionId,
-      finalText,
-      audioBase64,
-      response.action,
-      source === "comment",
-    );
+      // TTS gagal: tetap submit text — worker/bridge bisa fallback.
+      // Semua segmen jawaban komentar tetap priority agar tidak terpotong buffer otonom.
+      await this.submitToGPU(
+        sessionId,
+        seg.text,
+        audioBase64,
+        seg.action,
+        priority,
+      );
+    }
 
     state.counters.generated++;
     state.lastActivityAt = Date.now();
@@ -1467,11 +1475,12 @@ class LiveHostOrchestrator {
     this.recordMemory(state, {
       ...response,
       speech: normalized,
+      action: normalizeLunaAction(response.action),
       topic: response.topic || fallbackTopic,
     });
 
     console.log(
-      `[LiveHost] 🗣️ queued source=${source} mode=${response.mode} topic=${response.topic || fallbackTopic} action=${response.action}`,
+      `[LiveHost] 🗣️ queued source=${source} mode=${response.mode} topic=${response.topic || fallbackTopic} action=${response.action} segments=${segments.map((s) => s.action).join(">")}`,
     );
 
     return true;
@@ -1886,23 +1895,16 @@ class LiveHostOrchestrator {
       ? `${state.config.avatarName.toLowerCase().trim()}.png`
       : "namira.png";
 
-    const allowed = new Set([
-      "IDLE",
-      "TALK_EXPRESSIVE",
-      "NOD",
-      "LAUGH",
-      "POINT_UP",
-      "POINT_DOWN",
-      "WAVE",
-      "THINK",
-    ]);
-    const raw = String(action || "TALK_EXPRESSIVE")
+    const allowed = new Set(["IDLE", "POINT_UP", "POINT_DOWN"]);
+    const raw = String(action || "IDLE")
       .toUpperCase()
       .replace(/[^A-Z_]/g, "");
-    const gesture = allowed.has(raw) ? raw : "TALK_EXPRESSIVE";
-    const taggedText = /^\s*\[[A-Z_]+\]/.test(text)
-      ? text.replace(/^\s*\[[A-Z_]+\]/, `[${gesture}]`)
-      : `[${gesture}] ${text}`.trim();
+    const gesture = allowed.has(raw) ? raw : "IDLE";
+    // Action dikirim di field `action` — tidak wajib tag di text.
+    // Tag hanya untuk POINT_* (legacy parser). IDLE = text polos.
+    const cleanText = String(text || "").replace(/^\s*\[[A-Z_]+\]\s*/i, "").trim();
+    const taggedText =
+      gesture === "IDLE" ? cleanText : `[${gesture}] ${cleanText}`.trim();
 
     try {
       await forwardToRunPodGPU(state.config.podId || process.env.RUNPOD_POD_ID, {

@@ -53,20 +53,25 @@ def fit_bgr(frame, width: int = CANVAS_W, height: int = CANVAS_H):
 
 
 def prefer_idle_clip(idle_path: str) -> str:
-    """Utamakan *_idle.mp4 untuk visual idle (bukan talk_expressive)."""
+    """Utamakan namira_idle_1.mp4 (pose menjelaskan) untuk visual idle."""
     if not idle_path:
         return idle_path
     directory = os.path.dirname(idle_path) or "."
     base = os.path.basename(idle_path)
     stem = os.path.splitext(base)[0]
     host = (
-        stem.replace("_idle", "")
+        stem.replace("_idle_1", "")
+        .replace("_idle_2", "")
+        .replace("_idle_3", "")
+        .replace("_idle", "")
         .replace("_talk_expressive", "")
         .replace("_talk", "")
         or "namira"
     )
     for name in (
+        f"{host}_idle_1.mp4",
         f"{host}_idle.mp4",
+        "namira_idle_1.mp4",
         "namira_idle.mp4",
         "idle.mp4",
     ):
@@ -79,5 +84,5 @@ def prefer_idle_clip(idle_path: str) -> str:
 
 
 def prefer_talk_clip(idle_path: str) -> str:
-    """Legacy: utamakan talk_expressive. Idle sekarang pakai prefer_idle_clip()."""
+    """Talk body = idle_1 (sama prefer_idle_clip)."""
     return prefer_idle_clip(idle_path)

@@ -87,7 +87,12 @@ total_videos_rendered = 0
 MAX_JOBS_STORE = 200
 JOB_TTL_SECONDS = 3600  # 1 hour TTL
 AVG_RENDER_SECONDS = 10.0
-IDLE_CLIP_BASENAMES = {"namira_idle.mp4", "namira.mp4", "idle.mp4"}
+IDLE_CLIP_BASENAMES = {
+    "namira_idle_1.mp4",
+    "namira_idle.mp4",
+    "namira.mp4",
+    "idle.mp4",
+}
 
 _duration_cache: Dict[tuple, float] = {}
 
@@ -619,9 +624,9 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                 if _broadcast_boot_state == "starting":
                     bridge = get_speech_bridge(output_dir)
                     if bridge is not None:
-                        action_tag = (req.action or "talk_expressive").strip().lower()
-                        if not action_tag or action_tag in ("none", "null"):
-                            action_tag = "talk_expressive"
+                        action_tag = (req.action or "idle").strip().lower()
+                        if not action_tag or action_tag in ("none", "null", "talk", "talk_expressive"):
+                            action_tag = "idle"
                         bridge.enqueue(
                             audio_path,
                             task_id=task_id,
@@ -644,9 +649,9 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                     "created_at": time.time(),
                 }
                 return
-            action_tag = (req.action or "talk_expressive").strip().lower()
-            if not action_tag or action_tag in ("none", "null"):
-                action_tag = "talk_expressive"
+            action_tag = (req.action or "idle").strip().lower()
+            if not action_tag or action_tag in ("none", "null", "talk", "talk_expressive"):
+                action_tag = "idle"
             visual_worker.enqueue_utterance(
                 audio_path,
                 task_id=task_id,
@@ -1114,18 +1119,18 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # Resolusi path idle video — utamakan namira_idle.mp4
+    # Resolusi path idle video — utamakan namira_idle_1.mp4
     resolved_idle = req.idle_video or req.idleVideo or ""
     if not resolved_idle or not os.path.exists(resolved_idle):
         for candidate in [
+            "/workspace/ai_live_worker/assets/3d/namira_idle_1.mp4",
             "/workspace/ai_live_worker/assets/3d/namira_idle.mp4",
-            "/workspace/ai_live_worker/assets/3d/namira_talk_expressive.mp4",
             "/workspace/ai_live_worker/assets/3d/namira.mp4",
+            "/workspace/live-streaming-ai/deploy/assets/3d/namira_idle_1.mp4",
             "/workspace/live-streaming-ai/deploy/assets/3d/namira_idle.mp4",
-            "/workspace/live-streaming-ai/deploy/assets/3d/namira_talk_expressive.mp4",
             "/workspace/live-streaming-ai/deploy/assets/3d/namira.mp4",
+            os.path.join(os.path.dirname(__file__), "assets/3d/namira_idle_1.mp4"),
             os.path.join(os.path.dirname(__file__), "assets/3d/namira_idle.mp4"),
-            os.path.join(os.path.dirname(__file__), "assets/3d/namira_talk_expressive.mp4"),
             os.path.join(os.path.dirname(__file__), "assets/3d/namira.mp4"),
         ]:
             if os.path.exists(candidate):
@@ -1136,9 +1141,25 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
 
     # Hentikan broadcaster lama jika ada agar tidak bentrok RTMP URL
     _terminate_broadcaster(timeout=2.0)
+    # ai_worker: stop threads/RTMP tapi JANGAN buang model (Go ulang cepat)
+    _keep_warm = (
+        (os.environ.get("BROADCAST_MODE") or "").strip().lower()
+        in ("ai_worker", "ai-worker", "realtime", "visual_worker")
+    )
     if stop_visual_broadcast is not None:
-        stop_visual_broadcast()
-    visual_worker = None
+        if _keep_warm:
+            try:
+                from ai_worker import pause_visual_broadcast
+
+                pause_visual_broadcast()
+            except Exception:
+                stop_visual_broadcast()
+                visual_worker = None
+        else:
+            stop_visual_broadcast()
+            visual_worker = None
+    else:
+        visual_worker = None
     _clear_speech_bridge_queue()
     if write_rtmp_status is not None:
         write_rtmp_status(output_dir, "connecting")
@@ -1238,23 +1259,28 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         if output_dir:
             vw.output_folder = output_dir
         print(
-            f"[AI-Worker] Memuat AIVisualWorker ({host_slug}) — "
-            "model + assets (bisa 1–3 menit)..."
+            f"[AI-Worker] STAGE: init model/assets ({host_slug}) — "
+            "skip jika sudah hangat; bisa 1–3 menit saat cold start"
         )
         vw.initialize()
+        print("[AI-Worker] STAGE: model READY — mulai RTMP handshake")
         flag_path = os.path.join(output_dir, "playback_active.flag")
         try:
             with open(flag_path, "w", encoding="utf-8") as fh:
                 fh.write("1")
-            print("[AI-Worker] playback_active.flag dibuat (audio TTS aktif)")
+            print("[AI-Worker] STAGE: playback_active — antrian TTS boleh masuk")
         except Exception as flag_err:
             print(f"[AI-Worker] playback_active notice: {flag_err}")
         try:
             vw.start(wait_rtmp=True)
         except Exception as start_err:
             if stop_visual_broadcast is not None:
-                stop_visual_broadcast()
+                try:
+                    stop_visual_broadcast(destroy=False)
+                except TypeError:
+                    stop_visual_broadcast()
             visual_worker = None
+            _clear_speech_bridge_queue()
             if write_rtmp_status is not None:
                 write_rtmp_status(output_dir, "failed", str(start_err)[:240])
             raise RuntimeError(str(start_err)) from start_err
@@ -1264,8 +1290,9 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         if bridge is not None:
             bridge.output_folder = output_dir
         print(
-            f"[AI-Worker] AIVisualWorker aktif @ {os.environ.get('AI_WORKER_FPS', '25')}fps "
-            f"(in-process, no subprocess)"
+            f"[AI-Worker] STAGE: LIVE pipeline aktif @ "
+            f"{os.environ.get('AI_WORKER_FPS', '25')}fps "
+            f"(RTMP connected / handshake selesai)"
         )
         broadcaster_process = None
         return {"success": True, "status": "starting", "pid": os.getpid(), "mode": "ai_worker"}

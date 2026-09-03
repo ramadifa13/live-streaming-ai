@@ -5,6 +5,7 @@ import type {
   LunaAction,
   LunaEmotion,
 } from "./groq-brain.js";
+import { inferCtaPointAction, normalizeLunaAction } from "./groq-brain.js";
 
 export interface ScriptProductFacts {
   id: string;
@@ -354,7 +355,9 @@ function line(
   const maxWords = FILLER_TOPICS.has(topic) ? 16 : 32;
   return {
     speech: clampSpeech(speech, maxWords),
-    action: (extras?.action as LunaAction) || "TALK_EXPRESSIVE",
+    action: extras?.action
+      ? normalizeLunaAction(extras.action)
+      : inferCtaPointAction(speech, topic),
     emotion: extras?.emotion || emotions[Math.floor(Math.random() * emotions.length)] || "warm",
     intent: extras?.intent || "SELL",
     mode,
@@ -1098,7 +1101,9 @@ export function mergeScriptLines(
     bank.lines.push({
       ...item,
       speech,
-      action: "TALK_EXPRESSIVE",
+      action: normalizeLunaAction(item.action) !== "IDLE"
+        ? normalizeLunaAction(item.action)
+        : inferCtaPointAction(speech, item.topic),
       mode: item.mode || mode,
       ctaType: item.ctaType || "NONE",
       target_product_id: item.target_product_id ?? null,

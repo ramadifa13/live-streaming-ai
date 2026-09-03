@@ -34,8 +34,9 @@ export const ConnectingOverlay: React.FC = () => {
         pipelineStatus?.generationCount ?? 0,
       )
     : pipelineStatus?.videosQueued ?? 0;
-  const videosReady =
-    bufferCount >= 2 || (pipelineStatus?.generationCount ?? 0) >= 2;
+  const videosReady = isRealtimeWorker
+    ? bufferCount >= 1 || pipelineStatus?.ready === true
+    : bufferCount >= 2 || (pipelineStatus?.generationCount ?? 0) >= 2;
   const rtmpConnected = pipelineStatus?.isRtmpConnected === true;
   const podBooting = pipelineStatus?.podBooting === true;
   const rtmpFailed = Boolean(pipelineStatus?.rtmpError);

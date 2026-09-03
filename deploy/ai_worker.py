@@ -56,15 +56,15 @@ TARGET_FPS = int(os.environ.get("AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS"
 SAMPLE_RATE = 44100
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
 BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2  # stereo s16le
-CROSSFADE_FRAMES = int(os.environ.get("AI_WORKER_CROSSFADE", "6"))
-OVERLAP_FRAMES = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "6"))
+CROSSFADE_FRAMES = int(os.environ.get("AI_WORKER_CROSSFADE", "8"))
+OVERLAP_FRAMES = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "10"))
 BBOX_SMOOTH_WINDOW = int(os.environ.get("AI_WORKER_BBOX_SMOOTH", "7"))
 RAW_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RAW_QUEUE", "24"))
 RENDER_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RENDER_QUEUE", "48"))
 RAW_QUEUE_BLOCK_SEC = float(os.environ.get("AI_WORKER_RAW_BLOCK_SEC", "0.25"))
 MASK_FEATHER_PX = int(os.environ.get("AI_WORKER_MASK_FEATHER", "15"))
-AMBIENT_MIN_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MIN_SEC", "18"))
-AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "42"))
+AMBIENT_MIN_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MIN_SEC", "12"))
+AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "28"))
 IDLE_FALLBACK_AFTER = int(os.environ.get("AI_WORKER_IDLE_FALLBACK_AFTER", "2"))
 BROADCAST_MAX_LAG = int(os.environ.get("AI_WORKER_BROADCAST_MAX_LAG", "8"))
 BROADCAST_RENDER_WAIT_SEC = float(os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.10"))
@@ -77,11 +77,55 @@ LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "0"))
 LIPSYNC_PREROLL_TIMEOUT_SEC = float(os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.0"))
 
 
+# Post-speech gestures only — CTA visual (banner / checkout).
+ALLOWED_GESTURES = frozenset({"point_up", "point_down"})
+# Body during speech: prefer idle_1 (pose menjelaskan). Fallback idle / idle_*.
+TALK_CLIP_DEFAULT = (os.environ.get("AI_WORKER_TALK_CLIP") or "idle_1").strip().lower() or "idle_1"
+
+
 def _ambient_gesture_names() -> List[str]:
-    raw = (os.environ.get("AI_WORKER_AMBIENT_GESTURES") or "wave,nod").strip()
-    if raw.lower() in ("0", "off", "false", "none", "no"):
+    """Legacy point ambient — default off. Idle variants pakai AI_WORKER_IDLE_VARIANTS."""
+    raw = (os.environ.get("AI_WORKER_AMBIENT_GESTURES") or "off").strip()
+    if raw.lower() in ("0", "off", "false", "none", "no", ""):
         return []
-    return [n.strip() for n in raw.split(",") if n.strip()]
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    return [n for n in names if n.lower().replace("-", "_") in ALLOWED_GESTURES]
+
+
+def _idle_variant_names() -> List[str]:
+    """Variasi idle saat tidak bicara (idle_2, idle_3). idle_1 = talk/default."""
+    raw = (os.environ.get("AI_WORKER_IDLE_VARIANTS") or "idle_2,idle_3").strip()
+    if raw.lower() in ("0", "off", "false", "none", "no", ""):
+        return []
+    return [n.strip().lower().replace("-", "_") for n in raw.split(",") if n.strip()]
+
+
+def _is_idle_clip_name(name: Optional[str]) -> bool:
+    if not name:
+        return False
+    key = name.lower().strip().replace("-", "_")
+    return key == "idle" or key.startswith("idle_")
+
+
+def _is_neutral_action(tag: Optional[str]) -> bool:
+    if not tag:
+        return True
+    key = tag.lower().strip().replace("-", "_")
+    return key in (
+        "none",
+        "null",
+        "idle",
+        "talk",
+        "talk_expressive",
+        "expressive",
+    )
+
+
+def _is_allowed_gesture(tag: Optional[str]) -> bool:
+    if not tag or _is_neutral_action(tag) or _is_idle_clip_name(tag):
+        return False
+    key = tag.lower().strip().replace("-", "_")
+    return key in ALLOWED_GESTURES
 
 try:
     from worker_telemetry import get_telemetry
@@ -337,25 +381,49 @@ class AssetBank:
     """Decode all host clips into RAM and precompute MuseTalk materials."""
 
     ACTION_ALIASES = {
-        "talk": "talk_expressive",
-        "talk_expressive": "talk_expressive",
-        "expressive": "talk_expressive",
-        "idle": "idle",
-        "wave": "wave",
-        "raise_hand": "wave",
-        "nod": "nod",
-        "laugh": "laugh",
+        "talk": "idle_1",
+        "talk_expressive": "idle_1",
+        "expressive": "idle_1",
+        "idle": "idle_1",
+        "idle_1": "idle_1",
+        "idle_2": "idle_2",
+        "idle_3": "idle_3",
+        "wave": "idle_1",
+        "raise_hand": "idle_1",
+        "nod": "idle_1",
+        "laugh": "idle_1",
+        "think": "idle_1",
         "point_up": "point_up",
         "point_down": "point_down",
-        "think": "think",
     }
+
+    def talk_clip_name(self) -> str:
+        """Body saat bicara: idle_1 (menjelaskan), fallback idle / idle_*."""
+        for key in (TALK_CLIP_DEFAULT, "idle_1", "idle", self._idle_name):
+            if key and key in self.clips:
+                return key
+            if key:
+                resolved = self.ACTION_ALIASES.get(key, key)
+                if resolved in self.clips:
+                    return resolved
+        return self._idle_name
+
+    def idle_variant_clips(self) -> List[str]:
+        """Idle non-talk untuk rotasi saat diam."""
+        out: List[str] = []
+        talk = self.talk_clip_name()
+        for name in _idle_variant_names():
+            resolved = self.resolve_action(name)
+            if resolved in self.clips and resolved != talk and resolved not in out:
+                out.append(resolved)
+        return out
 
     def __init__(self, assets_dir: str, host: str = "namira", models_bundle=None):
         self.assets_dir = assets_dir
         self.host = host.lower()
         self.models = models_bundle
         self.clips: Dict[str, ClipAsset] = {}
-        self._idle_name = "idle"
+        self._idle_name = "idle_1"
 
     def discover_and_load(self) -> None:
         if not os.path.isdir(self.assets_dir):
@@ -379,7 +447,7 @@ class AssetBank:
             name = self._clip_name_from_file(fname)
             num_frames = self._probe_frame_count(path)
             base_pose, end_pose = self._load_pose_meta(name, num_frames)
-            decode_now = decode_all or name in eager_names
+            decode_now = decode_all or name in eager_names or _is_idle_clip_name(name)
             frames = self._decode_video(path) if decode_now else []
             self.clips[name] = ClipAsset(
                 name=name,
@@ -388,7 +456,7 @@ class AssetBank:
                 base_pose_frame=base_pose,
                 end_pose_frame=end_pose,
                 probed_frame_count=num_frames,
-                loop=name in ("idle", "talk_expressive"),
+                loop=_is_idle_clip_name(name) or name == TALK_CLIP_DEFAULT,
             )
             status = f"{len(frames)} frames" if frames else f"lazy ({num_frames}f)"
             print(
@@ -396,33 +464,39 @@ class AssetBank:
                 f"base_pose={base_pose}, end_pose={self.clips[name].end_pose}"
             )
 
-        if "idle" not in self.clips:
-            # fallback: first clip containing 'idle'
-            for k in self.clips:
-                if "idle" in k:
-                    self._idle_name = k
-                    break
-            else:
-                self._idle_name = next(iter(self.clips))
-        else:
-            self._idle_name = "idle"
+        self._idle_name = self._pick_primary_idle()
+        if "idle" not in self.clips and self._idle_name in self.clips:
+            self.clips["idle"] = self.clips[self._idle_name]
+            print(f"[AssetBank] Alias idle → {self._idle_name}")
+        print(
+            f"[AssetBank] Primary idle/talk={self.talk_clip_name()}, "
+            f"variants={self.idle_variant_clips()}"
+        )
 
         if self.models:
             self._warm_musetalk_materials()
 
+    def _pick_primary_idle(self) -> str:
+        for key in ("idle_1", "idle", TALK_CLIP_DEFAULT):
+            if key in self.clips:
+                return key
+        for k in sorted(self.clips):
+            if _is_idle_clip_name(k):
+                return k
+        return next(iter(self.clips))
+
     def _eager_clip_names(self) -> List[str]:
-        """Clip yang di-decode ke RAM saat init. Sisanya lazy saat dipakai."""
+        """Decode ke RAM: semua idle_* (+ point jika ada di env)."""
         raw = (
             os.environ.get("AI_WORKER_EAGER_CLIPS")
-            or "idle,talk_expressive,wave,nod,laugh,point_up,point_down"
+            or "idle_1,idle_2,idle_3,idle,point_up,point_down"
         ).strip()
         if raw.lower() in ("all", "*"):
-            return list(self.clips.keys()) if self.clips else ["idle", "talk_expressive"]
+            return list(self.clips.keys()) if self.clips else ["idle_1"]
         names = [n.strip() for n in raw.split(",") if n.strip()]
-        if "talk_expressive" not in names:
-            names.append("talk_expressive")
-        if "idle" not in names:
-            names.append("idle")
+        for must in ("idle_1", "idle", TALK_CLIP_DEFAULT):
+            if must and must not in names:
+                names.append(must)
         return names
 
     def _probe_frame_count(self, path: str) -> int:
@@ -447,13 +521,14 @@ class AssetBank:
         return clip
 
     def _precache_clip_names(self) -> List[str]:
-        """Clips yang di-precompute MuseTalk (latent+mask). Default: talk saja — hindari OOM."""
-        raw = (os.environ.get("AI_WORKER_PRECACHE_CLIPS") or "talk_expressive").strip()
+        """MuseTalk latent+mask — hanya body bicara (idle_1). Variants tidak di-warmup."""
+        talk = self.talk_clip_name() if self.clips else (TALK_CLIP_DEFAULT or "idle_1")
+        raw = (os.environ.get("AI_WORKER_PRECACHE_CLIPS") or talk).strip()
         if raw.lower() in ("all", "*", "1", "true", "yes", "on"):
-            return list(self.clips.keys())
+            return [n for n in (talk, self._idle_name) if n in self.clips]
         names = [n.strip() for n in raw.split(",") if n.strip()]
-        if "talk_expressive" in self.clips and "talk_expressive" not in names:
-            names.insert(0, "talk_expressive")
+        if talk not in names:
+            names.insert(0, talk)
         return [n for n in names if n in self.clips]
 
     def ensure_musetalk_materials(self, name: str) -> bool:
@@ -523,15 +598,22 @@ class AssetBank:
     def _load_pose_meta(self, name: str, num_frames: int) -> Tuple[int, int]:
         """Load base/end pose from sidecar JSON. Default: frame 0 == last frame."""
         base, end = 0, -1
-        sidecar = os.path.join(self.assets_dir, f"{name}_meta.json")
-        if os.path.exists(sidecar):
+        candidates = [
+            os.path.join(self.assets_dir, f"{name}_meta.json"),
+            os.path.join(self.assets_dir, f"{self.host}_{name}_meta.json"),
+            os.path.join(self.assets_dir, f"namira_{name}_meta.json"),
+        ]
+        for sidecar in candidates:
+            if not os.path.exists(sidecar):
+                continue
             try:
                 with open(sidecar, "r", encoding="utf-8") as fh:
                     meta = json.load(fh)
                 base = int(meta.get("base_pose_frame", base))
                 end = int(meta.get("end_pose_frame", end))
+                break
             except Exception:
-                pass
+                continue
         if end < 0:
             end = max(0, num_frames - 1)
         return base, end
@@ -554,13 +636,18 @@ class AssetBank:
     def resolve_action(self, tag: Optional[str]) -> str:
         if not tag:
             return self._idle_name
-        key = self.ACTION_ALIASES.get(tag.lower().strip().replace("-", "_"), tag.lower())
+        raw = tag.lower().strip().replace("-", "_")
+        if raw not in ALLOWED_GESTURES and not _is_idle_clip_name(raw) and raw not in self.ACTION_ALIASES:
+            # Unknown / retired gestures → primary idle
+            if raw not in self.clips:
+                return self._idle_name
+        key = self.ACTION_ALIASES.get(raw, raw)
         if key in self.clips:
             return key
         for candidate in (f"{self.host}_{key}", key, f"namira_{key}"):
             if candidate in self.clips:
                 return candidate
-        return "talk_expressive" if "talk_expressive" in self.clips else self._idle_name
+        return self._idle_name
 
     @property
     def idle_clip(self) -> ClipAsset:
@@ -602,11 +689,13 @@ class VideoStateMachine:
         self._scheduled_gesture: Optional[str] = None
         self._post_speech_gesture_active = False
         self._ambient_names = _ambient_gesture_names()
+        self._idle_variants = list(bank.idle_variant_clips())
         self._next_ambient_at = 0.0
         self._schedule_next_ambient()
 
     def _schedule_next_ambient(self) -> None:
-        if not self._ambient_names:
+        # Rotasi idle variant ATAU ambient gesture (jarang)
+        if not self._idle_variants and not self._ambient_names:
             self._next_ambient_at = 0.0
             return
         self._next_ambient_at = time.monotonic() + random.uniform(
@@ -614,16 +703,27 @@ class VideoStateMachine:
         )
 
     def _maybe_queue_ambient_gesture(self) -> None:
-        """Gerakan spontan saat idle — supaya avatar tidak terlihat membeku."""
-        if not self._ambient_names or self._utterance_active or self._playthrough_lock:
+        """Saat diam: ganti idle_2/idle_3 di batas pose (bukan point gesture)."""
+        if self._utterance_active or self._playthrough_lock:
             return
         if self.state != PlayState.IDLE or self._overlap is not None:
             return
-        if time.monotonic() < self._next_ambient_at:
+        if self._next_ambient_at <= 0 or time.monotonic() < self._next_ambient_at:
             return
-        talk = self.bank.resolve_action("talk_expressive")
-        candidates: List[str] = []
+        talk = self.bank.talk_clip_name()
+        candidates = [
+            c
+            for c in self._idle_variants
+            if c in self.bank.clips and c not in (talk, self.current_name)
+        ]
+        # Boleh balik ke idle_1 (primary) supaya tidak stuck di idle_2/3
+        primary = self.bank._idle_name
+        if primary in self.bank.clips and primary != self.current_name:
+            candidates.append(primary)
+        # Fallback legacy ambient point (biasanya off)
         for name in self._ambient_names:
+            if not _is_allowed_gesture(name):
+                continue
             resolved = self.bank.resolve_action(name)
             if resolved in (self.bank._idle_name, talk, self.current_name):
                 continue
@@ -634,23 +734,63 @@ class VideoStateMachine:
             return
         tag = random.choice(candidates)
         self.pending_action = tag
-        print(f"[StateMachine] Ambient gesture → {tag}")
+        print(f"[StateMachine] Ambient idle/gesture → {tag}")
+
+    def reset_after_stop(self) -> None:
+        """Reset state setelah pause/stop — hindari utterance stuck di Go Live berikutnya."""
+        with self._lock:
+            self._utterance_active = False
+            self._utterance_audio_done = False
+            self._post_speech_gesture_active = False
+            self._scheduled_gesture = None
+            self._playthrough_lock = False
+            self._overlap = None
+            self._talk_loop_count = 0
+            self.pending_action = None
+            self._action_queue.clear()
+            self.state = PlayState.IDLE
+            self.current_name = self.bank._idle_name
+            try:
+                self.frame_idx = self.bank.idle_clip.base_pose_frame
+            except Exception:
+                self.frame_idx = 0
+            if self._face_registry:
+                self._face_registry.release_lock()
+            self._schedule_next_ambient()
 
     def set_utterance_gesture(self, tag: Optional[str]) -> None:
-        """Gesture diputar segera setelah audio habis (bukan setelah talk loop end_pose)."""
+        """Gesture diputar segera setelah audio habis (CTA point saja)."""
         with self._lock:
-            if not tag:
-                return
-            key = tag.lower().strip()
-            if key in ("none", "null", "idle", "talk", "talk_expressive"):
+            if not _is_allowed_gesture(tag):
                 return
             self._scheduled_gesture = tag
+            # Decode point clip sekarang (bukan di tick 70%) supaya FrameFetcher tidak hitch.
+            try:
+                resolved = self.bank.resolve_action(tag)
+                clip = self.bank.get_clip(resolved)
+                if clip is not None:
+                    self.bank.ensure_frames(clip)
+            except Exception as err:
+                print(f"[StateMachine] Preload gesture notice: {err}")
 
     def request_action(self, tag: Optional[str]) -> None:
         with self._lock:
-            if not tag or tag.lower() in ("none", "null", "idle", "talk_expressive"):
-                if tag and tag.lower() == "idle":
-                    self._action_queue.append("idle")
+            if not tag:
+                return
+            key = tag.lower().strip().replace("-", "_")
+            if _is_neutral_action(tag):
+                self._action_queue.append(self.bank._idle_name)
+                return
+            # Idle variant switch (idle_2 / idle_3)
+            if _is_idle_clip_name(key):
+                target = self.bank.resolve_action(key)
+                if self._playthrough_lock or self._utterance_active:
+                    self._action_queue.append(target)
+                else:
+                    self.pending_action = target
+                return
+            if not _is_allowed_gesture(tag):
+                print(f"[StateMachine] Gesture diabaikan (bukan CTA point): {tag}")
                 return
             if self._playthrough_lock or self._utterance_active:
                 self._action_queue.append(tag)
@@ -659,7 +799,7 @@ class VideoStateMachine:
             self.pending_action = tag
 
     def begin_utterance(self) -> None:
-        """Lock playthrough; overlap blend idle[-N:] → talk[0:N]."""
+        """Lock playthrough; stay on idle talk body (no idle↔talk_expressive cut)."""
         with self._lock:
             if self._utterance_active:
                 return
@@ -667,7 +807,7 @@ class VideoStateMachine:
             self._utterance_audio_done = False
             self._playthrough_lock = True
             self._talk_loop_count = 0
-            talk = self.bank.resolve_action("talk_expressive")
+            talk = self.bank.talk_clip_name()
             if talk not in self.bank.clips:
                 return
             if self.current_name != talk:
@@ -692,10 +832,24 @@ class VideoStateMachine:
                 self._utterance_audio_done = True
                 self._try_start_post_speech_gesture()
 
+    def try_start_cta_gesture_early(self) -> None:
+        """Mulai POINT saat audio CTA masih jalan (~70%) — jangan set audio_done."""
+        with self._lock:
+            if not self._utterance_active or self._utterance_audio_done:
+                return
+            if self._post_speech_gesture_active or not self._scheduled_gesture:
+                return
+            if not _is_allowed_gesture(self._scheduled_gesture):
+                return
+            self._try_start_post_speech_gesture()
+
     def _try_start_post_speech_gesture(self) -> None:
         if not self._scheduled_gesture or self._post_speech_gesture_active:
             return
-        talk = self.bank.resolve_action("talk_expressive")
+        if not _is_allowed_gesture(self._scheduled_gesture):
+            self._scheduled_gesture = None
+            return
+        talk = self.bank.talk_clip_name()
         target = self.bank.resolve_action(self._scheduled_gesture)
         if target in (talk, self.bank._idle_name):
             self._scheduled_gesture = None
@@ -711,7 +865,7 @@ class VideoStateMachine:
         self._post_speech_gesture_active = True
         self._playthrough_lock = True
         self._scheduled_gesture = None
-        print(f"[StateMachine] Post-speech gesture → {target}")
+        print(f"[StateMachine] Post-speech CTA gesture → {target}")
 
     def at_end_pose(self) -> bool:
         clip = self.bank.get_clip(self.current_name)
@@ -745,7 +899,7 @@ class VideoStateMachine:
             if self._face_registry:
                 self._face_registry.release_lock()
             self._drain_action_queue()
-            talk = self.bank.resolve_action("talk_expressive")
+            talk = self.bank.talk_clip_name()
             if another_utterance_ready and self.current_name == talk:
                 self.pending_action = None
                 self.state = PlayState.TALK
@@ -837,20 +991,22 @@ class VideoStateMachine:
 
         prev_idx = self._wrapped_index(clip, min(self.frame_idx, clip.end_pose))
         idle_name = self.bank._idle_name
-        talk_name = self.bank.resolve_action("talk_expressive")
-        if target == talk_name:
+        talk_name = self.bank.talk_clip_name()
+        if target == talk_name and self._utterance_active:
             new_state = PlayState.TALK
-        elif target in (idle_name, "idle"):
+        elif _is_idle_clip_name(target) or target in (idle_name, "idle"):
             new_state = PlayState.IDLE
         else:
             new_state = PlayState.ACTION
-        lock_face = target == talk_name
+        lock_face = target == talk_name and self._utterance_active
         self._begin_overlap_transition(
             clip, prev_idx, target, new_state, lock_face=lock_face
         )
-        if target not in (idle_name, "idle"):
-            self._playthrough_lock = self.state in (PlayState.ACTION, PlayState.TALK)
-        print(f"[StateMachine] → {target} (overlap={self.overlap_frames}f)")
+        if new_state == PlayState.ACTION:
+            self._playthrough_lock = True
+        else:
+            self._playthrough_lock = False
+        print(f"[StateMachine] → {target} (overlap={self.overlap_frames}f, state={new_state.name})")
         return True
 
     def _advance_frame_index(self, clip: ClipAsset, is_speech: bool) -> None:
@@ -892,8 +1048,8 @@ class VideoStateMachine:
         whisper_idx: Optional[int] = None,
     ) -> RawFramePacket:
         with self._lock:
-            if llm_action and not self._playthrough_lock and not self._utterance_active:
-                self.request_action(llm_action)
+            # Peek gesture disabled — CTA point only via set_utterance_gesture (post-speech).
+            # Avoids starting point before speech then cutting mid-clip.
             self._maybe_queue_ambient_gesture()
 
             clip = self.bank.get_clip(self.current_name)
@@ -920,17 +1076,8 @@ class VideoStateMachine:
                 if clip is None:
                     raise RuntimeError(f"Clip missing: {self.current_name}")
 
-                drive_from_audio = (
-                    self._utterance_active
-                    and self.state == PlayState.TALK
-                    and whisper_idx is not None
-                    and not self._post_speech_gesture_active
-                    and is_speech
-                )
-                if drive_from_audio:
-                    self.frame_idx = _talk_body_index(clip, whisper_idx)
-                    body, cycle_idx = clip.forward_at(self.frame_idx)
-                elif self.state == PlayState.IDLE:
+                # Sequential body during talk (no whisper scrub) — prevents pose teleport.
+                if self.state == PlayState.IDLE:
                     body, cycle_idx = clip.forward_at(self.frame_idx)
                     self._advance_frame_index(clip, is_speech)
                 elif self._utterance_active and self.state == PlayState.TALK:
@@ -987,7 +1134,7 @@ class LipSyncEngine:
         self._infer_cursor = 0
         self._infer_stop = threading.Event()
         self._infer_thread: Optional[threading.Thread] = None
-        self._talk_clip_name = "talk_expressive"
+        self._talk_clip_name = "idle_1"
         self._last_mouth_256: Optional[np.ndarray] = None
         self._prev_composed: Optional[np.ndarray] = None
         self._square_pad = True
@@ -1005,7 +1152,7 @@ class LipSyncEngine:
         self.clear_utterance()
         if job is None or job.whisper_chunks is None:
             return
-        talk = self.bank.resolve_action("talk_expressive")
+        talk = self.bank.talk_clip_name()
         if talk in self.bank.clips:
             self._talk_clip_name = talk
         with self._lock:
@@ -1024,7 +1171,7 @@ class LipSyncEngine:
         self._infer_thread.start()
         print(
             f"[LipSync] Infer {job.task_id}: {int(job.whisper_chunks.shape[0])} frames, "
-            f"batch={self.batch_size}"
+            f"batch={self.batch_size}, body={self._talk_clip_name}"
         )
 
     def wait_preroll(self, n: int = LIPSYNC_PREROLL_FRAMES, timeout: float = 2.0) -> bool:
@@ -1206,6 +1353,13 @@ class LipSyncEngine:
             self._prev_composed = None
             return pkt.frame
 
+        # Jangan overlay mulut talk-materials ke body point_* (early CTA) — hasilnya patah.
+        if pkt.clip_name and pkt.clip_name != self._talk_clip_name and not _is_idle_clip_name(
+            pkt.clip_name
+        ):
+            self._prev_composed = None
+            return pkt.frame
+
         mouth_idx = int(pkt.whisper_idx) + LIPSYNC_SYNC_SHIFT
         with self._lock:
             total = 0 if self._whisper_chunks is None else int(self._whisper_chunks.shape[0])
@@ -1219,7 +1373,11 @@ class LipSyncEngine:
         metrics.inc("lipsync_cache_hit")
 
         talk = self.bank.get_clip(self._talk_clip_name) or clip
-        return self._compose_mouth(pkt.frame, mouth, talk, int(pkt.cycle_idx), pkt.audio_pcm)
+        # Compose memakai material frame body yang tampil (idle talk), bukan clip lain.
+        body_clip = clip if pkt.clip_name == talk.name else talk
+        return self._compose_mouth(
+            pkt.frame, mouth, body_clip, int(pkt.cycle_idx), pkt.audio_pcm
+        )
 
 
 def lipsync_worker_loop(
@@ -1325,6 +1483,12 @@ def frame_fetcher_loop(
         if bridge is not None and bridge.is_utterance_active():
             if is_speech and not was_speaking:
                 sm.begin_utterance()
+            # Early CTA: mulai point di ~70% audio supaya tangan sinkron frasa CTA
+            # (bukan nunggu silence penuh). Hanya untuk point_up/point_down.
+            elif is_speech and not bridge.is_audio_exhausted():
+                act = (bridge.current_action() or "").lower().replace("-", "_")
+                if act in ("point_up", "point_down") and bridge.audio_progress() >= 0.70:
+                    sm.try_start_cta_gesture_early()
             elif not is_speech and was_speaking and bridge.is_audio_exhausted():
                 sm.mark_utterance_audio_done()
             if sm.utterance_visual_complete():
@@ -2062,7 +2226,33 @@ class AIVisualWorker:
             os.chdir(original_cwd)
         return self._models
 
-    def initialize(self) -> None:
+    def initialize(self, *, force: bool = False) -> None:
+        """Load models + assets. Skip jika sudah siap (Go Live kedua tanpa delay panjang)."""
+        bank_stale = (
+            self._bank is None
+            or getattr(self._bank, "assets_dir", None) != self.assets_dir
+            or getattr(self._bank, "host", None) != self.host
+        )
+        if (
+            not force
+            and not bank_stale
+            and self._models is not None
+            and self._sm is not None
+            and self._engine is not None
+        ):
+            print(
+                f"[AIVisualWorker] Already initialized — skip reload "
+                f"(clips={list(self._bank.clips.keys())})"
+            )
+            if self._bridge is not None:
+                self._bridge.set_models(self._models)
+                self._bridge.set_callbacks(
+                    on_start=self._on_utterance_start,
+                    on_end=self._on_utterance_end,
+                    on_ready=self._on_utterance_ready,
+                )
+            return
+
         print(f"[AIVisualWorker] Loading models + assets ({self.fps} FPS target)...")
         models = self._load_models()
         self._bank = AssetBank(self.assets_dir, host=self.host, models_bundle=models)
@@ -2184,6 +2374,14 @@ class AIVisualWorker:
         if self._running:
             return
 
+        if any(t.is_alive() for t in self._threads):
+            raise RuntimeError(
+                "Pipeline lama masih berhenti — tunggu lalu coba lagi, atau restart api_server."
+            )
+
+        # Event baru agar thread zombie (jika ada) tidak hidup lagi saat clear.
+        self._stop = threading.Event()
+
         self._broadcaster = None
         self._rtmp_connected = False
         if self.rtmp_url:
@@ -2212,7 +2410,6 @@ class AIVisualWorker:
 
         bridge_ref = self._bridge
         broadcaster_ref = self._broadcaster
-        self._stop.clear()
         self._threads = [
             threading.Thread(
                 target=frame_fetcher_loop,
@@ -2268,16 +2465,31 @@ class AIVisualWorker:
         self._stop.set()
         if self._engine:
             self._engine.clear_utterance()
-        # Tunggu thread Broadcaster selesai loop sebelum tutup pipe FFmpeg.
         for t in self._threads:
-            t.join(timeout=2.0)
-        self._threads.clear()
+            t.join(timeout=5.0)
+        alive = [t.name for t in self._threads if t.is_alive()]
+        if alive:
+            print(f"[AIVisualWorker] WARNING thread masih hidup: {alive}")
+        self._threads = [t for t in self._threads if t.is_alive()]
         if self._broadcaster is not None:
             try:
                 self._broadcaster.shutdown()
             except Exception:
                 pass
             self._broadcaster = None
+
+        for q in (self._raw_q, self._render_q):
+            while True:
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    break
+
+        if self._sm is not None:
+            self._sm.reset_after_stop()
+        if self._bridge is not None:
+            self._bridge.clear_pending()
+
         self._running = False
         self._pipeline_active = False
         self._rtmp_connected = False
@@ -2346,12 +2558,19 @@ def start_visual_broadcast(
     return vw
 
 
-def stop_visual_broadcast() -> None:
+def stop_visual_broadcast(*, destroy: bool = True) -> None:
+    """Stop pipeline/RTMP. destroy=False menjaga model di memori (Go Live ulang cepat)."""
     global _visual_worker_singleton
     with _visual_lock:
         if _visual_worker_singleton is not None:
             _visual_worker_singleton.stop()
-            _visual_worker_singleton = None
+            if destroy:
+                _visual_worker_singleton = None
+
+
+def pause_visual_broadcast() -> None:
+    """Stop RTMP/threads saja — model + AssetBank tetap hangat."""
+    stop_visual_broadcast(destroy=False)
 
 
 # ---------------------------------------------------------------------------

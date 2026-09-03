@@ -1,0 +1,5 @@
+{
+  "base_pose_frame": 0,
+  "end_pose_frame": 233,
+  "comment": "idle_1 = primary talk/idle (menjelaskan). end=233 paling dekat rest frame 0 (MSE~23). Ideal: re-export frame0==last."
+}

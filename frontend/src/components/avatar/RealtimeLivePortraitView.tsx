@@ -28,7 +28,7 @@ export default function RealtimeLivePortraitView({
 }: RealtimeLivePortraitViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  const resolvedFillerSrc = "/avatars/namira_idle.mp4";
+  const resolvedFillerSrc = "/avatars/namira_idle_1.mp4";
 
   const resolvedImageSrc =
     mode === "video_ads"

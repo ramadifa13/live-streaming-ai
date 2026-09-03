@@ -14,6 +14,12 @@ backend/dist/
 *.db-journal
 dev.db
 
+# MuseTalk: di-clone + download model HANYA di RunPod via setup.sh.
+# Local Windows biasanya tanpa GPU — jangan commit repo/weights besar.
+MuseTalk/
+deploy/MuseTalk/
+**/MuseTalk/models/
+
 # Python AI Model weights & temp videos
 deploy/SadTalker/
 deploy/live_videos/*.mp4

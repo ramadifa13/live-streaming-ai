@@ -1,0 +1,5 @@
+{
+  "base_pose_frame": 0,
+  "end_pose_frame": 237,
+  "comment": "idle_3 = variasi idle. Start cocok idle_1; loop masih lemah (MSE tinggi) — re-export rest akhir sangat disarankan."
+}

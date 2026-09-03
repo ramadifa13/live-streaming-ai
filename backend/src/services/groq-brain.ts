@@ -228,15 +228,20 @@ export type HostIntent =
 
 export const LunaActionEnum = z.enum([
   "IDLE",
-  "TALK_EXPRESSIVE",
-  "NOD",
-  "LAUGH",
   "POINT_UP",
   "POINT_DOWN",
-  "WAVE",
-  "THINK",
 ]);
 export type LunaAction = z.infer<typeof LunaActionEnum>;
+
+/** Map legacy / LLM noise → idle | CTA point only. */
+export function normalizeLunaAction(action: unknown): LunaAction {
+  const raw = String(action || "IDLE")
+    .toUpperCase()
+    .replace(/[^A-Z_]/g, "");
+  if (raw === "POINT_UP") return "POINT_UP";
+  if (raw === "POINT_DOWN") return "POINT_DOWN";
+  return "IDLE";
+}
 
 export const LunaEmotionEnum = z.enum(["happy", "neutral", "surprised", "thinking", "warm", "excited", "empathetic"]);
 export type LunaEmotion = z.infer<typeof LunaEmotionEnum>;
@@ -270,7 +275,7 @@ export const HostIntentEnum = z.enum([
 
 export const HostResponseSchema = z.object({
   speech: z.string().min(3),
-  action: LunaActionEnum,
+  action: z.preprocess((v) => normalizeLunaAction(v), LunaActionEnum),
   emotion: LunaEmotionEnum,
   intent: HostIntentEnum,
   mode: HostModeEnum,
@@ -281,6 +286,92 @@ export const HostResponseSchema = z.object({
   claims: z.array(z.string()).default([]),
 });
 export type HostResponse = z.infer<typeof HostResponseSchema>;
+
+/** Heuristic: point only for banner (up) or checkout/cek dulu (down). */
+export function inferCtaPointAction(speech: string, topic?: string): LunaAction {
+  const s = `${speech || ""} ${topic || ""}`.toLowerCase();
+  if (
+    /\b(banner|di atas|atas layar|header|highlight di atas|cek (yang )?di atas)\b/.test(s)
+  ) {
+    return "POINT_UP";
+  }
+  if (
+    /\b(checkout|check ?out|keranjang|cek dulu|klik beli|beli sekarang|order sekarang|langsung beli|masukkan keranjang)\b/.test(
+      s,
+    )
+  ) {
+    return "POINT_DOWN";
+  }
+  return "IDLE";
+}
+
+export type SpeechGestureSegment = { text: string; action: LunaAction };
+
+const POINT_UP_RE =
+  /\b(banner|di atas|atas layar|header|highlight|cek (yang )?di atas)\b/i;
+const POINT_DOWN_RE =
+  /\b(checkout|check ?out|keranjang|cek dulu|klik beli|beli sekarang|order sekarang|langsung beli|masukkan keranjang|cek di bawah|banner bawah)\b/i;
+
+function splitSpeechClauses(speech: string): string[] {
+  const raw = speech
+    .replace(/[()（）]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!raw) return [];
+  const parts = raw
+    .split(/(?<=[.!?…,;]| lalu | terus | terus, | dan )|\n+/)
+    .map((p) => p.trim())
+    .filter((p) => p.length >= 3);
+  return parts.length ? parts : [raw];
+}
+
+function clauseMatchesPoint(clause: string, action: LunaAction): boolean {
+  if (action === "POINT_UP") return POINT_UP_RE.test(clause);
+  if (action === "POINT_DOWN") return POINT_DOWN_RE.test(clause);
+  return false;
+}
+
+/**
+ * Pecah satu baris host jadi segmen pendek supaya gesture CTA
+ * menempel ke frasa yang relevan (awal/tengah/akhir), bukan menunggu
+ * seluruh audio panjang selesai.
+ *
+ * IDLE → 1 segmen. POINT_* → before (idle) + CTA (point) + after (idle).
+ */
+export function splitSpeechIntoGestureSegments(
+  speech: string,
+  action: unknown,
+): SpeechGestureSegment[] {
+  const clean = String(speech || "")
+    .replace(/^\s*\[[A-Z_]+\]\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean) return [];
+
+  const act = normalizeLunaAction(action);
+  if (act === "IDLE") return [{ text: clean, action: "IDLE" }];
+
+  const clauses = splitSpeechClauses(clean);
+  if (clauses.length <= 1) {
+    return [{ text: clean, action: act }];
+  }
+
+  let ctaIdx = clauses.findIndex((c) => clauseMatchesPoint(c, act));
+  if (ctaIdx < 0) {
+    // Tidak ketemu kata CTA: taruh point di klausa terakhir (biasanya CTA).
+    ctaIdx = clauses.length - 1;
+  }
+
+  const before = clauses.slice(0, ctaIdx).join(" ").trim();
+  const cta = (clauses[ctaIdx] || "").trim();
+  const after = clauses.slice(ctaIdx + 1).join(" ").trim();
+
+  const out: SpeechGestureSegment[] = [];
+  if (before) out.push({ text: before, action: "IDLE" });
+  if (cta) out.push({ text: cta, action: act });
+  if (after) out.push({ text: after, action: "IDLE" });
+  return out.length ? out : [{ text: clean, action: act }];
+}
 
 export interface SalesBrainOutput {
   replyText: string;
@@ -446,24 +537,11 @@ function hasHighPhraseOverlap(text: string, previous: string[]): boolean {
 
 function extractActionTag(text: string): { speech: string; action: LunaAction } {
     const match = text.match(/^\s*\[([A-Z_]+)\]\s*/i);
-    if (!match) return { speech: text.trim(), action: "TALK_EXPRESSIVE" };
+    if (!match) return { speech: text.trim(), action: "IDLE" };
     const tag = String(match[1]).toUpperCase();
-    const mapping: Record<string, LunaAction> = {
-      IDLE: "IDLE",
-      TALK_EXPRESSIVE: "TALK_EXPRESSIVE",
-      NOD: "NOD",
-      LAUGH: "LAUGH",
-      POINT_UP: "POINT_UP",
-      POINT_DOWN: "POINT_DOWN",
-      RAISE_HAND: "WAVE",
-      WAVE: "WAVE",
-      EXCITED: "TALK_EXPRESSIVE",
-      SMILE: "NOD",
-      THINK: "THINK",
-    };
     return {
       speech: text.slice(match[0].length).trim(),
-      action: mapping[tag] || "TALK_EXPRESSIVE",
+      action: normalizeLunaAction(tag),
     };
   }
 
@@ -564,21 +642,22 @@ ANTI-LOOP:
 - Jangan menyebut benefit yang baru saja disebut kecuali komentar memang menanyakannya lagi.
 - Jangan menggunakan struktur kalimat yang sama seperti 1–2 respons terakhir.
 
-GERAKAN AVATAR (action) — pakai gesture supaya host terasa hidup:
-- TALK_EXPRESSIVE: default bicara (paling sering, ~50%).
-- WAVE: sapaan / welcome / "halo kak".
-- NOD: setuju, "betul kak", "iya benar".
-- LAUGH: candaan / ketawa.
-- POINT_UP / POINT_DOWN: tunjuk harga, promo, stok.
-- THINK: ragu, "hmm", sedang pikir.
-- IDLE: jangan untuk kalimat yang diucapkan.
-Variasikan. Jangan WAVE atau POINT setiap kalimat berturut-turut.
+GERAKAN AVATAR (action) — hemat & bermakna (hanya 3 pilihan):
+- IDLE: default hampir semua ucapan (sapaan, QnA, penjelasan produk, candaan). Body tetap idle + mulut bergerak.
+- POINT_UP: HANYA saat mengajak penonton melihat / cek sesuatu di ATAS layar (banner, highlight, info di header live).
+- POINT_DOWN: HANYA saat mengajak checkout / keranjang / "cek dulu" / beli di bawah.
+Saat pakai POINT: tulis 2 klausa jelas — frasa CTA singkat dulu/di tengah, lalu penjelasan. Contoh:
+  "Kakak bisa cek banner di atas ya. Di sana lagi ada diskon."
+  "Langsung checkout di keranjang ya, stok live terbatas."
+Sistem akan memutar gesture tepat di frasa CTA, bukan di akhir seluruh kalimat panjang.
+JANGAN pakai POINT untuk sapaan / penjelasan biasa. JANGAN POINT setiap kalimat.
+Action lama (TALK_EXPRESSIVE/WAVE/NOD/LAUGH/THINK) sudah dihapus — jangan keluarkan.
 
 OUTPUT:
 Kembalikan SATU JSON murni, tanpa markdown, dengan schema:
 {
   "speech": "kalimat yang benar-benar diucapkan host",
-  "action": "IDLE|TALK_EXPRESSIVE|NOD|LAUGH|POINT_UP|POINT_DOWN|WAVE|THINK",
+  "action": "IDLE|POINT_UP|POINT_DOWN",
   "emotion": "happy|neutral|surprised|thinking|warm|excited|empathetic",
   "intent": "ANSWER|PRODUCT_INFO|PRICE|BUYING_INTENT|OBJECTION|SOCIAL|THANKS|COMPLAINT|ANNOUNCEMENT|SELL|SPAM|OTHER",
   "mode": "ENGAGE|SELL|QNA|DEMO|OBJECTION|SOCIAL|ANNOUNCEMENT|RECOVERY|CLOSING",
@@ -850,7 +929,7 @@ function fallbackResponse(input: SalesBrainInput): HostResponse {
   const candidates: HostResponse[] = [
     {
       speech: `Aku tangkep pertanyaannya... soal ${product}, ${benefits.split(/[.!?]/)[0] || "detail produknya"}. Untuk harga saat ini, patokannya ${price}; detail yang belum tertulis di data produk jangan aku tebak-tebak ya.`,
-      action: "THINK",
+      action: "IDLE",
       emotion: "thinking",
       intent,
       mode: "QNA",
@@ -862,7 +941,7 @@ function fallbackResponse(input: SalesBrainInput): HostResponse {
     },
     {
       speech: `Yang ini enaknya memang dilihat dari kebutuhannya dulu... kalau kamu lagi cari ${product}, bagian yang paling menonjol itu ${benefits.split(/[.!?]/)[0] || "fiturnya"}. Jadi jangan sekadar ikut ramai, pilih yang memang kepakai buat kamu.`,
-      action: "TALK_EXPRESSIVE",
+      action: "IDLE",
       emotion: "warm",
       intent: intent === "SOCIAL" ? "PRODUCT_INFO" : intent,
       mode: "ENGAGE",
@@ -874,7 +953,7 @@ function fallbackResponse(input: SalesBrainInput): HostResponse {
     },
     {
       speech: `Oke, aku jawab dari info yang memang kita punya ya... ${product} harganya ${price}. Kalau pertanyaannya soal kecocokan atau detail spesifik, kasih konteks sedikit biar aku jawabnya tepat, bukan asal nebak.`,
-      action: "NOD",
+      action: "IDLE",
       emotion: "empathetic",
       intent: "ANSWER",
       mode: "QNA",
@@ -895,6 +974,9 @@ function selectSafeParsedResponse(parsed: unknown, input: SalesBrainInput): Host
   if (!validated.success) return null;
 
   const response = validated.data;
+  if (response.action === "IDLE") {
+    response.action = inferCtaPointAction(response.speech, response.topic);
+  }
   const knownProductIds = new Set([...(input.allProducts || []).map((p) => String(p.id))]);
   if (response.target_product_id && knownProductIds.size > 0 && !knownProductIds.has(response.target_product_id)) {
     response.target_product_id = null;
@@ -1035,7 +1117,7 @@ LARANG frasa kaku berulang: "dari data produk", "yang tertulis", "aku nggak neba
 Jangan mengarang fakta. Campur topik: benefit, how_to_use, value, social, objection, micro_tip, reframe, use_case, promo_pitch, filler.
 Setiap baris harus beda angle/pembuka — jangan parafrase ulang baris sebelumnya.
 Kembalikan JSON murni:
-{"lines":[{ "speech":"", "action":"TALK_EXPRESSIVE", "emotion":"warm", "intent":"SELL", "mode":"ENGAGE", "topic":"", "ctaType":"NONE", "target_product_id":null, "interruptible":true, "claims":[] }]}`;
+{"lines":[{ "speech":"", "action":"IDLE", "emotion":"warm", "intent":"SELL", "mode":"ENGAGE", "topic":"", "ctaType":"NONE", "target_product_id":null, "interruptible":true, "claims":[] }]}`;
 
   try {
     const result = await callBrain(prompt, {
@@ -1314,7 +1396,7 @@ ${factsBase.hasBanner ? 'Sertakan 1 baris topic "banner_callout".' : "Jangan seb
         const meta = mapTopicMode(topic);
         llmLines.push({
           speech,
-          action: "TALK_EXPRESSIVE",
+          action: inferCtaPointAction(speech, meta.topic),
           emotion: "warm",
           intent: (meta.intent as HostIntent) || "SELL",
           mode: meta.mode,
@@ -1334,9 +1416,10 @@ ${factsBase.hasBanner ? 'Sertakan 1 baris topic "banner_callout".' : "Jangan seb
       for (const speech of data.fallback?.troll || []) pushSpeech(speech, "deflection");
       for (const item of data.lines || []) {
         const meta = mapTopicMode(item.topic || "benefit");
+        const fromItem = normalizeLunaAction(item.action);
         llmLines.push({
           speech: item.speech,
-          action: "TALK_EXPRESSIVE",
+          action: fromItem !== "IDLE" ? fromItem : inferCtaPointAction(item.speech, meta.topic),
           emotion: (item.emotion as any) || "warm",
           intent: (item.intent as HostIntent) || meta.intent || "SELL",
           mode: (item.mode as HostMode) || meta.mode,
@@ -1372,7 +1455,7 @@ Kembalikan JSON murni: {"lines":[{ "speech":"", "topic":"", "mode":"ENGAGE|SELL|
             const meta = mapTopicMode(row.topic || "benefit");
             llmLines.push({
               speech: row.speech,
-              action: "TALK_EXPRESSIVE",
+              action: inferCtaPointAction(row.speech, meta.topic),
               emotion: (row.emotion as any) || "warm",
               intent: (row.intent as HostIntent) || meta.intent || "SELL",
               mode: (row.mode as HostMode) || meta.mode,
@@ -1596,14 +1679,14 @@ export async function generateLunaResponse(
     });
     return {
       speech: result.replyText,
-      action: (result.action as LunaAction) || "TALK_EXPRESSIVE",
+      action: normalizeLunaAction(result.action),
       emotion: "warm",
       target_product_id: product?.id || null,
     };
   } catch {
     return {
       speech: `Aku lihat komentarnya... ${product ? `Untuk ${product.name}, ` : ""}aku jawab dari info yang memang tersedia ya.`,
-      action: "THINK",
+      action: "IDLE",
       emotion: "thinking",
       target_product_id: product?.id || null,
     };

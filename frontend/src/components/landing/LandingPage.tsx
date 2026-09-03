@@ -141,7 +141,7 @@ function DashboardMockup() {
           <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">Preview</p>
           <div className="relative mb-3 aspect-[3/4] overflow-hidden rounded-xl border border-[#333]">
             <Image
-              src="/avatars/namira.jpg"
+              src="/avatars/namira.png"
               alt="Avatar preview"
               fill
               unoptimized

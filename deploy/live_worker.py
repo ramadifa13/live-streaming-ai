@@ -205,9 +205,9 @@ class AILiveWorker:
                 for f in os.listdir(target_dir)
                 if f.endswith(".mp4") and not f.startswith("temp_")
             ]
-            talk_clips = [f for f in files if "talk_expressive" in f.lower()]
-            # Hanya cache clip lipsync. Precache semua gesture bisa OOM / force-close.
-            for f in talk_clips or files[:1]:
+            idle_clips = [f for f in files if "idle" in f.lower()]
+            # Precache idle saja (MuseTalk GPU-heavy). Jangan warmup semua gesture.
+            for f in idle_clips[:1] or files[:1]:
                 video_path = os.path.join(target_dir, f)
                 try:
                     _get_avatar_materials(
@@ -247,14 +247,9 @@ class AILiveWorker:
 
         gesture_tokens = (
             "wave",
-            "nod",
-            "laugh",
             "point_up",
             "point_down",
             "idle",
-            "think",
-            "talk_expressive",
-            "expressive",
         )
         is_specific_clip = any(
             clean_name == token or clean_name.endswith("_" + token)
@@ -262,15 +257,11 @@ class AILiveWorker:
         )
         if is_specific_clip:
             exact_names = [f"{clean_name}.mp4"]
-        elif not clean_name.endswith("_talk_expressive"):
-            # Host "namira" → utamakan idle untuk lookup generik, lalu talk.
+        else:
             exact_names = [
                 f"{clean_name}_idle.mp4",
-                f"{clean_name}_talk_expressive.mp4",
                 f"{clean_name}.mp4",
             ]
-        else:
-            exact_names = [f"{clean_name}.mp4", f"{clean_name}_idle.mp4"]
         for d in candidate_dirs:
             if not os.path.exists(d):
                 continue
@@ -299,7 +290,6 @@ class AILiveWorker:
                 continue
             for fallback in (
                 "namira_idle.mp4",
-                "namira_talk_expressive.mp4",
                 "namira.mp4",
             ):
                 p = os.path.join(d, fallback)
@@ -318,24 +308,17 @@ class AILiveWorker:
         return None
 
     def _resolve_action_clip(self, host_type, host_name, action_tag):
-        """Pilih clip gesture sesuai action. Fallback ke talk_expressive bila file tidak ada.
-
-        Canvas 720x1280 (pad, bukan crop) menahan lonjakan resolusi antar clip.
-        """
+        """Pilih clip gesture. Runtime CTA: point_up/point_down; selain itu idle."""
         host = (host_name or "namira").lower().strip()
-        action = (action_tag or "talk_expressive").lower().strip().replace("-", "_")
+        action = (action_tag or "idle").lower().strip().replace("-", "_")
+        if action in ("talk", "talk_expressive", "expressive", "wave", "raise_hand", "nod", "laugh", "think"):
+            action = "idle"
         aliases = {
-            "talk_expressive": ["talk_expressive", "expressive"],
             "idle": ["idle"],
-            "wave": ["wave", "raise_hand"],
-            "raise_hand": ["wave", "raise_hand"],
-            "nod": ["nod"],
-            "laugh": ["laugh"],
             "point_up": ["point_up"],
             "point_down": ["point_down"],
-            "think": ["think", "nod"],
         }
-        variants = aliases.get(action, [action])
+        variants = aliases.get(action, ["idle"])
         candidates = []
         for variant in variants:
             candidates.extend(
@@ -345,9 +328,6 @@ class AILiveWorker:
                     f"namira_{variant}",
                 ]
             )
-        if action not in ("idle", "talk_expressive"):
-            candidates.append(f"{host}_talk_expressive")
-            candidates.append("namira_talk_expressive")
         candidates.append(f"{host}_idle")
         candidates.append("namira_idle")
         candidates.append(host)
@@ -385,8 +365,8 @@ class AILiveWorker:
         if match:
             action_tag = match.group(1).lower()
             text_answer = re.sub(r"\[[A-Z_]+\]", "", text_answer).strip()
-        if not action_tag or action_tag in ("none", "null"):
-            action_tag = "talk_expressive"
+        if not action_tag or action_tag in ("none", "null", "talk", "talk_expressive"):
+            action_tag = "idle"
 
         print(
             f"\n[MEMPROSES] {task_id} | Host: {host_name} ({host_type.upper()}) | Action: {action_tag}"

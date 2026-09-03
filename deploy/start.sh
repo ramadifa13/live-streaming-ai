@@ -15,7 +15,7 @@ elif [ -f "$SCRIPT_DIR/api_server.py" ]; then
 else
 	echo "[ERROR] Worker belum disiapkan."
 	echo "        Jalankan setup terlebih dahulu:"
-	echo "          cd /workspace/live-streaming-ai/deploy && bash setup-safe.sh"
+	echo "          cd /workspace/live-streaming-ai/deploy && bash setup.sh"
 	exit 1
 fi
 
@@ -25,7 +25,7 @@ if [ ! -f "$WORKER_DIR/.setup_complete" ]; then
 		date -Iseconds > "$WORKER_DIR/.setup_complete" 2>/dev/null || true
 	else
 		echo "[ERROR] Setup belum selesai (file .setup_complete tidak ditemukan)."
-		echo "        Jalankan: cd /workspace/live-streaming-ai/deploy && bash setup-safe.sh"
+		echo "        Jalankan: cd /workspace/live-streaming-ai/deploy && bash setup.sh"
 		exit 1
 	fi
 fi
@@ -47,9 +47,12 @@ fi
 
 REPO_DIR="${REPO_DIR:-/workspace/live-streaming-ai}"
 DEPLOY_DIR="${DEPLOY_DIR:-$REPO_DIR/deploy}"
-SYNC_SCRIPT="${SYNC_SCRIPT:-$DEPLOY_DIR/sync-worker.sh}"
+SYNC_SCRIPT="${SYNC_SCRIPT:-$DEPLOY_DIR/sync.sh}"
+if [ ! -f "$SYNC_SCRIPT" ] && [ -f "$DEPLOY_DIR/sync-worker.sh" ]; then
+	SYNC_SCRIPT="$DEPLOY_DIR/sync-worker.sh"
+fi
 if [ -f "$SYNC_SCRIPT" ]; then
-	# shellcheck source=sync-worker.sh
+	# shellcheck source=sync.sh
 	source "$SYNC_SCRIPT"
 	bootstrap_worker_env
 fi
@@ -150,7 +153,7 @@ if [ -f "$WORKER_DIR/env/bin/python" ]; then
 else
 	echo "[ERROR] Python venv tidak ditemukan di $WORKER_DIR/env"
 	echo "        Jalankan setup terlebih dahulu:"
-	echo "          cd $DEPLOY_DIR && export HF_TOKEN=hf_... && bash setup-safe.sh"
+	echo "          cd $DEPLOY_DIR && export HF_TOKEN=hf_... && bash setup.sh"
 	exit 1
 fi
 
