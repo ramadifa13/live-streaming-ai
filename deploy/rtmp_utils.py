@@ -53,7 +53,7 @@ USER_HINT_CONNECTING_SLOW = (
 USER_HINT_DNS = (
     "Pod GPU tidak bisa resolve hostname Instagram (DNS gagal). "
     "Di terminal pod: perbaiki /etc/resolv.conf (8.8.8.8, 1.1.1.1), "
-    "lalu redeploy-worker.sh dan gunakan Stream Key baru."
+    "lalu bash deploy/sync.sh --pull --restart dan gunakan Stream Key baru."
 )
 USER_HINT_FFMPEG = (
     "FFmpeg tidak bisa start encoder RTMP — cek ai_worker_rtmp.log di pod."

@@ -208,6 +208,19 @@ sync_worker_files() {
 	if [ -f "$DEPLOY_DIR/requirements-worker.txt" ]; then
 		cp -f "$DEPLOY_DIR/requirements-worker.txt" "$WORKER_DIR/requirements-worker.txt" 2>/dev/null || true
 	fi
+
+	# Piper TTS — salin ke /workspace/piper_tts (JANGAN ke MuseTalk env)
+	if [ -d "$DEPLOY_DIR/piper_tts" ]; then
+		PIPER_DIR="${PIPER_DIR:-/workspace/piper_tts}"
+		mkdir -p "$PIPER_DIR" "$PIPER_DIR/models" "$PIPER_DIR/logs"
+		cp -f "$DEPLOY_DIR/piper_tts/server.py" "$PIPER_DIR/server.py" 2>/dev/null || true
+		cp -f "$DEPLOY_DIR/piper_tts/requirements.txt" "$PIPER_DIR/requirements.txt" 2>/dev/null || true
+		cp -f "$DEPLOY_DIR/piper_tts/setup.sh" "$PIPER_DIR/setup.sh" 2>/dev/null || true
+		cp -f "$DEPLOY_DIR/piper_tts/start.sh" "$PIPER_DIR/start.sh" 2>/dev/null || true
+		sed -i 's/\r$//' "$PIPER_DIR"/*.sh 2>/dev/null || true
+		chmod +x "$PIPER_DIR"/*.sh 2>/dev/null || true
+		echo "[SYNC] Piper TTS scripts → $PIPER_DIR"
+	fi
 	if [ -f "$DEPLOY_DIR/.env.example" ]; then
 		cp -f "$DEPLOY_DIR/.env.example" "$WORKER_DIR/.env.example" 2>/dev/null || true
 	fi

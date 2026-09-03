@@ -228,18 +228,14 @@ export type HostIntent =
 
 export const LunaActionEnum = z.enum([
   "IDLE",
+  // Kept for schema/LLM noise; normalizeLunaAction always maps → IDLE (point CTA off).
   "POINT_UP",
   "POINT_DOWN",
 ]);
 export type LunaAction = z.infer<typeof LunaActionEnum>;
 
-/** Map legacy / LLM noise → idle | CTA point only. */
-export function normalizeLunaAction(action: unknown): LunaAction {
-  const raw = String(action || "IDLE")
-    .toUpperCase()
-    .replace(/[^A-Z_]/g, "");
-  if (raw === "POINT_UP") return "POINT_UP";
-  if (raw === "POINT_DOWN") return "POINT_DOWN";
+/** All actions → IDLE while multi-idle-only. Point CTA re-enable later. */
+export function normalizeLunaAction(_action: unknown): LunaAction {
   return "IDLE";
 }
 
@@ -287,90 +283,27 @@ export const HostResponseSchema = z.object({
 });
 export type HostResponse = z.infer<typeof HostResponseSchema>;
 
-/** Heuristic: point only for banner (up) or checkout/cek dulu (down). */
-export function inferCtaPointAction(speech: string, topic?: string): LunaAction {
-  const s = `${speech || ""} ${topic || ""}`.toLowerCase();
-  if (
-    /\b(banner|di atas|atas layar|header|highlight di atas|cek (yang )?di atas)\b/.test(s)
-  ) {
-    return "POINT_UP";
-  }
-  if (
-    /\b(checkout|check ?out|keranjang|cek dulu|klik beli|beli sekarang|order sekarang|langsung beli|masukkan keranjang)\b/.test(
-      s,
-    )
-  ) {
-    return "POINT_DOWN";
-  }
+/** Point CTA off — always IDLE. Re-enable heuristic when point assets return. */
+export function inferCtaPointAction(_speech: string, _topic?: string): LunaAction {
   return "IDLE";
 }
 
 export type SpeechGestureSegment = { text: string; action: LunaAction };
 
-const POINT_UP_RE =
-  /\b(banner|di atas|atas layar|header|highlight|cek (yang )?di atas)\b/i;
-const POINT_DOWN_RE =
-  /\b(checkout|check ?out|keranjang|cek dulu|klik beli|beli sekarang|order sekarang|langsung beli|masukkan keranjang|cek di bawah|banner bawah)\b/i;
-
-function splitSpeechClauses(speech: string): string[] {
-  const raw = speech
-    .replace(/[()（）]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!raw) return [];
-  const parts = raw
-    .split(/(?<=[.!?…,;]| lalu | terus | terus, | dan )|\n+/)
-    .map((p) => p.trim())
-    .filter((p) => p.length >= 3);
-  return parts.length ? parts : [raw];
-}
-
-function clauseMatchesPoint(clause: string, action: LunaAction): boolean {
-  if (action === "POINT_UP") return POINT_UP_RE.test(clause);
-  if (action === "POINT_DOWN") return POINT_DOWN_RE.test(clause);
-  return false;
-}
-
 /**
- * Pecah satu baris host jadi segmen pendek supaya gesture CTA
- * menempel ke frasa yang relevan (awal/tengah/akhir), bukan menunggu
- * seluruh audio panjang selesai.
- *
- * IDLE → 1 segmen. POINT_* → before (idle) + CTA (point) + after (idle).
+ * Saat point off: selalu 1 segmen IDLE.
+ * (API tetap ada supaya orchestrator tidak pecah saat CTA diaktifkan lagi.)
  */
 export function splitSpeechIntoGestureSegments(
   speech: string,
-  action: unknown,
+  _action: unknown,
 ): SpeechGestureSegment[] {
   const clean = String(speech || "")
     .replace(/^\s*\[[A-Z_]+\]\s*/i, "")
     .replace(/\s+/g, " ")
     .trim();
   if (!clean) return [];
-
-  const act = normalizeLunaAction(action);
-  if (act === "IDLE") return [{ text: clean, action: "IDLE" }];
-
-  const clauses = splitSpeechClauses(clean);
-  if (clauses.length <= 1) {
-    return [{ text: clean, action: act }];
-  }
-
-  let ctaIdx = clauses.findIndex((c) => clauseMatchesPoint(c, act));
-  if (ctaIdx < 0) {
-    // Tidak ketemu kata CTA: taruh point di klausa terakhir (biasanya CTA).
-    ctaIdx = clauses.length - 1;
-  }
-
-  const before = clauses.slice(0, ctaIdx).join(" ").trim();
-  const cta = (clauses[ctaIdx] || "").trim();
-  const after = clauses.slice(ctaIdx + 1).join(" ").trim();
-
-  const out: SpeechGestureSegment[] = [];
-  if (before) out.push({ text: before, action: "IDLE" });
-  if (cta) out.push({ text: cta, action: act });
-  if (after) out.push({ text: after, action: "IDLE" });
-  return out.length ? out : [{ text: clean, action: act }];
+  return [{ text: clean, action: "IDLE" }];
 }
 
 export interface SalesBrainOutput {
@@ -642,22 +575,16 @@ ANTI-LOOP:
 - Jangan menyebut benefit yang baru saja disebut kecuali komentar memang menanyakannya lagi.
 - Jangan menggunakan struktur kalimat yang sama seperti 1–2 respons terakhir.
 
-GERAKAN AVATAR (action) — hemat & bermakna (hanya 3 pilihan):
-- IDLE: default hampir semua ucapan (sapaan, QnA, penjelasan produk, candaan). Body tetap idle + mulut bergerak.
-- POINT_UP: HANYA saat mengajak penonton melihat / cek sesuatu di ATAS layar (banner, highlight, info di header live).
-- POINT_DOWN: HANYA saat mengajak checkout / keranjang / "cek dulu" / beli di bawah.
-Saat pakai POINT: tulis 2 klausa jelas — frasa CTA singkat dulu/di tengah, lalu penjelasan. Contoh:
-  "Kakak bisa cek banner di atas ya. Di sana lagi ada diskon."
-  "Langsung checkout di keranjang ya, stok live terbatas."
-Sistem akan memutar gesture tepat di frasa CTA, bukan di akhir seluruh kalimat panjang.
-JANGAN pakai POINT untuk sapaan / penjelasan biasa. JANGAN POINT setiap kalimat.
+GERAKAN AVATAR (action):
+- Hanya IDLE untuk sekarang. Body = multi-idle di worker (idle_1 rest saat bicara; idle_2/3 rotasi saat diam).
+- POINT_UP / POINT_DOWN ditunda — jangan keluarkan (akan di-normalize ke IDLE).
 Action lama (TALK_EXPRESSIVE/WAVE/NOD/LAUGH/THINK) sudah dihapus — jangan keluarkan.
 
 OUTPUT:
 Kembalikan SATU JSON murni, tanpa markdown, dengan schema:
 {
   "speech": "kalimat yang benar-benar diucapkan host",
-  "action": "IDLE|POINT_UP|POINT_DOWN",
+  "action": "IDLE",
   "emotion": "happy|neutral|surprised|thinking|warm|excited|empathetic",
   "intent": "ANSWER|PRODUCT_INFO|PRICE|BUYING_INTENT|OBJECTION|SOCIAL|THANKS|COMPLAINT|ANNOUNCEMENT|SELL|SPAM|OTHER",
   "mode": "ENGAGE|SELL|QNA|DEMO|OBJECTION|SOCIAL|ANNOUNCEMENT|RECOVERY|CLOSING",
@@ -974,9 +901,8 @@ function selectSafeParsedResponse(parsed: unknown, input: SalesBrainInput): Host
   if (!validated.success) return null;
 
   const response = validated.data;
-  if (response.action === "IDLE") {
-    response.action = inferCtaPointAction(response.speech, response.topic);
-  }
+  // Point CTA off — action selalu IDLE (normalize sudah memaksa).
+  response.action = "IDLE";
   const knownProductIds = new Set([...(input.allProducts || []).map((p) => String(p.id))]);
   if (response.target_product_id && knownProductIds.size > 0 && !knownProductIds.has(response.target_product_id)) {
     response.target_product_id = null;

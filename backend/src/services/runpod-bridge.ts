@@ -484,6 +484,7 @@ export async function forwardToRunPodGPU(
           avatarName,
           tone: params.tone,
           speed: params.speed,
+          podId,
         });
         if (ttsRes.success && ttsRes.audioBuffer) {
           audioBase64 = ttsRes.audioBuffer.toString("base64");

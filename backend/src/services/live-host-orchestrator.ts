@@ -125,6 +125,8 @@ export interface PendingComment {
   priority: number;
   intent: HostIntent;
   dedupeKey: string;
+  /** Berapa kali sudah dicoba dijawab (anti-drop setelah reject). */
+  attempts?: number;
 }
 
 interface HostMemory {
@@ -173,8 +175,11 @@ interface HostRuntimeState {
   isLive: boolean;
   pipelineReady: boolean;
   generationRunning: boolean;
+  /** Monotonic id — recovery loop tidak bentrok dengan finally lama. */
+  generationLoopId: number;
   preliveRunning: boolean;
 
+  /** Di-reset saat Go Live supaya boot/pending tidak memakan durasi paket. */
   startedAt: number;
   lastActivityAt: number;
 
@@ -682,7 +687,8 @@ class LiveHostOrchestrator {
     if (state.isLive) return;
 
     state.isLive = true;
-    state.startedAt = state.startedAt || Date.now();
+    // Clock paket mulai di Go Live (bukan saat prelive/boot).
+    state.startedAt = Date.now();
     state.lastActivityAt = Date.now();
 
     console.log(
@@ -710,6 +716,7 @@ class LiveHostOrchestrator {
       isLive: false,
       pipelineReady: false,
       generationRunning: false,
+      generationLoopId: 0,
       preliveRunning: false,
       startedAt: now,
       lastActivityAt: now,
@@ -933,13 +940,22 @@ class LiveHostOrchestrator {
     const state = this.sessions.get(sessionId);
     if (!state || state.generationRunning) return;
     state.generationRunning = true;
+    const myLoopId = ++state.generationLoopId;
 
     console.log(`[LiveHost] 🎙️ Runtime supervisor ACTIVE: ${sessionId}`);
 
+    let shouldRecover = false;
     try {
       while (true) {
         const s = this.sessions.get(sessionId);
-        if (!s || s.abortController.signal.aborted || !s.isLive) break;
+        if (
+          !s ||
+          s.generationLoopId !== myLoopId ||
+          s.abortController.signal.aborted ||
+          !s.isLive
+        ) {
+          break;
+        }
         if (this.isSessionExpired(s)) {
           console.log(`[LiveHost] ⏹️ Plan ${s.config.plan} selesai: ${sessionId}`);
           try {
@@ -997,20 +1013,25 @@ class LiveHostOrchestrator {
       }
     } catch (err: any) {
       const s = this.sessions.get(sessionId);
-      if (s && !s.abortController.signal.aborted) {
+      if (s && s.generationLoopId === myLoopId && !s.abortController.signal.aborted) {
         console.error(`[LiveHost] Runtime supervisor crash: ${err?.message || err}`);
-        // Recovery loop agar satu exception tidak mematikan sesi.
-        await sleep(2500);
-        if (s.isLive && !s.abortController.signal.aborted) {
-          s.generationRunning = false;
-          void this.runLiveGenerationLoop(sessionId);
-          return;
-        }
+        shouldRecover = true;
       }
     } finally {
       const s = this.sessions.get(sessionId);
-      if (s) s.generationRunning = false;
+      if (s && s.generationLoopId === myLoopId) {
+        s.generationRunning = false;
+      }
       console.log(`[LiveHost] Runtime supervisor stopped: ${sessionId}`);
+    }
+
+    // Recovery SETELAH finally clear flag — hindari double supervisor.
+    if (shouldRecover) {
+      await sleep(2500);
+      const s = this.sessions.get(sessionId);
+      if (s?.isLive && !s.abortController.signal.aborted && !s.generationRunning) {
+        void this.runLiveGenerationLoop(sessionId);
+      }
     }
   }
 
@@ -1391,6 +1412,48 @@ class LiveHostOrchestrator {
       state.counters.commentsAnswered++;
       state.memory.lastCommentResponseAt = Date.now();
       livePlatformConnector.recordCommentReply(sessionId, comment.id, response.speech);
+      return;
+    }
+
+    state.counters.duplicateResponsesPrevented++;
+    const attempts = (comment.attempts || 0) + 1;
+    if (attempts < 2) {
+      // Re-queue sekali — jangan drop diam-diam.
+      state.pendingComments.push({
+        ...comment,
+        attempts,
+        priority: Math.max(5, comment.priority - 8),
+        createdAt: Date.now(),
+      });
+      return;
+    }
+
+    // Percobaan ke-2 gagal: paksa balasan lokal unik singkat.
+    const forced = buildLocalCommentResponse(
+      facts,
+      comment.text,
+      comment.intent,
+      author,
+      state.memory.utterances.slice(-8),
+    );
+    // Sedikit beda agar lolos anti-repeat.
+    if (author) {
+      forced.speech = `Kak ${author}, ${forced.speech.replace(/^kak\s+\w+,?\s*/i, "")}`;
+    } else {
+      forced.speech = `${forced.speech} Ya kak.`;
+    }
+    const forcedOk = await this.processHostResponse(
+      sessionId,
+      forced,
+      "comment",
+      `comment:${comment.intent}:forced`,
+    );
+    if (forcedOk) {
+      state.counters.commentsAnswered++;
+      state.memory.lastCommentResponseAt = Date.now();
+      livePlatformConnector.recordCommentReply(sessionId, comment.id, forced.speech);
+    } else {
+      state.counters.commentsDropped++;
     }
   }
 
@@ -1429,8 +1492,7 @@ class LiveHostOrchestrator {
       return false;
     }
 
-    // Pecah CTA jadi segmen pendek: IDLE … → POINT di frasa CTA → IDLE …
-    // supaya gesture natural (bukan nunggu audio panjang selesai).
+    // Satu segmen IDLE (point CTA off). API split tetap dipakai untuk kompatibilitas.
     const segments = splitSpeechIntoGestureSegments(speech, response.action);
     const priority = source === "comment";
 
@@ -1443,6 +1505,7 @@ class LiveHostOrchestrator {
           avatarName: state.config.avatarName,
           tone: state.config.tone,
           emotion: response.emotion,
+          podId: state.config.podId || process.env.RUNPOD_POD_ID || null,
         });
         if (ttsResult.success && ttsResult.audioBuffer) {
           audioBase64 = ttsResult.audioBuffer.toString("base64");
@@ -1792,12 +1855,14 @@ class LiveHostOrchestrator {
 
       let queuedVideos = Number(raw.queued_videos_count || 0);
       if (aiWorker) {
-        queuedVideos = Math.max(
-          utteranceQueueCount,
-          readyVideos,
-          state.counters.generated,
-          state.counters.submitted > 0 ? 1 : 0,
-        );
+        // Jangan pakai counters.generated (lifetime) — itu membuat buffer "penuh" palsu.
+        queuedVideos = Math.max(utteranceQueueCount, readyVideos);
+        if (activeProcessing > 0) {
+          queuedVideos = Math.max(queuedVideos, 1);
+        } else if (queuedVideos < 1 && state.estimatedBufferSeconds >= 2) {
+          // Soft floor singkat setelah submit lokal, sebelum worker update.
+          queuedVideos = 1;
+        }
       } else {
         queuedVideos = Math.max(queuedVideos, readyVideos);
       }
@@ -1811,7 +1876,7 @@ class LiveHostOrchestrator {
       const explicitTotal = Number(raw.buffer_seconds ?? NaN);
 
       let bufferSeconds: number;
-      if (Number.isFinite(explicitTotal) && explicitTotal > 0) {
+      if (Number.isFinite(explicitTotal) && explicitTotal >= 0) {
         bufferSeconds = Math.max(0, explicitTotal);
       } else if (Number.isFinite(playableSeconds)) {
         bufferSeconds = Math.max(
@@ -1825,9 +1890,15 @@ class LiveHostOrchestrator {
         bufferSeconds = Math.max(
           0,
           utteranceQueueCount * FALLBACK_SPEECH_SECONDS +
-            activeProcessing * 3 +
-            state.counters.generated * FALLBACK_SPEECH_SECONDS,
+            activeProcessing * 3,
         );
+        // Soft floor dari estimasi submit lokal (bukan lifetime counter).
+        if (bufferSeconds <= 0 && state.estimatedBufferSeconds > 0) {
+          bufferSeconds = Math.min(
+            state.estimatedBufferSeconds,
+            this.getPolicy(state).maxBufferSeconds,
+          );
+        }
       } else {
         bufferSeconds = Math.max(
           0,
@@ -1895,16 +1966,10 @@ class LiveHostOrchestrator {
       ? `${state.config.avatarName.toLowerCase().trim()}.png`
       : "namira.png";
 
-    const allowed = new Set(["IDLE", "POINT_UP", "POINT_DOWN"]);
-    const raw = String(action || "IDLE")
-      .toUpperCase()
-      .replace(/[^A-Z_]/g, "");
-    const gesture = allowed.has(raw) ? raw : "IDLE";
-    // Action dikirim di field `action` — tidak wajib tag di text.
-    // Tag hanya untuk POINT_* (legacy parser). IDLE = text polos.
+    // Point CTA off — selalu IDLE (tanpa tag di text).
+    const gesture = "IDLE";
     const cleanText = String(text || "").replace(/^\s*\[[A-Z_]+\]\s*/i, "").trim();
-    const taggedText =
-      gesture === "IDLE" ? cleanText : `[${gesture}] ${cleanText}`.trim();
+    const taggedText = cleanText;
 
     try {
       await forwardToRunPodGPU(state.config.podId || process.env.RUNPOD_POD_ID, {
@@ -1977,8 +2042,17 @@ class LiveHostOrchestrator {
     const rtmpOk = !rtmpRequired || queue.rtmpConnected;
     const bufferReady =
       queue.bufferSeconds >= policy.minBufferSeconds && queue.queuedVideos >= 1;
-    if (bufferReady && rtmpOk) {
+
+    // Recompute tiap poll (hysteresis: jangan sticky forever).
+    if (bufferReady && rtmpOk && !queue.rtmpError) {
       state.pipelineReady = true;
+    } else if (
+      queue.rtmpError ||
+      !rtmpOk ||
+      queue.bufferSeconds < policy.minBufferSeconds * 0.5 ||
+      (queue.queuedVideos < 1 && queue.bufferSeconds < 2)
+    ) {
+      state.pipelineReady = false;
     }
     const ready =
       Boolean(state.pipelineReady) && rtmpOk && !queue.rtmpError;

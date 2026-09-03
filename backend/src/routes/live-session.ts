@@ -606,39 +606,52 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       reply.code(400);
       return { error: parsed.error.flatten() };
     }
-    if (parsed.data.sessionId) liveHostOrchestrator.stop(parsed.data.sessionId);
-    const sessionObj = liveSessionManager.getSession(
-      parsed.data.sessionId || "",
-    );
+    const sessionId = parsed.data.sessionId || "";
+    if (sessionId) liveHostOrchestrator.stop(sessionId);
+    const sessionObj = liveSessionManager.getSession(sessionId);
     await stopRunPodBroadcast(sessionObj?.podId).catch(() => {});
     const res = stopBroadcast();
+    // Teardown sesi+GPU jika masih aktif (aman bila FE juga memanggil /stop).
+    if (sessionId && liveSessionManager.getSession(sessionId)) {
+      await liveSessionManager.stopSession(sessionId).catch(() => {});
+    }
     return {
       success: true,
       data: res,
     };
   });
 
-  // POST /api/live-stream/pause
+  // POST /api/live-stream/pause — FFmpeg lokal saja; AI worker RunPod tidak support pause.
   server.post("/api/live-stream/pause", async () => {
-    const result = pauseBroadcast();
-    if (!result.success) {
-      return { success: false, data: result };
+    const local = getStreamStatus();
+    if (local.status === "streaming" || local.status === "connecting") {
+      const result = pauseBroadcast();
+      return { success: result.success, data: result };
     }
     return {
-      success: result.success,
-      data: result,
+      success: false,
+      data: {
+        success: false,
+        error:
+          "Pause tidak didukung untuk AI worker RunPod. Gunakan End Live.",
+      },
     };
   });
 
   // POST /api/live-stream/resume
   server.post("/api/live-stream/resume", async () => {
-    const result = await resumeBroadcast();
-    if (!result.success) {
-      return { success: false, data: result };
+    const local = getStreamStatus();
+    if (local.paused || local.status === "streaming") {
+      const result = await resumeBroadcast();
+      return { success: result.success, data: result };
     }
     return {
-      success: result.success,
-      data: result,
+      success: false,
+      data: {
+        success: false,
+        error:
+          "Resume tidak didukung untuk AI worker RunPod. Mulai broadcast ulang.",
+      },
     };
   });
 

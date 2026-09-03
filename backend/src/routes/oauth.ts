@@ -94,19 +94,50 @@ interface OAuthSession {
 
 const sessionStore: Record<string, OAuthSession> = {};
 
+/** Response publik — jangan bocorkan token. */
+function toPublicOAuthAccount(session: OAuthSession) {
+  return {
+    platform: session.platform,
+    isConnected: session.isConnected,
+    username: session.username,
+    displayName: session.displayName,
+    storeName: session.storeName,
+    avatarUrl: session.avatarUrl,
+    followers: session.followers,
+    rating: session.rating,
+    status: session.status,
+    ingestUrl: session.ingestUrl || "",
+    // Jangan invent key palsu; kosong = user paste manual.
+    streamKey: session.streamKey || "",
+    connectedAt: session.connectedAt,
+    accessToken: "",
+    refreshToken: undefined,
+    expiresAt: session.expiresAt,
+    hasAccessToken: Boolean(session.accessToken),
+  };
+}
+
 function generateCodeVerifier(): string { return crypto.randomBytes(32).toString("base64url"); }
 function generateCodeChallenge(v: string): string { return crypto.createHash("sha256").update(v).digest("base64url"); }
 function generateState(): string { return crypto.randomBytes(16).toString("hex"); }
 
 export async function oauthRoutes(server: FastifyInstance) {
 
-  server.get("/api/oauth/accounts", async () => ({ success: true, data: sessionStore }));
+  server.get("/api/oauth/accounts", async () => {
+    const data: Record<string, ReturnType<typeof toPublicOAuthAccount>> = {};
+    for (const [k, v] of Object.entries(sessionStore)) {
+      data[k] = toPublicOAuthAccount(v);
+    }
+    return { success: true, data };
+  });
 
   server.get<{ Params: { platform: string } }>("/api/oauth/profile/:platform", async (request) => {
     const rawPlatform = decodeURIComponent(request.params.platform);
     const matched = Object.keys(sessionStore).find((k) => k.toLowerCase() === rawPlatform.toLowerCase());
-    if (matched && sessionStore[matched]) return { success: true, data: sessionStore[matched] };
-    return { success: true, data: { platform: rawPlatform, isConnected: false, username: "", displayName: "", storeName: "", avatarUrl: "", followers: 0, rating: 0, status: "ready", ingestUrl: "", streamKey: "", connectedAt: "" } };
+    if (matched && sessionStore[matched]) {
+      return { success: true, data: toPublicOAuthAccount(sessionStore[matched]!) };
+    }
+    return { success: true, data: { platform: rawPlatform, isConnected: false, username: "", displayName: "", storeName: "", avatarUrl: "", followers: 0, rating: 0, status: "ready", ingestUrl: "", streamKey: "", connectedAt: "", accessToken: "", hasAccessToken: false } };
   });
 
   server.get<{ Querystring: { platform: string } }>("/api/oauth/authorize", async (request, reply) => {
@@ -170,8 +201,9 @@ export async function oauthRoutes(server: FastifyInstance) {
           }
         } catch { /* profile fetch is optional */ }
       }
-      const streamKey = `live_${platform.replace(/\s/g, "").toLowerCase()}_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
-      const session: OAuthSession = { platform, isConnected: true, username: username || `${platform.replace(/\s/g, "").toLowerCase()}_user`, displayName: displayName || `${platform} Account`, storeName: displayName || `${platform} Official Store`, avatarUrl, followers, rating: 0, status: "active", ingestUrl: config.rtmpIngestUrl, streamKey, accessToken, refreshToken, expiresAt, connectedAt: new Date().toISOString() };
+      // Stream key harus dari platform / paste manual — jangan invent palsu.
+      const streamKey = "";
+      const session: OAuthSession = { platform, isConnected: true, username: username || `${platform.replace(/\s/g, "").toLowerCase()}_user`, displayName: displayName || `${platform} Account`, storeName: displayName || `${platform} Official Store`, avatarUrl, followers, rating: 0, status: "active", ingestUrl: config.rtmpIngestUrl || "", streamKey, accessToken, refreshToken, expiresAt, connectedAt: new Date().toISOString() };
       sessionStore[platform] = session;
       return reply.redirect(`${frontendUrl}/dashboard?oauth_success=${encodeURIComponent(platform)}&display=${encodeURIComponent(session.displayName)}`);
     } catch (err) {
@@ -186,10 +218,10 @@ export async function oauthRoutes(server: FastifyInstance) {
     const { platform, accessToken, username, displayName, storeName, avatarUrl } = parsed.data;
     const config = getPlatformConfig(platform);
     if (config && !config.clientId) server.log.warn(`[OAuth] ${platform}: OAuth env keys not configured — using manual connect.`);
-    const streamKey = `live_${platform.replace(/\s/g, "").toLowerCase()}_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
-    const session: OAuthSession = { platform, isConnected: true, username: username || `${platform.toLowerCase().replace(/[^a-z0-9]/g, "")}_user`, displayName: displayName || `${platform} Official Store`, storeName: storeName || "Official Brand Store Indonesia", avatarUrl: avatarUrl || "", followers: 0, rating: 0, status: "active", ingestUrl: config?.rtmpIngestUrl || "rtmp://live.livestreamer.ai/live", streamKey, accessToken: accessToken || "", connectedAt: new Date().toISOString() };
+    const streamKey = "";
+    const session: OAuthSession = { platform, isConnected: true, username: username || `${platform.toLowerCase().replace(/[^a-z0-9]/g, "")}_user`, displayName: displayName || `${platform} Official Store`, storeName: storeName || "Official Brand Store Indonesia", avatarUrl: avatarUrl || "", followers: 0, rating: 0, status: "active", ingestUrl: config?.rtmpIngestUrl || "", streamKey, accessToken: accessToken || "", connectedAt: new Date().toISOString() };
     sessionStore[platform] = session;
-    return { success: true, message: `Akun ${platform} berhasil terhubung!`, data: session };
+    return { success: true, message: `Akun ${platform} berhasil terhubung!`, data: toPublicOAuthAccount(session) };
   });
 
   server.post("/api/oauth/disconnect", async (request, reply) => {

@@ -19,7 +19,10 @@ export interface ManagedSession {
   state: SessionState;
   platform: string;
   durationHours: number;
+  /** Waktu sesi dibuat (boot/pending). */
   startedAt: number;
+  /** Di-set ulang saat masuk live — basis sisa durasi paket. */
+  liveStartedAt?: number;
   deadlineAt: number;
   avatarName: string;
   voice?: string;
@@ -221,7 +224,7 @@ class LiveSessionManager {
           );
         },
       });
-      const podId = typeof podIdStr === "string" ? podIdStr : null;
+      const podId = typeof podIdStr === "string" ? podIdStr.trim() : "";
       if (!this.activeSessions.has(sessionId)) {
         if (podId) {
           const staticId = (process.env.RUNPOD_POD_ID || "").trim();
@@ -244,13 +247,30 @@ class LiveSessionManager {
         return;
       }
 
-      managed.podId = podId;
-      managed.podBootStatus = "ready";
-      managed.podBootMessage = "GPU siap — menghubungkan ke worker...";
+      // Null pod = gagal, kecuali ada worker URL lokal eksplisit (dev).
+      const localWorkerUrl = (process.env.RUNPOD_WORKER_URL || "").trim();
+      if (!podId) {
+        if (localWorkerUrl) {
+          managed.podId = null;
+          managed.podBootStatus = "ready";
+          managed.podBootMessage = "Worker lokal siap (RUNPOD_WORKER_URL).";
+        } else {
+          managed.podId = null;
+          managed.podBootStatus = "failed";
+          managed.podBootMessage =
+            "GPU tidak tersedia (pod null). Cek RUNPOD_API_KEY / kuota GPU.";
+          await this.transitionState("error", sessionId);
+          return;
+        }
+      } else {
+        managed.podId = podId;
+        managed.podBootStatus = "ready";
+        managed.podBootMessage = "GPU siap — menghubungkan ke worker...";
+      }
 
       livePlatformConnector.startSession({
         sessionId,
-        podId,
+        podId: managed.podId || null,
         platform: connectorParams.platform,
         accessToken: connectorParams.accessToken,
         liveChatId: connectorParams.liveChatId,
@@ -299,8 +319,10 @@ class LiveSessionManager {
     if (!session) return null;
 
     const podFailed = session.podBootStatus === "failed";
+    const hasLocalWorker = Boolean((process.env.RUNPOD_WORKER_URL || "").trim());
     const podReady =
-      session.podBootStatus === "ready" && Boolean(session.podId);
+      session.podBootStatus === "ready" &&
+      (Boolean(session.podId) || hasLocalWorker);
     const podBooting =
       !podFailed &&
       !podReady &&
@@ -478,6 +500,10 @@ class LiveSessionManager {
     session.state = newState;
 
     if (newState === "live" && previousState !== "live") {
+      // Clock paket mulai saat benar-benar live (bukan saat boot/pending).
+      session.liveStartedAt = Date.now();
+      session.deadlineAt =
+        session.liveStartedAt + session.durationHours * 3600 * 1000;
       this.startDurationWatchdog(sessionId);
       if (session.podId) {
         triggerWorkerPlayback(session.podId).catch((err) =>
@@ -542,7 +568,8 @@ class LiveSessionManager {
       }
 
       if (s.state === "live") {
-        const elapsedSeconds = Math.floor((Date.now() - s.startedAt) / 1000);
+        const liveAnchor = s.liveStartedAt || s.startedAt;
+        const elapsedSeconds = Math.floor((Date.now() - liveAnchor) / 1000);
         const maxSeconds = s.durationHours * 3600;
 
         if (elapsedSeconds >= maxSeconds) {

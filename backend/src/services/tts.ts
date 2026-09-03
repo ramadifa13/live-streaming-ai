@@ -1,5 +1,9 @@
-import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import { spawn } from "child_process";
+import { tmpdir } from "os";
+import path from "path";
+import { randomBytes } from "crypto";
+import fs from "fs";
+import { getWorkerUrl } from "./runpod-manager.js";
 
 export interface TTSVoice {
   id: string;
@@ -8,36 +12,46 @@ export interface TTSVoice {
   locale: string;
   style: string;
   avatarMatch: string;
-  engine: "edge" | "google";
+  engine: "piper" | "google";
 }
 
+/** Voice list untuk UI — id lama Edge di-map ke Piper ID di server. */
 export const INDONESIAN_VOICES: TTSVoice[] = [
   {
-    id: "id-ID-GadisNeural",
-    name: "Gadis (Wanita - Sangat Natural, Hangat & Ceria)",
+    id: "id_ID-news_tts-medium",
+    name: "Namira / Gadis (Piper ID — natural, lokal)",
     gender: "female",
     locale: "id-ID",
     style: "Friendly",
     avatarMatch: "Namira",
-    engine: "edge",
+    engine: "piper",
+  },
+  {
+    id: "id-ID-GadisNeural",
+    name: "Gadis (alias → Piper ID)",
+    gender: "female",
+    locale: "id-ID",
+    style: "Friendly",
+    avatarMatch: "Namira",
+    engine: "piper",
   },
   {
     id: "id-ID-SitiNeural",
-    name: "Siti (Wanita - Ceria & Energetik untuk Live Shopping)",
+    name: "Siti (alias → Piper ID)",
     gender: "female",
     locale: "id-ID",
     style: "Energetic",
     avatarMatch: "Siti",
-    engine: "edge",
+    engine: "piper",
   },
   {
     id: "id-ID-ArdiNeural",
-    name: "Ardi (Pria - Tegas, Percaya Diri & Alami)",
+    name: "Ardi (alias → Piper ID)",
     gender: "male",
     locale: "id-ID",
     style: "Confident",
     avatarMatch: "Ardi",
-    engine: "edge",
+    engine: "piper",
   },
 ];
 
@@ -49,6 +63,8 @@ export interface SynthesizeRequest {
   pitch?: number;
   tone?: string;
   emotion?: string;
+  /** Pod RunPod sesi live — supaya /tts/synthesize kena worker yang benar. */
+  podId?: string | null;
 }
 
 export interface SynthesizeResponse {
@@ -63,45 +79,33 @@ export interface SynthesizeResponse {
   audioBuffer?: Buffer;
 }
 
-/**
- * Filter anti-robot percakapan live streaming:
- * - Menghilangkan simbol teknis/tag aksi.
- * - Mengubah angka, persen, dan singkatan agar dieja secara manusiawi & natural.
- * - Menambahkan koma/jeda mikro alami pada transisi kalimat host live.
- */
 export function sanitizeForLiveTTS(text: string): string {
   if (!text) return "";
   return (
     text
       .replace(/\[[A-Z_]+\]/gi, "")
-      // 2. Hapus Emoji Unicode
       .replace(
         /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu,
         "",
       )
-      // 3. Format ejaan mata uang dan angka secara natural
       .replace(/Rp\s?(\d+(?:\.\d+)?(?:\,\d+)?)/gi, "$1 rupiah ")
       .replace(/\$(\d+(?:\.\d+)?)/g, "$1 dollar ")
       .replace(/\b(\d+)k\b/gi, "$1 ribu ")
       .replace(/(\d+)%/g, "$1 persen")
-      // 4. Singkatan umum agar tidak terbaca kaku
       .replace(/\bBPOM\b/g, "B P O M")
       .replace(/\bORI\b/gi, "original")
       .replace(/\bCO\b/g, "check out")
       .replace(/\bCOD\b/g, "C O D")
       .replace(/\bFYP\b/g, "F Y P")
       .replace(/\bDM\b/g, "D M")
-      // 5. Normalisasi karakter khusus
       .replace(/&/g, " dan ")
       .replace(/</g, "")
       .replace(/>/g, "")
       .replace(/['"]/g, "")
-      // 6. Sisipkan jeda mikro alami pada kata transisi khas live streaming
       .replace(
         /\b(yuk|nah|khusus hari ini|mumpung lagi promo|jangan sampai kehabisan)\b/gi,
         ", $1",
       )
-      // 7. Rapikan tanda baca (pertahankan elipsis ... untuk jeda nafas membaca komentar)
       .replace(/[!]{2,}/g, "!")
       .replace(/[?]{2,}/g, "?")
       .replace(/[.]{4,}/g, "...")
@@ -111,89 +115,51 @@ export function sanitizeForLiveTTS(text: string): string {
   );
 }
 
-/**
- * Pengaturan prosodi akustik (Kecepatan, Nada, Volume) berdasarkan Tone / Persona:
- * - Energetic   : Tempo cepat (+12%), nada ceria (+3Hz), volume mantap (+12%).
- * - FOMO / Promo: Tempo mendesak (+16%), nada heboh (+4Hz), volume tinggi (+15%).
- * - Professional: Tempo tenang artikulatif (+2%), nada hangat (+0Hz), volume jernih (+6%).
- * - Casual      : Tempo ramah santai (+8%), nada hangat (+2Hz), volume (+8%).
- */
+/** Piper length_scale: >1 lebih lambat. Map tone/emotion → scale. */
+export function getPiperLengthScale(
+  tone?: string,
+  baseSpeed = 1.0,
+  emotion?: string,
+): number {
+  const t = (tone || "").toLowerCase();
+  const e = (emotion || "neutral").toLowerCase();
+  let speed = Math.max(0.7, Math.min(1.35, baseSpeed || 1.0));
+
+  if (e === "excited" || e === "surprised") speed *= 1.08;
+  else if (e === "happy") speed *= 1.04;
+  else if (e === "thinking" || e === "empathetic") speed *= 0.94;
+  else if (e === "warm") speed *= 0.98;
+
+  if (t.includes("fomo") || t.includes("flash") || t.includes("promo")) {
+    speed *= 1.1;
+  } else if (
+    t.includes("profesion") ||
+    t.includes("professional") ||
+    t.includes("edukatif")
+  ) {
+    speed *= 0.96;
+  }
+
+  // Piper: length_scale 1.0 = normal; lebih besar = lebih lambat
+  const lengthScale = 1.0 / speed;
+  return Math.max(0.75, Math.min(1.45, lengthScale));
+}
+
+/** Legacy Edge prosody — tetap diekspor jika ada caller lama. */
 export function getProsodyOptions(
   tone?: string,
   baseSpeed = 1.0,
   emotion?: string,
 ): { rate: string; pitch: string; volume: string } {
-  const t = (tone || "").toLowerCase();
-  const e = (emotion || "neutral").toLowerCase();
-
-  let rateOffset = 0;
-  let pitchHz = 2;
-  let volume = "+8%";
-
-  if (e === "excited") {
-    rateOffset = 12;
-    pitchHz = 5;
-    volume = "+14%";
-  } else if (e === "happy") {
-    rateOffset = 8;
-    pitchHz = 3;
-    volume = "+10%";
-  } else if (e === "warm") {
-    rateOffset = 4;
-    pitchHz = 1;
-    volume = "+8%";
-  } else if (e === "empathetic") {
-    rateOffset = -4;
-    pitchHz = -1;
-    volume = "+6%";
-  } else if (e === "thinking") {
-    rateOffset = -6;
-    pitchHz = -2;
-    volume = "+5%";
-  } else if (e === "surprised") {
-    rateOffset = 10;
-    pitchHz = 6;
-    volume = "+12%";
-  }
-
-  // FOMO / Flash Sale: Cepat & mendesak, pitch naik
-  if (t.includes("fomo") || t.includes("flash") || t.includes("promo")) {
-    const calculatedRate = Math.round((Math.max(baseSpeed, 1.12) - 1.0) * 100) + rateOffset;
-    return {
-      rate: `${calculatedRate >= 0 ? "+" : ""}${calculatedRate}%`,
-      pitch: `+${Math.max(3, pitchHz + 2)}Hz`,
-      volume: "+15%",
-    };
-  }
-
-  // Professional / Edukasi: Nada tenang, stabil, tempo sedang
-  if (
-    t.includes("profesion") ||
-    t.includes("professional") ||
-    t.includes("edukatif")
-  ) {
-    const calculatedRate = Math.round((baseSpeed - 1.0) * 100) + Math.min(rateOffset, 2);
-    return {
-      rate: `${calculatedRate >= 0 ? "+" : ""}${calculatedRate}%`,
-      pitch: `${pitchHz >= 0 ? "+" : ""}${pitchHz}Hz`,
-      volume: "+6%",
-    };
-  }
-
-  const calculatedRate = Math.round((baseSpeed * 1.06 - 1.0) * 100) + rateOffset;
+  const length = getPiperLengthScale(tone, baseSpeed, emotion);
+  const ratePct = Math.round((1 / length - 1) * 100);
   return {
-    rate: `${calculatedRate >= 0 ? "+" : ""}${calculatedRate}%`,
-    pitch: `${pitchHz >= 0 ? "+" : ""}${pitchHz}Hz`,
-    volume,
+    rate: `${ratePct >= 0 ? "+" : ""}${ratePct}%`,
+    pitch: "+2Hz",
+    volume: "+8%",
   };
 }
 
-import { tmpdir } from "os";
-import path from "path";
-import { randomBytes } from "crypto";
-import fs from "fs";
-
-/** PM2 sering di-start sebelum ffmpeg terpasang; PATH proses tidak ikut update. */
 function resolveFfmpegBinary(): string {
   if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH;
   for (const candidate of ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"]) {
@@ -204,18 +170,75 @@ function resolveFfmpegBinary(): string {
 
 const FFMPEG_BIN = resolveFfmpegBinary();
 
+async function ensureWav16kMono(input: Buffer): Promise<Buffer> {
+  if (
+    input.length >= 44 &&
+    input.toString("ascii", 0, 4) === "RIFF" &&
+    input.toString("ascii", 8, 12) === "WAVE"
+  ) {
+    // Cek sample rate di header (byte 24-27 little-endian)
+    const rate = input.readUInt32LE(24);
+    const channels = input.readUInt16LE(22);
+    if (rate === 16000 && channels === 1) return input;
+  }
+
+  return new Promise((resolve, reject) => {
+    const inFile = path.join(tmpdir(), `tts_in_${randomBytes(4).toString("hex")}.wav`);
+    const outFile = path.join(tmpdir(), `tts_out_${randomBytes(4).toString("hex")}.wav`);
+    fs.writeFileSync(inFile, input);
+
+    const proc = spawn(FFMPEG_BIN, [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      inFile,
+      "-ar",
+      "16000",
+      "-ac",
+      "1",
+      "-c:a",
+      "pcm_s16le",
+      "-y",
+      outFile,
+    ]);
+
+    const errors: Buffer[] = [];
+    proc.stderr.on("data", (c: Buffer) => errors.push(c));
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      try {
+        fs.unlinkSync(inFile);
+      } catch {
+        /* ignore */
+      }
+      if (code !== 0) {
+        try {
+          fs.unlinkSync(outFile);
+        } catch {
+          /* ignore */
+        }
+        reject(new Error(`FFmpeg error (${code}): ${Buffer.concat(errors).toString()}`));
+        return;
+      }
+      try {
+        const output = fs.readFileSync(outFile);
+        fs.unlinkSync(outFile);
+        if (output.length < 44) {
+          reject(new Error("Invalid WAV output"));
+          return;
+        }
+        resolve(output);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+}
+
 async function convertMp3ToWav(mp3Buffer: Buffer): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    // PENTING: Kita tidak boleh menggunakan "pipe:1" untuk output WAV.
-    // FFmpeg tidak bisa melakukan "seek" pada stream pipe untuk menulis ukuran (size)
-    // dari file WAV di RIFF header-nya. Akibatnya header WAV akan rusak (0xFFFFFFFF)
-    // dan membuat worker AI menjadi lag/putus-putus saat membaca audionya.
-    // Solusi: Tulis ke temp file terlebih dahulu, lalu baca kembali.
-    const tempFile = path.join(
-      tmpdir(),
-      `tts_${randomBytes(4).toString("hex")}.wav`,
-    );
-
+    const tempFile = path.join(tmpdir(), `tts_${randomBytes(4).toString("hex")}.wav`);
     const proc = spawn(FFMPEG_BIN, [
       "-hide_banner",
       "-loglevel",
@@ -224,111 +247,142 @@ async function convertMp3ToWav(mp3Buffer: Buffer): Promise<Buffer> {
       "mp3",
       "-i",
       "pipe:0",
-
-      // NORMALISASI AUDIO LANGSUNG 16kHz MONO (Format Asli MuseTalk & Whisper)
       "-ar",
       "16000",
       "-ac",
       "1",
-
-      // PCM 16-bit WAV
       "-c:a",
       "pcm_s16le",
-
       "-f",
       "wav",
       tempFile,
     ]);
-
     const errors: Buffer[] = [];
-
-    proc.stderr.on("data", (chunk: Buffer) => {
-      errors.push(chunk);
-    });
-
+    proc.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
     proc.on("error", reject);
-
     proc.on("close", (code) => {
       if (code !== 0) {
-        reject(
-          new Error(
-            `FFmpeg error (${code}): ${Buffer.concat(errors).toString()}`,
-          ),
-        );
+        reject(new Error(`FFmpeg error (${code}): ${Buffer.concat(errors).toString()}`));
         return;
       }
-
       try {
         const output = fs.readFileSync(tempFile);
         fs.unlinkSync(tempFile);
-
         if (output.length < 44) {
           reject(new Error("Invalid WAV output"));
           return;
         }
-
         resolve(output);
       } catch (err) {
         reject(err);
       }
     });
-
     proc.stdin.write(mp3Buffer);
     proc.stdin.end();
   });
 }
 
-/** Synthesize speech menggunakan Microsoft Edge Neural TTS dengan buffer error recovery */
-async function synthesizeWithEdgeTTS(
+export function resolvePiperVoiceId(voice?: string, avatarName?: string): string {
+  const defaultVoice =
+    (process.env.PIPER_VOICE || "id_ID-news_tts-medium").trim() ||
+    "id_ID-news_tts-medium";
+  if (voice && /^id_ID[-_]/i.test(voice)) return voice.replace(/-/g, "_");
+  if (voice && INDONESIAN_VOICES.some((v) => v.id === voice)) {
+    // Legacy Edge ids → default Piper ID voice
+    return defaultVoice;
+  }
+  const av = (avatarName || "").toLowerCase();
+  if (av.includes("budi") || av.includes("ardi") || av.includes("siti") || av.includes("namira")) {
+    return defaultVoice;
+  }
+  return defaultVoice;
+}
+
+/** Alias lama untuk caller yang masih pakai resolveEdgeVoiceId. */
+export function resolveEdgeVoiceId(voice?: string, avatarName?: string): string {
+  return resolvePiperVoiceId(voice, avatarName);
+}
+
+function resolvePiperEndpoints(podId?: string | null): string[] {
+  const endpoints: string[] = [];
+  const explicit = (process.env.PIPER_TTS_URL || "").trim().replace(/\/$/, "");
+  // PIPER_TTS_URL=http://127.0.0.1:8090 hanya valid di dalam pod.
+  // Di VPS production jangan set ke localhost — biarkan lewat worker proxy.
+  const explicitIsLocal =
+    explicit.includes("127.0.0.1") || explicit.includes("localhost");
+  const onVpsProduction =
+    process.env.NODE_ENV === "production" &&
+    !(process.env.GPU_PROVIDER || "").toLowerCase().includes("mock");
+
+  if (explicit && !(onVpsProduction && explicitIsLocal)) {
+    endpoints.push(
+      explicit.endsWith("/synthesize") ? explicit : `${explicit}/synthesize`,
+    );
+  }
+
+  const worker =
+    getWorkerUrl(podId || process.env.RUNPOD_POD_ID || null) ||
+    (process.env.RUNPOD_WORKER_URL || "").trim().replace(/\/$/, "");
+  if (worker) {
+    endpoints.push(`${worker}/tts/synthesize`);
+  }
+
+  if (!onVpsProduction) {
+    endpoints.push("http://127.0.0.1:8090/synthesize");
+  }
+
+  return [...new Set(endpoints)];
+}
+
+async function synthesizeWithPiper(
   text: string,
   voice: string,
   tone?: string,
   speed = 1.0,
   emotion?: string,
+  podId?: string | null,
 ): Promise<Buffer> {
   const cleanText = sanitizeForLiveTTS(text);
-  if (!cleanText) {
-    throw new Error("Teks kosong setelah sanitasi");
+  if (!cleanText) throw new Error("Teks kosong setelah sanitasi");
+
+  const lengthScale = getPiperLengthScale(tone, speed, emotion);
+  const body = JSON.stringify({
+    text: cleanText,
+    voice,
+    length_scale: lengthScale,
+    sample_rate: 16000,
+  });
+
+  const endpoints = resolvePiperEndpoints(podId);
+  let lastErr: Error | null = null;
+
+  for (const url of endpoints) {
+    try {
+      const ctrl = AbortSignal.timeout(90_000);
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: ctrl,
+      });
+      if (!res.ok) {
+        const detail = (await res.text().catch(() => "")).slice(0, 240);
+        throw new Error(`HTTP ${res.status} ${detail}`);
+      }
+      const ab = await res.arrayBuffer();
+      const buf = Buffer.from(ab);
+      if (buf.length < 44) throw new Error("Piper WAV kosong/pendek");
+      return await ensureWav16kMono(buf);
+    } catch (err) {
+      lastErr = err as Error;
+      console.warn(`[TTS] Piper endpoint gagal (${url}): ${lastErr.message}`);
+    }
   }
 
-  const prosody = getProsodyOptions(tone, speed, emotion);
-  const tts = new MsEdgeTTS();
-  await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-
-  const { audioStream } = tts.toStream(cleanText, {
-    rate: prosody.rate,
-    pitch: prosody.pitch,
-    volume: prosody.volume,
-  });
-
-  const mp3Buffer = await new Promise<Buffer>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-
-    const timeout = setTimeout(() => {
-      reject(new Error("Edge-TTS request timeout (60s)"));
-    }, 60_000);
-
-    audioStream.on("data", (chunk: Buffer) => chunks.push(chunk));
-    audioStream.on("end", () => {
-      clearTimeout(timeout);
-      const audioBuffer = Buffer.concat(chunks);
-      if (audioBuffer.length === 0) {
-        reject(new Error("Edge-TTS menghasilkan buffer kosong"));
-        return;
-      }
-      resolve(audioBuffer);
-    });
-
-    audioStream.on("error", (err: Error) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-  });
-
-  return await convertMp3ToWav(mp3Buffer);
+  throw lastErr || new Error("Semua endpoint Piper gagal");
 }
 
-/** Fallback Tier 2 (Fail-Safe 100% Gratis): Google Indonesia Speech API */
+/** Fail-safe gratis (bukan Edge): Google Indonesia Speech API */
 async function synthesizeWithGoogleTTS(text: string): Promise<Buffer> {
   const cleanText = sanitizeForLiveTTS(text);
   if (!cleanText) throw new Error("Teks kosong");
@@ -336,7 +390,6 @@ async function synthesizeWithGoogleTTS(text: string): Promise<Buffer> {
   const chunks: string[] = [];
   const words = cleanText.split(" ");
   let currentChunk = "";
-
   for (const word of words) {
     if ((currentChunk + " " + word).trim().length > 180) {
       if (currentChunk) chunks.push(currentChunk.trim());
@@ -348,7 +401,6 @@ async function synthesizeWithGoogleTTS(text: string): Promise<Buffer> {
   if (currentChunk) chunks.push(currentChunk.trim());
 
   const audioBuffers: Buffer[] = [];
-
   for (const chunk of chunks) {
     const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=id&client=tw-ob`;
     const res = await fetch(url, {
@@ -357,43 +409,17 @@ async function synthesizeWithGoogleTTS(text: string): Promise<Buffer> {
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       },
     });
-
-    if (!res.ok) {
-      throw new Error(`Google TTS request failed: ${res.status}`);
-    }
-
-    const arrayBuffer = await res.arrayBuffer();
-    audioBuffers.push(Buffer.from(arrayBuffer));
+    if (!res.ok) throw new Error(`Google TTS request failed: ${res.status}`);
+    audioBuffers.push(Buffer.from(await res.arrayBuffer()));
   }
-
-  const mp3Buffer = Buffer.concat(audioBuffers);
-  return await convertMp3ToWav(mp3Buffer);
-}
-
-export function resolveEdgeVoiceId(
-  voice?: string,
-  avatarName?: string,
-): string {
-  if (voice && INDONESIAN_VOICES.some((v) => v.id === voice)) {
-    return voice;
-  }
-  const av = (avatarName || "").toLowerCase();
-  if (av.includes("budi") || av.includes("ardi")) {
-    return "id-ID-ArdiNeural";
-  }
-  if (av.includes("siti")) {
-    return "id-ID-SitiNeural";
-  }
-  return "id-ID-GadisNeural";
+  return await convertMp3ToWav(Buffer.concat(audioBuffers));
 }
 
 export async function synthesizeSpeech(
   req: SynthesizeRequest,
 ): Promise<SynthesizeResponse> {
   const { text, avatarName = "Namira", speed = 1.0, tone, emotion } = req;
-
-  // Pilih suara Microsoft Edge Neural TTS gratis terbaik
-  const selectedVoice = resolveEdgeVoiceId(req.voice, avatarName);
+  const selectedVoice = resolvePiperVoiceId(req.voice, avatarName);
 
   const wordCount = text.trim().split(/\s+/).length;
   const estimatedSeconds = Math.max(
@@ -402,48 +428,27 @@ export async function synthesizeSpeech(
   );
 
   let audioBuffer: Buffer | undefined;
-  let engineUsed = "Microsoft Edge Neural TTS (100% Gratis & Natural)";
+  let engineUsed = "Piper TTS (id_ID, open-source, CPU)";
 
-  // ─── TIER 1: Microsoft Edge Neural TTS (Gratis, Natural, 24kHz MP3) ───────
   try {
-    audioBuffer = await synthesizeWithEdgeTTS(text, selectedVoice, tone, speed, emotion);
+    audioBuffer = await synthesizeWithPiper(
+      text,
+      selectedVoice,
+      tone,
+      speed,
+      emotion,
+      req.podId,
+    );
   } catch (primaryErr) {
     console.warn(
-      `[TTS] ⚠️ Edge-TTS primer (${selectedVoice}) notice: ${(primaryErr as Error).message}. Mencoba fallback ke SitiNeural / Google TTS...`,
+      `[TTS] Piper gagal: ${(primaryErr as Error).message}. Fail-safe Google TTS...`,
     );
-
-    // ─── TIER 2: Fallback ke SitiNeural ───────────────────────────────────
     try {
-      const fallbackVoice =
-        selectedVoice === "id-ID-GadisNeural"
-          ? "id-ID-SitiNeural"
-          : "id-ID-GadisNeural";
-      audioBuffer = await synthesizeWithEdgeTTS(
-        text,
-        fallbackVoice,
-        tone,
-        speed,
-        emotion,
-      );
+      audioBuffer = await synthesizeWithGoogleTTS(text);
+      engineUsed = "Google Indonesia TTS (Fail-Safe)";
     } catch (tier2Err) {
-      console.warn(
-        `[TTS] ⚠️ Edge-TTS Tier 2 notice: ${(tier2Err as Error).message}. Menggunakan Fail-Safe Google Indonesia TTS...`,
-      );
-
-      // ─── TIER 3: Google Indonesia Speech API (100% Selalu Berhasil) ──────
-      try {
-        audioBuffer = await synthesizeWithGoogleTTS(text);
-        engineUsed = "Google Indonesia TTS (Fail-Safe)";
-        console.log(
-          `Google TTS fail-safe berhasil (${audioBuffer.length} bytes)`,
-        );
-      } catch (tier3Err) {
-        console.error(
-          `Semua tier TTS gagal:`,
-          (tier3Err as Error).message,
-        );
-        engineUsed = "TTS Error";
-      }
+      console.error(`[TTS] Semua engine gagal:`, (tier2Err as Error).message);
+      engineUsed = "TTS Error";
     }
   }
 
@@ -457,20 +462,30 @@ export async function synthesizeSpeech(
     engine: engineUsed,
     message: audioBuffer
       ? `TTS synthesis success (${engineUsed})`
-      : "TTS synthesis failed — periksa koneksi internet",
+      : "TTS synthesis failed — pastikan Piper :8090 jalan di pod",
     audioBuffer,
   };
 }
 
-/** Pre-warmup connection saat backend start */
 export async function warmUpTTS(): Promise<void> {
   try {
-    const tts = new MsEdgeTTS();
-    await tts.setMetadata(
-      "id-ID-GadisNeural",
-      OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3,
+    const endpoints = resolvePiperEndpoints().map((u) =>
+      u.replace(/\/synthesize$/, "/health").replace(/\/tts\/synthesize$/, "/tts/health"),
     );
-    console.log("[TTS] 🚀 Microsoft Edge Neural TTS engine (100% Free) ready.");
+    for (const url of endpoints) {
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(5_000) });
+        if (res.ok) {
+          console.log(`[TTS] Piper ready via ${url}`);
+          return;
+        }
+      } catch {
+        /* try next */
+      }
+    }
+    console.warn(
+      "[TTS] Piper belum siap — jalankan bash /workspace/piper_tts/setup.sh && start.sh di pod",
+    );
   } catch (e) {
     console.warn("[TTS] Warmup notice:", (e as Error).message);
   }

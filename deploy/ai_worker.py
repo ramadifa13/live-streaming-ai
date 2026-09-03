@@ -63,8 +63,10 @@ RAW_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RAW_QUEUE", "24"))
 RENDER_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RENDER_QUEUE", "48"))
 RAW_QUEUE_BLOCK_SEC = float(os.environ.get("AI_WORKER_RAW_BLOCK_SEC", "0.25"))
 MASK_FEATHER_PX = int(os.environ.get("AI_WORKER_MASK_FEATHER", "15"))
-AMBIENT_MIN_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MIN_SEC", "12"))
-AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "28"))
+AMBIENT_MIN_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MIN_SEC", "4"))
+AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "6"))
+# Probabilitas sisip idle_1 (nafas) saat rotasi variant — biar tidak terus gerak tangan.
+IDLE_BREATH_CHANCE = float(os.environ.get("AI_WORKER_IDLE_BREATH_CHANCE", "0.18"))
 IDLE_FALLBACK_AFTER = int(os.environ.get("AI_WORKER_IDLE_FALLBACK_AFTER", "2"))
 BROADCAST_MAX_LAG = int(os.environ.get("AI_WORKER_BROADCAST_MAX_LAG", "8"))
 BROADCAST_RENDER_WAIT_SEC = float(os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.10"))
@@ -77,14 +79,15 @@ LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "0"))
 LIPSYNC_PREROLL_TIMEOUT_SEC = float(os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.0"))
 
 
-# Post-speech gestures only — CTA visual (banner / checkout).
-ALLOWED_GESTURES = frozenset({"point_up", "point_down"})
-# Body during speech: prefer idle_1 (pose menjelaskan). Fallback idle / idle_*.
+# Post-speech CTA gestures — disabled for now (focus multi-idle only).
+# Re-enable later: frozenset({"point_up", "point_down"})
+ALLOWED_GESTURES: frozenset = frozenset()
+# Body during speech: idle_1 = rest diam (tanpa gerak tangan). Fallback idle / idle_*.
 TALK_CLIP_DEFAULT = (os.environ.get("AI_WORKER_TALK_CLIP") or "idle_1").strip().lower() or "idle_1"
 
 
 def _ambient_gesture_names() -> List[str]:
-    """Legacy point ambient — default off. Idle variants pakai AI_WORKER_IDLE_VARIANTS."""
+    """Legacy ambient gestures — default off. Idle variants pakai AI_WORKER_IDLE_VARIANTS."""
     raw = (os.environ.get("AI_WORKER_AMBIENT_GESTURES") or "off").strip()
     if raw.lower() in ("0", "off", "false", "none", "no", ""):
         return []
@@ -93,8 +96,8 @@ def _ambient_gesture_names() -> List[str]:
 
 
 def _idle_variant_names() -> List[str]:
-    """Variasi idle saat tidak bicara (idle_2, idle_3). idle_1 = talk/default."""
-    raw = (os.environ.get("AI_WORKER_IDLE_VARIANTS") or "idle_2,idle_3").strip()
+    """Variasi saat diam: idle_2/3/4 (gerak). idle_1 = talk + nafas/fallback."""
+    raw = (os.environ.get("AI_WORKER_IDLE_VARIANTS") or "idle_2,idle_3,idle_4").strip()
     if raw.lower() in ("0", "off", "false", "none", "no", ""):
         return []
     return [n.strip().lower().replace("-", "_") for n in raw.split(",") if n.strip()]
@@ -385,20 +388,22 @@ class AssetBank:
         "talk_expressive": "idle_1",
         "expressive": "idle_1",
         "idle": "idle_1",
-        "idle_1": "idle_1",
-        "idle_2": "idle_2",
-        "idle_3": "idle_3",
+        "idle_1": "idle_1",  # nafas / body bicara / fallback crash
+        "idle_2": "idle_2",  # gerak tangan A
+        "idle_3": "idle_3",  # gerak tangan B
+        "idle_4": "idle_4",  # gerak tangan C
         "wave": "idle_1",
         "raise_hand": "idle_1",
         "nod": "idle_1",
         "laugh": "idle_1",
         "think": "idle_1",
-        "point_up": "point_up",
-        "point_down": "point_down",
+        # Point CTA ditunda — map ke rest sampai asset + policy diaktifkan lagi.
+        "point_up": "idle_1",
+        "point_down": "idle_1",
     }
 
     def talk_clip_name(self) -> str:
-        """Body saat bicara: idle_1 (menjelaskan), fallback idle / idle_*."""
+        """Body saat bicara: idle_1 (rest diam), fallback idle / idle_*."""
         for key in (TALK_CLIP_DEFAULT, "idle_1", "idle", self._idle_name):
             if key and key in self.clips:
                 return key
@@ -489,7 +494,7 @@ class AssetBank:
         """Decode ke RAM: semua idle_* (+ point jika ada di env)."""
         raw = (
             os.environ.get("AI_WORKER_EAGER_CLIPS")
-            or "idle_1,idle_2,idle_3,idle,point_up,point_down"
+            or "idle_1,idle_2,idle_3,idle_4,idle"
         ).strip()
         if raw.lower() in ("all", "*"):
             return list(self.clips.keys()) if self.clips else ["idle_1"]
@@ -694,7 +699,7 @@ class VideoStateMachine:
         self._schedule_next_ambient()
 
     def _schedule_next_ambient(self) -> None:
-        # Rotasi idle variant ATAU ambient gesture (jarang)
+        # Backup timer: rotasi utama di akhir clip (~4s). Timer ini untuk idle_1 → variant.
         if not self._idle_variants and not self._ambient_names:
             self._next_ambient_at = 0.0
             return
@@ -702,39 +707,49 @@ class VideoStateMachine:
             AMBIENT_MIN_SEC, AMBIENT_MAX_SEC
         )
 
+    def _choose_next_idle_variant(self, exclude: Optional[str] = None) -> Optional[str]:
+        """Pilih idle berikutnya — tidak boleh sama dengan clip sekarang (hindari 2→2)."""
+        talk = self.bank.talk_clip_name()
+        primary = self.bank._idle_name
+        cur = exclude or self.current_name
+        variants = [
+            c
+            for c in self._idle_variants
+            if c in self.bank.clips and c not in (talk, cur)
+        ]
+        # Kadang sisip idle_1 (nafas) biar ritme natural, tapi jangan stuck di sana terus.
+        if (
+            primary in self.bank.clips
+            and primary != cur
+            and random.random() < max(0.0, min(1.0, IDLE_BREATH_CHANCE))
+        ):
+            return primary
+        if variants:
+            return random.choice(variants)
+        # Kalau cuma 1 variant & sedang di situ → balik idle_1
+        if primary in self.bank.clips and primary != cur:
+            return primary
+        return None
+
     def _maybe_queue_ambient_gesture(self) -> None:
-        """Saat diam: ganti idle_2/idle_3 di batas pose (bukan point gesture)."""
+        """Saat diam di idle_1 terlalu lama: mulai rotasi idle_2/3/4 (tanpa ulang clip sama)."""
         if self._utterance_active or self._playthrough_lock:
             return
         if self.state != PlayState.IDLE or self._overlap is not None:
             return
         if self._next_ambient_at <= 0 or time.monotonic() < self._next_ambient_at:
             return
-        talk = self.bank.talk_clip_name()
-        candidates = [
-            c
-            for c in self._idle_variants
-            if c in self.bank.clips and c not in (talk, self.current_name)
-        ]
-        # Boleh balik ke idle_1 (primary) supaya tidak stuck di idle_2/3
-        primary = self.bank._idle_name
-        if primary in self.bank.clips and primary != self.current_name:
-            candidates.append(primary)
-        # Fallback legacy ambient point (biasanya off)
-        for name in self._ambient_names:
-            if not _is_allowed_gesture(name):
-                continue
-            resolved = self.bank.resolve_action(name)
-            if resolved in (self.bank._idle_name, talk, self.current_name):
-                continue
-            if resolved in self.bank.clips:
-                candidates.append(resolved)
         self._schedule_next_ambient()
-        if not candidates or self.pending_action or self._action_queue:
+        if self.pending_action or self._action_queue:
             return
-        tag = random.choice(candidates)
+        # Hanya kick dari idle_1/primary — variant diganti di akhir clip.
+        if self.current_name not in (self.bank._idle_name, "idle", self.bank.talk_clip_name()):
+            return
+        tag = self._choose_next_idle_variant()
+        if not tag:
+            return
         self.pending_action = tag
-        print(f"[StateMachine] Ambient idle/gesture → {tag}")
+        print(f"[StateMachine] Ambient idle → {tag}")
 
     def reset_after_stop(self) -> None:
         """Reset state setelah pause/stop — hindari utterance stuck di Go Live berikutnya."""
@@ -1025,6 +1040,19 @@ class VideoStateMachine:
 
         if self.frame_idx > end_pf:
             if clip.loop and not self._playthrough_lock:
+                # Idle variant (~4s): satu putaran selesai → ganti clip lain (bukan 2→2).
+                if (
+                    self.state == PlayState.IDLE
+                    and not self._utterance_active
+                    and not self.pending_action
+                    and self.current_name in self._idle_variants
+                ):
+                    nxt = self._choose_next_idle_variant(exclude=self.current_name)
+                    if nxt:
+                        self.frame_idx = end_pf
+                        self.pending_action = nxt
+                        self._schedule_next_ambient()
+                        return
                 self.frame_idx = base_pf
                 return
             # Clip sekali-putar selesai: tahan pose akhir, lepas lock, antri idle.
@@ -1033,7 +1061,8 @@ class VideoStateMachine:
             self._playthrough_lock = False
             if not self._utterance_active:
                 if not self.pending_action:
-                    self.pending_action = self.bank._idle_name
+                    nxt = self._choose_next_idle_variant(exclude=self.current_name)
+                    self.pending_action = nxt or self.bank._idle_name
                 self._drain_action_queue()
 
     def _drain_action_queue(self) -> None:
@@ -1483,12 +1512,7 @@ def frame_fetcher_loop(
         if bridge is not None and bridge.is_utterance_active():
             if is_speech and not was_speaking:
                 sm.begin_utterance()
-            # Early CTA: mulai point di ~70% audio supaya tangan sinkron frasa CTA
-            # (bukan nunggu silence penuh). Hanya untuk point_up/point_down.
-            elif is_speech and not bridge.is_audio_exhausted():
-                act = (bridge.current_action() or "").lower().replace("-", "_")
-                if act in ("point_up", "point_down") and bridge.audio_progress() >= 0.70:
-                    sm.try_start_cta_gesture_early()
+            # Early CTA point dinonaktifkan (ALLOWED_GESTURES kosong).
             elif not is_speech and was_speaking and bridge.is_audio_exhausted():
                 sm.mark_utterance_audio_done()
             if sm.utterance_visual_complete():

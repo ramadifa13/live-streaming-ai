@@ -2,7 +2,7 @@ import { Avatar } from "./types";
 
 export function avatarIdleVideoPath(avatarId: string): string {
   const id = (avatarId || "namira").toLowerCase();
-  // Prefer idle_1 (pose menjelaskan); fallback idle generik.
+  // Prefer idle_1 (rest diam + lipsync); fallback idle generik.
   return `/avatars/${id}_idle_1.mp4`;
 }
 

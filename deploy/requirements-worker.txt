@@ -1,5 +1,5 @@
 # ==========================================
-# RUNPOD AI WORKER — pinned (harus cocok setup.sh / setup-safe.sh)
+# RUNPOD AI WORKER — pinned (harus cocok setup.sh)
 # JANGAN pakai MuseTalk/requirements.txt upstream (numpy/torch/transformers beda).
 # Torch + torchvision + torchaudio diinstall TERPISAH di setup (cu118).
 # MMCV / MMDet / MMPose diinstall via `mim` di setup (bukan pip di file ini).

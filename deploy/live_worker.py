@@ -37,7 +37,7 @@ class AILiveWorker:
 
         if not os.path.exists(self.musetalk_checkpoint):
             print(
-                f"[WARNING] Model MuseTalk belum terunduh di {self.musetalk_checkpoint}. Pastikan setup-safe.sh sudah dijalankan."
+                f"[WARNING] Model MuseTalk belum terunduh di {self.musetalk_checkpoint}. Pastikan setup.sh sudah dijalankan."
             )
 
         self._ensure_musetalk_layout()
@@ -246,10 +246,10 @@ class AILiveWorker:
         clean_name = host_name.lower().replace(".png", "").replace(".jpg", "").replace(".mp4", "").strip()
 
         gesture_tokens = (
-            "wave",
-            "point_up",
-            "point_down",
             "idle",
+            "idle_1",
+            "idle_2",
+            "idle_3",
         )
         is_specific_clip = any(
             clean_name == token or clean_name.endswith("_" + token)
@@ -308,17 +308,29 @@ class AILiveWorker:
         return None
 
     def _resolve_action_clip(self, host_type, host_name, action_tag):
-        """Pilih clip gesture. Runtime CTA: point_up/point_down; selain itu idle."""
+        """Pilih clip. Point CTA off → selalu idle_1 / idle."""
         host = (host_name or "namira").lower().strip()
         action = (action_tag or "idle").lower().strip().replace("-", "_")
-        if action in ("talk", "talk_expressive", "expressive", "wave", "raise_hand", "nod", "laugh", "think"):
-            action = "idle"
+        if action in (
+            "talk",
+            "talk_expressive",
+            "expressive",
+            "wave",
+            "raise_hand",
+            "nod",
+            "laugh",
+            "think",
+            "point_up",
+            "point_down",
+        ):
+            action = "idle_1"
         aliases = {
-            "idle": ["idle"],
-            "point_up": ["point_up"],
-            "point_down": ["point_down"],
+            "idle": ["idle_1", "idle"],
+            "idle_1": ["idle_1", "idle"],
+            "idle_2": ["idle_2"],
+            "idle_3": ["idle_3"],
         }
-        variants = aliases.get(action, ["idle"])
+        variants = aliases.get(action, ["idle_1", "idle"])
         candidates = []
         for variant in variants:
             candidates.extend(

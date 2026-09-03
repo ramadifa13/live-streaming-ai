@@ -138,7 +138,9 @@ export default function Dashboard() {
       oauthService.fetchProfile(decodedPlat).then((acc) => {
         if (acc?.isConnected) {
           setConnectedAccount(acc);
-          if (acc.streamKey) setStreamKey(acc.streamKey);
+          // Hanya isi stream key nyata — jangan overwrite dengan key kosong/palsu OAuth.
+          const key = (acc.streamKey || "").trim();
+          if (key && !key.startsWith("live_")) setStreamKey(key);
           setSelectedPlatform(decodedPlat);
         }
       });
@@ -167,7 +169,8 @@ export default function Dashboard() {
     oauthService.fetchProfile(selectedPlatform).then((acc) => {
       if (acc?.isConnected) {
         setConnectedAccount(acc);
-        if (acc.streamKey) setStreamKey(acc.streamKey);
+        const key = (acc.streamKey || "").trim();
+        if (key && !key.startsWith("live_")) setStreamKey(key);
       } else {
         setConnectedAccount(null);
       }

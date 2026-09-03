@@ -38,6 +38,17 @@ type SpeechCallback = (
   platformCommentId?: string,
 ) => void;
 
+const COMMENT_ID_CAP = 5000;
+function rememberCommentId(set: Set<string>, commentId: string): boolean {
+  if (set.has(commentId)) return false;
+  set.add(commentId);
+  if (set.size > COMMENT_ID_CAP) {
+    set.clear();
+    set.add(commentId);
+  }
+  return true;
+}
+
 interface SessionState {
   config: PollerSessionConfig;
   isRunning: boolean;
@@ -166,8 +177,7 @@ class LivePlatformConnector {
       const text = String(data.text || data.message || data.comment || "");
       const commentId = String(data.id || data.commentId || Date.now());
 
-      if (!state.lastProcessedCommentIds.has(commentId)) {
-        state.lastProcessedCommentIds.add(commentId);
+      if (rememberCommentId(state.lastProcessedCommentIds, commentId)) {
         await this.handleNewComment(sessionId, commentId, sender, text);
       }
     }
@@ -255,8 +265,7 @@ class LivePlatformConnector {
       if (json.items && json.items.length > 0) {
         for (const item of json.items) {
           const commentId = item.id;
-          if (!state.lastProcessedCommentIds.has(commentId)) {
-            state.lastProcessedCommentIds.add(commentId);
+          if (rememberCommentId(state.lastProcessedCommentIds, commentId)) {
             const sender = item.authorDetails?.displayName || "YouTube User";
             const text = item.snippet?.displayMessage || "";
             await this.handleNewComment(sessionId, commentId, sender, text);
@@ -337,8 +346,7 @@ class LivePlatformConnector {
 
       if (json.data && json.data.length > 0) {
         for (const item of json.data) {
-          if (!state.lastProcessedCommentIds.has(item.id)) {
-            state.lastProcessedCommentIds.add(item.id);
+          if (rememberCommentId(state.lastProcessedCommentIds, item.id)) {
             const sender = item.from?.username || "IG Viewer";
             const text = item.message || "";
             await this.handleNewComment(sessionId, item.id, sender, text);

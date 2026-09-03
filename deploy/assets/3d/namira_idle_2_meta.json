@@ -1,5 +1,5 @@
 {
   "base_pose_frame": 0,
-  "end_pose_frame": 233,
-  "comment": "idle_2 = variasi tangan bergerak. Rest start harus = idle_1. end=233 MSE~18."
+  "end_pose_frame": 119,
+  "comment": "idle_2 = gerak tangan A. 120f @~30fps (~4s). Rest = idle_1."
 }

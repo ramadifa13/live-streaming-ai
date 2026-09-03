@@ -1,148 +1,133 @@
 # Deployment Guide
 
-## 1. Setup RunPod GPU Worker (Pertama Kali)
+## Setup Network Volume RunPod
+
+```
+RunPod Console → Storage → Network Volume → Create
+Pod → Edit → Network Volume → Mount Path: /workspace
+```
+
+## Setup Piper TTS
+
+```
+Otomatis di akhir bash setup.sh (setelah MuseTalk OK).
+Manual ulang: FORCE_PIPER=1 bash deploy/piper_tts/setup.sh
+Skip: SKIP_PIPER_SETUP=1 bash setup.sh
+```
+
+## Cek Log Piper
+
+```bash
+tail -f /workspace/piper_tts/logs/piper.log
+```
+
+## Setup Worker Pertama Kali
 
 ```bash
 cd /workspace
 git clone https://github.com/ramadifa13/live-streaming-ai.git live-streaming-ai
 cd /workspace/live-streaming-ai/deploy
 export HF_TOKEN="hf_YourHuggingFaceTokenHere"
-bash setup-safe.sh
-cd /workspace/ai_live_worker
-bash start.sh
-```
-
----
-
-## 2. Redeploy RunPod Worker
-
-### 2.1 Pertama kali (skrip belum ada di pod)
-
-```bash
-cd /workspace/live-streaming-ai && git pull origin main && bash deploy/redeploy-worker.sh
-```
-
-### 2.2 Redeploy rutin
-
-```bash
-bash /workspace/live-streaming-ai/deploy/redeploy-worker.sh
-```
-
-### 2.3 Background
-
-```bash
-nohup bash /workspace/live-streaming-ai/deploy/redeploy-worker.sh > /workspace/ai_live_worker/redeploy.log 2>&1 &
-```
-
-### 2.4 Git konflik
-
-```bash
-FORCE_GIT_RESET=1 bash /workspace/live-streaming-ai/deploy/redeploy-worker.sh
-```
-
-### 2.5 Verifikasi
-
-```bash
+bash setup.sh
+cp -n .env.example /workspace/ai_live_worker/.env
+FORCE_ASSETS=1 bash sync.sh --restart
 curl -s http://localhost:8000/health
+curl -s http://localhost:8000/tts/health
+```
+
+## Deploy Worker
+
+```bash
+cd /workspace/live-streaming-ai
+git pull origin main
+bash deploy/sync.sh --pull --restart
+curl -s http://localhost:8000/health
+```
+
+## Redeploy Worker
+
+```bash
+bash /workspace/live-streaming-ai/deploy/sync.sh --pull --restart
+```
+
+```bash
+FORCE_ASSETS=1 bash /workspace/live-streaming-ai/deploy/sync.sh --pull --restart
+```
+
+```bash
+FORCE_GIT_RESET=1 bash /workspace/live-streaming-ai/deploy/sync.sh --pull --restart
+```
+
+```bash
+nohup bash /workspace/live-streaming-ai/deploy/sync.sh --pull --restart > /workspace/ai_live_worker/redeploy.log 2>&1 &
+```
+
+## Edit Env Worker
+
+```bash
+nano /workspace/ai_live_worker/.env
+bash /workspace/live-streaming-ai/deploy/sync.sh --restart
+```
+
+## Cek Log Worker
+
+```bash
 tail -f /workspace/ai_live_worker/api_server.log
 ```
 
-**Troubleshooting redeploy**
-
-- `cp: cannot stat deploy/.env` — normal; `deploy/.env` tidak di-commit ke git. Redeploy terbaru otomatis membuat `/workspace/ai_live_worker/.env` dari `deploy/.env.example`.
-- `ModuleNotFoundError: No module named 'fastapi'` — venv belum punya API deps. Redeploy otomatis menjalankan `pip install -r requirements-worker.txt`. Jika venv (`/workspace/ai_live_worker/env`) tidak ada sama sekali, jalankan setup penuh:
-
 ```bash
-cd /workspace/live-streaming-ai/deploy
-export HF_TOKEN="hf_YourToken"
-bash setup-safe.sh
+tail -f /workspace/ai_live_worker/output/broadcaster.log
 ```
 
-- `No module named pip` di venv — pip hilang/rusak. Redeploy otomatis memulihkan via `ensurepip` atau `get-pip.py`. Manual:
-
 ```bash
-/workspace/ai_live_worker/env/bin/python -m ensurepip --upgrade
-# jika gagal:
-curl -sS https://bootstrap.pypa.io/get-pip.py | /workspace/ai_live_worker/env/bin/python
-/workspace/ai_live_worker/env/bin/python -m pip install --no-cache-dir -r /workspace/live-streaming-ai/deploy/requirements-worker.txt
+tail -f /workspace/ai_live_worker/logs/master_ffmpeg.log
 ```
 
-### 2.5b Aktifkan frame-feed (opsional, lebih natural)
-
-Di `/workspace/ai_live_worker/.env` (atau `env`):
-
 ```bash
-BROADCAST_MODE=frame_feed
-MUSETALK_RAW_FEED=1
-MUSETALK_SKIP_MP4=1
+tail -f /workspace/ai_live_worker/api_server.log /workspace/ai_live_worker/output/broadcaster.log
 ```
 
-Lalu restart worker / redeploy. Idle dipotong per frame; MuseTalk menyerahkan
-`.ffseg` raw (tanpa encode MP4); pose cycle berlanjut antar clip.
-Rollback: `BROADCAST_MODE=segment`.
-
-### 2.6 Redeploy VPS (backend + frontend)
-
 ```bash
-ssh root@202.10.35.186 "/root/deploy.sh"
+tail -n 50 /workspace/ai_live_worker/api_server.log
 ```
 
----
-
-## 3. Deploy Backend & Frontend di VPS
-
-### 3.1 Persiapan VPS
+```bash
+curl -s http://localhost:8000/logs
+```
 
 ```bash
-ssh root@<IP_VPS>
+curl -s http://localhost:8000/health
+```
+
+## Setup FE BE VPS Pertama Kali
+
+```bash
+ssh root@202.10.35.186
 apt update && apt upgrade -y
 apt install -y nodejs npm git ufw nginx certbot python3-certbot-nginx
-```
-
-### 3.2 Clone repository
-
-```bash
 cd /var/www
-git clone <your-repo-url> app
-cd /var/www/app
-```
-
-### 3.3 Backend setup
-
-```bash
-cd backend
+git clone https://github.com/ramadifa13/live-streaming-ai.git app
+cd /var/www/app/backend
+cp -n .env.example .env
+nano .env
 npm install
 npx prisma generate
 npm run build
-cd ..
-```
-
-### 3.4 Frontend setup
-
-```bash
-cd frontend
+cd /var/www/app/frontend
+cp -n .env.example .env
+nano .env
 npm install
 npm run build
-cd ..
-```
-
-### 3.5 PM2
-
-```bash
-pm2 start backend/dist/server.js --name api
-pm2 start frontend/npm --name frontend -- start
+pm2 start /var/www/app/backend/dist/server.js --name api
+pm2 start /var/www/app/frontend/npm --name frontend -- start
 pm2 save
 pm2 startup
 ```
 
-### 3.6 Nginx
-
-Buat `/etc/nginx/sites-available/app`:
-
 ```nginx
 server {
     listen 80;
-    server_name yourdomain.com www.yourdomain.com;
+    server_name livio.id www.livio.id;
     client_max_body_size 20M;
 
     location / {
@@ -165,177 +150,82 @@ server {
         proxy_send_timeout 120s;
         proxy_read_timeout 120s;
     }
-
-    listen 443 ssl;
-    ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
 }
 ```
 
 ```bash
-ln -s /etc/nginx/sites-available/app /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/app /etc/nginx/sites-enabled/app
 nginx -t
 systemctl reload nginx
+certbot --nginx -d livio.id -d www.livio.id
 ```
 
-### 3.7 SSL
+## Deploy FE BE
 
 ```bash
-certbot --nginx -d yourdomain.com -d www.yourdomain.com
+scp deploy.sh root@202.10.35.186:/root/deploy.sh
+ssh root@202.10.35.186 "bash /root/deploy.sh"
 ```
 
-### 3.8 Restart setelah ubah .env
-
-Di `.env` backend VPS:
+## Redeploy FE BE
 
 ```bash
-# Off = tidak LLM tiap clip otonom (default). Bank & komentar tetap bisa pakai LLM saat perlu.
-LIVE_BRAIN_DURING_LIVE=0
-
-# On = jika bank hampir habis, LLM isi ulang (throttled). Set 0 untuk lokal-only total.
-LIVE_BRAIN_REFILL_WHEN_LOW=1
-# On = LLM isi ulang saat variasi bank habis (bukan cuma count rendah)
-LIVE_BRAIN_REFILL_ON_EXHAUST=1
-# On = LLM jawab komentar yang belum ada di script bank / FAQ lokal
-LIVE_BRAIN_COMMENT_WHEN_NEEDED=1
-
-# Script bank: refill lebih awal (12), max refill LLM per sesi (16)
-LIVE_SCRIPT_BANK_LOW=12
-LIVE_SCRIPT_BANK_LLM_REFILL_MAX=16
-# Kapasitas bank lokal per produk (seed + recycle tanpa LLM live)
-LIVE_SCRIPT_BANK_CAP=520
-LIVE_SCRIPT_BANK_RECYCLE_BATCH=160
-LIVE_SCRIPT_BANK_RECYCLE_ROUNDS=3
-# Marathon: threshold per plan (lokal-first, LLM live minimal)
-LIVE_SCRIPT_BANK_LOW_8H=24
-LIVE_SCRIPT_BANK_LOW_24H=32
-LIVE_SCRIPT_BANK_LLM_REFILL_MAX_8H=8
-LIVE_SCRIPT_BANK_LLM_REFILL_MAX_24H=5
-LIVE_SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS_8H=180000
-LIVE_SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS_24H=240000
-LIVE_SCRIPT_BANK_FRESH_LOW=8
-LIVE_SCRIPT_BANK_LLM_EXHAUST_BONUS=6
-LIVE_BRAIN_REFILL_ON_EXHAUST=1
-LIVE_BRAIN_COMMENT_WHEN_NEEDED=1
-# Prep produk: lebih banyak variasi LLM saat save (bukan saat live)
-LIVE_SCRIPT_PREP_LINE_TARGET=28
-LIVE_BRAIN_PREP_EXTRA_PASS=1
-LIVE_BRAIN_BANK_MAX_TOKENS=3200
-
-# Provider: auto | groq | gemini  (ollama/vllm sudah dihapus)
-LIVE_BRAIN_PROVIDER=auto
-GROQ_API_KEY=...
-GROQ_MODEL=openai/gpt-oss-20b
-GEMINI_API_KEY=...
+ssh root@202.10.35.186 "bash /root/deploy.sh"
 ```
 
-Stack LLM: **Groq primary** (`openai/gpt-oss-20b`, fallback `openai/gpt-oss-120b`) + **Gemini cadangan**. Tidak perlu LLM ketiga selama Gemini key tersedia.
-
 ```bash
-pm2 restart api
-pm2 restart frontend
+ssh root@202.10.35.186
+cd /var/www/app
+git pull origin main
+cd backend && npm install && npx prisma generate && npm run build
+cd ../frontend && npm install && npm run build
+pm2 restart api --update-env
+pm2 restart frontend --update-env
 pm2 save
 ```
 
-### 3.9 Verifikasi
+## Edit Env FE BE
 
 ```bash
-curl -s https://yourdomain.com/api/health
-pm2 logs api --lines 50
-pm2 logs frontend --lines 50
+ssh root@202.10.35.186
+nano /var/www/app/backend/.env
+nano /var/www/app/frontend/.env
+pm2 restart api --update-env
+pm2 restart frontend --update-env
+pm2 save
 ```
 
----
-
-## 4. Health Check
-
-### 4.1 Backend (VPS)
+## Cek Log FE BE
 
 ```bash
-curl -s http://localhost:4000/health
+ssh root@202.10.35.186 "pm2 logs api --lines 50"
 ```
-
-### 4.2 AI Worker (RunPod)
 
 ```bash
-curl -s http://localhost:8000/health
+ssh root@202.10.35.186 "pm2 logs frontend --lines 50"
 ```
-
----
-
-## 5. Monitoring Log RunPod
-
-### 5.1 API Worker
 
 ```bash
-tail -f /workspace/ai_live_worker/api_server.log
+ssh root@202.10.35.186 "pm2 logs --lines 100"
 ```
-
-### 5.2 Broadcaster RTMP
 
 ```bash
-tail -f /workspace/ai_live_worker/output/broadcaster.log
+ssh root@202.10.35.186 "curl -s http://localhost:4000/health"
 ```
-
-### 5.3 FFmpeg stream
 
 ```bash
-tail -f /workspace/ai_live_worker/logs/master_ffmpeg.log
+curl -s https://livio.id/api/health
 ```
 
-### 5.4 Semua log
-
-```bash
-tail -f /workspace/ai_live_worker/api_server.log /workspace/ai_live_worker/output/broadcaster.log
-```
-
-### 5.5 Snapshot 50 baris
-
-```bash
-tail -n 50 /workspace/ai_live_worker/api_server.log
-tail -n 50 /workspace/ai_live_worker/output/broadcaster.log
-```
-
-### 5.6 Log via HTTP
-
-```bash
-curl -s http://localhost:8000/logs
-```
-
----
-
-## 6. Storage Cleanup RunPod
-
-### 6.1 Temp files
+## Cleanup Worker Storage
 
 ```bash
 rm -rf /workspace/ai_live_worker/temp/*
-```
-
-### 6.2 Video segmen lama
-
-```bash
 find /workspace/ai_live_worker/output -name "task_*.mp4" -delete 2>/dev/null || true
 find /workspace/ai_live_worker/output -name "temp_*.mp4" -delete 2>/dev/null || true
 find /workspace/ai_live_worker/output -name "*.tmp" -delete 2>/dev/null || true
-```
-
-### 6.3 Kosongkan log
-
-```bash
 > /workspace/ai_live_worker/api_server.log 2>/dev/null || true
-> /workspace/ai_live_worker/broadcaster.log 2>/dev/null || true
+> /workspace/ai_live_worker/output/broadcaster.log 2>/dev/null || true
 > /workspace/ai_live_worker/logs/master_ffmpeg.log 2>/dev/null || true
-```
-
-### 6.4 Cache pip
-
-```bash
 rm -rf /workspace/tmp/pip_cache /workspace/tmp/* 2>/dev/null || true
 ```
-
-### 6.5 Jangan hapus
-
-- `/workspace/ai_live_worker/env`
-- `/workspace/ai_live_worker/MuseTalk/models`
-- `/workspace/ai_live_worker/assets`
