@@ -275,6 +275,29 @@ def fast_check_ffmpeg():
         return False
 
 
+def _nn_device(module) -> str:
+    """Device of an nn.Module without raising StopIteration (empty params)."""
+    if module is None:
+        return "none"
+    try:
+        params = getattr(module, "parameters", None)
+        if callable(params):
+            first = next(params(), None)
+            if first is not None:
+                return str(first.device)
+        buffers = getattr(module, "buffers", None)
+        if callable(buffers):
+            first = next(buffers(), None)
+            if first is not None:
+                return str(first.device)
+        device = getattr(module, "device", None)
+        if device is not None:
+            return str(device)
+    except Exception as err:
+        return f"n/a ({err})"
+    return "n/a"
+
+
 def _load_models_cached(args):
     global _models_cache
     gpu_id = getattr(args, "gpu_id", 0)
@@ -337,12 +360,11 @@ def _load_models_cached(args):
                 else:
                     fp = FaceParsing()
 
-                # Validate models
-                print(f"[MuseTalk-Cache] Validating models...")
-                print(f"  - VAE: {vae.__class__.__name__}, device={next(vae.vae.parameters()).device}")
-                print(f"  - UNet: {unet.model.__class__.__name__}, device={next(unet.model.parameters()).device}")
-                print(f"  - PE: {pe.__class__.__name__}, device={next(pe.parameters()).device}")
-                print(f"  - Whisper: {whisper.__class__.__name__}, device={next(whisper.parameters()).device}")
+                print("[MuseTalk-Cache] Validating models...")
+                print(f"  - VAE: {vae.__class__.__name__}, device={_nn_device(getattr(vae, 'vae', vae))}")
+                print(f"  - UNet: {unet.model.__class__.__name__}, device={_nn_device(unet.model)}")
+                print(f"  - PE: {pe.__class__.__name__}, device={_nn_device(pe)}")
+                print(f"  - Whisper: {whisper.__class__.__name__}, device={_nn_device(whisper)}")
                 print(f"  - FaceParsing: {fp.__class__.__name__}")
                 print(f"  - dtype: {weight_dtype}")
 
