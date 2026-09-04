@@ -127,7 +127,7 @@ curl -s http://127.0.0.1:8000/health
 Repo sudah ada:
 
 ```bash
-cd /workspace/live-streaming-ai && git pull origin main
+cd /workspace/live-streaming-ai && git checkout main && git pull origin main
 cd deploy && export HF_TOKEN="hf_xxx" && bash setup.sh
 ```
 
@@ -150,6 +150,7 @@ pkill -f 'piper_tts/server.py|uvicorn.*8090' || true
 rm -rf /workspace/piper_tts
 
 cd /workspace/live-streaming-ai
+git checkout main
 git pull origin main
 bash deploy/sync.sh --pull --restart
 

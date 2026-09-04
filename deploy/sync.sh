@@ -300,7 +300,7 @@ for _arg in "$@"; do
 			echo "Usage: bash sync.sh [--pull] [--restart]"
 			echo "  (no flags)   sync files only"
 			echo "  --restart    sync + FORCE_RESTART start.sh"
-			echo "  --pull       git pull origin main before sync"
+			echo "  --pull       checkout main, lalu git pull origin main"
 			exit 0
 			;;
 	esac
@@ -314,8 +314,15 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	if [ "$_cli_pull" = "1" ]; then
 		if [ -d "$REPO_DIR/.git" ]; then
 			cd "$REPO_DIR"
-			echo "[pull] git fetch/pull origin main ..."
+			echo "[pull] pindah ke branch main, lalu fetch/pull origin main ..."
 			git fetch origin main 2>/dev/null || true
+			if git show-ref --verify --quiet refs/heads/main; then
+				git checkout main || echo "[WARN] git checkout main gagal"
+			else
+				git checkout -B main origin/main || echo "[WARN] git checkout -B main gagal"
+			fi
+			_br="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+			echo "[pull] branch sekarang: ${_br:-?}"
 			if [ "${FORCE_GIT_RESET:-0}" = "1" ]; then
 				git reset --hard origin/main
 			else
