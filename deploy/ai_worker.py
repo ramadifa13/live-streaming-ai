@@ -1847,14 +1847,25 @@ class StreamBroadcaster:
             cls._nvenc_available = False
         return cls._nvenc_available
 
-    @classmethod
-    def _prefer_nvenc(cls) -> bool:
+    def _prefer_nvenc(self) -> bool:
         raw = (os.environ.get("FFMPEG_VIDEO_ENCODER") or "auto").strip().lower()
         if raw in ("libx264", "x264", "cpu"):
             return False
         if raw in ("nvenc", "h264_nvenc", "gpu"):
             return True
-        return cls._nvenc_supported()
+        try:
+            from rtmp_utils import is_deferred_rtmp_ack
+
+            if is_deferred_rtmp_ack(self.rtmp_url or ""):
+                print(
+                    "[Broadcaster] Instagram/Facebook: encoder libx264 "
+                    "(NVENC sering ditolak ingest — preview kosong). "
+                    "Paksa GPU: FFMPEG_VIDEO_ENCODER=nvenc"
+                )
+                return False
+        except Exception:
+            pass
+        return self._nvenc_supported()
 
     def _video_codec_args(self, *, use_nvenc: bool, nvenc_tune_ll: bool = True) -> list:
         gop = self.fps * 2
@@ -1880,10 +1891,14 @@ class StreamBroadcaster:
                     "4000k",
                     "-profile:v",
                     "main",
+                    "-level",
+                    "4.1",
                     "-bf",
                     "0",
                     "-g",
                     str(gop),
+                    "-forced-idr",
+                    "1",
                     "-gpu",
                     "0",
                 ]
