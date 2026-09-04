@@ -1855,10 +1855,30 @@ class StreamBroadcaster:
             return True
         return self._nvenc_supported()
 
-    def _video_codec_args(self, *, use_nvenc: bool, nvenc_tune_ll: bool = True) -> list:
+    def _nvenc_try_order(self) -> list:
+        """FFmpeg 4.4 (Lavc58) tidak punya preset p1–p7 / -tune ll.
+
+        Urutan: env dulu, lalu llhp (low-latency lama), lalu fast.
+        """
+        env_preset = (os.environ.get("FFMPEG_NVENC_PRESET") or "").strip()
+        ordered = []
+        if env_preset:
+            ordered.append(env_preset)
+        for name in ("p2", "llhp", "fast"):
+            if name not in ordered:
+                ordered.append(name)
+        return ordered
+
+    def _video_codec_args(
+        self,
+        *,
+        use_nvenc: bool,
+        nvenc_tune_ll: bool = True,
+        nvenc_preset: str = "p2",
+    ) -> list:
         gop = self.fps * 2
         if use_nvenc:
-            preset = (os.environ.get("FFMPEG_NVENC_PRESET") or "p2").strip() or "p2"
+            preset = (nvenc_preset or "p2").strip() or "p2"
             args = [
                 "-c:v",
                 "h264_nvenc",
@@ -1879,14 +1899,10 @@ class StreamBroadcaster:
                     "4000k",
                     "-profile:v",
                     "main",
-                    "-level",
-                    "4.1",
                     "-bf",
                     "0",
                     "-g",
                     str(gop),
-                    "-forced-idr",
-                    "1",
                     "-gpu",
                     "0",
                 ]
@@ -1927,6 +1943,7 @@ class StreamBroadcaster:
         force_ipv4: bool,
         use_nvenc: bool,
         nvenc_tune_ll: bool = True,
+        nvenc_preset: str = "p2",
     ) -> list:
         cmd = [
             "ffmpeg",
@@ -1978,7 +1995,11 @@ class StreamBroadcaster:
             ]
         )
         cmd.extend(
-            self._video_codec_args(use_nvenc=use_nvenc, nvenc_tune_ll=nvenc_tune_ll)
+            self._video_codec_args(
+                use_nvenc=use_nvenc,
+                nvenc_tune_ll=nvenc_tune_ll,
+                nvenc_preset=nvenc_preset,
+            )
         )
         cmd.extend(
             [
@@ -2079,23 +2100,15 @@ class StreamBroadcaster:
         last_stderr = ""
         proc = None
         encoder_name = "libx264"
-        instagram = False
-        try:
-            from rtmp_utils import is_deferred_rtmp_ack
-
-            instagram = is_deferred_rtmp_ack(self.rtmp_url or "")
-        except Exception:
-            pass
         video_plans = []
         if self._prefer_nvenc():
-            # Instagram ingest lebih aman tanpa -tune ll; NVENC tetap wajib
-            # supaya CPU tidak drop ke ~4 fps (libx264 720x1280).
-            if not instagram:
-                video_plans.append((True, True, "h264_nvenc"))
-            video_plans.append((True, False, "h264_nvenc"))
-        video_plans.append((False, False, "libx264"))
+            for preset in self._nvenc_try_order():
+                video_plans.append((True, False, preset, f"h264_nvenc/{preset}"))
+                if preset in ("p1", "p2", "p3", "p4", "p5", "p6", "p7"):
+                    video_plans.append((True, True, preset, f"h264_nvenc/{preset}+ll"))
+        video_plans.append((False, False, "", "libx264"))
 
-        for use_nvenc, nvenc_tune_ll, enc_label in video_plans:
+        for use_nvenc, nvenc_tune_ll, nvenc_preset, enc_label in video_plans:
             if self._proc is not None:
                 break
             for idx, use_ipv4 in enumerate(ipv4_attempts):
@@ -2105,14 +2118,19 @@ class StreamBroadcaster:
                     force_ipv4=use_ipv4,
                     use_nvenc=use_nvenc,
                     nvenc_tune_ll=nvenc_tune_ll,
+                    nvenc_preset=nvenc_preset or "p2",
                 )
                 if idx > 0:
                     print("[Broadcaster] Retry FFmpeg tanpa flag -4 (IPv4)...")
                 if use_nvenc:
                     print(
-                        f"[Broadcaster] Mencoba encoder {enc_label} "
-                        f"(preset={os.environ.get('FFMPEG_NVENC_PRESET') or 'p2'}"
-                        f"{', tune=ll' if nvenc_tune_ll else ''})..."
+                        f"[Broadcaster] Mencoba encoder {enc_label}"
+                        f"{' tune=ll' if nvenc_tune_ll else ''}..."
+                    )
+                elif enc_label == "libx264":
+                    print(
+                        "[Broadcaster] FALLBACK libx264 (CPU) — "
+                        "720x1280 akan lag. Cek log: nvenc gagal start."
                     )
                 try:
                     proc = subprocess.Popen(
