@@ -2,14 +2,14 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
   HOST_VOICES,
-  getHostSampleUrl,
-  resolveHostId,
+  resolveVoiceId,
   synthesizeSpeech,
 } from "../services/tts.js";
 import { liveSessionManager } from "../services/live-session-manager.js";
 
 const synthesizeSchema = z.object({
   text: z.string().min(1),
+  voiceId: z.string().optional(),
   host: z.string().optional(),
   voice: z.string().optional(),
   avatarName: z.string().optional().default("Namira"),
@@ -17,8 +17,11 @@ const synthesizeSchema = z.object({
   pitch: z.number().optional().default(1.0),
   tone: z.string().optional(),
   emotion: z.string().optional(),
+  style: z.string().optional(),
+  lang: z.string().optional(),
   sessionId: z.string().optional(),
-  /** Internal/dev only — FE jangan set ini untuk preview. */
+  requestId: z.string().optional(),
+  /** Studio preview — butuh AI Worker GPU (tidak ada TTS lokal). */
   allowOfflineSynth: z.boolean().optional(),
 });
 
@@ -29,14 +32,12 @@ function resolveLivePodId(sessionId?: string): string | null {
       return s.podId;
     }
   }
-  // Sesi live aktif mana pun
-  // (single-session product — ambil dari env static bila ada)
   const staticId = (process.env.RUNPOD_POD_ID || "").trim();
   return staticId || null;
 }
 
 export async function ttsRoutes(server: FastifyInstance) {
-  // GET /api/tts/voices — host voices + sample pra-live
+  // GET /api/tts/voices — voice_id profiles
   server.get("/api/tts/voices", async () => {
     return {
       success: true,
@@ -46,30 +47,30 @@ export async function ttsRoutes(server: FastifyInstance) {
         gender: h.gender,
         locale: h.locale,
         style: h.style,
-        engine: "piper",
-        sampleAudioUrl: h.sampleAudioUrl,
+        engine: "voxcpm2",
+        voiceId: h.id,
         avatarMatch: h.name,
       })),
     };
   });
 
-  // GET /api/tts/sample/:host — metadata sample pra-live (fallback)
   server.get<{ Params: { host: string } }>(
     "/api/tts/sample/:host",
     async (request) => {
-      const host = resolveHostId(request.params.host);
+      const voiceId = resolveVoiceId(request.params.host);
       return {
         success: true,
         data: {
-          host,
-          sampleAudioUrl: getHostSampleUrl(host),
-          note: "Fallback sample. Studio preview & live memakai Piper.",
+          host: voiceId,
+          voiceId,
+          sampleAudioUrl: null,
+          note: "Ganti reference di voices/<voice_id>/reference.wav. Preview memakai VoxCPM2 di AI Worker.",
         },
       };
     },
   );
 
-  // POST /api/tts/synthesize — Piper (live + studio preview via allowOfflineSynth)
+  // POST /api/tts/synthesize — VoxCPM2 via AI Worker
   server.post("/api/tts/synthesize", async (request, reply) => {
     const parsed = synthesizeSchema.safeParse(request.body);
 
@@ -78,11 +79,10 @@ export async function ttsRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
-    const host = resolveHostId(
-      parsed.data.host || parsed.data.voice,
+    const voiceId = resolveVoiceId(
+      parsed.data.voiceId || parsed.data.host || parsed.data.voice,
       parsed.data.avatarName,
     );
-    const sampleAudioUrl = getHostSampleUrl(host);
 
     const sessionPod = resolveLivePodId(parsed.data.sessionId);
     const allowOffline = parsed.data.allowOfflineSynth === true;
@@ -91,42 +91,48 @@ export async function ttsRoutes(server: FastifyInstance) {
       return {
         success: false,
         error:
-          "TTS Piper butuh sesi live atau allowOfflineSynth untuk preview studio.",
-        host,
-        sampleAudioUrl,
-        engine: "sample",
+          "TTS VoxCPM2 butuh sesi live atau allowOfflineSynth (dengan AI Worker GPU).",
+        voiceId,
+        engine: "voxcpm2",
       };
     }
 
     const result = await synthesizeSpeech({
       ...parsed.data,
-      host,
-      voice: host,
+      voiceId,
+      host: voiceId,
+      voice: voiceId,
+      style: parsed.data.style || parsed.data.tone,
       podId: sessionPod,
       allowOfflineSynth: allowOffline || Boolean(sessionPod),
     });
 
     if (result.success && result.audioBuffer && result.audioBuffer.length > 0) {
-      const isWav =
-        result.audioBuffer.length >= 4 &&
-        result.audioBuffer.toString("ascii", 0, 4) === "RIFF";
-      reply.header("Content-Type", isWav ? "audio/wav" : "audio/mpeg");
+      reply.header("Content-Type", "audio/wav");
       reply.header(
         "X-Voice-Duration-Est",
         result.durationEstimateSeconds.toString(),
       );
-      reply.header("X-TTS-Host", host);
-      reply.header("X-TTS-Engine", result.engine);
+      reply.header("X-TTS-Voice-Id", voiceId);
+      reply.header("X-TTS-Engine", "voxcpm2");
+      if (result.metrics?.latencyMs != null) {
+        reply.header("X-TTS-Latency-Ms", String(result.metrics.latencyMs));
+      }
+      if (result.metrics?.rtf != null) {
+        reply.header("X-TTS-RTF", String(result.metrics.rtf));
+      }
+      if (result.metrics?.audioDuration != null) {
+        reply.header("X-TTS-Audio-Duration", String(result.metrics.audioDuration));
+      }
       return reply.send(result.audioBuffer);
     }
 
-    reply.code(result.engine === "sample" ? 403 : 502);
+    reply.code(result.message.includes("Pra-live") ? 403 : 502);
     return {
       success: false,
       error: result.message || "TTS synthesis failed",
-      engine: result.engine,
-      host,
-      sampleAudioUrl: result.sampleAudioUrl || sampleAudioUrl,
+      engine: "voxcpm2",
+      voiceId,
     };
   });
 }

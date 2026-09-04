@@ -1,12 +1,20 @@
 "use client";
 
 import React from "react";
-import { Wifi, Loader2, Radio, AlertTriangle } from "lucide-react";
+import { Wifi, Loader2, Radio, AlertTriangle, Check } from "lucide-react";
 import { PlatformIcon } from "@/components/shared/PlatformIcon";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { liveSessionService } from "@/services/liveSessionService";
+
+const PREP_STEPS = [
+  { id: 0, label: "Menyalakan cloud" },
+  { id: 1, label: "Menyiapkan host AI" },
+  { id: 2, label: "Menyiapkan kata pembuka" },
+  { id: 3, label: "Menyambung ke platform" },
+  { id: 4, label: "Siap siaran" },
+] as const;
 
 export const ConnectingOverlay: React.FC = () => {
   const isConnectingLive = useLiveSessionStore((state) => state.isConnectingLive);
@@ -27,7 +35,6 @@ export const ConnectingOverlay: React.FC = () => {
     pipelineStatus?.broadcastMode === "ai-worker" ||
     pipelineStatus?.visualWorkerRunning === true;
   const minUtterances = pipelineStatus?.goLiveMinUtterances ?? 2;
-  // Playable-only — jangan pakai generationCount (lifetime).
   const bufferCount = isRealtimeWorker
     ? Math.max(
         pipelineStatus?.readyUtteranceCount ?? 0,
@@ -37,7 +44,13 @@ export const ConnectingOverlay: React.FC = () => {
   const videosReady = bufferCount >= minUtterances;
   const rtmpConnected = pipelineStatus?.isRtmpConnected === true;
   const podBooting = pipelineStatus?.podBooting === true;
-  const rtmpFailed = Boolean(pipelineStatus?.rtmpError);
+  const initializing =
+    pipelineStatus?.visualWorkerInitializing === true ||
+    pipelineStatus?.broadcastBootState === "starting";
+  // Hanya gagal jika backend tandai fatal — bukan pesan "masih menunggu".
+  const rtmpFailed =
+    pipelineStatus?.rtmpFatal === true ||
+    (pipelineStatus?.rtmpState === "failed" && Boolean(pipelineStatus?.rtmpError));
   const workerFailed = Boolean(pipelineStatus?.workerError);
   const connectionFailed = rtmpFailed || workerFailed;
   const canGoLive =
@@ -48,6 +61,21 @@ export const ConnectingOverlay: React.FC = () => {
     videosReady &&
     pipelineStatus?.ready === true;
 
+  const activeStep = Math.min(
+    4,
+    Math.max(0, canGoLive ? 4 : stageIndex),
+  );
+  const progressPct = canGoLive
+    ? 100
+    : Math.min(95, Math.max(8, ((activeStep + 1) / PREP_STEPS.length) * 100));
+
+  const statusLine =
+    connectingStageText ||
+    pipelineStatus?.rtmpHint ||
+    (canGoLive
+      ? "Semua siap. Lanjut tekan tombol hijau."
+      : "Mohon tunggu, sistem sedang bekerja…");
+
   const handleConfirmGoLive = async () => {
     if (!currentLiveSessionId || isSubmittingGoLive || !canGoLive) return;
 
@@ -55,12 +83,12 @@ export const ConnectingOverlay: React.FC = () => {
     try {
       await liveSessionService.confirmGoLive(currentLiveSessionId);
       useLiveSessionStore.setState({
-          isConnectingLive: false,
-          isWaitingForGoLive: false,
-          isLiveActive: true,
-          isLivePaused: false,
-          liveSessionPhase: "live",
-          liveSeconds: 0,
+        isConnectingLive: false,
+        isWaitingForGoLive: false,
+        isLiveActive: true,
+        isLivePaused: false,
+        liveSessionPhase: "live",
+        liveSeconds: 0,
         connectAbortController: null,
       });
       showToast("AI Host aktif! Siaran live dimulai.");
@@ -77,13 +105,16 @@ export const ConnectingOverlay: React.FC = () => {
     <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/85 backdrop-blur-xl p-4 animate-in fade-in duration-200">
       <div className="relative w-full max-w-md max-h-[90vh] rounded-3xl border border-indigo-500/30 bg-[#0a0f1d] text-center shadow-2xl shadow-indigo-500/25 flex flex-col overflow-hidden">
         <div className="pointer-events-none absolute -top-20 left-1/2 -translate-x-1/2 w-64 h-64 bg-gradient-to-br from-blue-600/25 via-indigo-600/15 to-purple-600/25 blur-3xl rounded-full z-0" />
-        <div className="pointer-events-none absolute -bottom-20 left-1/2 -translate-x-1/2 w-64 h-64 bg-gradient-to-tr from-emerald-600/15 to-blue-600/15 blur-3xl rounded-full z-0" />
 
         <div className="p-5 sm:p-6 overflow-y-auto flex-1 z-10 custom-scrollbar relative">
           <div className="relative mx-auto mb-3 flex h-12 w-12 items-center justify-center">
             {connectionFailed ? (
               <div className="flex h-12 w-12 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10">
                 <AlertTriangle className="w-6 h-6 text-red-400" />
+              </div>
+            ) : canGoLive ? (
+              <div className="flex h-12 w-12 items-center justify-center rounded-full border border-emerald-500/40 bg-emerald-500/10">
+                <Check className="w-6 h-6 text-emerald-400" />
               </div>
             ) : (
               <>
@@ -96,118 +127,141 @@ export const ConnectingOverlay: React.FC = () => {
 
           <h3 className="text-base sm:text-lg font-extrabold text-white tracking-wide mb-0.5">
             {workerFailed
-              ? "Worker GPU Bermasalah"
+              ? "Ada gangguan di cloud"
               : rtmpFailed
-              ? "Koneksi RTMP Gagal"
-              : canGoLive
-                ? "Siap Go Live!"
-                : "Menyiapkan Sesi Live AI"}
+                ? "Siaran belum tersambung"
+                : canGoLive
+                  ? "Siap Go Live!"
+                  : "Sedang menyiapkan siaran"}
           </h3>
-          <p className="text-[11px] text-slate-400 mb-2 flex items-center justify-center gap-2 flex-wrap">
-            Host AI{" "}
-            <span className="text-indigo-300 font-semibold">{selectedAvatar.name}</span> di{" "}
+          <p className="text-[11px] text-slate-400 mb-3 flex items-center justify-center gap-2 flex-wrap">
+            Host{" "}
+            <span className="text-indigo-300 font-semibold">{selectedAvatar.name}</span> ·{" "}
             <span className="inline-flex items-center gap-1.5 text-indigo-300 font-semibold">
               <PlatformIcon platformName={selectedPlatform} size="sm" />
               {selectedPlatform}
             </span>
           </p>
 
-          {!canGoLive && !connectionFailed && (
+          {!connectionFailed && (
             <p className="text-[12px] text-slate-300 leading-relaxed mb-3 px-1">
-              {podBooting
-                ? connectingStageText ||
-                  "GPU RunPod sedang boot (PyTorch CUDA). Estimasi 2–6 menit — jangan tutup halaman ini."
-                : "Sistem sedang menyiapkan infrastruktur siaran (GPU, avatar, dan buffer video). Estimasi waktu persiapan "}
-              {!podBooting && (
-                <>
-                  <span className="text-amber-300 font-semibold">sekitar 5 menit</span>.
-                  Harap tetap di halaman ini hingga proses selesai.
-                </>
-              )}
+              {canGoLive
+                ? "Tunggu sampai preview host terlihat di platform, lalu tekan tombol hijau."
+                : initializing || podBooting
+                  ? "Pertama kali bisa 2–5 menit. Jangan tutup halaman ini."
+                  : "Sistem bekerja otomatis. Anda cukup menunggu sampai tombol hijau muncul."}
             </p>
           )}
 
-          <div className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-3 py-1 text-[11px] font-semibold text-indigo-300 mb-3.5">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500" />
-            </span>
-            <span className="truncate max-w-[260px]">{connectingStageText}</span>
-          </div>
-
-          <div className="w-full bg-[#1e293b] rounded-full h-1.5 overflow-hidden mb-4">
+          {/* Progress bar sederhana */}
+          <div className="w-full bg-[#1e293b] rounded-full h-2 overflow-hidden mb-2">
             <div
-              className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full transition-all duration-500"
-              style={{
-                width: `${Math.min(100, Math.max(15, (stageIndex + 1) * 20))}%`,
-              }}
+              className={`h-full transition-all duration-700 ${
+                connectionFailed
+                  ? "bg-red-500"
+                  : canGoLive
+                    ? "bg-emerald-500"
+                    : "bg-gradient-to-r from-blue-500 to-indigo-500"
+              }`}
+              style={{ width: `${progressPct}%` }}
             />
           </div>
+          <p className="text-[11px] text-indigo-200/90 font-medium mb-4 px-1 leading-snug">
+            {statusLine}
+          </p>
 
-          <div className="mb-4 rounded-xl bg-black/30 border border-white/10 p-3 text-left space-y-2">
-            <div className="flex items-center justify-between text-[10px]">
-              <span className="text-slate-400">
-                {isRealtimeWorker ? "Buffer ucapan" : "Video AI"}
-              </span>
-              <span className={videosReady ? "text-emerald-400 font-semibold" : "text-amber-400"}>
-                {bufferCount}/{minUtterances}
-              </span>
+          {/* Checklist langkah — mudah dipahami UMKM */}
+          {!connectionFailed && (
+            <div className="mb-4 rounded-xl bg-black/30 border border-white/10 p-3 text-left space-y-2">
+              {PREP_STEPS.map((step) => {
+                const done = activeStep > step.id || (canGoLive && step.id <= 4);
+                const current = !canGoLive && activeStep === step.id;
+                return (
+                  <div
+                    key={step.id}
+                    className="flex items-center gap-2.5 text-[11px]"
+                  >
+                    <span
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${
+                        done
+                          ? "border-emerald-500/50 bg-emerald-500/20 text-emerald-300"
+                          : current
+                            ? "border-indigo-400/50 bg-indigo-500/20 text-indigo-200"
+                            : "border-white/10 bg-white/5 text-slate-500"
+                      }`}
+                    >
+                      {done ? (
+                        <Check className="w-3 h-3" />
+                      ) : current ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        step.id + 1
+                      )}
+                    </span>
+                    <span
+                      className={
+                        done
+                          ? "text-emerald-200/90"
+                          : current
+                            ? "text-white font-semibold"
+                            : "text-slate-500"
+                      }
+                    >
+                      {step.label}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
-            {isRealtimeWorker && (
-              <div className="flex items-center justify-between text-[10px]">
-                <span className="text-slate-400">Buffer audio</span>
-                <span className="text-slate-300">
-                  {Math.round(pipelineStatus?.bufferSeconds ?? 0)}s
-                </span>
-              </div>
-            )}
-            <div className="flex items-center justify-between text-[10px]">
-              <span className="text-slate-400">Worker GPU</span>
-              <span
+          )}
+
+          {/* Status ringkas */}
+          <div className="mb-4 grid grid-cols-2 gap-2 text-[10px]">
+            <div className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-left">
+              <p className="text-slate-500 mb-0.5">Host AI</p>
+              <p
                 className={
-                  pipelineStatus?.workerError
-                    ? "text-red-400 font-semibold"
-                    : pipelineStatus?.workerOffline
-                      ? "text-amber-400"
-                      : "text-emerald-400 font-semibold"
+                  workerFailed
+                    ? "text-red-300 font-semibold"
+                    : initializing
+                      ? "text-amber-300"
+                      : "text-emerald-300 font-semibold"
                 }
               >
-                {pipelineStatus?.workerError
-                  ? "Offline"
-                  : pipelineStatus?.workerOffline
-                    ? `Menunggu... (${pipelineStatus.workerOfflineSeconds ?? 0}s)`
-                    : "Online"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between text-[10px]">
-              <span className="text-slate-400">RTMP</span>
-              <span
-                className={
-                  pipelineStatus?.rtmpError
-                    ? "text-red-400 font-semibold"
-                    : pipelineStatus?.isRtmpConnected
-                      ? "text-emerald-400 font-semibold"
-                      : "text-amber-400"
-                }
-              >
-                {pipelineStatus?.rtmpError
-                  ? "Gagal"
-                  : pipelineStatus?.isRtmpConnected
-                    ? "Terhubung"
-                    : "Menunggu..."}
-              </span>
-            </div>
-            {(pipelineStatus?.workerError || pipelineStatus?.rtmpError) && (
-              <p className="text-[10px] text-red-300 leading-relaxed pt-1 border-t border-white/5">
-                {pipelineStatus.workerError || pipelineStatus.rtmpError}
+                {workerFailed
+                  ? "Gangguan"
+                  : initializing
+                    ? "Menyiapkan…"
+                    : "Siap"}
               </p>
-            )}
+            </div>
+            <div className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-left">
+              <p className="text-slate-500 mb-0.5">Siaran platform</p>
+              <p
+                className={
+                  rtmpFailed
+                    ? "text-red-300 font-semibold"
+                    : rtmpConnected
+                      ? "text-emerald-300 font-semibold"
+                      : "text-amber-300"
+                }
+              >
+                {rtmpFailed ? "Gagal" : rtmpConnected ? "Terhubung" : "Menyambung…"}
+              </p>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-left col-span-2">
+              <p className="text-slate-500 mb-0.5">Kata pembuka</p>
+              <p className={videosReady ? "text-emerald-300 font-semibold" : "text-amber-300"}>
+                {bufferCount}/{minUtterances} siap
+              </p>
+            </div>
           </div>
 
           {workerFailed && (
             <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-left">
               <p className="text-[11px] font-semibold text-red-200 leading-relaxed">
-                Ini bukan masalah Stream Key atau laptop Anda. Worker GPU di RunPod crash atau overload saat generate video AI. Tutup sesi ini dan coba Connect lagi — jika berulang, hubungi admin.
+                Cloud AI sedang bermasalah. Tutup, tunggu sebentar, lalu Connect lagi.
+                Bukan salah Stream Key atau HP Anda.
               </p>
             </div>
           )}
@@ -215,7 +269,8 @@ export const ConnectingOverlay: React.FC = () => {
           {rtmpFailed && !workerFailed && (
             <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-left">
               <p className="text-[11px] font-semibold text-red-200 leading-relaxed">
-                Stream Key Instagram/Facebook hanya berlaku sekali. Setelah putus, buat siaran baru di platform, tempel Stream Key baru, lalu mulai ulang.
+              Stream Key hanya berlaku sekali. Buat siaran baru di aplikasi live,
+              salin key baru, lalu Connect lagi.
               </p>
             </div>
           )}
@@ -223,16 +278,12 @@ export const ConnectingOverlay: React.FC = () => {
           {canGoLive && (
             <div className="mb-4 rounded-xl border border-yellow-500/30 bg-yellow-500/5 p-3 text-left">
               <p className="text-[10px] font-bold text-yellow-400 mb-2 uppercase tracking-wide">
-                Urutan yang benar
+                Lakukan berurutan
               </p>
               <ol className="list-decimal pl-4 text-[10px] text-slate-300 space-y-1">
+                <li>Lihat preview host di sebelah kiri aplikasi live.</li>
                 <li>
-                  Di Instagram, panel kiri adalah <strong>preview</strong> — belum
-                  tayang ke penonton sampai Anda tekan <strong>Siarkan</strong>.
-                </li>
-                <li>
-                  Setelah preview idle (host belum ngomong), klik{" "}
-                  <strong>Siarkan</strong> di Instagram.
+                  Tekan <strong>Siarkan</strong> di aplikasi live.
                 </li>
                 <li>Kembali ke sini, tekan tombol hijau di bawah.</li>
               </ol>
@@ -249,12 +300,12 @@ export const ConnectingOverlay: React.FC = () => {
               {isSubmittingGoLive ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Menyambungkan AI Host...
+                  Memulai siaran…
                 </>
               ) : (
                 <>
                   <Radio className="w-4 h-4" />
-                  Go Live — Konfirmasi Siaran
+                  Mulai Siaran Sekarang
                 </>
               )}
             </button>
@@ -264,35 +315,31 @@ export const ConnectingOverlay: React.FC = () => {
               onClick={cancelInitialization}
               className="w-full mb-2 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-red-600 to-rose-500 hover:brightness-110 active:scale-95 transition cursor-pointer"
             >
-              {workerFailed ? "Tutup & coba lagi" : "Tutup & coba Stream Key baru"}
+              {workerFailed ? "Tutup & coba lagi" : "Tutup & ganti Stream Key"}
             </button>
           ) : (
-            <div className="mb-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-center">
-              <div className="flex items-center justify-center gap-2 text-[11px] text-amber-200/90 font-medium">
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400 shrink-0" />
-                {rtmpConnected
-                  ? "Preview Instagram terhubung — menunggu buffer AI..."
-                  : isRealtimeWorker
-                    ? `Menyiapkan buffer ucapan (${bufferCount}/${minUtterances})...`
-                    : `Pipeline sedang diproses (${bufferCount}/${minUtterances} video siap)`}
+            <div className="mb-2 rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-3 py-3 text-center">
+              <div className="flex items-center justify-center gap-2 text-[12px] text-indigo-100 font-medium">
+                <Loader2 className="w-4 h-4 animate-spin text-indigo-300 shrink-0" />
+                Mohon tunggu…
               </div>
-              <p className="mt-1 text-[10px] text-slate-400 leading-snug">
+              <p className="mt-1.5 text-[10px] text-slate-400 leading-snug">
                 {rtmpConnected
-                  ? "Jangan tekan Siarkan dulu. Host harus idle di preview. Setelah tombol hijau muncul, Siarkan di Instagram lalu konfirmasi di sini."
-                  : "Estimasi waktu: sekitar 5 menit. Durasi dapat lebih singkat jika GPU sudah aktif."}
+                  ? "Hampir selesai — menyiapkan kata pembuka host."
+                  : "Jangan tutup halaman. Progress akan berlanjut otomatis."}
               </p>
             </div>
           )}
 
           {!connectionFailed && (
-          <button
-            type="button"
-            onClick={cancelInitialization}
-            disabled={isSubmittingGoLive}
-            className="w-full py-2.5 rounded-xl border border-slate-700 bg-[#111827] text-xs font-semibold text-slate-400 hover:text-white hover:border-slate-500 transition cursor-pointer disabled:opacity-50"
-          >
-            Batalkan Inisialisasi
-          </button>
+            <button
+              type="button"
+              onClick={cancelInitialization}
+              disabled={isSubmittingGoLive}
+              className="w-full py-2.5 rounded-xl border border-slate-700 bg-[#111827] text-xs font-semibold text-slate-400 hover:text-white hover:border-slate-500 transition cursor-pointer disabled:opacity-50"
+            >
+              Batalkan
+            </button>
           )}
         </div>
       </div>

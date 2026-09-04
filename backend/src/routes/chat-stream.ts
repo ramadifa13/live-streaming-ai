@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { generateLunaResponse } from "../services/groq-brain.js";
 import { generateVisemesFromText } from "../services/viseme-generator.js";
-import { getHostSampleUrl, resolveHostId } from "../services/tts.js";
+import { resolveHostId } from "../services/tts.js";
 
 const chatStreamRequestSchema = z.object({
   comment: z.string().min(1, "Comment is required"),
@@ -44,9 +44,8 @@ export async function chatStreamRoutes(server: FastifyInstance) {
       }
 
       const host = resolveHostId(voice, avatarName);
-      const sampleAudioUrl = getHostSampleUrl(host);
 
-      // Pra-live / studio chat: jangan hit Piper. FE putar sampleAudioUrl.
+      // Pra-live / studio chat: FE putar via VoxCPM2 (/api/tts/synthesize).
       return {
         success: true,
         data: {
@@ -60,7 +59,6 @@ export async function chatStreamRoutes(server: FastifyInstance) {
             voice: host,
             host,
             durationMs: visemeData.durationMs,
-            sampleAudioUrl,
             audioBase64: undefined,
           },
           visemes: visemeData.visemes,

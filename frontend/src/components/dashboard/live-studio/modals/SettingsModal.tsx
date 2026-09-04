@@ -34,19 +34,19 @@ export const SettingsModal: React.FC = () => {
           <div className="flex items-center justify-between p-2 rounded bg-[#111827] border border-[#232c42]">
             <span>GPU Cloud Orchestrator</span>
             <span className="text-emerald-400 font-bold">
-              NVIDIA RTX 4090 (On-Demand)
+              NVIDIA L40S (RunPod)
             </span>
           </div>
           <div className="flex items-center justify-between p-2 rounded bg-[#111827] border border-[#232c42]">
             <span>AI Video Engine</span>
             <span className="text-purple-400 font-bold">
-              LivePortrait / MuseTalk Neural
+              MuseTalk Lip-Sync
             </span>
           </div>
           <div className="flex items-center justify-between p-2 rounded bg-[#111827] border border-[#232c42]">
             <span>Voice TTS Engine</span>
             <span className="text-cyan-400 font-bold">
-              Chatterbox-TTS-Indonesian (Voice Clone)
+              VoxCPM2 (AI Worker GPU)
             </span>
           </div>
         </div>

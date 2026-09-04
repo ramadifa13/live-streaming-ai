@@ -1,13 +1,17 @@
 import { create } from "zustand";
 import { Avatar, LiveSalesScript, Product } from "@/app/dashboard/types";
-import { avatars } from "@/app/dashboard/constants";
+import {
+  avatars,
+  DEFAULT_VOICE_ID,
+  type TtsLangCode,
+} from "@/app/dashboard/constants";
 import { aiService, VideoScriptData } from "@/services/aiService";
 
 interface AiHostState {
   selectedAvatar: Avatar;
   selectedTone: string;
   selectedVoice: string;
-  selectedLang: string;
+  selectedLang: TtsLangCode;
   speechSpeed: number;
 
   isPlayingAudio: boolean;
@@ -28,7 +32,7 @@ interface AiHostState {
   setSelectedAvatar: (avatar: Avatar) => void;
   setSelectedTone: (tone: string) => void;
   setSelectedVoice: (voice: string) => void;
-  setSelectedLang: (lang: string) => void;
+  setSelectedLang: (lang: TtsLangCode) => void;
   setSpeechSpeed: (speed: number) => void;
   setCurrentLiveVideoUrl: (url: string | null) => void;
   setVideoDuration: (dur: "15s" | "30s" | "60s") => void;
@@ -39,7 +43,7 @@ interface AiHostState {
     text: string,
     opts?: {
       voice?: string;
-      lang?: string;
+      lang?: TtsLangCode | string;
       tone?: string;
       avatar?: string;
       speed?: number;
@@ -57,8 +61,8 @@ let videoPollingInterval: ReturnType<typeof setInterval> | null = null;
 export const useAiHostStore = create<AiHostState>((set, get) => ({
   selectedAvatar: avatars[0],
   selectedTone: "Energetic",
-  selectedVoice: "namira",
-  selectedLang: "Bahasa Indonesia",
+  selectedVoice: avatars[0]?.voice || DEFAULT_VOICE_ID,
+  selectedLang: "id",
   speechSpeed: 1.0,
 
   isPlayingAudio: false,
@@ -86,7 +90,7 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
   setSelectedAvatar: (avatar) =>
     set({
       selectedAvatar: avatar,
-      selectedVoice: avatar.voice || avatar.id || "namira",
+      selectedVoice: avatar.voice || DEFAULT_VOICE_ID,
     }),
   setSelectedTone: (tone) => set({ selectedTone: tone }),
   setSelectedVoice: (voice) => set({ selectedVoice: voice }),
@@ -119,20 +123,22 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
     set({ isSynthesizingAudio: true, isAvatarSpeaking: true });
 
     const state = get();
-    const host =
+    const voiceId =
       opts?.voice ||
       state.selectedVoice ||
       state.selectedAvatar.voice ||
-      state.selectedAvatar.id ||
-      "namira";
+      DEFAULT_VOICE_ID;
+    const lang = (opts?.lang || state.selectedLang || "id").toString();
 
     try {
       const blob = await aiService.synthesizeTTS({
         text,
-        voice: host,
+        voice: voiceId,
+        voiceId,
         avatarName: opts?.avatar || state.selectedAvatar.name,
         speed: opts?.speed ?? state.speechSpeed ?? 1,
         tone: opts?.tone || state.selectedTone,
+        lang,
         allowOfflineSynth: true,
       });
       const url = URL.createObjectURL(blob);
@@ -160,7 +166,7 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
       await audio.play().catch(() => {});
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      console.warn("[speakText] Piper preview notice:", errorMessage);
+      console.warn("[speakText] TTS preview notice:", errorMessage);
       set({
         isPlayingAudio: false,
         isAvatarSpeaking: false,
@@ -171,7 +177,7 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
     }
   },
 
-  fetchLiveSalesScript: async (activeProduct: Product) => {
+  fetchLiveSalesScript: async (activeProduct) => {
     set({ isLoadingLiveScript: true });
     try {
       const script = await aiService.generateLiveSalesScript({
@@ -246,7 +252,8 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
             set({ isRenderingVideo: false });
           }
         } catch {
-          }
+          /* ignore poll errors */
+        }
       }, 1500);
     } catch (err) {
       set({ isRenderingVideo: false });

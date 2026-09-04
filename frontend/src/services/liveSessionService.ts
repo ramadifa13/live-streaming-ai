@@ -50,8 +50,11 @@ export interface StartSessionParams {
   autoModeration: boolean;
   avatarName: string;
   tone: string;
-  /** Host id (namira) — Piper live TTS. */
+  /** VoxCPM2 voice_id (default_host). */
   voice?: string;
+  voiceId?: string;
+  lang?: string;
+  speechSpeed?: number;
   accessToken?: string;
   liveChatId?: string;
   liveVideoId?: string;
@@ -201,7 +204,6 @@ export const liveSessionService = {
   }): Promise<{
     mode: "live" | "prelive";
     speech?: string;
-    sampleAudioUrl?: string;
     note?: string;
   }> {
     const res = await fetch("/api/live-session/test-comment", {
@@ -216,7 +218,6 @@ export const liveSessionService = {
     return {
       mode: json.mode,
       speech: json.data?.speech,
-      sampleAudioUrl: json.data?.sampleAudioUrl,
       note: json.data?.note,
     };
   },
@@ -250,7 +251,8 @@ export const liveSessionService = {
       maxWaitMs?: number;
     },
   ): Promise<void> {
-    const maxWaitMs = options?.maxWaitMs ?? 30_000;
+    // Cold start MuseTalk bisa 2–5 menit; jangan gagal cepat.
+    const maxWaitMs = options?.maxWaitMs ?? 10 * 60_000;
     const started = Date.now();
 
     while (Date.now() - started < maxWaitMs) {
@@ -259,18 +261,29 @@ export const liveSessionService = {
       }
 
       const status = await this.fetchPipelineStatus(sessionId);
-      if (status?.stageText && options?.onProgress) {
-        options.onProgress(String(status.stageText));
+      const progressText =
+        status?.stageText || status?.rtmpHint || status?.rtmpError;
+      if (progressText && options?.onProgress) {
+        options.onProgress(String(progressText));
       }
       if (status?.isRtmpConnected) return;
-      if (status?.rtmpError) {
-        throw new Error(String(status.rtmpError));
+
+      // Soft connecting hints bukan gagal — overlay tetap menunggu.
+      const fatal =
+        status?.rtmpFatal === true ||
+        (status?.rtmpState === "failed" && Boolean(status?.rtmpError));
+      if (fatal) {
+        throw new Error(
+          String(status?.rtmpError || "Siaran gagal tersambung. Coba Stream Key baru."),
+        );
       }
 
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 2000));
     }
 
-    throw new Error("RTMP belum terdeteksi terhubung setelah menunggu.");
+    throw new Error(
+      "Masih menyiapkan siaran. Tunggu lebih lama atau coba Connect lagi tanpa tutup halaman terlalu cepat.",
+    );
   },
 
   async waitForPodReady(
@@ -302,7 +315,7 @@ export const liveSessionService = {
     }
 
     throw new Error(
-      "Timeout menunggu GPU RunPod siap (lebih dari 6 menit). Coba lagi atau cek worker di RunPod.",
+      "Cloud AI belum siap setelah menunggu lama. Coba Connect lagi, atau pastikan koneksi internet stabil.",
     );
   },
 

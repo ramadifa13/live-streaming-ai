@@ -45,8 +45,8 @@ def gpu_mismatch_help(gpu_name: str, err: str) -> str:
     return (
         f"GPU '{gpu_name}' tidak kompatibel dengan PyTorch {torch.__version__} (CUDA {cuda_ver}). "
         f"Detail: {err}\n"
-        "Solusi cepat: pakai pod RTX 4090 / 3090 / L4 / A5000 "
-        '(RUNPOD_GPU_TYPE="NVIDIA GeForce RTX 4090").\n'
+        "Solusi cepat: pakai pod L40S / RTX 4090 / 3090 / L4 / A5000 "
+        '(RUNPOD_GPU_TYPE="NVIDIA L40S" atau "NVIDIA GeForce RTX 4090").\n'
         "GPU Blackwell (RTX PRO 4500/4000) butuh PyTorch CUDA 12.4+ — belum didukung setup saat ini."
     )
 
@@ -80,15 +80,30 @@ def resolve_use_float16(requested: bool, gpu_id: int = 0) -> bool:
     return True
 
 
+def apply_cuda_perf_flags() -> None:
+    """TF32 + cuDNN benchmark — aman di Ada/Ampere (L40S, 4090)."""
+    if not torch.cuda.is_available():
+        return
+    try:
+        torch.set_float32_matmul_precision("high")
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+    except Exception as exc:
+        print(f"[GPU] Perf flags skip: {exc}", flush=True)
+
+
 def log_gpu_status(gpu_id: int = 0) -> None:
     if not torch.cuda.is_available():
         print("[GPU] CUDA tidak tersedia — inferensi akan lambat (CPU)", flush=True)
         return
+    apply_cuda_perf_flags()
     name = gpu_label(gpu_id)
     cap = torch.cuda.get_device_capability(gpu_id)
     fp16 = cuda_fp16_ok(gpu_id)
     print(
         f"[GPU] {name} | compute {cap[0]}.{cap[1]} | "
-        f"torch {torch.__version__} cu{torch.version.cuda} | fp16={'yes' if fp16 else 'no'}",
+        f"torch {torch.__version__} cu{torch.version.cuda} | fp16={'yes' if fp16 else 'no'} | "
+        f"tf32=on cudnn.benchmark=on",
         flush=True,
     )

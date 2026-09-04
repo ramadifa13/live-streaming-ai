@@ -42,8 +42,7 @@ export async function avatarsRoutes(server: FastifyInstance) {
         style: body.style ?? "neutral",
         language: body.language ?? "Indonesia",
         voice: body.voice ?? hostSlug,
-        sampleAudioUrl:
-          body.sampleAudioUrl ?? `/avatars/${hostSlug}_voice_sample.mp3`,
+        sampleAudioUrl: body.sampleAudioUrl ?? null,
       },
     });
 

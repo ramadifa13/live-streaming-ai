@@ -12,8 +12,6 @@ import { ttsRoutes } from "./routes/tts.js";
 import { avatarVideoRoutes } from "./routes/avatar-video.js";
 import { chatStreamRoutes } from "./routes/chat-stream.js";
 import { oauthRoutes } from "./routes/oauth.js";
-import { stopLocalPiper } from "./services/piper-local.js";
-
 dotenv.config();
 
 const server = Fastify({
@@ -58,8 +56,8 @@ async function seedDatabase() {
           type: "3D",
           style: "Energetic",
           language: "Indonesia",
-          voice: "namira",
-          sampleAudioUrl: "/avatars/namira_voice_sample.mp3",
+          voice: "default_host",
+          sampleAudioUrl: null,
           description: "AI host utama untuk demo live streaming",
         },
       ],
@@ -71,12 +69,13 @@ async function seedDatabase() {
           { name: { contains: "Namira" } },
           { voice: { contains: "Gadis" } },
           { voice: { contains: "Neural" } },
-          { sampleAudioUrl: null },
+          { voice: { equals: "namira" } },
+          { sampleAudioUrl: { not: null } },
         ],
       },
       data: {
-        voice: "namira",
-        sampleAudioUrl: "/avatars/namira_voice_sample.mp3",
+        voice: "default_host",
+        sampleAudioUrl: null,
       },
     });
   }
@@ -97,14 +96,12 @@ try {
   }
   await server.listen({ port, host });
   console.log(`Backend ready at http://${host}:${port}`);
-  console.log("[TTS] Piper CPU di-spawn on-demand (stdin), bukan port 8090.");
+  console.log(
+    `[TTS] Engine=VoxCPM2 voice_id=${process.env.VOICE_ID || "default_host"} (AI Worker GPU)`,
+  );
 
   import("./services/runpod-manager.js").then((m) => m.startIdleMonitor());
-  const shutdown = () => {
-    stopLocalPiper();
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  import("./services/tts.js").then((m) => m.warmUpTTS());
 } catch (error) {
   server.log.error(error);
   process.exit(1);

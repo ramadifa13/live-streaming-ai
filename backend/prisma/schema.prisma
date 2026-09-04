@@ -13,9 +13,9 @@ model Avatar {
   type           String
   style          String?
   language       String?
-  /// Host id untuk Piper live TTS (contoh: namira) — bukan Edge Neural id.
+  /// VoxCPM2 voice_id (contoh: default_host).
   voice          String?
-  /// Sample pra-live (FE play lokal). Jangan hit pod TTS untuk preview.
+  /// Optional sample URL (biasanya null — preview via VoxCPM2).
   sampleAudioUrl String?
   isActive       Boolean  @default(true)
   description    String?

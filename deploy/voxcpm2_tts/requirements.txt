@@ -1,0 +1,10 @@
+# VoxCPM2 TTS — venv terpisah dari MuseTalk (torch conflict: MuseTalk=2.1/cu118, VoxCPM2>=2.5/CUDA12).
+# Install: bash deploy/voxcpm2_tts/setup.sh
+voxcpm>=0.2.0
+soundfile>=0.12.1
+numpy>=1.26.0,<2.0.0
+librosa>=0.10.0
+huggingface_hub>=0.25.0
+fastapi>=0.115.0
+uvicorn>=0.32.0
+pydantic>=2.0.0

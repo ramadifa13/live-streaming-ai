@@ -47,12 +47,11 @@ USER_HINT_REFUSED = (
     "Server RTMP menolak koneksi. Cek RTMP URL, Stream Key, dan jaringan pod."
 )
 USER_HINT_CONNECTING_SLOW = (
-    "RTMP belum publish frame. Pastikan Stream Key dari sesi Instagram Producer "
-    "yang sedang terbuka (key sekali pakai), tunggu 30–90 detik, lalu cek preview "
-    "kiri di Producer — bukan hanya status di dashboard Livio."
+    "Masih menyambungkan siaran ke platform anda. Tunggu sebentar, "
+    "lalu cek gambar preview di sebelah kiri layar platform anda."
 )
 USER_HINT_DNS = (
-    "Pod GPU tidak bisa resolve hostname Instagram (DNS gagal). "
+    "Pod GPU tidak bisa resolve hostname platform anda (DNS gagal). "
     "Di terminal pod: perbaiki /etc/resolv.conf (8.8.8.8, 1.1.1.1), "
     "lalu bash deploy/sync.sh --pull --restart dan gunakan Stream Key baru."
 )

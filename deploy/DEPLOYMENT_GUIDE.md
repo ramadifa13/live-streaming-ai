@@ -1,17 +1,18 @@
 # Deployment Guide
 
-Live host AI: **frontend** (Next.js) + **backend** (Node, TTS Piper CPU) + **AI worker** (RunPod GPU: MuseTalk lip-sync + RTMP).
+Live host AI: **frontend** (Next.js) + **backend** (Node, LLM/orkestrasi) + **AI worker** (RunPod RTX 4090: **VoxCPM2 TTS** + MuseTalk + RTMP).
 
-```
+`
 Browser  →  Frontend :3000  →  Backend :4000
                                 │
-                                ├─ Piper TTS (CPU, spawn Python, tanpa port)
-                                │     WAV 16 kHz → audio_base64
-                                │
-                                └─ RunPod proxy :8000  →  MuseTalk + FFmpeg RTMP
-```
+                                └─ RunPod proxy :8000
+                                      ├─ /tts/synthesize  → VoxCPM2 (GPU, venv terpisah)
+                                      └─ /stream/*        → MuseTalk + FFmpeg RTMP
+`
 
-Worker **tidak** menjalankan TTS. Tidak ada `/tts/health` atau `/tts/synthesize` di pod. Preview dashboard memakai file statis (`/avatars/namira_voice_sample.mp3`); Piper hanya saat sesi live.
+**Satu TTS engine saja: VoxCPM2.** Piper dan Supertonic sudah dihapus (tidak ada fallback).
+
+Voice: oice_id=default_host → /workspace/voices/default_host/reference.wav (ganti file tanpa ubah kode).
 
 ---
 
@@ -19,64 +20,69 @@ Worker **tidak** menjalankan TTS. Tidak ada `/tts/health` atau `/tts/synthesize`
 
 | Komponen | Mesin | Tugas |
 |---|---|---|
-| Frontend | VPS / laptop | UI, Go Live, sample suara pra-live |
-| Backend | VPS / laptop | LLM/script bank, Piper, orkestrasi live, kirim WAV ke worker |
-| AI worker | RunPod GPU + network volume `/workspace` | MuseTalk, idle clips, RTMP ke platform |
+| Frontend | VPS / laptop | UI, Go Live, preview suara (via worker) |
+| Backend | VPS / laptop | LLM/script bank, orkestrasi live, panggil worker /tts/synthesize |
+| AI worker | RunPod GPU + network volume /workspace | VoxCPM2 + MuseTalk + idle clips + RTMP |
 
-**Pod statis vs on-demand** (backend `.env`):
+**Pod statis vs on-demand** (backend .env):
 
-- `RUNPOD_POD_ID` **terisi** → pakai pod itu (health / resume). Tidak GraphQL-find / create on-demand.
-- `RUNPOD_POD_ID` **kosong** → buat pod on-demand (butuh `RUNPOD_NETWORK_VOLUME_ID` + API key).
-- `RUNPOD_WORKER_URL` diisi untuk pod statis, contoh: `https://POD_ID-8000.proxy.runpod.net`. Jangan set ke `localhost` di VPS.
+- RUNPOD_POD_ID **terisi** → pakai pod itu (health / resume). Tidak GraphQL-find / create on-demand.
+- RUNPOD_POD_ID **kosong** → buat pod on-demand (butuh RUNPOD_NETWORK_VOLUME_ID + API key).
+- RUNPOD_WORKER_URL diisi untuk pod statis, contoh: https://POD_ID-8000.proxy.runpod.net. Jangan set ke localhost di VPS.
 
 ---
 
 ## 2. Setup Network Volume RunPod
 
-```
+`
 RunPod Console → Storage → Network Volume → Create
 Pod → Edit → Network Volume → Mount Path: /workspace
 HTTP service: port 8000 (proxy publik worker)
-```
+`
 
-Simpan `RUNPOD_API_KEY`, volume ID, pod ID, dan URL proxy ke backend `.env`.
+Layout volume:
+
+`
+/workspace/models/voxcpm2/
+/workspace/voices/default_host/reference.wav
+/workspace/voxcpm2_env/          # torch 2.5+ / CUDA 12 (VoxCPM2)
+/workspace/ai_live_worker/       # MuseTalk torch 2.1 / cu118
+`
+
+Simpan RUNPOD_API_KEY, volume ID, pod ID, dan URL proxy ke backend .env.
 
 ---
 
-## 3. Piper TTS (CPU di backend)
+## 3. VoxCPM2 TTS (GPU di AI Worker)
 
-Piper hidup di mesin backend, venv terpisah (`backend/piper_data/env`). Backend mem-spawn `piper_tts/worker.py` (stdin/stdout). **Tidak** ada server HTTP `:8090`.
+Venv **terpisah** dari MuseTalk (konflik torch). pi_server spawn 127.0.0.1:8091 saat startup.
 
-Voice default Hugging Face: `id_ID-news_tts-medium`. Host live memakai `namira.onnx` (copy/symlink dari voice itu sampai ada model custom).
+Endpoints: GET /tts/health, POST /tts/synthesize, POST /tts/invalidate-voice.
 
-**Windows (dev):**
+`
+cd /workspace/live-streaming-ai/deploy
+bash voxcpm2_tts/setup.sh
+FORCE_ASSETS=1 bash sync.sh --restart
+curl -s http://127.0.0.1:8000/tts/health
+`
 
-```
+Backend test (butuh worker URL):
+
+`
 cd backend
-npm run piper:setup
-npm run tts:test
-npm run dev
-```
-
-**Linux (VPS):**
-
-```
-cd /var/www/app/backend
-bash piper_tts/setup.sh
 npx tsx test-tts.ts
-```
+`
 
-`npm run piper:setup` di `package.json` memanggil PowerShell; di Linux pakai `bash piper_tts/setup.sh`.
+Ganti suara: timpa 
+eference.wav → POST /tts/invalidate-voice.
 
-Voice custom: taruh `backend/piper_data/models/namira.onnx` + `namira.onnx.json`, lalu **restart backend**.
-
-Worker GPU tidak menginstall Piper. `start.sh` / `sync.sh` mematikan proses Piper lama di pod (port 8090) jika masih ada.
+Piper/Supertonic: **REMOVED**. sync.sh membersihkan sisa folder/env lama.
 
 ---
 
 ## 4. Dev lokal (laptop)
 
-Terminal 1 — backend (setelah Piper setup):
+Terminal 1 — backend (butuh RUNPOD_WORKER_URL ke pod VoxCPM2):
 
 ```
 cd backend
@@ -141,13 +147,13 @@ curl -s http://127.0.0.1:8000/health
 
 Audio lip-sync datang dari backend sebagai WAV (`audio_base64`) ke `/stream/live-utterance`.
 
-### Pod yang sudah pernah install Piper (sekali saja)
+### Bersihkan Piper/Supertonic lama (sekali saja)
 
 Jalankan di **terminal pod**, bukan di laptop. `setup.sh` MuseTalk **tidak** perlu diulang.
 
 ```bash
 pkill -f 'piper_tts/server.py|uvicorn.*8090' || true
-rm -rf /workspace/piper_tts
+rm -rf /workspace/piper_tts /workspace/supertonic_tts
 
 cd /workspace/live-streaming-ai
 git checkout main
@@ -159,9 +165,9 @@ ls /workspace/piper_tts 2>/dev/null && echo "MASIH ADA piper_tts" || echo "OK: p
 ss -lptn | grep -E ':8000|:8090' || true
 ```
 
-Yang harus hidup: **port 8000**. Port **8090** harus kosong. Jangan `bash piper_tts/setup.sh` di pod.
+Yang harus hidup: **port 8000**. Port **8090** harus kosong. Jangan install Piper/Supertonic. Pakai bash voxcpm2_tts/setup.sh.
 
-`sync.sh` juga menghapus `/workspace/piper_tts` dan baris `PIPER_*` di `.env` worker.
+sync.sh menghapus folder/env Piper dan Supertonic.
 
 ---
 
@@ -239,8 +245,8 @@ cd /var/www/app/backend
 cp -n .env.example .env
 nano .env
 # Wajib: DATABASE_URL, BACKEND_PUBLIC_URL, CORS_ORIGIN,
-# GROQ/GEMINI, RUNPOD_*, TTS_ENGINE=piper
-bash piper_tts/setup.sh
+# GROQ/GEMINI, RUNPOD_*, VOICE_ID=default_host
+# VoxCPM2 setup di pod: bash deploy/voxcpm2_tts/setup.sh
 npm install
 npx prisma generate
 npx prisma migrate deploy
@@ -320,8 +326,9 @@ npm install
 npx prisma generate
 npx prisma migrate deploy
 npm run build
-# jika piper_tts/ atau requirements berubah:
-# bash piper_tts/setup.sh
+# jika voxcpm2_tts/ berubah:
+# # VoxCPM2 setup di pod: bash deploy/voxcpm2_tts/setup.sh
+# legacy Piper/Supertonic sudah dihapus
 
 cd ../frontend
 npm install
@@ -342,7 +349,7 @@ pm2 restart frontend --update-env
 pm2 save
 ```
 
-Setelah ganti file `namira.onnx`, restart `api` saja.
+Setelah ganti reference.wav / model VoxCPM2, restart API atau invalidate-voice.
 
 ### Log FE/BE
 
@@ -359,14 +366,14 @@ curl -s https://livio.id/api/health
 
 **Backend** (`backend/.env.example`):
 
-- `TTS_ENGINE=piper` — tidak ada TTS di worker.
-- Jangan set `PIPER_TTS_URL` ke pod / `:8090` kecuali tes HTTP cadangan di CPU yang sama.
+- `VOICE_ID=default_host` — tidak ada TTS di worker.
+- `# (removed) SUPERTONIC_*`, `TTS_LANGUAGE=id`, `# VOXCPM2 on worker`.
 - `RUNPOD_POD_ID` + `RUNPOD_WORKER_URL` untuk pod yang sudah nyala 24/7.
 
 **Worker** (`deploy/.env.example` → `/workspace/ai_live_worker/.env`):
 
 - `PORT=8000`, `BROADCAST_MODE=ai_worker`, `WORKER_REQUIRE_AUDIO=1`.
-- Tidak ada variabel Piper.
+- Tidak ada variabel TTS/Piper/Supertonic.
 
 **Frontend**:
 
@@ -377,8 +384,8 @@ curl -s https://livio.id/api/health
 
 ## 10. Cek alur live (ringkas)
 
-1. Backend: `curl /health`, `npx tsx test-tts.ts` (WAV valid, engine Piper).
+1. Worker curl /tts/health; backend npx tsx test-tts.ts (engine voxcpm2).
 2. Worker: `curl :8000/health` (`status: ok`).
-3. Go Live di dashboard → backend synth Piper → kirim WAV ke worker → MuseTalk + RTMP.
+3. Go Live → VoxCPM2 → MuseTalk + RTMP.
 
-Jika bibir tidak gerak: pastikan WAV sampai worker, `playback_active` setelah konfirmasi Go Live, dan Whisper di MuseTalk mendapat audio 16 kHz (backend sudah men-synth 16 kHz).
+Jika bibir tidak gerak: pastikan WAV sampai worker, `playback_active` setelah konfirmasi Go Live, dan Whisper di MuseTalk mendapat audio 16 kHz (backend sudah men-synth/resample 16 kHz).

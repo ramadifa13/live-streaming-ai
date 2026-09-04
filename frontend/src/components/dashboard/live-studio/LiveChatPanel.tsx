@@ -24,6 +24,8 @@ export const LiveChatPanel: React.FC = () => {
   const selectedAvatar = useAiHostStore((state) => state.selectedAvatar);
   const selectedTone = useAiHostStore((state) => state.selectedTone);
   const selectedVoice = useAiHostStore((state) => state.selectedVoice);
+  const selectedLang = useAiHostStore((state) => state.selectedLang);
+  const speechSpeed = useAiHostStore((state) => state.speechSpeed);
   const speakText = useAiHostStore((state) => state.speakText);
 
   const showToast = useDashboardUIStore((state) => state.showToast);
@@ -98,11 +100,13 @@ export const LiveChatPanel: React.FC = () => {
         time: now,
       });
 
-      // Prelive: Piper TTS (CPU lokal) — sama engine dengan live.
+      // Prelive/step 4: VoxCPM2 — voice_id / lang / speed sama seperti Step 2.
       await speakText(replyText, {
         avatar: selectedAvatar.name,
         tone: selectedTone,
         voice: selectedVoice,
+        lang: selectedLang,
+        speed: speechSpeed,
       }).catch(() => {});
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal uji komentar");
@@ -151,7 +155,7 @@ export const LiveChatPanel: React.FC = () => {
             <span className="text-[10px] text-slate-600 mt-0.5">
               {isLive
                 ? "Ketik untuk inject komentar ke AI Host live"
-                : "Prelive: uji respons LLM + Piper TTS"}
+                : "Prelive: uji respons LLM + VoxCPM2 TTS"}
             </span>
           </div>
         ) : (

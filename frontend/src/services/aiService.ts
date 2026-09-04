@@ -1,5 +1,4 @@
 import { LiveSalesScript, Product } from "@/app/dashboard/types";
-import { hostSampleAudioPath } from "@/app/dashboard/constants";
 
 export interface SynthesizeTTSOptions {
   text: string;
@@ -7,8 +6,12 @@ export interface SynthesizeTTSOptions {
   avatarName: string;
   speed?: number;
   tone?: string;
+  /** VoxCPM2 voice_id (default_host) */
+  voiceId?: string;
+  /** ISO lang: id | en */
+  lang?: string;
   sessionId?: string;
-  /** Studio preview (step 2/4) — Piper lokal tanpa sesi live. */
+  /** Studio preview — butuh AI Worker GPU (VoxCPM2). */
   allowOfflineSynth?: boolean;
 }
 
@@ -20,35 +23,33 @@ export interface VideoScriptData {
   fullVoiceover?: string;
 }
 
-function resolveHostId(voiceOrName?: string): string {
-  const raw = (voiceOrName || "namira").trim().toLowerCase();
+function resolveVoiceId(voiceOrName?: string): string {
+  const raw = (voiceOrName || "default_host").trim().toLowerCase();
   if (!raw || raw.includes("gadis") || raw.includes("neural") || raw.includes("edge")) {
-    return "namira";
+    return "default_host";
   }
-  if (raw.includes("namira")) return "namira";
+  if (raw.includes("namira") || raw === "namira") return "default_host";
   return raw.replace(/\s+/g, "_");
 }
 
 export const aiService = {
-  /** Pra-live: URL sample host (static). Tidak hit Piper. */
-  getHostSampleUrl(hostOrVoice?: string, sampleFromAvatar?: string | null): string {
-    if (sampleFromAvatar) return sampleFromAvatar;
-    return hostSampleAudioPath(resolveHostId(hostOrVoice));
-  },
-
-  /** Piper TTS — live (session) atau studio preview (`allowOfflineSynth`). */
+  /** VoxCPM2 TTS — live (session) atau studio preview (`allowOfflineSynth` + worker GPU). */
   async synthesizeTTS(options: SynthesizeTTSOptions): Promise<Blob> {
-    const host = resolveHostId(options.voice || options.avatarName);
+    const voiceId = resolveVoiceId(
+      options.voiceId || options.voice || options.avatarName,
+    );
     const res = await fetch("/api/tts/synthesize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         text: options.text,
-        host,
-        voice: host,
+        voiceId,
+        host: voiceId,
+        voice: voiceId,
         avatarName: options.avatarName,
         speed: options.speed ?? 1,
         tone: options.tone,
+        lang: options.lang,
         sessionId: options.sessionId,
         allowOfflineSynth: options.allowOfflineSynth === true,
       }),
@@ -58,7 +59,7 @@ export const aiService = {
       const errJson = await res.json().catch(() => null);
       const errorMsg =
         errJson?.error ||
-        `HTTP ${res.status}: Gagal sintesis Piper TTS.`;
+        `HTTP ${res.status}: Gagal sintesis VoxCPM2 TTS.`;
       throw new Error(errorMsg);
     }
 

@@ -27,6 +27,10 @@ export interface ManagedSession {
   deadlineAt: number;
   avatarName: string;
   voice?: string;
+  voiceId?: string;
+  style?: string;
+  ttsLang?: string;
+  speechSpeed?: number;
   tone: string;
   podId?: string | null;
   podBootStatus?: "pending" | "booting" | "ready" | "failed";
@@ -78,6 +82,10 @@ class LiveSessionManager {
     productId: string;
     avatarId: string;
     voice?: string;
+    voiceId?: string;
+    style?: string;
+    ttsLang?: string;
+    speechSpeed?: number;
     platform: string;
     durationHours: number;
     autoReply?: boolean;
@@ -144,6 +152,10 @@ class LiveSessionManager {
       deadlineAt: Date.now() + params.durationHours * 3600 * 1000,
       avatarName: params.avatarName || "Namira",
       voice: params.voice || this.pendingVoicePreference || undefined,
+      voiceId: params.voiceId || process.env.VOICE_ID || "default_host",
+      style: params.style || undefined,
+      ttsLang: params.ttsLang || "id",
+      speechSpeed: params.speechSpeed ?? 1,
       tone: params.tone || "Persuasif",
       podId: staticPodId || null,
       podBootStatus: "booting",

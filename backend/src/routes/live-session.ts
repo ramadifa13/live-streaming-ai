@@ -46,6 +46,10 @@ const liveSessionSchema = z.object({
   productId: z.string().min(1),
   avatarId: z.string().min(1),
   voice: z.string().optional(),
+  voiceId: z.string().optional(),
+  style: z.string().optional(),
+  lang: z.string().optional(),
+  speechSpeed: z.number().optional(),
   platform: z.string().min(1),
   durationHours: z.number().int().min(1).default(1),
   autoReply: z.boolean().optional(),
@@ -187,6 +191,10 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         liveVideoId: parsed.data.liveVideoId,
         avatarName: avatar.name,
         voice: parsed.data.voice || avatar.voice || undefined,
+        voiceId: parsed.data.voiceId || process.env.VOICE_ID || "default_host",
+        style: parsed.data.style || undefined,
+        ttsLang: parsed.data.lang || "id",
+        speechSpeed: parsed.data.speechSpeed ?? 1,
         tone: parsed.data.tone || "Persuasif",
         product: product || undefined,
         catalog,
@@ -381,6 +389,10 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         avatarName: managedSession.avatarName,
         tone: managedSession.tone,
         voice: liveSession.voice || undefined,
+        voiceId: managedSession.voiceId || process.env.VOICE_ID || "default_host",
+        style: managedSession.style,
+        ttsLang: managedSession.ttsLang || "id",
+        speechSpeed: managedSession.speechSpeed ?? 1,
         podId: managedSession.podId ?? podId ?? undefined,
         sessionId: parsed.data.sessionId,
         rtmpUrl,
@@ -753,15 +765,15 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         mode: "live",
         data: {
           speech: null,
-          note: "Komentar diantrikan ke AI Host live (Piper + lipsync).",
+          note: "Komentar diantrikan ke AI Host live (VoxCPM2 + lipsync).",
           commentId,
         },
       };
     }
 
-    // Prelive / studio testing — LLM + sample (bukan Piper pod).
+    // Prelive / studio testing — LLM; FE synth via VoxCPM2.
     const { generateLunaResponse } = await import("../services/groq-brain.js");
-    const { getHostSampleUrl, resolveHostId } = await import("../services/tts.js");
+    const { resolveHostId } = await import("../services/tts.js");
     const luna = await generateLunaResponse(
       comment,
       managed?.product || null,
@@ -776,7 +788,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         speech: luna.speech,
         action: luna.action,
         emotion: luna.emotion,
-        sampleAudioUrl: getHostSampleUrl(host),
         host,
       },
     };

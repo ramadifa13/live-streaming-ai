@@ -70,8 +70,8 @@ export class MockTTSProvider implements TTSProvider {
     return {
       provider: this.name,
       status: "ready",
-      model: "piper-tts",
-      message: "Voice synthesis pipeline healthy",
+      model: "voxcpm2",
+      message: "VoxCPM2 TTS pipeline healthy",
     };
   }
 }

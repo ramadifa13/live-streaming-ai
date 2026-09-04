@@ -24,11 +24,17 @@ export interface PipelineStatus {
   goLiveMinUtterances?: number;
   broadcastMode?: string;
   visualWorkerRunning?: boolean;
+  visualWorkerInitializing?: boolean;
+  broadcastBootState?: string;
   pendingCount: number;
   isLive?: boolean;
   isBroadcasting?: boolean;
   isRtmpConnected?: boolean;
   rtmpError?: string;
+  rtmpHint?: string;
+  rtmpState?: string;
+  rtmpConnectingSeconds?: number;
+  rtmpFatal?: boolean;
   workerError?: string;
   workerOffline?: boolean;
   workerOfflineSeconds?: number;
@@ -139,7 +145,7 @@ export const useLiveSessionStore = create<LiveSessionState>()(
       connectAttemptId: 0,
       connectAbortController: null,
       connectingStageIndex: 0,
-      connectingStageText: "Mengalokasikan Cloud GPU RTX 4090...",
+      connectingStageText: "Mengalokasikan Cloud GPU L40S...",
       selectedDuration: 1,
       liveSeconds: 0,
       selectedPlatform: "Instagram Live",
@@ -237,7 +243,7 @@ export const useLiveSessionStore = create<LiveSessionState>()(
           hasConfirmedBroadcast: false,
           liveSessionPhase: "idle",
           connectingStageIndex: 0,
-          connectingStageText: "Mengalokasikan Cloud GPU RTX 4090...",
+          connectingStageText: "Mengalokasikan Cloud GPU L40S...",
         });
 
         if (sid) {

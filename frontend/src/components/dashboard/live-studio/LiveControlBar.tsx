@@ -38,6 +38,8 @@ export const LiveControlBar: React.FC = () => {
   const selectedAvatar = useAiHostStore((state) => state.selectedAvatar);
   const selectedTone = useAiHostStore((state) => state.selectedTone);
   const selectedVoice = useAiHostStore((state) => state.selectedVoice);
+  const selectedLang = useAiHostStore((state) => state.selectedLang);
+  const speechSpeed = useAiHostStore((state) => state.speechSpeed);
 
   const products = useProductStore((state) => state.products);
   const activeFeaturedProduct = useProductStore((state) => state.activeFeaturedProduct);
@@ -165,7 +167,7 @@ export const LiveControlBar: React.FC = () => {
       connectAbortController: controller,
       pipelineStatus: null,
     });
-    showToast(`Menghubungkan ke server ${selectedPlatform}... Memverifikasi RTMP Ingest Handshake...`);
+    showToast(`Menyiapkan siaran ke ${selectedPlatform}… Mohon tunggu, jangan tutup halaman.`);
 
     let createdSessionId: string | null = null;
     try {
@@ -183,7 +185,10 @@ export const LiveControlBar: React.FC = () => {
           autoModeration: automations.autoModeration,
           avatarName: selectedAvatar.name,
           tone: selectedTone,
-          voice: selectedVoice || selectedAvatar.voice || selectedAvatar.id || "namira",
+          voice: selectedVoice || selectedAvatar.voice || "default_host",
+          voiceId: selectedVoice || selectedAvatar.voice || "default_host",
+          lang: selectedLang,
+          speechSpeed,
           accessToken: connectedAccount?.accessToken,
           liveChatId: connectedAccount?.liveChatId,
           liveVideoId: connectedAccount?.liveVideoId,
@@ -215,7 +220,7 @@ export const LiveControlBar: React.FC = () => {
       useLiveSessionStore.setState({
         currentLiveSessionId: sessionId,
         liveSessionPhase: "pending",
-        connectingStageText: "Mengalokasikan Cloud GPU RTX 4090...",
+        connectingStageText: "Menyalakan cloud AI… Mohon tunggu.",
       });
 
       await liveSessionService.waitForPodReady(sessionId, {
@@ -232,7 +237,7 @@ export const LiveControlBar: React.FC = () => {
       }
 
       useLiveSessionStore.setState({
-        connectingStageText: "Menghubungkan RTMP ke platform...",
+        connectingStageText: "Menyambungkan siaran ke Instagram…",
       });
 
       // http(s) atau data:image (upload studio) — worker decode base64.
@@ -275,11 +280,12 @@ export const LiveControlBar: React.FC = () => {
         const looksLikeTimeout = /timeout|504|502|gateway/i.test(msg);
         if (looksLikeTimeout && sessionId) {
           useLiveSessionStore.setState({
-            connectingStageText: "RTMP mungkin sudah terhubung — memverifikasi...",
+            connectingStageText:
+              "Masih menyiapkan siaran… Jangan tutup halaman, kami cek otomatis.",
           });
           await liveSessionService.waitForRtmpConnected(sessionId, {
             signal: controller.signal,
-            maxWaitMs: 25_000,
+            maxWaitMs: 10 * 60_000,
             onProgress: (text) => {
               if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
               useLiveSessionStore.setState({ connectingStageText: text });
@@ -288,7 +294,7 @@ export const LiveControlBar: React.FC = () => {
           bcastJson = {
             success: true,
             waitingForGoLive: true,
-            message: "RTMP terhubung! Sedang menggenerate Video AI...",
+            message: "Siaran tersambung. Menyiapkan kata pembuka host…",
           };
         } else {
           throw broadcastErr;
@@ -308,8 +314,8 @@ export const LiveControlBar: React.FC = () => {
           isWaitingForGoLive: Boolean(bcastJson.waitingForGoLive),
           connectingStageText:
             bcastJson.waitingForGoLive !== false
-              ? "Memuat model AI Host ke Cloud GPU..."
-              : "Menunggu platform memulai live...",
+              ? "Menyiapkan host AI… Pertama kali bisa 2–5 menit."
+              : "Menunggu Instagram siap siaran…",
           // Tetap buka overlay sampai user konfirmasi Go Live atau pipeline siap.
           isConnectingLive: bcastJson.waitingForGoLive !== false,
           isLiveActive: bcastJson.waitingForGoLive === false,
@@ -319,8 +325,8 @@ export const LiveControlBar: React.FC = () => {
         showToast(
           bcastJson.message ||
             (bcastJson.waitingForGoLive !== false
-              ? "RTMP terhubung! Sedang menggenerate Video AI..."
-              : `RTMP terhubung! Menunggu ${selectedPlatform} memulai live...`),
+              ? "Siaran tersambung. Menyiapkan host AI — tunggu tombol hijau."
+              : `Tersambung! Menunggu ${selectedPlatform} siap siaran…`),
         );
       } else {
         await liveSessionService.teardownSession(sessionId);
@@ -331,7 +337,9 @@ export const LiveControlBar: React.FC = () => {
           liveSessionPhase: "idle",
           pipelineStatus: null,
         });
-        showToast(`Gagal terhubung ke ${selectedPlatform}: ${bcastJson.error || "Server RTMP menolak koneksi."}`);
+        showToast(
+          `Belum berhasil ke ${selectedPlatform}. Cek Stream Key (sekali pakai), lalu Connect lagi.`,
+        );
       }
     } catch (err) {
       if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
@@ -393,9 +401,10 @@ export const LiveControlBar: React.FC = () => {
                   <User className="w-3.5 h-3.5" />
                 </span>
                 <div>
-                  <p className="text-slate-500 leading-none">AI Host</p>
+                  <p className="text-slate-500 leading-none">AI Host &amp; Suara</p>
                   <p className="font-medium text-slate-200 mt-1">
-                    {selectedAvatar.name} ({selectedTone})
+                    {selectedAvatar.name} · {selectedVoice || selectedAvatar.voice} ·{" "}
+                    {selectedLang.toUpperCase()} · {speechSpeed.toFixed(2)}×
                   </p>
                 </div>
               </div>

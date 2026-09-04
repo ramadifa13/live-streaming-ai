@@ -88,10 +88,11 @@ export interface Avatar {
   role: string;
   type: "2D" | "3D";
   language: string;
-  /** Host id untuk Piper live (= namira), bukan Edge Neural id. */
+  /** female | male — visual host only */
+  gender: "female" | "male";
+  /** VoxCPM2 voice_id (default_host) */
   voice: string;
   voiceId?: string;
-  /** Sample pra-live (static). Piper hanya saat live di pod. */
   sampleAudioUrl?: string;
   image: string;
   modelUrl3d?: string;

@@ -11,6 +11,10 @@ frontend/*.tsbuildinfo
 # Backend Build & Local SQLite
 backend/dist/
 backend/piper_data/
+backend/supertonic_data/
+backend/voxcpm2_data/
+deploy/voxcpm2_tts/env/
+deploy/voxcpm2_tts/.setup_complete
 backend/tts-test.wav
 backend/test.wav
 *.db

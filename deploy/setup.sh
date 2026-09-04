@@ -478,12 +478,31 @@ if [ -f "$WORKER_DIR/requirements-worker.txt" ]; then
 fi
 
 # ------------------------------------------------------------
-# 10. TTS — hanya di backend CPU, bukan di pod GPU
+# 10. VoxCPM2 TTS — venv TERPISAH (torch 2.5+/CUDA12 vs MuseTalk cu118)
 # ------------------------------------------------------------
 echo ""
-echo "[INFO] Piper/TTS tidak diinstall di worker. Audio datang dari backend (WAV)."
-echo "[INFO] MuseTalk env ($VENV_DIR) tidak akan di-install piper/onnxruntime."
+echo "[INFO] Installing VoxCPM2 TTS (dedicated venv)…"
+if [ -f "$SCRIPT_DIR/voxcpm2_tts/setup.sh" ]; then
+    # Juga sync package ke worker dir
+    mkdir -p "$WORKER_DIR/voxcpm2_tts" "$WORKER_DIR/voices"
+    cp -rf "$SCRIPT_DIR/voxcpm2_tts/." "$WORKER_DIR/voxcpm2_tts/"
+    if [ -d "$SCRIPT_DIR/voices" ]; then
+        cp -rf "$SCRIPT_DIR/voices/." "$WORKER_DIR/voices/"
+    fi
+    bash "$WORKER_DIR/voxcpm2_tts/setup.sh" || {
+        echo "[WARN] VoxCPM2 setup gagal — API tetap jalan; /tts akan 503 sampai diperbaiki."
+    }
+else
+    echo "[WARN] voxcpm2_tts/setup.sh tidak ditemukan di $SCRIPT_DIR"
+fi
 
+# Sync voice assets ke network volume
+mkdir -p /workspace/voices/default_host
+if [ -f "$WORKER_DIR/voices/default_host/reference.wav" ]; then
+    cp -n "$WORKER_DIR/voices/default_host/reference.wav" /workspace/voices/default_host/reference.wav || true
+elif [ -f "$SCRIPT_DIR/voices/default_host/reference.wav" ]; then
+    cp -n "$SCRIPT_DIR/voices/default_host/reference.wav" /workspace/voices/default_host/reference.wav || true
+fi
 
 
 # ------------------------------------------------------------

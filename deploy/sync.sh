@@ -17,10 +17,10 @@ DEPLOY_DIR="${DEPLOY_DIR:-$REPO_DIR/deploy}"
 # 0 = jangan timpa asset yang sudah ada (start biasa), 1 = timpa semua asset (redeploy)
 FORCE_ASSETS="${FORCE_ASSETS:-0}"
 
-# Hapus Piper/TTS lama di GPU: proses :8090, folder /workspace/piper_tts, env PIPER_*.
+# Hapus TTS engine lama (Piper/Supertonic) — VoxCPM2 adalah satu-satunya TTS.
 purge_legacy_tts() {
-	echo "[TTS] Membersihkan sisa Piper di pod (TTS hanya di backend CPU)..."
-	pkill -f "[p]iper_tts/server.py|uvicorn.*8090" 2>/dev/null || true
+	echo "[TTS] Membersihkan sisa Piper/Supertonic di pod…"
+	pkill -f "[p]iper_tts/server.py|uvicorn.*8090|[s]upertonic" 2>/dev/null || true
 	if [ -f /workspace/piper_tts/piper.pid ]; then
 		old="$(cat /workspace/piper_tts/piper.pid 2>/dev/null || true)"
 		if [ -n "${old:-}" ]; then
@@ -31,22 +31,25 @@ purge_legacy_tts() {
 	rm -rf /workspace/piper_tts \
 		"${DEPLOY_DIR:-}/piper_tts" \
 		"${WORKER_DIR:-}/piper_tts" \
+		/workspace/supertonic_tts \
+		"${DEPLOY_DIR:-}/supertonic_tts" \
+		"${WORKER_DIR:-}/supertonic_tts" \
 		2>/dev/null || true
 
-	_strip_piper_env() {
+	_strip_legacy_tts_env() {
 		local envf="$1"
 		[ -f "$envf" ] || return 0
-		if grep -qE '^(export[[:space:]]+)?(PIPER_|TTS_PIPER|PIPER_TTS)' "$envf" 2>/dev/null; then
-			grep -vE '^(export[[:space:]]+)?(PIPER_|TTS_PIPER|PIPER_TTS)' "$envf" > "${envf}.notts" || true
+		if grep -qE '^(export[[:space:]]+)?(PIPER_|TTS_PIPER|PIPER_TTS|SUPERTONIC_|TTS_ENGINE=supertonic)' "$envf" 2>/dev/null; then
+			grep -vE '^(export[[:space:]]+)?(PIPER_|TTS_PIPER|PIPER_TTS|SUPERTONIC_|TTS_ENGINE=supertonic)' "$envf" > "${envf}.notts" || true
 			if [ -s "${envf}.notts" ] || [ -f "${envf}.notts" ]; then
 				mv -f "${envf}.notts" "$envf"
-				echo "[TTS] Variabel Piper dihapus dari $envf"
+				echo "[TTS] Variabel Piper/Supertonic dihapus dari $envf"
 			fi
 		fi
 	}
-	_strip_piper_env "${WORKER_DIR:-}/.env"
-	_strip_piper_env "${DEPLOY_DIR:-}/.env"
-	echo "[TTS] Sisa Piper di pod sudah dihapus."
+	_strip_legacy_tts_env "${WORKER_DIR:-}/.env"
+	_strip_legacy_tts_env "${DEPLOY_DIR:-}/.env"
+	echo "[TTS] Sisa Piper/Supertonic dihapus. TTS aktif = VoxCPM2."
 }
 
 bootstrap_worker_env() {
@@ -223,6 +226,23 @@ sync_worker_files() {
 
 	echo "[SYNC] Menyalin skrip Python & shell ke $WORKER_DIR ..."
 	cp -f "$DEPLOY_DIR"/*.py "$WORKER_DIR/" 2>/dev/null || true
+
+	# VoxCPM2 TTS package + voice assets
+	if [ -d "$DEPLOY_DIR/voxcpm2_tts" ]; then
+		echo "[SYNC] Menyalin voxcpm2_tts/ ..."
+		mkdir -p "$WORKER_DIR/voxcpm2_tts"
+		cp -rf "$DEPLOY_DIR/voxcpm2_tts/." "$WORKER_DIR/voxcpm2_tts/"
+	fi
+	if [ -f "$DEPLOY_DIR/check_tts_integration.sh" ]; then
+		cp -f "$DEPLOY_DIR/check_tts_integration.sh" "$WORKER_DIR/check_tts_integration.sh"
+		chmod +x "$WORKER_DIR/check_tts_integration.sh" 2>/dev/null || true
+	fi
+	if [ -d "$DEPLOY_DIR/voices" ]; then
+		echo "[SYNC] Menyalin voices/ ..."
+		mkdir -p "$WORKER_DIR/voices" /workspace/voices
+		cp -rf "$DEPLOY_DIR/voices/." "$WORKER_DIR/voices/"
+		cp -rn "$DEPLOY_DIR/voices/." /workspace/voices/ 2>/dev/null || true
+	fi
 	if [ "${START_SH_RUNNING:-0}" = "1" ]; then
 		for shf in "$DEPLOY_DIR"/*.sh; do
 			[ -f "$shf" ] || continue

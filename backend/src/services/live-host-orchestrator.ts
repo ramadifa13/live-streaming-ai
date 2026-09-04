@@ -60,6 +60,14 @@ export interface HostConfig {
   productId: string;
   avatarName: string;
   voice?: string;
+  /** VoxCPM2 voice_id (default_host) */
+  voiceId?: string;
+  /** Optional natural-language style control for VoxCPM2 */
+  style?: string;
+  /** ISO lang: id | en */
+  ttsLang?: string;
+  /** Speech speed hint (prosody) */
+  speechSpeed?: number;
   tone: string;
   rtmpUrl?: string;
   streamKey?: string;
@@ -161,7 +169,11 @@ interface QueueMetrics {
   workerOffline: boolean;
   broadcasting: boolean;
   rtmpConnected: boolean;
+  /** Fatal RTMP only (state=failed). Soft hints go to rtmpHint. */
   rtmpError: string;
+  rtmpHint: string;
+  rtmpState: string;
+  rtmpConnectingSeconds: number;
   warmedUp: boolean;
   broadcastMode: string;
   utteranceQueueCount: number;
@@ -362,6 +374,9 @@ function emptyQueueMetrics(
     broadcasting: false,
     rtmpConnected: false,
     rtmpError: "",
+    rtmpHint: "",
+    rtmpState: "disconnected",
+    rtmpConnectingSeconds: 0,
     warmedUp: false,
     broadcastMode: "segment",
     utteranceQueueCount: 0,
@@ -372,6 +387,38 @@ function emptyQueueMetrics(
     broadcastBootState: "idle",
     ...partial,
   };
+}
+
+/** Soft / progress messages that must NOT kill the session or turn FE red. */
+function isSoftRtmpMessage(msg: string): boolean {
+  const t = (msg || "").toLowerCase();
+  if (!t) return true;
+  return (
+    t.includes("belum publish") ||
+    t.includes("masih") ||
+    t.includes("tunggu") ||
+    t.includes("menunggu") ||
+    t.includes("handshake") ||
+    t.includes("menyiapkan") ||
+    t.includes("preview") ||
+    t.includes("sedang")
+  );
+}
+
+function isFatalRtmpFailure(queue: QueueMetrics): boolean {
+  if (queue.rtmpConnected) return false;
+  if (queue.visualWorkerInitializing || queue.broadcastBootState === "starting") {
+    return false;
+  }
+  if (queue.rtmpState === "connecting" || queue.rtmpState === "disconnected") {
+    // Connecting hint / empty error = not fatal.
+    if (!queue.rtmpError || isSoftRtmpMessage(queue.rtmpError)) return false;
+  }
+  if (queue.rtmpState === "failed") return true;
+  if (queue.broadcastBootState === "error" && queue.rtmpError) return true;
+  // Hard errors only (invalid key, refused, etc.)
+  if (queue.rtmpError && !isSoftRtmpMessage(queue.rtmpError)) return true;
+  return false;
 }
 const PRODUCT_CACHE_TTL_MS = 30_000;
 const QUEUE_POLL_MS = 800;
@@ -895,7 +942,7 @@ class LiveHostOrchestrator {
     if (queue.broadcastBootState === "starting" || queue.visualWorkerInitializing) {
       return;
     }
-    if (queue.broadcastBootState === "error" || queue.rtmpError) {
+    if (queue.broadcastBootState === "error" || isFatalRtmpFailure(queue)) {
       return;
     }
 
@@ -961,7 +1008,7 @@ class LiveHostOrchestrator {
           await sleep(2000);
           continue;
         }
-        if (queue.rtmpError) {
+        if (isFatalRtmpFailure(queue)) {
           await sleep(2000);
           continue;
         }
@@ -1045,7 +1092,7 @@ class LiveHostOrchestrator {
           await sleep(800);
           continue;
         }
-        if (s.lastQueue.rtmpError) {
+        if (isFatalRtmpFailure(s.lastQueue)) {
           console.log(
             `[LiveHost] RTMP fatal saat live — menghentikan generasi: ${sessionId}`,
           );
@@ -1727,24 +1774,38 @@ class LiveHostOrchestrator {
       try {
         const ttsResult = await synthesizeSpeech({
           text: seg.text,
-          host: state.config.avatarName || state.config.voice || "namira",
-          voice: state.config.avatarName || state.config.voice || "namira",
+          voiceId:
+            state.config.voiceId ||
+            process.env.VOICE_ID ||
+            "default_host",
+          host: state.config.avatarName || state.config.voice || "default_host",
+          voice: state.config.avatarName || state.config.voice || "default_host",
           avatarName: state.config.avatarName,
           tone: state.config.tone,
           emotion: response.emotion,
+          style: state.config.style || state.config.tone,
+          lang: state.config.ttsLang || "id",
+          speed: state.config.speechSpeed ?? 1,
           podId: state.config.podId || process.env.RUNPOD_POD_ID || null,
+          sessionId,
           allowOfflineSynth: true,
         });
         if (ttsResult.success && ttsResult.audioBuffer) {
           audioBase64 = ttsResult.audioBuffer.toString("base64");
+        } else {
+          console.warn(
+            `[LiveHost] TTS failed (no fallback): ${ttsResult.message}`,
+          );
+          // Jangan submit utterance tanpa audio — worker tidak boleh fallback engine lama.
+          continue;
         }
       } catch (err: any) {
         console.warn(
           `[LiveHost] TTS error (seg action=${seg.action}): ${err?.message || err}`,
         );
+        continue;
       }
 
-      // TTS gagal: tetap submit text — worker/bridge bisa fallback.
       // Semua segmen jawaban komentar tetap priority agar tidak terpotong buffer otonom.
       await this.submitToGPU(
         sessionId,
@@ -2124,8 +2185,22 @@ class LiveHostOrchestrator {
       const broadcastBootState = String(raw.broadcast_boot_state || "idle");
       const bootError = String(raw.broadcast_boot_error || "");
       let rtmpError = String(raw.rtmp_error || "");
+      let rtmpHint = String(raw.rtmp_hint || "");
+      const rtmpState = String(raw.rtmp_state || "disconnected");
+      const rtmpConnectingSeconds = Number(raw.rtmp_connecting_seconds ?? 0);
       if (!rtmpError && broadcastBootState === "error" && bootError) {
         rtmpError = bootError;
+      }
+      // Soft connecting messages must not sit in rtmpError (FE treats as fail).
+      if (rtmpError && isSoftRtmpMessage(rtmpError)) {
+        if (!rtmpHint) rtmpHint = rtmpError;
+        if (
+          rtmpState === "connecting" ||
+          visualWorkerInitializing ||
+          broadcastBootState === "starting"
+        ) {
+          rtmpError = "";
+        }
       }
 
       let queuedVideos = Number(raw.queued_videos_count || 0);
@@ -2180,6 +2255,11 @@ class LiveHostOrchestrator {
         broadcasting: Boolean(raw.broadcasting),
         rtmpConnected: Boolean(raw.rtmp_connected),
         rtmpError,
+        rtmpHint,
+        rtmpState,
+        rtmpConnectingSeconds: Number.isFinite(rtmpConnectingSeconds)
+          ? Math.max(0, rtmpConnectingSeconds)
+          : 0,
         warmedUp: Boolean(
           raw.warmed_up ||
             visualWorkerRunning ||
@@ -2316,10 +2396,11 @@ class LiveHostOrchestrator {
       : playableReady && queue.bufferSeconds >= policy.minBufferSeconds;
 
     // Recompute tiap poll (hysteresis: jangan sticky forever).
-    if (bufferReady && rtmpOk && !queue.rtmpError) {
+    const fatalRtmp = isFatalRtmpFailure(queue);
+    if (bufferReady && rtmpOk && !fatalRtmp) {
       state.pipelineReady = true;
     } else if (
-      queue.rtmpError ||
+      fatalRtmp ||
       !rtmpOk ||
       (aiWorker
         ? queue.utteranceQueueCount < 1 && queue.readyUtteranceCount < 1
@@ -2329,11 +2410,12 @@ class LiveHostOrchestrator {
       state.pipelineReady = false;
     }
     const ready =
-      Boolean(state.pipelineReady) && rtmpOk && !queue.rtmpError;
+      Boolean(state.pipelineReady) && rtmpOk && !fatalRtmp;
 
-    if (queue.rtmpError) {
+    if (fatalRtmp) {
       if (!state.rtmpFailedAt) state.rtmpFailedAt = Date.now();
-      const waitMs = state.isLive ? 5_000 : 90_000;
+      // Live: fail cepat. Pre-live: kasih waktu panjang (cold MuseTalk bisa 5+ menit).
+      const waitMs = state.isLive ? 5_000 : 10 * 60_000;
       if (
         !state.rtmpFailStopping &&
         Date.now() - state.rtmpFailedAt >= waitMs
@@ -2344,6 +2426,9 @@ class LiveHostOrchestrator {
         );
         this.onSessionExpired?.(sessionId);
       }
+    } else {
+      state.rtmpFailedAt = 0;
+      state.rtmpFailStopping = false;
     }
 
     let stageIndex = 0;
@@ -2378,9 +2463,11 @@ class LiveHostOrchestrator {
       }
       stageIndex = 2;
       stageText = workerError;
-    } else if (queue.rtmpError) {
+    } else if (fatalRtmp) {
       stageIndex = 3;
-      stageText = queue.rtmpError;
+      stageText =
+        queue.rtmpError ||
+        "Siaran gagal tersambung. Buat Stream Key baru di Instagram, lalu coba lagi.";
     } else if (
       queue.broadcastBootState === "error" &&
       !queue.visualWorkerRunning
@@ -2388,17 +2475,17 @@ class LiveHostOrchestrator {
       stageIndex = 2;
       stageText =
         workerError ||
-        "Visual worker gagal start — coba putuskan dan hubungkan ulang sesi.";
+        "Avatar AI gagal dinyalakan. Tekan batalkan, lalu coba Connect lagi.";
     } else if (
       !queue.visualWorkerRunning &&
       (queue.broadcastBootState === "starting" || queue.visualWorkerInitializing)
     ) {
       stageIndex = 1;
       stageText =
-        "Memuat model MuseTalk ke GPU (1–3 menit pada broadcast pertama)...";
+        "Menyiapkan wajah & gerak host AI… Pertama kali bisa 2–5 menit. Tetap di halaman ini.";
     } else if (!queue.warmedUp && queue.queuedVideos === 0 && state.counters.submitted === 0) {
       stageIndex = 1;
-      stageText = "Memuat model AI Host ke Cloud GPU...";
+      stageText = "Menyalakan mesin AI di cloud… Mohon tunggu.";
     } else if (
       (aiWorker
         ? queue.utteranceQueueCount < GO_LIVE_MIN_UTTERANCES &&
@@ -2409,28 +2496,19 @@ class LiveHostOrchestrator {
     ) {
       stageIndex = 2;
       stageText = aiWorker
-        ? `Menyiapkan buffer ucapan AI Host (${Math.max(queue.readyUtteranceCount, queue.utteranceQueueCount)}/${GO_LIVE_MIN_UTTERANCES})...`
-        : "Menyiapkan segmen pembuka AI Host...";
+        ? `Menyiapkan kata pembuka host (${Math.max(queue.readyUtteranceCount, queue.utteranceQueueCount)}/${GO_LIVE_MIN_UTTERANCES})…`
+        : "Menyiapkan video pembuka host…";
     } else if (rtmpRequired && !queue.rtmpConnected) {
       stageIndex = 3;
-      const connectingHint =
-        queue.rtmpError ||
-        (Math.round(this.elapsedMs(state) / 1000) >= 90 && queue.broadcasting
-          ? "RTMP masih handshake — pastikan sudah klik 'Siarkan Langsung' di Instagram/Facebook."
-          : "");
       stageText =
-        connectingHint ||
-        (queue.broadcastBootState === "starting" || queue.visualWorkerInitializing
-          ? "Menghubungkan RTMP ke platform..."
-          : queue.broadcasting
-            ? "Menghubungkan RTMP ke platform..."
-            : "Menunggu koneksi RTMP...");
+        queue.rtmpHint ||
+        "Menyambungkan siaran ke Instagram… Tunggu sampai status jadi Terhubung.";
     } else if (!state.isLive) {
       stageIndex = 4;
-      stageText = "AI Host siap. Silakan konfirmasi Go Live.";
+      stageText = "Siap! Cek preview di Instagram, lalu tekan tombol hijau di bawah.";
     } else {
       stageIndex = 5;
-      stageText = `AI Host LIVE — buffer ${Math.round(queue.bufferSeconds)} detik.`;
+      stageText = `Host sedang live — buffer ${Math.round(queue.bufferSeconds)} detik.`;
     }
 
     return {
@@ -2451,7 +2529,11 @@ class LiveHostOrchestrator {
       isLive: state.isLive,
       isBroadcasting: queue.broadcasting,
       isRtmpConnected: queue.rtmpConnected,
-      rtmpError: queue.rtmpError || "",
+      rtmpError: fatalRtmp ? queue.rtmpError || "" : "",
+      rtmpHint: queue.rtmpHint || "",
+      rtmpState: queue.rtmpState || "disconnected",
+      rtmpConnectingSeconds: queue.rtmpConnectingSeconds || 0,
+      rtmpFatal: fatalRtmp,
       workerError,
       bufferSeconds: Math.round(queue.bufferSeconds),
       workerOffline: queue.workerOffline,

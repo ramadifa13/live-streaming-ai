@@ -77,6 +77,12 @@ except ImportError:
         return None
 
 
+try:
+    import voxcpm2_bridge
+except ImportError:
+    voxcpm2_bridge = None  # type: ignore
+
+
 worker = AILiveWorker()
 os.environ.setdefault("WORKER_TEMP", worker.temp_dir)
 
@@ -510,6 +516,19 @@ async def lifespan(app: FastAPI):
     os.makedirs(worker.output_dir, exist_ok=True)
     os.makedirs(worker.temp_dir, exist_ok=True)
 
+    # Warm-load VoxCPM2 (venv terpisah) sekali di startup — model tetap di VRAM.
+    if voxcpm2_bridge is not None and voxcpm2_bridge.is_enabled():
+        try:
+            ready_timeout = float(os.environ.get("VOXCPM2_READY_TIMEOUT") or "600")
+            print("[AI-Worker] Warming VoxCPM2 TTS…", flush=True)
+            await asyncio.to_thread(voxcpm2_bridge.ensure_started, ready_timeout)
+            print("[AI-Worker] VoxCPM2 TTS warm OK", flush=True)
+        except Exception as tts_err:
+            # Jangan crash API — MuseTalk tetap bisa jalan; /tts akan 503.
+            print(f"[AI-Worker] VoxCPM2 warm FAILED (non-fatal): {tts_err}", flush=True)
+    else:
+        print("[AI-Worker] VoxCPM2 bridge unavailable or TTS_ENABLED=false", flush=True)
+
     global watchdog_task
     watchdog_task = asyncio.create_task(periodic_cleanup_and_watchdog())
     yield
@@ -523,6 +542,11 @@ async def lifespan(app: FastAPI):
     if stop_visual_broadcast is not None:
         stop_visual_broadcast()
     visual_worker = None
+    if voxcpm2_bridge is not None:
+        try:
+            voxcpm2_bridge.stop()
+        except Exception:
+            pass
 
 
 app = FastAPI(title="LiveStreamer AI Worker", lifespan=lifespan)
@@ -539,6 +563,11 @@ class GenerateVideoRequest(BaseModel):
     host_type: Optional[str] = None
     hostType: Optional[str] = None
     voice: Optional[str] = None
+    voice_id: Optional[str] = None
+    voiceId: Optional[str] = None
+    language: Optional[str] = None
+    style: Optional[str] = None
+    emotion: Optional[str] = None
     speed: float = 1.0
     tone: str = "Persuasif"
     audio_base64: Optional[str] = None
@@ -548,6 +577,64 @@ class GenerateVideoRequest(BaseModel):
     wait: Optional[bool] = False
     action: Optional[str] = None
     priority: Optional[bool] = False
+    live_session_id: Optional[str] = None
+    liveSessionId: Optional[str] = None
+
+
+class TtsSynthesizeRequest(BaseModel):
+    text: str
+    voice_id: Optional[str] = None
+    voiceId: Optional[str] = None
+    language: Optional[str] = None
+    style: Optional[str] = None
+    emotion: Optional[str] = None
+    request_id: Optional[str] = None
+    requestId: Optional[str] = None
+    live_session_id: Optional[str] = None
+    liveSessionId: Optional[str] = None
+
+
+def _default_voice_id() -> str:
+    return (os.environ.get("VOICE_ID") or "default_host").strip() or "default_host"
+
+
+def _resolve_voice_id(*candidates: Optional[str]) -> str:
+    """Map legacy host slugs (namira) → voice_id default_host."""
+    default = _default_voice_id()
+    for raw in candidates:
+        if not raw:
+            continue
+        v = str(raw).strip().lower().replace("\\", "/").split("/")[-1]
+        v = v.replace(".wav", "").replace(".mp3", "")
+        if not v:
+            continue
+        if v in ("namira", "siti", "ardi", "budi") or v.startswith("id-id-"):
+            return default
+        return v
+    return default
+
+
+def _synthesize_voxcpm2_wav(
+    text: str,
+    voice_id: Optional[str] = None,
+    language: Optional[str] = None,
+    style: Optional[str] = None,
+    emotion: Optional[str] = None,
+    request_id: Optional[str] = None,
+    live_session_id: Optional[str] = None,
+) -> tuple:
+    """Return (wav_bytes, metrics_headers). Raises RuntimeError on failure."""
+    if voxcpm2_bridge is None:
+        raise RuntimeError("voxcpm2_bridge tidak tersedia di worker")
+    return voxcpm2_bridge.synthesize(
+        text=text,
+        voice_id=_resolve_voice_id(voice_id) if voice_id else _default_voice_id(),
+        language=(language or os.environ.get("TTS_LANGUAGE") or "id").strip() or "id",
+        style=style,
+        emotion=emotion,
+        request_id=request_id,
+        live_session_id=live_session_id,
+    )
 
 
 output_dir = worker.output_dir
@@ -558,6 +645,13 @@ app.mount("/output", StaticFiles(directory=output_dir), name="output")
 @app.get("/")
 @app.get("/health")
 async def health():
+    tts_info = {"engine": "voxcpm2", "ready": False}
+    if voxcpm2_bridge is not None and voxcpm2_bridge.is_enabled():
+        try:
+            tts_info = voxcpm2_bridge.health(timeout=2.0)
+            tts_info["engine"] = "voxcpm2"
+        except Exception as exc:
+            tts_info = {"engine": "voxcpm2", "ready": False, "error": str(exc)}
     return {
         "status": "ok",
         "message": "AI Live Worker API is running",
@@ -568,7 +662,54 @@ async def health():
         "visual_worker_running": _visual_worker_pipeline_active()
         or (visual_worker is not None and visual_worker.is_running),
         "visual_worker_pipeline_active": _visual_worker_pipeline_active(),
+        "tts": tts_info,
     }
+
+
+@app.get("/tts/health")
+async def tts_health():
+    if voxcpm2_bridge is None:
+        raise HTTPException(status_code=503, detail="voxcpm2_bridge missing")
+    return voxcpm2_bridge.health(timeout=5.0)
+
+
+@app.post("/tts/synthesize")
+async def tts_synthesize(req: TtsSynthesizeRequest):
+    """Short-sentence TTS via VoxCPM2. Returns WAV (16 kHz mono)."""
+    if voxcpm2_bridge is None or not voxcpm2_bridge.is_enabled():
+        raise HTTPException(status_code=503, detail="VoxCPM2 TTS disabled or unavailable")
+    try:
+        wav_bytes, headers = await asyncio.to_thread(
+            _synthesize_voxcpm2_wav,
+            req.text,
+            req.voice_id or req.voiceId,
+            req.language,
+            req.style,
+            req.emotion,
+            req.request_id or req.requestId,
+            req.live_session_id or req.liveSessionId,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    from fastapi.responses import Response as FastResponse
+
+    return FastResponse(
+        content=wav_bytes,
+        media_type="audio/wav",
+        headers={k: v for k, v in headers.items()},
+    )
+
+
+@app.post("/tts/invalidate-voice")
+async def tts_invalidate_voice(req: dict = None):
+    if voxcpm2_bridge is None:
+        raise HTTPException(status_code=503, detail="voxcpm2_bridge missing")
+    voice_id = None
+    if isinstance(req, dict):
+        voice_id = req.get("voice_id") or req.get("voiceId")
+    await asyncio.to_thread(voxcpm2_bridge.invalidate_voice, voice_id)
+    return {"success": True, "voice_id": voice_id or "all"}
 
 
 @app.get("/logs")
@@ -644,6 +785,40 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                 return
         elif req.audio_url or req.audioUrl:
             audio_path = req.audio_url or req.audioUrl
+
+        # Jika backend belum kirim WAV: sintesis di GPU via VoxCPM2 (satu engine).
+        if (not audio_path or not os.path.exists(str(audio_path))) and (req.text or "").strip():
+            try:
+                t_tts0 = time.perf_counter()
+                wav_bytes, tts_headers = await asyncio.to_thread(
+                    _synthesize_voxcpm2_wav,
+                    req.text,
+                    req.voice_id or req.voiceId or req.voice,
+                    req.language,
+                    req.style or req.tone,
+                    req.emotion,
+                    task_id,
+                    req.live_session_id or req.liveSessionId,
+                )
+                audio_path = os.path.join(worker.temp_dir, f"audio_{task_id}.wav")
+                with open(audio_path, "wb") as audio_file:
+                    audio_file.write(wav_bytes)
+                tts_ms = (time.perf_counter() - t_tts0) * 1000
+                print(
+                    f"[API] VoxCPM2 on-worker synth task={task_id} "
+                    f"bytes={len(wav_bytes)} total_ms={tts_ms:.0f} "
+                    f"headers={tts_headers}",
+                    flush=True,
+                )
+            except Exception as tts_err:
+                jobs[task_id] = {
+                    "status": "error",
+                    "error": f"VoxCPM2 TTS failed: {tts_err}",
+                    "created_at": time.time(),
+                }
+                print(f"[API] VoxCPM2 TTS failed task={task_id}: {tts_err}", flush=True)
+                return
+
         if is_ai_worker_mode() and get_visual_worker is not None:
             if not audio_path or not os.path.exists(audio_path):
                 jobs[task_id] = {
@@ -732,7 +907,7 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
         jobs[task_id] = {
             "status": "done",
             "video_url": video_url,
-            "engine": "Backend TTS + MuseTalk",
+            "engine": "VoxCPM2 + MuseTalk",
             "lip_sync_active": True,
             "created_at": time.time(),
         }
@@ -852,6 +1027,7 @@ async def get_queue_status():
 
     rtmp_connected = False
     rtmp_error = ""
+    rtmp_hint = ""
     rtmp_state = "disconnected"
     if is_broadcasting:
         if read_rtmp_status is not None:
@@ -866,21 +1042,46 @@ async def get_queue_status():
                         rtmp_connected = rtmp_state == "connected"
                 except Exception:
                     pass
+        rtmp_hint = ""
         if (
             not rtmp_connected
             and rtmp_state == "connecting"
             and _broadcast_started_at > 0
-            and not rtmp_error
         ):
             connecting_sec = time.time() - _broadcast_started_at
-            if connecting_sec >= 90:
+            # Soft / progress text must never sit in rtmp_error (FE treats as fail).
+            soft_err = False
+            if rtmp_error:
+                low = rtmp_error.lower()
+                soft_err = any(
+                    k in low
+                    for k in (
+                        "belum publish",
+                        "masih",
+                        "tunggu",
+                        "menunggu",
+                        "handshake",
+                        "menyiapkan",
+                        "preview",
+                        "sedang",
+                    )
+                )
+                if soft_err:
+                    rtmp_hint = rtmp_error
+                    rtmp_error = ""
+            if visual_worker_initializing or _broadcast_boot_state == "starting":
+                rtmp_hint = (
+                    "Sedang menyiapkan avatar AI (pertama kali bisa 2–5 menit). "
+                    "Mohon tunggu, jangan tutup halaman."
+                )
+            elif connecting_sec >= 45 and not rtmp_hint:
                 try:
                     from rtmp_utils import USER_HINT_CONNECTING_SLOW
                 except ImportError:
                     USER_HINT_CONNECTING_SLOW = (
-                        "RTMP masih handshake — klik Go Live di platform lalu tunggu."
+                        "Masih menyambungkan siaran — tunggu sebentar."
                     )
-                rtmp_error = USER_HINT_CONNECTING_SLOW
+                rtmp_hint = USER_HINT_CONNECTING_SLOW
         if not rtmp_connected and rtmp_state not in ("failed", "connecting"):
             legacy_flag = os.path.join(output_dir, "rtmp_connected.flag")
             if os.path.exists(legacy_flag):
@@ -897,6 +1098,7 @@ async def get_queue_status():
             rtmp_connected = True
             rtmp_state = "connected"
             rtmp_error = ""
+            rtmp_hint = ""
     elif read_rtmp_status is not None:
         rtmp_state, rtmp_error = read_rtmp_status(output_dir)
 
@@ -913,6 +1115,7 @@ async def get_queue_status():
         "broadcasting": is_broadcasting,
         "rtmp_connected": rtmp_connected,
         "rtmp_error": rtmp_error,
+        "rtmp_hint": rtmp_hint,
         "rtmp_state": rtmp_state,
         "rtmp_connecting_seconds": (
             round(max(0.0, time.time() - _broadcast_started_at), 1)

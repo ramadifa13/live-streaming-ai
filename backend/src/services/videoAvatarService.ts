@@ -196,17 +196,19 @@ async function runLivePortrait(
 
     updateJob(jobId, {
       progress: 20,
-      stage: "Synthesizing TTS audio (Piper-TTS) & starting job...",
+      stage: "Synthesizing TTS audio (VoxCPM2) & starting job...",
     });
 
     let audioBase64: string | undefined;
     try {
       const ttsRes = await synthesizeSpeech({
         text: params.scriptText,
-        host: "namira",
-        voice: "namira",
+        voiceId: process.env.VOICE_ID || "default_host",
+        host: process.env.VOICE_ID || "default_host",
+        voice: process.env.VOICE_ID || "default_host",
         avatarName: finalAvatarFileName,
         tone: params.tone,
+        style: params.tone,
         podId: process.env.RUNPOD_POD_ID || null,
         allowOfflineSynth: true,
       });
@@ -221,10 +223,12 @@ async function runLivePortrait(
       avatar_name: finalAvatarFileName,
       avatar_image_path: avatarImagePath,
       text: params.scriptText,
-      voice: "namira",
+      voice: process.env.VOICE_ID || "default_host",
+      voice_id: process.env.VOICE_ID || "default_host",
       speed:
         params.tone === "Energetic" || params.tone === "Semangat" ? 1.1 : 1.0,
       tone: params.tone || "Persuasif",
+      style: params.tone || "Persuasif",
       audio_base64: audioBase64,
     };
 

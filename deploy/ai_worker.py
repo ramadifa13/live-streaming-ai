@@ -2936,13 +2936,19 @@ class AIVisualWorker:
                 pass
             self._rtmp_connected = True
             return
+        # FFmpeg masih hidup: jangan anggap gagal fatal (terutama IG/FB deferred ACK).
+        # Pipeline lanjut; status "connecting" + hint lembut — FE/BE menunggu sampai connected.
         if self._broadcaster is not None and self._broadcaster.is_alive():
-            raise RuntimeError(
-                "FFmpeg hidup tapi belum ada frame publish ke RTMP. "
-                "Biasanya Stream Key/URL salah, key kadaluarsa, atau jaringan pod. "
-                "Buat siaran baru di Instagram Producer, tempel key baru, lalu Go Live ulang. "
-                "Cek ai_worker_rtmp.log."
+            try:
+                write_rtmp_status(self.output_folder, "connecting", "")
+            except Exception:
+                pass
+            print(
+                "[AIVisualWorker] RTMP masih handshake setelah timeout — "
+                "lanjut pipeline, status tetap connecting (bukan gagal)."
             )
+            self._rtmp_connected = False
+            return
         raise RuntimeError(err or USER_HINT_CONNECTING_SLOW)
 
     def start(

@@ -10,27 +10,28 @@ async function seedDatabase() {
           type: "3D",
           style: "Energetic",
           language: "Indonesia",
-          voice: "namira",
-          sampleAudioUrl: "/avatars/namira_voice_sample.mp3",
+          voice: "default_host",
+          sampleAudioUrl: null,
           description: "AI host utama untuk live streaming",
         },
       ],
     });
     console.log("Seeded default avatar Namira");
   } else {
-    // Align existing hosts ke Piper host-id + sample pra-live
+    // Map legacy voice slugs → default_host; hapus sample MP3 statis
     await prisma.avatar.updateMany({
       where: {
         OR: [
           { name: { contains: "Namira" } },
           { voice: { contains: "Gadis" } },
           { voice: { contains: "Neural" } },
-          { sampleAudioUrl: null },
+          { voice: { equals: "namira" } },
+          { sampleAudioUrl: { not: null } },
         ],
       },
       data: {
-        voice: "namira",
-        sampleAudioUrl: "/avatars/namira_voice_sample.mp3",
+        voice: "default_host",
+        sampleAudioUrl: null,
       },
     });
   }
