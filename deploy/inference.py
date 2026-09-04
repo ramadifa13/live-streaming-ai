@@ -107,7 +107,7 @@ def unpad_generated_face(generated, bbox_w: int, bbox_h: int) -> np.ndarray:
     bh = max(1, int(bbox_h))
     side = max(bw, bh)
     square = cv2.resize(
-        generated.astype(np.uint8), (side, side), interpolation=cv2.INTER_CUBIC
+        generated.astype(np.uint8), (side, side), interpolation=cv2.INTER_LANCZOS4
     )
     top = (side - bh) // 2
     left = (side - bw) // 2
@@ -130,7 +130,7 @@ def resize_generated_to_bbox(
     if square_pad:
         return unpad_generated_face(generated, bw, bh)
     return cv2.resize(
-        generated.astype(np.uint8), (bw, bh), interpolation=cv2.INTER_CUBIC
+        generated.astype(np.uint8), (bw, bh), interpolation=cv2.INTER_LANCZOS4
     )
 
 

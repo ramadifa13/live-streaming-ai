@@ -62,7 +62,7 @@ BBOX_SMOOTH_WINDOW = int(os.environ.get("AI_WORKER_BBOX_SMOOTH", "7"))
 RAW_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RAW_QUEUE", "24"))
 RENDER_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RENDER_QUEUE", "48"))
 RAW_QUEUE_BLOCK_SEC = float(os.environ.get("AI_WORKER_RAW_BLOCK_SEC", "0.25"))
-MASK_FEATHER_PX = int(os.environ.get("AI_WORKER_MASK_FEATHER", "20"))
+MASK_FEATHER_PX = int(os.environ.get("AI_WORKER_MASK_FEATHER", "8"))
 AMBIENT_MIN_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MIN_SEC", "4"))
 AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "6"))
 
@@ -72,10 +72,10 @@ BROADCAST_MAX_LAG = int(os.environ.get("AI_WORKER_BROADCAST_MAX_LAG", "8"))
 BROADCAST_RENDER_WAIT_SEC = float(
     os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.10")
 )
-MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.78"))
-MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0.22"))
-MOUTH_MAX_DELTA = float(os.environ.get("MUSETALK_MAX_DELTA", "42"))
-MOUTH_FRAME_DELTA = float(os.environ.get("MUSETALK_FRAME_DELTA", "16"))
+MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.72"))
+MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0.06"))
+MOUTH_MAX_DELTA = float(os.environ.get("MUSETALK_MAX_DELTA", "36"))
+MOUTH_FRAME_DELTA = float(os.environ.get("MUSETALK_FRAME_DELTA", "0"))
 LIPSYNC_PREROLL_FRAMES = int(os.environ.get("MUSETALK_PREROLL_FRAMES", "6"))
 LIPSYNC_WAIT_SEC = float(os.environ.get("MUSETALK_MOUTH_WAIT_SEC", "0.15"))
 LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "0"))
@@ -1418,6 +1418,9 @@ class LipSyncEngine:
             if orig.size == 0:
                 print(f"[LipSync] ERROR: Empty orig crop for face_box={face_box}")
                 return body
+            # Tajamkan patch 256→bbox; jangan temporal/frame-delta tinggi (itu bikin burem).
+            blur = cv2.GaussianBlur(mouth, (0, 0), 0.8)
+            mouth = cv2.addWeighted(mouth, 1.45, blur, -0.45, 0)
             strength = _mouth_strength_for_pcm(pcm)
             damped = _dampen_generated_mouth(orig, mouth, strength)
             if (
