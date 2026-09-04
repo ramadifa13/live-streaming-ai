@@ -62,7 +62,7 @@ BBOX_SMOOTH_WINDOW = int(os.environ.get("AI_WORKER_BBOX_SMOOTH", "7"))
 RAW_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RAW_QUEUE", "24"))
 RENDER_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RENDER_QUEUE", "48"))
 RAW_QUEUE_BLOCK_SEC = float(os.environ.get("AI_WORKER_RAW_BLOCK_SEC", "0.25"))
-MASK_FEATHER_PX = int(os.environ.get("AI_WORKER_MASK_FEATHER", "15"))
+MASK_FEATHER_PX = int(os.environ.get("AI_WORKER_MASK_FEATHER", "20"))
 AMBIENT_MIN_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MIN_SEC", "4"))
 AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "6"))
 
@@ -72,24 +72,16 @@ BROADCAST_MAX_LAG = int(os.environ.get("AI_WORKER_BROADCAST_MAX_LAG", "8"))
 BROADCAST_RENDER_WAIT_SEC = float(
     os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.10")
 )
-MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.95"))
-MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0.10"))
-MOUTH_MAX_DELTA = float(os.environ.get("MUSETALK_MAX_DELTA", "0"))
+MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.78"))
+MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0.22"))
+MOUTH_MAX_DELTA = float(os.environ.get("MUSETALK_MAX_DELTA", "42"))
+MOUTH_FRAME_DELTA = float(os.environ.get("MUSETALK_FRAME_DELTA", "16"))
 LIPSYNC_PREROLL_FRAMES = int(os.environ.get("MUSETALK_PREROLL_FRAMES", "6"))
 LIPSYNC_WAIT_SEC = float(os.environ.get("MUSETALK_MOUTH_WAIT_SEC", "0.15"))
 LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "0"))
 LIPSYNC_PREROLL_TIMEOUT_SEC = float(
     os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.0")
 )
-
-if MOUTH_MAX_DELTA > 0 and MOUTH_MAX_DELTA <= 30 and MOUTH_STRENGTH <= 0.70:
-    print(
-        "[LipSync] Env mulut lama menekan hasil UNet (kedip bibir). "
-        "Override: strength=0.95 temporal<=0.10 max_delta=0"
-    )
-    MOUTH_STRENGTH = 0.95
-    MOUTH_TEMPORAL = min(MOUTH_TEMPORAL, 0.10)
-    MOUTH_MAX_DELTA = 0.0
 
 
 ALLOWED_GESTURES: frozenset = frozenset()
@@ -322,11 +314,11 @@ def _pcm_rms(pcm: bytes) -> float:
 
 
 def _mouth_strength_for_pcm(pcm: bytes) -> float:
-    """Skala buka mulut vs volume. Jangan terlalu kecil — hasilnya cuma kedip bibir."""
-    base = max(0.75, min(1.0, MOUTH_STRENGTH))
+    """Buka mulut mengikuti volume, tetap lembut untuk bibir tipis."""
+    base = max(0.55, min(0.92, MOUTH_STRENGTH))
     rms = _pcm_rms(pcm)
-    t = float(np.clip((rms - 0.008) / 0.10, 0.0, 1.0))
-    return base * (0.82 + 0.18 * t)
+    t = float(np.clip((rms - 0.010) / 0.11, 0.0, 1.0))
+    return base * (0.88 + 0.12 * t)
 
 
 def _dampen_generated_mouth(
@@ -1440,6 +1432,19 @@ class LipSyncEngine:
                     1.0 - float(MOUTH_TEMPORAL),
                     0,
                 )
+            jump = float(MOUTH_FRAME_DELTA)
+            if (
+                jump > 0
+                and self._prev_composed is not None
+                and self._prev_composed.shape == damped.shape
+            ):
+                prev_f = self._prev_composed.astype(np.float32)
+                now_f = damped.astype(np.float32)
+                damped = np.clip(
+                    prev_f + np.clip(now_f - prev_f, -jump, jump),
+                    0,
+                    255,
+                ).astype(np.uint8)
             self._prev_composed = damped
             blended = get_image_blending(
                 body, damped, list(face_box), mask_array, crop_box
@@ -2426,7 +2431,7 @@ class AIVisualWorker:
             unet_config=os.path.join(models_root, "musetalkV15", "musetalk.json"),
             whisper_dir=os.path.join(models_root, "whisper"),
             vae_type="sd-vae-ft-mse",
-            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "2")),
+            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "4")),
         )
 
         original_cwd = os.getcwd()
@@ -2496,7 +2501,7 @@ class AIVisualWorker:
         self._engine = LipSyncEngine(
             models,
             self._bank,
-            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "2")),
+            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "4")),
             face_registry=self._face_registry,
         )
         if self._bridge is not None:
@@ -2516,7 +2521,7 @@ class AIVisualWorker:
                 f"bbox_shift={vis['bbox_shift']}, extra_margin={vis['extra_margin']}, "
                 f"upper={vis['upper_boundary_ratio']}, strength={MOUTH_STRENGTH}, "
                 f"temporal={MOUTH_TEMPORAL}, max_delta={MOUTH_MAX_DELTA}, "
-                f"preroll={LIPSYNC_PREROLL_FRAMES}"
+                f"frame_delta={MOUTH_FRAME_DELTA}, preroll={LIPSYNC_PREROLL_FRAMES}"
             )
         except Exception:
             pass
