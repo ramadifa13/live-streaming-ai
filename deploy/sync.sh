@@ -343,6 +343,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	dedupe_worker_env
 	ensure_worker_python_deps || true
 
+	echo "[check] invariant worker ..."
+	if [ -f "$WORKER_DIR/check_invariants.py" ]; then
+		python3 "$WORKER_DIR/check_invariants.py" || {
+			echo "[ERROR] Invariant gagal — batalkan restart. Perbaiki kode lalu sync lagi."
+			exit 1
+		}
+	fi
+
 	if [ "$_cli_restart" = "1" ]; then
 		echo "[restart] FORCE_RESTART=1 SKIP_WATCHDOG=1 bash start.sh ..."
 		for f in "$WORKER_DIR"/*.sh "$DEPLOY_DIR"/*.sh; do

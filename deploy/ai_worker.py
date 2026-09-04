@@ -346,9 +346,14 @@ def _dampen_generated_mouth(
     return np.clip(mixed, 0, 255).astype(np.uint8)
 
 
-def _talk_body_index(clip: "ClipAsset", whisper_idx: int) -> int:
+def _talk_body_index(
+    clip: "ClipAsset", whisper_idx: int, start_frame_idx: int = 0
+) -> int:
+    """Pose tubuh untuk UNet = pose visual saat audio frame 0, lalu +whisper_idx."""
     span = max(1, clip.end_pose - clip.base_pose_frame + 1)
-    return clip.base_pose_frame + (int(whisper_idx) % span)
+    origin = int(start_frame_idx) - clip.base_pose_frame
+    offset = (origin + int(whisper_idx)) % span
+    return clip.base_pose_frame + offset
 
 
 class FaceCoordRegistry:
@@ -722,6 +727,7 @@ class VideoStateMachine:
         self._ambient_names = _ambient_gesture_names()
         self._idle_variants = list(bank.idle_variant_clips())
         self._next_ambient_at = 0.0
+        self._talk_pinned = False
         self._schedule_next_ambient()
 
     def _schedule_next_ambient(self) -> None:
@@ -759,7 +765,7 @@ class VideoStateMachine:
 
     def _maybe_queue_ambient_gesture(self) -> None:
         """Saat diam di idle_1 terlalu lama: mulai rotasi idle_2/3/4 (tanpa ulang clip sama)."""
-        if self._utterance_active or self._playthrough_lock:
+        if self._utterance_active or self._playthrough_lock or self._talk_pinned:
             return
         if self.state != PlayState.IDLE or self._overlap is not None:
             return
@@ -788,6 +794,7 @@ class VideoStateMachine:
             self._utterance_audio_done = False
             self._post_speech_gesture_active = False
             self._scheduled_gesture = None
+            self._talk_pinned = False
             self._playthrough_lock = False
             self._overlap = None
             self._talk_loop_count = 0
@@ -843,6 +850,20 @@ class VideoStateMachine:
                 return
             self.pending_action = tag
 
+    def pin_talk_body(self) -> int:
+        """Utterance sudah di antrian: kunci tubuh ke clip talk sebelum audio start."""
+        with self._lock:
+            talk = self.bank.talk_clip_name()
+            if talk not in self.bank.clips:
+                return int(self.frame_idx)
+            self._talk_pinned = True
+            self.pending_action = None
+            if self._utterance_active:
+                return int(self.frame_idx)
+            if self.current_name != talk:
+                self._cut_to_clip(talk, PlayState.IDLE, lock_face=False)
+            return int(self.frame_idx)
+
     def begin_utterance(self) -> None:
         """Lock playthrough; stay on idle talk body (no idle↔talk_expressive cut)."""
         with self._lock:
@@ -852,24 +873,20 @@ class VideoStateMachine:
             self._utterance_audio_done = False
             self._playthrough_lock = True
             self._talk_loop_count = 0
+            self._talk_pinned = True
             talk = self.bank.talk_clip_name()
             if talk not in self.bank.clips:
                 return
+            # Jangan blend idle_N→talk: mask MuseTalk milik idle_1 di tubuh campuran = mulut patah.
             if self.current_name != talk:
-                from_clip = self.bank.get_clip(self.current_name)
-                if from_clip is None:
-                    return
-                self._begin_overlap_transition(
-                    from_clip, self.frame_idx, talk, PlayState.TALK, lock_face=True
-                )
+                self._cut_to_clip(talk, PlayState.TALK, lock_face=True)
             else:
+                self._overlap = None
                 self.state = PlayState.TALK
                 if self._face_registry:
                     talk_clip = self.bank.get_clip(talk)
                     if talk_clip is not None:
-                        self._face_registry.lock_from_clip(
-                            talk_clip, talk_clip.base_pose_frame
-                        )
+                        self._face_registry.lock_from_clip(talk_clip, self.frame_idx)
 
     def mark_utterance_audio_done(self) -> None:
         with self._lock:
@@ -903,10 +920,7 @@ class VideoStateMachine:
         if clip is None or target not in self.bank.clips:
             self._scheduled_gesture = None
             return
-        prev_idx = min(self.frame_idx, clip.end_pose)
-        self._begin_overlap_transition(
-            clip, prev_idx, target, PlayState.ACTION, lock_face=False
-        )
+        self._cut_to_clip(target, PlayState.ACTION, lock_face=False)
         self._post_speech_gesture_active = True
         self._playthrough_lock = True
         self._scheduled_gesture = None
@@ -948,10 +962,12 @@ class VideoStateMachine:
             if another_utterance_ready and self.current_name == talk:
                 self.pending_action = None
                 self.state = PlayState.TALK
+                self._talk_pinned = True
                 print(
                     "[StateMachine] Utterance selesai → hold talk (utterance berikutnya siap)"
                 )
             else:
+                self._talk_pinned = False
                 if not self.pending_action:
                     self.pending_action = self.bank._idle_name
                 self.state = PlayState.IDLE
@@ -966,36 +982,30 @@ class VideoStateMachine:
             return clip.base_pose_frame + (int(idx) - clip.base_pose_frame) % span
         return max(clip.base_pose_frame, min(int(idx), clip.end_pose))
 
-    def _begin_overlap_transition(
+    def _cut_to_clip(
         self,
-        from_clip: ClipAsset,
-        from_idx: int,
         to_name: str,
         new_state: PlayState,
         lock_face: bool = False,
     ) -> None:
-        """Blend N frame sumber (wrap jika loop) dengan N frame pertama target."""
+        """Ganti clip instan. Crossfade antar take idle berbeda + MuseTalk = ghost/patah."""
         to_clip = self.bank.get_clip(to_name)
         if to_clip is None:
             return
-        n = self.overlap_frames
-        from_idx = self._wrapped_index(from_clip, from_idx)
-        pairs: List[Tuple[np.ndarray, np.ndarray]] = []
-        for i in range(n):
-            src_idx = self._wrapped_index(from_clip, from_idx + i)
-            ti = min(to_clip.base_pose_frame + i, to_clip.end_pose)
-            pairs.append((from_clip.frames[src_idx].copy(), to_clip.frames[ti].copy()))
-        resume = min(to_clip.base_pose_frame + n, to_clip.end_pose + 1)
-        self._overlap = _OverlapTransition(pairs=pairs, step=0, resume_frame_idx=resume)
+        from_name = self.current_name
+        from_idx = self.frame_idx
+        self._overlap = None
         self.current_name = to_name
+        self.frame_idx = to_clip.base_pose_frame
         self.state = new_state
         if lock_face and self._face_registry:
             lock_idx = min(to_clip.base_pose_frame, to_clip.end_pose)
             self._face_registry.lock_from_clip(to_clip, lock_idx)
-        print(
-            f"[StateMachine] Overlap {n}f: {from_clip.name}@{from_idx} → {to_name} "
-            f"(resume@{resume})"
-        )
+        if from_name != to_name or from_idx != self.frame_idx:
+            print(
+                f"[StateMachine] Cut {from_name}@{from_idx} → {to_name}@{self.frame_idx} "
+                f"(state={new_state.name})"
+            )
 
     def _clip_in_progress(self, clip: ClipAsset) -> bool:
         """True while a non-looping clip has not reached its last frame."""
@@ -1036,7 +1046,6 @@ class VideoStateMachine:
             self.pending_action = raw
             return False
 
-        prev_idx = self._wrapped_index(clip, min(self.frame_idx, clip.end_pose))
         idle_name = self.bank._idle_name
         talk_name = self.bank.talk_clip_name()
         if target == talk_name and self._utterance_active:
@@ -1046,16 +1055,11 @@ class VideoStateMachine:
         else:
             new_state = PlayState.ACTION
         lock_face = target == talk_name and self._utterance_active
-        self._begin_overlap_transition(
-            clip, prev_idx, target, new_state, lock_face=lock_face
-        )
+        self._cut_to_clip(target, new_state, lock_face=lock_face)
         if new_state == PlayState.ACTION:
             self._playthrough_lock = True
         else:
             self._playthrough_lock = False
-        print(
-            f"[StateMachine] → {target} (overlap={self.overlap_frames}f, state={new_state.name})"
-        )
         return True
 
     def _advance_frame_index(self, clip: ClipAsset, is_speech: bool) -> None:
@@ -1077,6 +1081,7 @@ class VideoStateMachine:
                 if (
                     self.state == PlayState.IDLE
                     and not self._utterance_active
+                    and not self._talk_pinned
                     and not self.pending_action
                     and self.current_name in self._idle_variants
                 ):
@@ -1117,7 +1122,10 @@ class VideoStateMachine:
             cycle_idx = 0
             frame: np.ndarray
 
-            if self._overlap is not None and self._overlap.step < len(
+            if self._talk_pinned and not self._utterance_active:
+                body, cycle_idx = clip.forward_at(self.frame_idx)
+                frame = body.copy()
+            elif self._overlap is not None and self._overlap.step < len(
                 self._overlap.pairs
             ):
                 from_f, to_f = self._overlap.pairs[self._overlap.step]
@@ -1147,8 +1155,12 @@ class VideoStateMachine:
                     self._advance_frame_index(clip, is_speech)
                 frame = body.copy()
 
-            needs_lipsync = is_speech and (
-                self._utterance_active or self.state == PlayState.TALK
+            talk_name = self.bank.talk_clip_name()
+            needs_lipsync = (
+                is_speech
+                and self._overlap is None
+                and self.current_name == talk_name
+                and (self._utterance_active or self.state == PlayState.TALK)
             )
 
             pkt = RawFramePacket(
@@ -1191,6 +1203,7 @@ class LipSyncEngine:
         self._infer_stop = threading.Event()
         self._infer_thread: Optional[threading.Thread] = None
         self._talk_clip_name = "idle_1"
+        self._start_frame_idx = 0
         self._last_mouth_256: Optional[np.ndarray] = None
         self._prev_composed: Optional[np.ndarray] = None
         self._feather_cache: dict = {}
@@ -1202,7 +1215,7 @@ class LipSyncEngine:
         except Exception:
             pass
 
-    def set_utterance(self, job) -> None:
+    def set_utterance(self, job, start_frame_idx: int = 0) -> None:
         """Mulai batch-ahead inference untuk satu utterance."""
         if job is not None and self._utterance_id == getattr(job, "task_id", None):
             return
@@ -1216,9 +1229,11 @@ class LipSyncEngine:
         talk = self.bank.talk_clip_name()
         if talk in self.bank.clips:
             self._talk_clip_name = talk
+        start_idx = int(start_frame_idx)
         with self._lock:
             self._utterance_id = job.task_id
             self._whisper_chunks = job.whisper_chunks
+            self._start_frame_idx = start_idx
             self._mouths = {}
             self._infer_cursor = 0
             self._last_mouth_256 = None
@@ -1232,7 +1247,8 @@ class LipSyncEngine:
         self._infer_thread.start()
         print(
             f"[LipSync] Infer {job.task_id}: {int(job.whisper_chunks.shape[0])} frames, "
-            f"batch={self.batch_size}, body={self._talk_clip_name}"
+            f"batch={self.batch_size}, body={self._talk_clip_name}, "
+            f"start_frame={start_idx}"
         )
 
     def wait_preroll(
@@ -1267,6 +1283,7 @@ class LipSyncEngine:
             self._whisper_chunks = None
             self._mouths = {}
             self._infer_cursor = 0
+            self._start_frame_idx = 0
             self._last_mouth_256 = None
             self._prev_composed = None
         self._infer_thread = None
@@ -1296,13 +1313,15 @@ class LipSyncEngine:
             if chunks is None or cursor >= chunks.shape[0]:
                 break
 
+            with self._lock:
+                start_idx = int(self._start_frame_idx)
             end = min(cursor + self.batch_size, chunks.shape[0])
             whisper_batch = chunks[cursor:end].to(
                 device=self.device, dtype=self.weight_dtype
             )
             latent_list = []
             for i in range(cursor, end):
-                body_idx = _talk_body_index(clip, i)
+                body_idx = _talk_body_index(clip, i, start_idx)
                 lat_idx = self._latent_index(clip, body_idx)
                 lat = clip.latent_list_cycle[lat_idx]
                 if lat is None:
@@ -1479,11 +1498,7 @@ class LipSyncEngine:
             self._prev_composed = None
             return pkt.frame
 
-        if (
-            pkt.clip_name
-            and pkt.clip_name != self._talk_clip_name
-            and not _is_idle_clip_name(pkt.clip_name)
-        ):
+        if not pkt.clip_name or pkt.clip_name != self._talk_clip_name:
             metrics.inc("lipsync_skipped_wrong_clip")
             self._prev_composed = None
             return pkt.frame
@@ -1507,11 +1522,8 @@ class LipSyncEngine:
             return pkt.frame
         metrics.inc("lipsync_cache_hit")
 
-        talk = self.bank.get_clip(self._talk_clip_name) or clip
-
-        body_clip = clip if pkt.clip_name == talk.name else talk
         return self._compose_mouth(
-            pkt.frame, mouth, body_clip, int(pkt.cycle_idx), pkt.audio_pcm
+            pkt.frame, mouth, clip, int(pkt.cycle_idx), pkt.audio_pcm
         )
 
 
@@ -1640,8 +1652,15 @@ def frame_fetcher_loop(
         action = action_fn()
         pkt = sm.next_packet(pcm, is_speech, llm_action=action, whisper_idx=whisper_idx)
         pkt.whisper_idx = whisper_idx
-        if whisper_idx is not None:
+        talk_name = sm.bank.talk_clip_name()
+        if (
+            whisper_idx is not None
+            and pkt.clip_name == talk_name
+            and sm._overlap is None
+        ):
             pkt.needs_lipsync = True
+        elif pkt.clip_name != talk_name or sm._overlap is not None:
+            pkt.needs_lipsync = False
         metrics.set_gauge("raw_queue_depth", float(raw_q.qsize()))
         if bridge is not None:
             metrics.set_gauge("utterance_queue_depth", float(bridge.pending_count()))
@@ -2366,9 +2385,12 @@ class AIVisualWorker:
         self._rtmp_connected = False
 
     def _on_utterance_ready(self, job) -> None:
-        """Mulai inferensi mulut di background — idle tetap jalan, tanpa freeze."""
+        """Mulai inferensi mulut — pose tubuh di-freeze sampai audio start."""
+        start_idx = 0
+        if self._sm:
+            start_idx = self._sm.pin_talk_body()
         if self._engine:
-            self._engine.set_utterance(job)
+            self._engine.set_utterance(job, start_frame_idx=start_idx)
 
         def _mark_ready() -> None:
             try:
@@ -2392,7 +2414,8 @@ class AIVisualWorker:
         if self._engine and getattr(self._engine, "_utterance_id", None) != getattr(
             job, "task_id", None
         ):
-            self._engine.set_utterance(job)
+            start_idx = self._sm.pin_talk_body() if self._sm else 0
+            self._engine.set_utterance(job, start_frame_idx=start_idx)
         if self._sm:
             self._sm.begin_utterance()
             if job.action:
