@@ -1853,18 +1853,6 @@ class StreamBroadcaster:
             return False
         if raw in ("nvenc", "h264_nvenc", "gpu"):
             return True
-        try:
-            from rtmp_utils import is_deferred_rtmp_ack
-
-            if is_deferred_rtmp_ack(self.rtmp_url or ""):
-                print(
-                    "[Broadcaster] Instagram/Facebook: encoder libx264 "
-                    "(NVENC sering ditolak ingest — preview kosong). "
-                    "Paksa GPU: FFMPEG_VIDEO_ENCODER=nvenc"
-                )
-                return False
-        except Exception:
-            pass
         return self._nvenc_supported()
 
     def _video_codec_args(self, *, use_nvenc: bool, nvenc_tune_ll: bool = True) -> list:
@@ -1927,6 +1915,8 @@ class StreamBroadcaster:
             str(gop),
             "-sc_threshold",
             "0",
+            "-threads",
+            "4",
         ]
 
     def _build_ffmpeg_cmd(
@@ -2089,9 +2079,19 @@ class StreamBroadcaster:
         last_stderr = ""
         proc = None
         encoder_name = "libx264"
+        instagram = False
+        try:
+            from rtmp_utils import is_deferred_rtmp_ack
+
+            instagram = is_deferred_rtmp_ack(self.rtmp_url or "")
+        except Exception:
+            pass
         video_plans = []
         if self._prefer_nvenc():
-            video_plans.append((True, True, "h264_nvenc"))
+            # Instagram ingest lebih aman tanpa -tune ll; NVENC tetap wajib
+            # supaya CPU tidak drop ke ~4 fps (libx264 720x1280).
+            if not instagram:
+                video_plans.append((True, True, "h264_nvenc"))
             video_plans.append((True, False, "h264_nvenc"))
         video_plans.append((False, False, "libx264"))
 
@@ -2871,6 +2871,11 @@ class AIVisualWorker:
 
         self._stop = threading.Event()
 
+        if self._broadcaster is not None:
+            try:
+                self._broadcaster.shutdown()
+            except Exception:
+                pass
         self._broadcaster = None
         self._rtmp_connected = False
         if self.rtmp_url:
