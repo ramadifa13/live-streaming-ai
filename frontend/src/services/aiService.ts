@@ -5,10 +5,11 @@ export interface SynthesizeTTSOptions {
   text: string;
   voice: string;
   avatarName: string;
-  speed: number;
-  tone: string;
-  /** Hanya untuk live — FE pra-live jangan panggil synthesizeTTS. */
+  speed?: number;
+  tone?: string;
   sessionId?: string;
+  /** Studio preview (step 2/4) — Piper lokal tanpa sesi live. */
+  allowOfflineSynth?: boolean;
 }
 
 export interface VideoScriptData {
@@ -35,10 +36,7 @@ export const aiService = {
     return hostSampleAudioPath(resolveHostId(hostOrVoice));
   },
 
-  /**
-   * Live-only Piper TTS. Pra-live harus pakai getHostSampleUrl / play sample.
-   * Akan 403 tanpa session live + pod.
-   */
+  /** Piper TTS — live (session) atau studio preview (`allowOfflineSynth`). */
   async synthesizeTTS(options: SynthesizeTTSOptions): Promise<Blob> {
     const host = resolveHostId(options.voice || options.avatarName);
     const res = await fetch("/api/tts/synthesize", {
@@ -49,9 +47,10 @@ export const aiService = {
         host,
         voice: host,
         avatarName: options.avatarName,
-        speed: options.speed,
+        speed: options.speed ?? 1,
         tone: options.tone,
         sessionId: options.sessionId,
+        allowOfflineSynth: options.allowOfflineSynth === true,
       }),
     });
 
@@ -59,7 +58,7 @@ export const aiService = {
       const errJson = await res.json().catch(() => null);
       const errorMsg =
         errJson?.error ||
-        `HTTP ${res.status}: TTS Piper hanya saat live. Pra-live pakai sample.`;
+        `HTTP ${res.status}: Gagal sintesis Piper TTS.`;
       throw new Error(errorMsg);
     }
 

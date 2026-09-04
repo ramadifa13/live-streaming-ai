@@ -98,7 +98,7 @@ export const LiveChatPanel: React.FC = () => {
         time: now,
       });
 
-      // Prelive: sample suara host (bukan Piper live).
+      // Prelive: Piper TTS (CPU lokal) — sama engine dengan live.
       await speakText(replyText, {
         avatar: selectedAvatar.name,
         tone: selectedTone,
@@ -151,7 +151,7 @@ export const LiveChatPanel: React.FC = () => {
             <span className="text-[10px] text-slate-600 mt-0.5">
               {isLive
                 ? "Ketik untuk inject komentar ke AI Host live"
-                : "Prelive: uji respons LLM + sample suara (bukan Piper)"}
+                : "Prelive: uji respons LLM + Piper TTS"}
             </span>
           </div>
         ) : (

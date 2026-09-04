@@ -110,13 +110,12 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
     });
   },
 
-  speakText: async (_text, opts) => {
+  speakText: async (text, opts) => {
     if (get().isPlayingAudio) {
       get().stopAudio();
       return;
     }
 
-    // Pra-live / studio: putar sample host — jangan hit Piper di pod.
     set({ isSynthesizingAudio: true, isAvatarSpeaking: true });
 
     const state = get();
@@ -126,23 +125,30 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
       state.selectedAvatar.voice ||
       state.selectedAvatar.id ||
       "namira";
-    const sampleUrl = aiService.getHostSampleUrl(
-      host,
-      state.selectedAvatar.sampleAudioUrl,
-    );
 
     try {
-      const audio = new Audio(sampleUrl);
+      const blob = await aiService.synthesizeTTS({
+        text,
+        voice: host,
+        avatarName: opts?.avatar || state.selectedAvatar.name,
+        speed: opts?.speed ?? state.speechSpeed ?? 1,
+        tone: opts?.tone || state.selectedTone,
+        allowOfflineSynth: true,
+      });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
       activeAudio = audio;
 
       set({ isPlayingAudio: true, isSynthesizingAudio: false });
 
       audio.onended = () => {
+        URL.revokeObjectURL(url);
         set({ isPlayingAudio: false, isAvatarSpeaking: false });
         activeAudio = null;
       };
 
       audio.onerror = () => {
+        URL.revokeObjectURL(url);
         set({
           isPlayingAudio: false,
           isAvatarSpeaking: false,
@@ -154,7 +160,7 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
       await audio.play().catch(() => {});
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      console.warn("[speakText] Sample playback notice:", errorMessage);
+      console.warn("[speakText] Piper preview notice:", errorMessage);
       set({
         isPlayingAudio: false,
         isAvatarSpeaking: false,

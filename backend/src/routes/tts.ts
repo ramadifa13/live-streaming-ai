@@ -53,7 +53,7 @@ export async function ttsRoutes(server: FastifyInstance) {
     };
   });
 
-  // GET /api/tts/sample/:host — metadata sample pra-live (FE play URL)
+  // GET /api/tts/sample/:host — metadata sample pra-live (fallback)
   server.get<{ Params: { host: string } }>(
     "/api/tts/sample/:host",
     async (request) => {
@@ -63,13 +63,13 @@ export async function ttsRoutes(server: FastifyInstance) {
         data: {
           host,
           sampleAudioUrl: getHostSampleUrl(host),
-          note: "Pra-live preview. Piper hanya saat live.",
+          note: "Fallback sample. Studio preview & live memakai Piper.",
         },
       };
     },
   );
 
-  // POST /api/tts/synthesize — LIVE ONLY (Piper CPU di backend)
+  // POST /api/tts/synthesize — Piper (live + studio preview via allowOfflineSynth)
   server.post("/api/tts/synthesize", async (request, reply) => {
     const parsed = synthesizeSchema.safeParse(request.body);
 
@@ -86,13 +86,12 @@ export async function ttsRoutes(server: FastifyInstance) {
 
     const sessionPod = resolveLivePodId(parsed.data.sessionId);
     const allowOffline = parsed.data.allowOfflineSynth === true;
-    // Live gate: butuh pod (session live/pending atau RUNPOD_POD_ID) kecuali offline flag.
     if (!sessionPod && !allowOffline) {
       reply.code(403);
       return {
         success: false,
         error:
-          "TTS Piper hanya untuk sesi live. Pra-live: putar sampleAudioUrl.",
+          "TTS Piper butuh sesi live atau allowOfflineSynth untuk preview studio.",
         host,
         sampleAudioUrl,
         engine: "sample",

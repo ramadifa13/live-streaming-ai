@@ -366,13 +366,13 @@ export default function Dashboard() {
         {appMode === "LIVE_STUDIO" ? (
           <div className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-3 xl:items-stretch">
-              <div className="min-w-0">
+              <div className="min-h-0 min-w-0 xl:h-full">
                 <ProductPanel />
               </div>
-              <div className="min-w-0">
+              <div className="min-h-0 min-w-0 xl:h-full">
                 <AiHostPanel />
               </div>
-              <div className="min-w-0">
+              <div className="min-h-0 min-w-0 xl:h-full">
                 <BroadcastSettingsPanel />
               </div>
             </div>
