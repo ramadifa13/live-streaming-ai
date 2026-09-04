@@ -18,7 +18,6 @@ export const VoiceToneSettings: React.FC = () => {
   const isAvatarSpeaking = useAiHostStore((state) => state.isAvatarSpeaking);
   const speakText = useAiHostStore((state) => state.speakText);
 
-  const activeFeaturedProduct = useProductStore((state) => state.activeFeaturedProduct);
   const showToast = useDashboardUIStore((state) => state.showToast);
 
   const isBusy = isSynthesizingAudio || isPlayingAudio || isAvatarSpeaking;
@@ -29,12 +28,7 @@ export const VoiceToneSettings: React.FC = () => {
       : "Siap diputar";
 
   const handlePlayAudioPreview = async (voice: string = selectedVoice) => {
-    const productLabel =
-      activeFeaturedProduct?.name && activeFeaturedProduct.name !== "Memuat Produk..."
-        ? activeFeaturedProduct.name
-        : "produk unggulan kami";
-    const previewText = `Halo semuanya! Selamat datang di live streaming. Saya ${selectedAvatar.name}. Yuk langsung cek penawaran spesial ${productLabel} hari ini ya!`;
-
+    const previewText = `Halo semuanya! ini suara saya ${selectedAvatar.name}.`;
     showToast(`Sintesis Piper TTS: ${selectedAvatar.name}...`);
     try {
       await speakText(previewText, {
