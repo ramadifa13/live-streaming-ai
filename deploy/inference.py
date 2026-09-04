@@ -59,12 +59,22 @@ def _env_flag(name: str, default: str = "1") -> bool:
 
 
 def musetalk_visual_params():
-    """Parameter visual MuseTalk — kurangi mulut berlebihan & cegah stretch."""
+    """Crop wajah untuk MuseTalk — cukup rahang agar mulut bisa buka."""
+    bbox_shift = int(os.environ.get("MUSETALK_BBOX_SHIFT", "0"))
+    extra_margin = int(os.environ.get("MUSETALK_EXTRA_MARGIN", "10"))
+    upper_boundary_ratio = float(os.environ.get("MUSETALK_UPPER_BOUNDARY", "0.50"))
+    # Preset lama menekan gerak bibir (hanya kedip).
+    if bbox_shift == -5 and extra_margin <= 4 and upper_boundary_ratio >= 0.56:
+        print(
+            "[MuseTalk] Crop lama (bbox=-5, margin<=4, upper>=0.56) — "
+            "dipakai crop rahang bbox=0 extra=10 upper=0.50"
+        )
+        bbox_shift, extra_margin, upper_boundary_ratio = 0, 10, 0.50
     return {
-        "bbox_shift": int(os.environ.get("MUSETALK_BBOX_SHIFT", "-5")),
-        "extra_margin": int(os.environ.get("MUSETALK_EXTRA_MARGIN", "4")),
+        "bbox_shift": bbox_shift,
+        "extra_margin": extra_margin,
         "parsing_mode": (os.environ.get("MUSETALK_PARSING_MODE") or "jaw").strip() or "jaw",
-        "upper_boundary_ratio": float(os.environ.get("MUSETALK_UPPER_BOUNDARY", "0.58")),
+        "upper_boundary_ratio": upper_boundary_ratio,
         "square_pad": _env_flag("MUSETALK_SQUARE_PAD", "1"),
         "left_cheek_width": int(os.environ.get("MUSETALK_CHEEK_WIDTH", "80")),
         "right_cheek_width": int(os.environ.get("MUSETALK_CHEEK_WIDTH", "80")),

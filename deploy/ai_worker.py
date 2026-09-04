@@ -72,15 +72,24 @@ BROADCAST_MAX_LAG = int(os.environ.get("AI_WORKER_BROADCAST_MAX_LAG", "8"))
 BROADCAST_RENDER_WAIT_SEC = float(
     os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.10")
 )
-MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.62"))
-MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0.32"))
-MOUTH_MAX_DELTA = float(os.environ.get("MUSETALK_MAX_DELTA", "30"))
+MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.95"))
+MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0.10"))
+MOUTH_MAX_DELTA = float(os.environ.get("MUSETALK_MAX_DELTA", "0"))
 LIPSYNC_PREROLL_FRAMES = int(os.environ.get("MUSETALK_PREROLL_FRAMES", "6"))
 LIPSYNC_WAIT_SEC = float(os.environ.get("MUSETALK_MOUTH_WAIT_SEC", "0.15"))
 LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "0"))
 LIPSYNC_PREROLL_TIMEOUT_SEC = float(
     os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.0")
 )
+
+if MOUTH_MAX_DELTA > 0 and MOUTH_MAX_DELTA <= 30 and MOUTH_STRENGTH <= 0.70:
+    print(
+        "[LipSync] Env mulut lama menekan hasil UNet (kedip bibir). "
+        "Override: strength=0.95 temporal<=0.10 max_delta=0"
+    )
+    MOUTH_STRENGTH = 0.95
+    MOUTH_TEMPORAL = min(MOUTH_TEMPORAL, 0.10)
+    MOUTH_MAX_DELTA = 0.0
 
 
 ALLOWED_GESTURES: frozenset = frozenset()
@@ -313,17 +322,17 @@ def _pcm_rms(pcm: bytes) -> float:
 
 
 def _mouth_strength_for_pcm(pcm: bytes) -> float:
-    """Lebih pelan saat audio lemah — mulut tidak melebar di jeda kata."""
-    base = max(0.25, min(0.85, MOUTH_STRENGTH))
+    """Skala buka mulut vs volume. Jangan terlalu kecil — hasilnya cuma kedip bibir."""
+    base = max(0.75, min(1.0, MOUTH_STRENGTH))
     rms = _pcm_rms(pcm)
-    t = float(np.clip((rms - 0.015) / 0.12, 0.0, 1.0))
-    return base * (0.50 + 0.50 * t)
+    t = float(np.clip((rms - 0.008) / 0.10, 0.0, 1.0))
+    return base * (0.82 + 0.18 * t)
 
 
 def _dampen_generated_mouth(
     original: np.ndarray, generated: np.ndarray, strength: float
 ) -> np.ndarray:
-    """Campur hasil MuseTalk dengan crop asli + clamp delta agar rahang tidak tertarik."""
+    """Lerp MuseTalk vs crop idle. Clamp delta opsional (0 = matikan, biar mulut benar-benar buka)."""
     if original is None or generated is None:
         return generated if generated is not None else original
     if original.shape != generated.shape:
@@ -334,10 +343,12 @@ def _dampen_generated_mouth(
         )
     orig_f = original.astype(np.float32)
     gen_f = generated.astype(np.float32)
-    delta = gen_f - orig_f
-    cap = max(8.0, MOUTH_MAX_DELTA)
-    delta = np.clip(delta, -cap, cap)
-    mixed = orig_f + delta * float(np.clip(strength, 0.0, 1.0))
+    s = float(np.clip(strength, 0.0, 1.0))
+    mixed = orig_f * (1.0 - s) + gen_f * s
+    cap = float(MOUTH_MAX_DELTA)
+    if cap > 0:
+        delta = mixed - orig_f
+        mixed = orig_f + np.clip(delta, -cap, cap)
     return np.clip(mixed, 0, 255).astype(np.uint8)
 
 
