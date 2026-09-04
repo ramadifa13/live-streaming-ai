@@ -1,5 +1,0 @@
-{
-  "base_pose_frame": 0,
-  "end_pose_frame": 89,
-  "comment": "idle_1 = nafas + body bicara / fallback. 90 frames @~30fps (~3s)."
-}

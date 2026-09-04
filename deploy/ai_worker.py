@@ -793,11 +793,26 @@ class VideoStateMachine:
         return None
 
     def _pick_next_talk_clip(self) -> str:
-        """Rotasi talk: boleh 2x sama beruntun, lalu wajib beda (random)."""
+        """Rotasi talk lebih jarang — kurangi hard cut antar utterance."""
+        # Sudah di talk clip yang valid: reuse (hold antar kalimat).
+        if (
+            self.state == PlayState.TALK
+            and self.current_name
+            and self.bank.clip_has_musetalk(self.current_name)
+        ):
+            if self._talk_streak_name == self.current_name:
+                self._talk_streak_count += 1
+            else:
+                self._talk_streak_name = self.current_name
+                self._talk_streak_count = 1
+            # Baru ganti setelah 4 utterance beruntun di clip yang sama.
+            if self._talk_streak_count < 4:
+                return self.current_name
+
         avoid = None
         if (
             self._talk_streak_name
-            and self._talk_streak_count >= 2
+            and self._talk_streak_count >= 4
             and self._talk_streak_name in self.bank.talk_clips_ready()
         ):
             avoid = self._talk_streak_name
@@ -917,7 +932,7 @@ class VideoStateMachine:
             return int(talk_clip.base_pose_frame)
 
     def begin_utterance(self) -> None:
-        """Lock playthrough; cut ke talk clip yang sudah di-pin — audio mulai bersamaan."""
+        """Lock playthrough; soft-cut ke talk clip yang sudah di-pin — audio mulai bersamaan."""
         with self._lock:
             if self._utterance_active:
                 return
@@ -937,18 +952,27 @@ class VideoStateMachine:
                 target = self.bank.crash_fallback_name()
             self._talk_target = target
             if self.current_name != target:
-                self._cut_to_clip(target, PlayState.TALK, lock_face=True)
+                self._cut_to_clip(target, PlayState.TALK, lock_face=True, soft=True)
             else:
-                self._overlap = None
                 self.state = PlayState.TALK
-                talk_clip = self.bank.get_clip(target)
-                if talk_clip is not None and not was_hold_talk:
-                    # Sinkron dengan infer (base pose) supaya mulut cocok.
-                    self.frame_idx = talk_clip.base_pose_frame
-                    if self._face_registry:
-                        self._face_registry.lock_from_clip(
-                            talk_clip, self.frame_idx
-                        )
+                # Hold antar-utterance: lanjut frame sekarang (jangan rewind → patah).
+                if was_hold_talk:
+                    pass
+                else:
+                    talk_clip = self.bank.get_clip(target)
+                    if talk_clip is not None:
+                        # Soft rewind ke base jika sedang jauh dari rest pose.
+                        if abs(self.frame_idx - talk_clip.base_pose_frame) > 3:
+                            self._cut_to_clip(
+                                target, PlayState.TALK, lock_face=True, soft=True
+                            )
+                        else:
+                            self.frame_idx = talk_clip.base_pose_frame
+                            if self._face_registry:
+                                self._face_registry.lock_from_clip(
+                                    talk_clip,
+                                    min(talk_clip.base_pose_frame, talk_clip.end_pose),
+                                )
 
     def mark_utterance_audio_done(self) -> None:
         with self._lock:
@@ -1050,18 +1074,81 @@ class VideoStateMachine:
             return clip.base_pose_frame + (int(idx) - clip.base_pose_frame) % span
         return max(clip.base_pose_frame, min(int(idx), clip.end_pose))
 
+    def _build_overlap_pairs(
+        self,
+        from_clip: ClipAsset,
+        from_idx: int,
+        to_clip: ClipAsset,
+        n: int,
+    ) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """Pasangan frame untuk blend tubuh (tanpa MuseTalk) saat ganti clip."""
+        self.bank.ensure_frames(from_clip)
+        self.bank.ensure_frames(to_clip)
+        n = max(4, min(int(n), 16))
+        pairs: List[Tuple[np.ndarray, np.ndarray]] = []
+        for i in range(n):
+            src_i = max(from_clip.base_pose_frame, int(from_idx) - n + 1 + i)
+            src_i = min(src_i, from_clip.end_pose)
+            dst_i = to_clip.base_pose_frame + i
+            if dst_i > to_clip.end_pose:
+                dst_i = to_clip.end_pose
+            fa, _ = from_clip.forward_at(src_i)
+            fb, _ = to_clip.forward_at(dst_i)
+            pairs.append((fa.copy(), fb.copy()))
+        return pairs
+
     def _cut_to_clip(
         self,
         to_name: str,
         new_state: PlayState,
         lock_face: bool = False,
+        soft: bool = True,
     ) -> None:
-        """Ganti clip instan. Crossfade antar take idle berbeda + MuseTalk = ghost/patah."""
+        """Ganti clip — soft overlap tubuh bila memungkinkan (hindari patah mid-pose)."""
         to_clip = self.bank.get_clip(to_name)
         if to_clip is None:
             return
         from_name = self.current_name
-        from_idx = self.frame_idx
+        from_idx = int(self.frame_idx)
+        from_clip = self.bank.get_clip(from_name)
+
+        # Soft blend jika ganti clip (atau loncat jauh di clip yang sama).
+        jump_same = (
+            from_name == to_name
+            and abs(from_idx - to_clip.base_pose_frame) > 3
+            and not (
+                from_idx == to_clip.base_pose_frame or from_idx >= to_clip.end_pose
+            )
+        )
+        want_soft = soft and from_clip is not None and (from_name != to_name or jump_same)
+        if want_soft:
+            n = max(self.overlap_frames, self.crossfade_frames)
+            try:
+                pairs = self._build_overlap_pairs(from_clip, from_idx, to_clip, n)
+            except Exception as err:
+                print(f"[StateMachine] Soft transition notice: {err}")
+                pairs = []
+            if pairs:
+                resume = to_clip.base_pose_frame + len(pairs)
+                if resume > to_clip.end_pose:
+                    resume = to_clip.base_pose_frame
+                self._overlap = _OverlapTransition(
+                    pairs=pairs,
+                    step=0,
+                    resume_frame_idx=resume,
+                )
+                self.current_name = to_name
+                self.frame_idx = to_clip.base_pose_frame
+                self.state = new_state
+                if lock_face and self._face_registry:
+                    lock_idx = min(to_clip.base_pose_frame, to_clip.end_pose)
+                    self._face_registry.lock_from_clip(to_clip, lock_idx)
+                print(
+                    f"[StateMachine] Soft {from_name}@{from_idx} → {to_name}@{resume} "
+                    f"({len(pairs)}f, state={new_state.name})"
+                )
+                return
+
         self._overlap = None
         self.current_name = to_name
         self.frame_idx = to_clip.base_pose_frame
@@ -1232,12 +1319,16 @@ class VideoStateMachine:
                     self._advance_frame_index(clip, is_speech)
                 frame = body.copy()
 
-            talk_name = self.bank.talk_clip_name()
+            talk_target = self._talk_target or self.bank.talk_clip_name()
             needs_lipsync = (
                 is_speech
                 and self._overlap is None
-                and self.current_name == talk_name
-                and (self._utterance_active or self.state == PlayState.TALK)
+                and self.state == PlayState.TALK
+                and (self._utterance_active or self._talk_pinned)
+                and (
+                    self.current_name == talk_target
+                    or self.bank.clip_has_musetalk(self.current_name)
+                )
             )
 
             pkt = RawFramePacket(
