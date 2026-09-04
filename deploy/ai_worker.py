@@ -57,7 +57,7 @@ SAMPLE_RATE = 44100
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
 BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2
 CROSSFADE_FRAMES = int(os.environ.get("AI_WORKER_CROSSFADE", "8"))
-OVERLAP_FRAMES = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "10"))
+OVERLAP_FRAMES = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "8"))
 BBOX_SMOOTH_WINDOW = int(os.environ.get("AI_WORKER_BBOX_SMOOTH", "7"))
 RAW_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RAW_QUEUE", "24"))
 RENDER_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RENDER_QUEUE", "48"))
@@ -68,8 +68,13 @@ AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "6"))
 
 IDLE_BREATH_CHANCE = float(os.environ.get("AI_WORKER_IDLE_BREATH_CHANCE", "0.18"))
 IDLE_FALLBACK_AFTER = int(os.environ.get("AI_WORKER_IDLE_FALLBACK_AFTER", "2"))
-# Hold talk (idle_2) antar-utterance: kalau BE diam / reload, balik ke idle_1.
-HOLD_TALK_MAX_SEC = float(os.environ.get("AI_WORKER_HOLD_TALK_SEC", "2.5"))
+# Hold talk antar-utterance: kalau BE diam / reload, balik ke idle_1.
+# Default 20s — TTS+MuseTalk di GPU yang sama sering >10s refill.
+HOLD_TALK_MAX_SEC = float(os.environ.get("AI_WORKER_HOLD_TALK_SEC", "20"))
+# Berapa utterance beruntun di clip talk yang sama sebelum rotasi (kurangi soft-cut).
+TALK_STREAK_BEFORE_ROTATE = int(os.environ.get("AI_WORKER_TALK_STREAK", "8"))
+# Setelah audio habis, izinkan N frame silence sebelum complete (bukan full end_pose).
+UTTERANCE_TAIL_FRAMES = int(os.environ.get("AI_WORKER_UTTERANCE_TAIL_FRAMES", "3"))
 BROADCAST_MAX_LAG = int(os.environ.get("AI_WORKER_BROADCAST_MAX_LAG", "8"))
 BROADCAST_RENDER_WAIT_SEC = float(
     os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.10")
@@ -82,7 +87,7 @@ LIPSYNC_PREROLL_FRAMES = int(os.environ.get("MUSETALK_PREROLL_FRAMES", "6"))
 LIPSYNC_WAIT_SEC = float(os.environ.get("MUSETALK_MOUTH_WAIT_SEC", "0"))
 LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "0"))
 LIPSYNC_PREROLL_TIMEOUT_SEC = float(
-    os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.0")
+    os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "1.0")
 )
 
 
@@ -110,9 +115,9 @@ def _ambient_gesture_names() -> List[str]:
 
 
 def _talk_clip_pool_names() -> List[str]:
-    """Clip tubuh saat bicara: idle_1/2/3/4 (idle_1 ikut pool talking)."""
+    """Clip tubuh saat bicara — default tanpa idle_1 (idle_1 = true rest)."""
     raw = (
-        os.environ.get("AI_WORKER_TALK_CLIPS") or "idle_2,idle_3,idle_4,idle_1"
+        os.environ.get("AI_WORKER_TALK_CLIPS") or "idle_2,idle_3,idle_4"
     ).strip()
     if raw.lower() in ("0", "off", "false", "none", "no", ""):
         return [TALK_CLIP_DEFAULT]
@@ -388,11 +393,13 @@ class FaceCoordRegistry:
 
 @dataclass
 class _OverlapTransition:
-    """N pasang frame: idle[-N..] blended dengan talk[0..N-1]."""
+    """N pasang frame: from[-N..] blended dengan target[0..N-1]."""
 
     pairs: List[Tuple[np.ndarray, np.ndarray]]
     step: int = 0
     resume_frame_idx: int = 0
+    # Index material MuseTalk di sisi target (bukan step blend).
+    target_cycle_indices: List[int] = field(default_factory=list)
 
 
 class AssetBank:
@@ -758,6 +765,7 @@ class VideoStateMachine:
         self._playthrough_lock = False
         self._utterance_active = False
         self._utterance_audio_done = False
+        self._utterance_audio_done_at: Optional[float] = None
         self._talk_loop_count = 0
         self._scheduled_gesture: Optional[str] = None
         self._post_speech_gesture_active = False
@@ -770,6 +778,7 @@ class VideoStateMachine:
         self._hold_talk_since: Optional[float] = None
         self._talk_streak_name: Optional[str] = None
         self._talk_streak_count = 0
+        self._pending_begin_utterance = False
         self._schedule_next_ambient()
 
     def _schedule_next_ambient(self) -> None:
@@ -808,14 +817,14 @@ class VideoStateMachine:
             else:
                 self._talk_streak_name = self.current_name
                 self._talk_streak_count = 1
-            # Baru ganti setelah 4 utterance beruntun di clip yang sama.
-            if self._talk_streak_count < 4:
+            # Rotasi jarang — kurangi kesan ganti clip di tengah live.
+            if self._talk_streak_count < max(2, TALK_STREAK_BEFORE_ROTATE):
                 return self.current_name
 
         avoid = None
         if (
             self._talk_streak_name
-            and self._talk_streak_count >= 4
+            and self._talk_streak_count >= max(2, TALK_STREAK_BEFORE_ROTATE)
             and self._talk_streak_name in self.bank.talk_clips_ready()
         ):
             avoid = self._talk_streak_name
@@ -856,6 +865,7 @@ class VideoStateMachine:
         with self._lock:
             self._utterance_active = False
             self._utterance_audio_done = False
+            self._utterance_audio_done_at = None
             self._post_speech_gesture_active = False
             self._scheduled_gesture = None
             self._playthrough_lock = False
@@ -935,37 +945,41 @@ class VideoStateMachine:
             return int(talk_clip.base_pose_frame)
 
     def begin_utterance(self) -> None:
-        """Lock playthrough; soft-cut ke talk clip yang sudah di-pin — audio mulai bersamaan."""
+        """Lock playthrough; soft-cut ke talk clip segera (jangan defer → mulut tertutup)."""
         with self._lock:
             if self._utterance_active:
+                self._pending_begin_utterance = False
                 return
+            target = self._talk_target or self._pick_next_talk_clip()
+            if not self.bank.clip_has_musetalk(target):
+                target = self.bank.crash_fallback_name()
+            self._talk_target = target
+
+            # Jangan defer sampai rest pose — audio sudah mulai di SpeechBridge.
+            # Soft blend mid-pose jauh lebih natural daripada voice + mulut tertutup.
             was_hold_talk = (
                 self.state == PlayState.TALK
                 and self._talk_pinned
                 and self._talk_target == self.current_name
             )
+            self._pending_begin_utterance = False
             self._utterance_active = True
             self._utterance_audio_done = False
+            self._utterance_audio_done_at = None
             self._playthrough_lock = True
             self._talk_loop_count = 0
             self._talk_pinned = True
             self._hold_talk_since = None
             self._hold_pose_for_infer = False
-            target = self._talk_target or self._pick_next_talk_clip()
-            if not self.bank.clip_has_musetalk(target):
-                target = self.bank.crash_fallback_name()
-            self._talk_target = target
             if self.current_name != target:
                 self._cut_to_clip(target, PlayState.TALK, lock_face=True, soft=True)
             else:
                 self.state = PlayState.TALK
-                # Hold antar-utterance: lanjut frame sekarang (jangan rewind → patah).
                 if was_hold_talk:
                     pass
                 else:
                     talk_clip = self.bank.get_clip(target)
                     if talk_clip is not None:
-                        # Soft rewind ke base jika sedang jauh dari rest pose.
                         if abs(self.frame_idx - talk_clip.base_pose_frame) > 3:
                             self._cut_to_clip(
                                 target, PlayState.TALK, lock_face=True, soft=True
@@ -982,6 +996,8 @@ class VideoStateMachine:
         with self._lock:
             if self._utterance_active:
                 self._utterance_audio_done = True
+                if self._utterance_audio_done_at is None:
+                    self._utterance_audio_done_at = time.perf_counter()
                 self._try_start_post_speech_gesture()
 
     def try_start_cta_gesture_early(self) -> None:
@@ -1023,7 +1039,11 @@ class VideoStateMachine:
         return self.frame_idx >= clip.end_pose
 
     def utterance_visual_complete(self) -> bool:
-        """True when audio selesai DAN clip mencapai end pose (visual tail, no freeze)."""
+        """True saat audio selesai (+ short grace) — jangan tunggu full end_pose.
+
+        Menunggu end_pose membuat mute talking-body dan menunda utterance berikutnya
+        (SpeechBridge tidak start job baru sampai signal_visual_complete).
+        """
         if not self._utterance_active:
             return False
         if not self._utterance_audio_done:
@@ -1035,41 +1055,55 @@ class VideoStateMachine:
             return self.frame_idx >= clip.end_pose
         if self._scheduled_gesture:
             return False
-        clip = self.bank.get_clip(self.current_name)
-        if clip is None:
+        # Short grace (~3 frame @30fps) supaya mouth settle, lalu unblock next utterance.
+        done_at = self._utterance_audio_done_at
+        if done_at is None:
             return True
-        return self.frame_idx >= clip.end_pose
+        grace = max(0, UTTERANCE_TAIL_FRAMES) / float(max(1, TARGET_FPS))
+        return (time.perf_counter() - float(done_at)) >= grace
 
     def end_utterance(self, *, another_utterance_ready: bool = False) -> None:
         with self._lock:
             self._utterance_active = False
             self._utterance_audio_done = False
+            self._utterance_audio_done_at = None
             self._playthrough_lock = False
             self._talk_loop_count = 0
             self._scheduled_gesture = None
             self._post_speech_gesture_active = False
-            self._talk_target = None
+            self._pending_begin_utterance = False
+            # Keep _talk_target saat hold supaya pin/lipsync tidak loncat clip.
+            if not (
+                self.bank.clip_has_musetalk(self.current_name)
+            ):
+                self._talk_target = None
+            else:
+                self._talk_target = self.current_name
             if self._face_registry:
                 self._face_registry.release_lock()
             self._drain_action_queue()
-            if another_utterance_ready and self.bank.clip_has_musetalk(
-                self.current_name
-            ):
+            # Selalu hold talk dulu — jangan langsung idle (anti-gap).
+            # Idle hanya lewat release_stale_hold_talk setelah timeout panjang.
+            if self.bank.clip_has_musetalk(self.current_name):
                 self.pending_action = None
                 self.state = PlayState.TALK
                 self._talk_pinned = True
                 self._hold_pose_for_infer = False
                 self._hold_talk_since = time.perf_counter()
-                print(
-                    "[StateMachine] Utterance selesai → hold talk (utterance berikutnya siap)"
+                why = (
+                    "utterance berikutnya siap"
+                    if another_utterance_ready
+                    else "tunggu generate berikutnya"
                 )
+                print(f"[StateMachine] Utterance selesai → hold talk ({why})")
             else:
                 self._talk_pinned = False
                 self._hold_talk_since = None
+                self._talk_target = None
                 if not self.pending_action:
                     self.pending_action = self.bank._idle_name
                 self.state = PlayState.IDLE
-                print("[StateMachine] Utterance selesai → idle_1 (end pose tercapai)")
+                print("[StateMachine] Utterance selesai → idle_1")
 
     def release_stale_hold_talk(
         self, *, queue_has_ready: bool, max_sec: float = HOLD_TALK_MAX_SEC
@@ -1116,12 +1150,13 @@ class VideoStateMachine:
         from_idx: int,
         to_clip: ClipAsset,
         n: int,
-    ) -> List[Tuple[np.ndarray, np.ndarray]]:
+    ) -> Tuple[List[Tuple[np.ndarray, np.ndarray]], List[int]]:
         """Pasangan frame untuk blend tubuh (tanpa MuseTalk) saat ganti clip."""
         self.bank.ensure_frames(from_clip)
         self.bank.ensure_frames(to_clip)
         n = max(4, min(int(n), 16))
         pairs: List[Tuple[np.ndarray, np.ndarray]] = []
+        target_cycles: List[int] = []
         for i in range(n):
             src_i = max(from_clip.base_pose_frame, int(from_idx) - n + 1 + i)
             src_i = min(src_i, from_clip.end_pose)
@@ -1131,7 +1166,35 @@ class VideoStateMachine:
             fa, _ = from_clip.forward_at(src_i)
             fb, _ = to_clip.forward_at(dst_i)
             pairs.append((fa.copy(), fb.copy()))
-        return pairs
+            target_cycles.append(int(dst_i))
+        return pairs, target_cycles
+
+    def _start_talk_loop_wrap(self, clip: ClipAsset) -> None:
+        """Soft blend end→base saat loop mid-speech (hindari hard pose jump)."""
+        n = max(4, min(int(self.overlap_frames), 12))
+        try:
+            pairs, target_cycles = self._build_overlap_pairs(
+                clip, clip.end_pose, clip, n
+            )
+        except Exception as err:
+            print(f"[StateMachine] Loop wrap notice: {err}")
+            return
+        if not pairs:
+            return
+        resume = clip.base_pose_frame + len(pairs)
+        if resume > clip.end_pose:
+            resume = clip.base_pose_frame
+        self._overlap = _OverlapTransition(
+            pairs=pairs,
+            step=0,
+            resume_frame_idx=resume,
+            target_cycle_indices=target_cycles,
+        )
+        self._talk_loop_count += 1
+        print(
+            f"[StateMachine] Soft loop wrap {self.current_name} "
+            f"end→base ({len(pairs)}f)"
+        )
 
     def _cut_to_clip(
         self,
@@ -1160,18 +1223,20 @@ class VideoStateMachine:
         if want_soft:
             n = max(self.overlap_frames, self.crossfade_frames)
             try:
-                pairs = self._build_overlap_pairs(from_clip, from_idx, to_clip, n)
+                pairs, target_cycles = self._build_overlap_pairs(
+                    from_clip, from_idx, to_clip, n
+                )
             except Exception as err:
                 print(f"[StateMachine] Soft transition notice: {err}")
-                pairs = []
+                pairs, target_cycles = [], []
             if pairs:
-                resume = to_clip.base_pose_frame + len(pairs)
-                if resume > to_clip.end_pose:
-                    resume = to_clip.base_pose_frame
+                # Resume di base pose — jangan skip rest (first=end kontrak).
+                resume = to_clip.base_pose_frame
                 self._overlap = _OverlapTransition(
                     pairs=pairs,
                     step=0,
                     resume_frame_idx=resume,
+                    target_cycle_indices=target_cycles,
                 )
                 self.current_name = to_name
                 self.frame_idx = to_clip.base_pose_frame
@@ -1254,7 +1319,7 @@ class VideoStateMachine:
         return True
 
     def _advance_frame_index(self, clip: ClipAsset, is_speech: bool) -> None:
-        """Advance index; seamless loop saat bicara; setelah audio selesai mainkan ke end (no freeze)."""
+        """Advance index; soft-loop saat bicara; hold setelah audio (no end_pose freeze)."""
         self.frame_idx += 1
         end_pf = clip.end_pose
         base_pf = clip.base_pose_frame
@@ -1262,13 +1327,13 @@ class VideoStateMachine:
         if self.state == PlayState.TALK and (
             self._utterance_active or self._talk_pinned
         ):
-            # Audio masih jalan / video lebih pendek: loop clip yang sama (smooth).
-            if self._utterance_active and self._utterance_audio_done:
-                # Visual tail: jangan loop lagi — lanjut sampai end_pose lalu complete.
-                if self.frame_idx > end_pf:
-                    self.frame_idx = end_pf
-                return
             if self.frame_idx > end_pf:
+                # Soft wrap end→base supaya loop tidak terlihat seperti hard cut.
+                if self._overlap is None:
+                    self.frame_idx = end_pf
+                    self._start_talk_loop_wrap(clip)
+                    if self._overlap is not None:
+                        return
                 self.frame_idx = base_pf
                 self._talk_loop_count += 1
             return
@@ -1312,6 +1377,9 @@ class VideoStateMachine:
         whisper_idx: Optional[int] = None,
     ) -> RawFramePacket:
         with self._lock:
+            if self._pending_begin_utterance and not self._utterance_active:
+                # Coba lagi setelah frame maju ke rest pose.
+                self.begin_utterance()
             self._maybe_queue_ambient_gesture()
 
             clip = self.bank.get_clip(self.current_name)
@@ -1333,7 +1401,15 @@ class VideoStateMachine:
                 t = (self._overlap.step + 1) / float(n)
                 alpha = _ease_in_out(t)
                 frame = blend_weighted(from_f, to_f, alpha)
-                cycle_idx = self._overlap.step
+                if (
+                    self._overlap.target_cycle_indices
+                    and self._overlap.step < len(self._overlap.target_cycle_indices)
+                ):
+                    cycle_idx = int(
+                        self._overlap.target_cycle_indices[self._overlap.step]
+                    )
+                else:
+                    cycle_idx = int(self.frame_idx)
                 self._overlap.step += 1
                 if self._overlap.step >= n:
                     self.frame_idx = self._overlap.resume_frame_idx
@@ -1356,14 +1432,15 @@ class VideoStateMachine:
                 frame = body.copy()
 
             talk_target = self._talk_target or self.bank.talk_clip_name()
+            # Lipsync tetap ON saat soft overlap jika sudah bicara — cegah mulut tertutup.
             needs_lipsync = (
                 is_speech
-                and self._overlap is None
                 and self.state == PlayState.TALK
                 and (self._utterance_active or self._talk_pinned)
                 and (
                     self.current_name == talk_target
                     or self.bank.clip_has_musetalk(self.current_name)
+                    or self._overlap is not None
                 )
             )
 
@@ -1480,7 +1557,8 @@ class LipSyncEngine:
         with self._lock:
             ready = sum(1 for i in range(need) if i in self._mouths)
         print(f"[LipSync] Preroll {ready}/{need} (timeout)")
-        return ready > 0
+        # Jangan anggap siap jika belum ada mouth sama sekali.
+        return ready >= max(1, min(2, need))
 
     def clear_utterance(self) -> None:
         self._infer_stop.set()
@@ -1706,7 +1784,18 @@ class LipSyncEngine:
             self._prev_composed = None
             return pkt.frame
 
-        if not pkt.clip_name or pkt.clip_name != self._talk_clip_name:
+        if not pkt.clip_name:
+            metrics.inc("lipsync_skipped_wrong_clip")
+            self._prev_composed = None
+            return pkt.frame
+
+        # Prefer talk clip; jangan skip lipsync jika body juga punya MuseTalk materials
+        # (soft-cut / hold) — mulut tertutup jauh lebih jelek daripada mask mismatch.
+        if (
+            self._talk_clip_name
+            and pkt.clip_name != self._talk_clip_name
+            and not self.bank.clip_has_musetalk(pkt.clip_name)
+        ):
             metrics.inc("lipsync_skipped_wrong_clip")
             self._prev_composed = None
             return pkt.frame
@@ -1765,15 +1854,26 @@ def lipsync_worker_loop(
                 frame_idx=pkt.frame_idx,
             )
             metrics.set_gauge("render_queue_depth", float(render_q.qsize()))
+            speaking = bool(pkt.is_speech or pkt.needs_lipsync)
             try:
-                render_q.put(out, timeout=0.15)
+                render_q.put(out, timeout=0.25 if speaking else 0.15)
             except queue.Full:
-                metrics.inc("render_queue_dropped")
-                try:
-                    render_q.get_nowait()
-                except queue.Empty:
-                    pass
-                render_q.put(out, block=False)
+                if speaking:
+                    # Jangan drop frame bicara — block lebih lama.
+                    try:
+                        render_q.put(out, timeout=0.35)
+                    except queue.Full:
+                        metrics.inc("render_queue_dropped")
+                else:
+                    metrics.inc("render_queue_dropped")
+                    try:
+                        render_q.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        render_q.put(out, block=False)
+                    except queue.Full:
+                        pass
             frame_count += 1
             if frame_count % 300 == 0:
                 print(f"[LipSync] Processed {frame_count} frames, queue depth: {render_q.qsize()}")
@@ -1801,15 +1901,34 @@ def _put_raw_frame(
     metrics,
     stop_event: threading.Event,
     block_sec: float = RAW_QUEUE_BLOCK_SEC,
+    *,
+    must_keep: bool = False,
 ) -> None:
-    """Backpressure: tunggu slot queue sebelum drop (hindari gap sequence)."""
-    deadline = time.perf_counter() + max(0.01, block_sec)
+    """Backpressure: tunggu slot queue. Saat bicara, jangan drop seq."""
+    wait = max(0.01, block_sec * (4.0 if must_keep else 1.0))
+    deadline = time.perf_counter() + wait
     while not stop_event.is_set():
         try:
             raw_q.put(pkt, timeout=0.01)
             return
         except queue.Full:
             if time.perf_counter() >= deadline:
+                if must_keep:
+                    # Buang frame idle tertua jika ada, tapi jangan buang packet bicara.
+                    try:
+                        raw_q.get_nowait()
+                        metrics.inc("raw_queue_dropped_idle")
+                        raw_q.put(pkt, block=False)
+                        return
+                    except Exception:
+                        pass
+                    # Tetap coba block lebih lama daripada drop speech.
+                    try:
+                        raw_q.put(pkt, timeout=0.2)
+                        return
+                    except queue.Full:
+                        metrics.inc("raw_queue_dropped")
+                        return
                 metrics.inc("raw_queue_dropped")
                 return
 
@@ -1873,15 +1992,24 @@ def frame_fetcher_loop(
             whisper_idx is not None
             and pkt.clip_name
             and sm.bank.clip_has_musetalk(pkt.clip_name)
-            and sm._overlap is None
         ):
             pkt.needs_lipsync = True
-        elif not sm.bank.clip_has_musetalk(pkt.clip_name) or sm._overlap is not None:
+        elif not sm.bank.clip_has_musetalk(pkt.clip_name):
             pkt.needs_lipsync = False
         metrics.set_gauge("raw_queue_depth", float(raw_q.qsize()))
         if bridge is not None:
             metrics.set_gauge("utterance_queue_depth", float(bridge.pending_count()))
-        _put_raw_frame(raw_q, pkt, metrics, stop_event)
+        _put_raw_frame(
+            raw_q,
+            pkt,
+            metrics,
+            stop_event,
+            must_keep=bool(
+                pkt.is_speech
+                or pkt.needs_lipsync
+                or (bridge is not None and bridge.is_utterance_active())
+            ),
+        )
         metrics.record_latency(
             "frame_fetch_tick_ms", (time.perf_counter() - tick_start) * 1000.0
         )
@@ -2507,13 +2635,17 @@ def broadcaster_loop(
                 pass
 
         if pkt is None and pending:
-            pick = min(pending.keys())
-            for stale in [s for s in list(pending.keys()) if s < pick]:
-                pending.pop(stale, None)
-            pkt = pending.pop(pick, None)
-            if pkt is not None and pick != next_seq:
-                metrics.inc("broadcast_seq_resync")
-            next_seq = pick
+            if utterance_active:
+                # Jangan resync loncat seq saat bicara — tunggu next_seq / duplikasi frame.
+                pass
+            else:
+                pick = min(pending.keys())
+                for stale in [s for s in list(pending.keys()) if s < pick]:
+                    pending.pop(stale, None)
+                pkt = pending.pop(pick, None)
+                if pkt is not None and pick != next_seq:
+                    metrics.inc("broadcast_seq_resync")
+                next_seq = pick
 
         if pkt is not None:
             last_good = pkt.frame

@@ -1,5 +1,14 @@
-# VoxCPM2 TTS — venv terpisah dari MuseTalk (torch conflict: MuseTalk=2.1/cu118, VoxCPM2>=2.5/CUDA12).
+# VoxCPM2 TTS — venv TERPISAH dari MuseTalk
+#   path pod: /workspace/voxcpm2_env
+#   model:    /workspace/models/voxcpm2
+#   voices:   /workspace/voices/<voice_id>/reference.wav
+#
+# MuseTalk = torch 2.1 / cu118; VoxCPM2 butuh torch >=2.5 / CUDA 12 — jangan digabung.
 # Install: bash deploy/voxcpm2_tts/setup.sh
+#
+# voice_id default: girl_cute_kids
+# Katalog: girl_cute_kids | girl_warm_youthful | girl_warm_friendly | girl_calm_professional
+
 voxcpm>=0.2.0
 soundfile>=0.12.1
 numpy>=1.26.0,<2.0.0

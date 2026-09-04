@@ -1,17 +1,12 @@
 "use client";
 
 import React from "react";
-import {
-  Play,
-  Pause,
-  Loader2,
-  Languages,
-  AudioLines,
-  Gauge,
-} from "lucide-react";
+import { Play, Pause, Loader2, Languages, AudioLines } from "lucide-react";
 import {
   DEFAULT_VOICE_ID,
   TTS_LANGS,
+  localVoicePreviewUrl,
+  voicesForAvatarGender,
   type TtsLangCode,
 } from "@/app/dashboard/constants";
 import { useAiHostStore } from "@/stores/useAiHostStore";
@@ -22,40 +17,42 @@ export const VoiceToneSettings: React.FC = () => {
   const selectedVoice = useAiHostStore((state) => state.selectedVoice);
   const selectedLang = useAiHostStore((state) => state.selectedLang);
   const setSelectedLang = useAiHostStore((state) => state.setSelectedLang);
-  const speechSpeed = useAiHostStore((state) => state.speechSpeed);
-  const setSpeechSpeed = useAiHostStore((state) => state.setSpeechSpeed);
+  const setSelectedVoice = useAiHostStore((state) => state.setSelectedVoice);
   const isPlayingAudio = useAiHostStore((state) => state.isPlayingAudio);
   const isSynthesizingAudio = useAiHostStore((state) => state.isSynthesizingAudio);
   const isAvatarSpeaking = useAiHostStore((state) => state.isAvatarSpeaking);
   const speakText = useAiHostStore((state) => state.speakText);
   const showToast = useDashboardUIStore((state) => state.showToast);
 
+  const voiceOptions = voicesForAvatarGender(selectedAvatar.gender);
   const voiceId =
     selectedVoice || selectedAvatar.voice || DEFAULT_VOICE_ID;
+  const activeVoice =
+    voiceOptions.find((v) => v.id === voiceId) || voiceOptions[0];
 
   const isBusy = isSynthesizingAudio || isPlayingAudio || isAvatarSpeaking;
   const statusLabel = isSynthesizingAudio
-    ? "Menyintesis…"
+    ? "Memuat…"
     : isPlayingAudio || isAvatarSpeaking
       ? "Memutar"
       : "Siap";
 
-  const previewLine =
-    selectedLang === "en"
-      ? `Hi everyone! This is ${selectedAvatar.name}, your live host.`
-      : `Halo semuanya! Ini suara saya ${selectedAvatar.name}.`;
-
   const handlePlayAudioPreview = async () => {
-    showToast(`Preview ${voiceId} · ${selectedLang.toUpperCase()}`);
+    if (!activeVoice) {
+      showToast("Tidak ada suara untuk host ini.");
+      return;
+    }
+    showToast(`Preview lokal · ${activeVoice.label}`);
     try {
-      await speakText(previewLine, {
-        voice: voiceId,
+      // Pre-live: sample statis saja — tidak hit pod / VoxCPM2.
+      await speakText("__local_preview__", {
+        voice: activeVoice.id,
         avatar: selectedAvatar.name,
         lang: selectedLang,
-        speed: speechSpeed,
+        localPreviewOnly: true,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Gagal memproses audio.";
+      const msg = err instanceof Error ? err.message : "Gagal memutar audio.";
       showToast(`Gagal memutar audio: ${msg}`);
     }
   };
@@ -68,7 +65,7 @@ export const VoiceToneSettings: React.FC = () => {
             <AudioLines className="h-3 w-3" />
           </span>
           <p className="truncate text-[11px] font-bold text-white">
-            Suara · {selectedAvatar.name} · {voiceId}
+            Suara · {selectedAvatar.name}
           </p>
         </div>
         <span
@@ -90,9 +87,23 @@ export const VoiceToneSettings: React.FC = () => {
             <span className="mb-0.5 block text-[8px] font-semibold uppercase tracking-wider text-slate-500">
               Host Voice
             </span>
-            <div className="w-full rounded-md border border-[#2a3348] bg-[#111827] px-2 py-1.5 text-[11px] font-semibold text-white">
-              {voiceId}
-            </div>
+            {voiceOptions.length === 0 ? (
+              <div className="w-full rounded-md border border-[#2a3348] bg-[#111827] px-2 py-1.5 text-[11px] text-slate-500">
+                Belum ada suara untuk gender ini
+              </div>
+            ) : (
+              <select
+                value={activeVoice?.id || ""}
+                onChange={(e) => setSelectedVoice(e.target.value)}
+                className="w-full rounded-md border border-[#2a3348] bg-[#111827] px-2 py-1.5 text-[11px] font-semibold text-white cursor-pointer"
+              >
+                {voiceOptions.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+            )}
           </label>
 
           <div className="min-w-0">
@@ -124,7 +135,7 @@ export const VoiceToneSettings: React.FC = () => {
           <button
             type="button"
             onClick={() => void handlePlayAudioPreview()}
-            disabled={isSynthesizingAudio}
+            disabled={isSynthesizingAudio || voiceOptions.length === 0}
             aria-label={isPlayingAudio ? "Jeda preview" : "Putar preview suara"}
             className={`mb-px flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white shadow-md transition active:scale-95 disabled:cursor-wait disabled:opacity-60 cursor-pointer ${
               isBusy
@@ -143,31 +154,18 @@ export const VoiceToneSettings: React.FC = () => {
         </div>
 
         <div className="rounded-lg border border-white/5 bg-[#080e1a]/80 px-2 py-1.5">
-          <div className="mb-1 flex items-center justify-between gap-1">
-            <span className="flex items-center gap-0.5 text-[8px] font-semibold uppercase tracking-wider text-slate-500">
-              <Gauge className="h-2.5 w-2.5" />
-              Speed
-            </span>
-            <span className="text-[10px] font-bold tabular-nums text-blue-300">
-              {speechSpeed.toFixed(2)}×
-            </span>
-          </div>
-          <input
-            type="range"
-            min={0.7}
-            max={1.4}
-            step={0.05}
-            value={speechSpeed}
-            onChange={(e) => setSpeechSpeed(Number(e.target.value))}
-            className="h-1 w-full cursor-pointer accent-blue-500"
-          />
+          <p className="text-[9px] text-slate-500 leading-snug">
+            Preview memakai file lokal (
+            {localVoicePreviewUrl(activeVoice?.id || DEFAULT_VOICE_ID, selectedLang)}
+            ). VoxCPM2 hanya saat live.
+          </p>
         </div>
 
         {(isSynthesizingAudio || isPlayingAudio || isAvatarSpeaking) && (
           <p className="truncate text-[9px] text-slate-500">
             {isSynthesizingAudio
-              ? "Generate VoxCPM2…"
-              : `Preview ${voiceId} · ${selectedLang.toUpperCase()} · ${speechSpeed.toFixed(2)}×`}
+              ? "Memuat sample…"
+              : `Preview ${activeVoice?.label || voiceId} · ${selectedLang.toUpperCase()}`}
           </p>
         )}
       </div>

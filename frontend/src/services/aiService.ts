@@ -6,7 +6,7 @@ export interface SynthesizeTTSOptions {
   avatarName: string;
   speed?: number;
   tone?: string;
-  /** VoxCPM2 voice_id (default_host) */
+  /** VoxCPM2 voice_id (female host catalog) */
   voiceId?: string;
   /** ISO lang: id | en */
   lang?: string;
@@ -24,12 +24,19 @@ export interface VideoScriptData {
 }
 
 function resolveVoiceId(voiceOrName?: string): string {
-  const raw = (voiceOrName || "default_host").trim().toLowerCase();
+  const raw = (voiceOrName || "girl_cute_kids").trim().toLowerCase();
   if (!raw || raw.includes("gadis") || raw.includes("neural") || raw.includes("edge")) {
-    return "default_host";
+    return "girl_cute_kids";
   }
-  if (raw.includes("namira") || raw === "namira") return "default_host";
-  return raw.replace(/\s+/g, "_");
+  if (
+    raw.includes("namira") ||
+    raw === "namira" ||
+    raw === "default_host" ||
+    raw.includes("default")
+  ) {
+    return "girl_cute_kids";
+  }
+  return raw.replace(/\s+/g, "_").replace(/&/g, "and").replace(/[^a-z0-9_]/g, "_");
 }
 
 export const aiService = {

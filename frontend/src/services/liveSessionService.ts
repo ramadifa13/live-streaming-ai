@@ -50,7 +50,7 @@ export interface StartSessionParams {
   autoModeration: boolean;
   avatarName: string;
   tone: string;
-  /** VoxCPM2 voice_id (default_host). */
+  /** VoxCPM2 voice_id (female catalog) */
   voice?: string;
   voiceId?: string;
   lang?: string;
@@ -160,7 +160,7 @@ export const liveSessionService = {
 
   async teardownSession(sessionId?: string | null) {
     if (!sessionId) return;
-    await this.stopBroadcast(sessionId);
+    // Single end path — /stop already stops worker broadcast.
     await this.stopSession({ sessionId });
   },
 

@@ -49,7 +49,9 @@ export const AvatarCarousel: React.FC = () => {
                 setSelectedAvatar(av);
                 if (av.voice) setSelectedVoice(av.voice);
                 showToast(
-                  `Host: ${av.name} · ${av.gender === "male" ? "Male" : "Female"} voices`,
+                  av.gender === "female"
+                    ? `Host: ${av.name} · suara perempuan`
+                    : `Host: ${av.name} · ${av.gender}`,
                 );
               }}
               className={`flex w-full items-center gap-2.5 rounded-xl border px-2 py-1.5 text-left transition cursor-pointer ${

@@ -191,7 +191,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         liveVideoId: parsed.data.liveVideoId,
         avatarName: avatar.name,
         voice: parsed.data.voice || avatar.voice || undefined,
-        voiceId: parsed.data.voiceId || process.env.VOICE_ID || "default_host",
+        voiceId: parsed.data.voiceId || process.env.VOICE_ID || "girl_cute_kids",
         style: parsed.data.style || undefined,
         ttsLang: parsed.data.lang || "id",
         speechSpeed: parsed.data.speechSpeed ?? 1,
@@ -243,7 +243,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  // POST /api/live-session/stop
+  // POST /api/live-session/stop — single end path (stop worker + summary).
   server.post("/api/live-session/stop", async (request, reply) => {
     const parsed = liveStopSchema.safeParse(request.body);
 
@@ -252,23 +252,20 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
-    if (parsed.data.sessionId) liveHostOrchestrator.stop(parsed.data.sessionId);
-    const sessionObj = liveSessionManager.getSession(
-      parsed.data.sessionId || "",
-    );
-    await stopRunPodBroadcast(sessionObj?.podId).catch(() => {});
+    const sessionId = parsed.data.sessionId || "";
+    if (sessionId) liveHostOrchestrator.stop(sessionId);
+    const sessionObj = liveSessionManager.getSession(sessionId);
+    // Fire-and-forget worker stop agar UI tidak menunggu join thread.
+    void stopRunPodBroadcast(sessionObj?.podId).catch(() => {});
     stopBroadcast();
-    const result = await liveSessionManager.stopSession(
-      parsed.data.sessionId || "",
-      {
-        durationSeconds: parsed.data.durationSeconds,
-        viewers: parsed.data.viewers,
-        comments: parsed.data.comments,
-        clicks: parsed.data.clicks,
-        sales: parsed.data.sales,
-        productSold: parsed.data.productSold,
-      },
-    );
+    const result = await liveSessionManager.stopSession(sessionId, {
+      durationSeconds: parsed.data.durationSeconds,
+      viewers: parsed.data.viewers,
+      comments: parsed.data.comments,
+      clicks: parsed.data.clicks,
+      sales: parsed.data.sales,
+      productSold: parsed.data.productSold,
+    });
 
     return {
       success: result.success,
@@ -389,7 +386,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         avatarName: managedSession.avatarName,
         tone: managedSession.tone,
         voice: liveSession.voice || undefined,
-        voiceId: managedSession.voiceId || process.env.VOICE_ID || "default_host",
+        voiceId: managedSession.voiceId || process.env.VOICE_ID || "girl_cute_kids",
         style: managedSession.style,
         ttsLang: managedSession.ttsLang || "id",
         speechSpeed: managedSession.speechSpeed ?? 1,
@@ -627,7 +624,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  // POST /api/live-stream/stop-broadcast
+  // POST /api/live-stream/stop-broadcast — stop pipeline only (no session/GPU).
+  // Prefer /api/live-session/stop for full end-live; this is for cancel/teardown mid-connect.
   server.post("/api/live-stream/stop-broadcast", async (request, reply) => {
     const parsed = liveStopSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -637,12 +635,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     const sessionId = parsed.data.sessionId || "";
     if (sessionId) liveHostOrchestrator.stop(sessionId);
     const sessionObj = liveSessionManager.getSession(sessionId);
-    await stopRunPodBroadcast(sessionObj?.podId).catch(() => {});
+    void stopRunPodBroadcast(sessionObj?.podId).catch(() => {});
     const res = stopBroadcast();
-    // Teardown sesi+GPU jika masih aktif (aman bila FE juga memanggil /stop).
-    if (sessionId && liveSessionManager.getSession(sessionId)) {
-      await liveSessionManager.stopSession(sessionId).catch(() => {});
-    }
     return {
       success: true,
       data: res,

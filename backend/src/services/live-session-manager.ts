@@ -152,7 +152,7 @@ class LiveSessionManager {
       deadlineAt: Date.now() + params.durationHours * 3600 * 1000,
       avatarName: params.avatarName || "Namira",
       voice: params.voice || this.pendingVoicePreference || undefined,
-      voiceId: params.voiceId || process.env.VOICE_ID || "default_host",
+      voiceId: params.voiceId || process.env.VOICE_ID || "girl_cute_kids",
       style: params.style || undefined,
       ttsLang: params.ttsLang || "id",
       speechSpeed: params.speechSpeed ?? 1,
@@ -407,14 +407,16 @@ class LiveSessionManager {
     });
 
     if (podToTerminate) {
-      try {
-        await releaseGpuForJob(podToTerminate);
-        console.log(
-          `[LiveSessionManager] Pod ${podToTerminate} terminate/stop diminta untuk sesi ${sessionId}`,
-        );
-      } catch (err) {
-        console.error("Failed to stop GPU Pod:", err);
-      }
+      // Jangan block response end-live — pause/terminate pod di background.
+      void releaseGpuForJob(podToTerminate)
+        .then(() => {
+          console.log(
+            `[LiveSessionManager] Pod ${podToTerminate} terminate/stop diminta untuk sesi ${sessionId}`,
+          );
+        })
+        .catch((err) => {
+          console.error("Failed to stop GPU Pod:", err);
+        });
     }
 
     const durationSeconds =

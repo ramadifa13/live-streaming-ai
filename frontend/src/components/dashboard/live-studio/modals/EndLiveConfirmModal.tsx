@@ -20,11 +20,12 @@ export const EndLiveConfirmModal: React.FC = () => {
 
   const handleConfirmEnd = async () => {
     setIsEnding(true);
-    showToast("Menghitung Laporan Analitik Live...");
+    showToast("Mengakhiri siaran…");
     try {
       await endLiveSession();
       setShowEndLiveConfirm(false);
       setShowSummaryModal(true);
+      showToast("Siaran berakhir. Ringkasan siap.");
     } catch {
       showToast("Gagal mengakhiri live session.");
     } finally {

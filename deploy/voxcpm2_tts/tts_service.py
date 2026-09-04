@@ -21,7 +21,7 @@ import numpy as np
 # Paths / env
 # ---------------------------------------------------------------------------
 
-DEFAULT_VOICE_ID = (os.environ.get("VOICE_ID") or "default_host").strip() or "default_host"
+DEFAULT_VOICE_ID = (os.environ.get("VOICE_ID") or "girl_cute_kids").strip() or "girl_cute_kids"
 VOICE_ROOT = Path(
     os.environ.get("VOICE_ROOT")
     or os.environ.get("VOXCPM2_VOICE_ROOT")

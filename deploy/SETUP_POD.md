@@ -37,8 +37,10 @@ curl -s http://127.0.0.1:8000/tts/health
 
 ## Ganti reference voice
 
-Timpa `/workspace/voices/default_host/reference.wav` lalu:
+Timpa `/workspace/voices/<voice_id>/reference.wav` (contoh `girl_cute_kids`) lalu:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8000/tts/invalidate-voice -H 'Content-Type: application/json' -d '{"voice_id":"default_host"}'
+curl -s -X POST http://127.0.0.1:8000/tts/invalidate-voice \
+  -H 'Content-Type: application/json' \
+  -d '{"voice_id":"girl_cute_kids"}'
 ```

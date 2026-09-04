@@ -595,11 +595,11 @@ class TtsSynthesizeRequest(BaseModel):
 
 
 def _default_voice_id() -> str:
-    return (os.environ.get("VOICE_ID") or "default_host").strip() or "default_host"
+    return (os.environ.get("VOICE_ID") or "girl_cute_kids").strip() or "girl_cute_kids"
 
 
 def _resolve_voice_id(*candidates: Optional[str]) -> str:
-    """Map legacy host slugs (namira) → voice_id default_host."""
+    """Map legacy host slugs (namira/default_host) → girl_cute_kids."""
     default = _default_voice_id()
     for raw in candidates:
         if not raw:
@@ -608,7 +608,10 @@ def _resolve_voice_id(*candidates: Optional[str]) -> str:
         v = v.replace(".wav", "").replace(".mp3", "")
         if not v:
             continue
-        if v in ("namira", "siti", "ardi", "budi") or v.startswith("id-id-"):
+        if (
+            v in ("namira", "siti", "ardi", "budi", "default_host", "default")
+            or v.startswith("id-id-")
+        ):
             return default
         return v
     return default
@@ -995,6 +998,7 @@ async def get_queue_status():
     utterance_pending = 0
     ready_utterance_count = 0
     playback_armed = False
+    bridge = None
     if is_ai_worker_mode():
         bridge = get_speech_bridge(output_dir)
         if bridge is not None:
@@ -1018,9 +1022,17 @@ async def get_queue_status():
 
     broadcast_mode = os.environ.get("BROADCAST_MODE", "segment")
     if is_ai_worker_mode():
-        avg_utt_sec = 12.0
-        prep_sec = 3.0
-        playable_seconds = round(utterance_pending * avg_utt_sec, 2)
+        fps = float(os.environ.get("AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "30")))
+        playable_seconds = 0.0
+        if bridge is not None and hasattr(bridge, "queued_audio_seconds"):
+            try:
+                playable_seconds = float(bridge.queued_audio_seconds(fps))
+            except Exception:
+                playable_seconds = 0.0
+        if playable_seconds <= 0 and utterance_pending > 0:
+            # Jangan inflate buffer palsu — biarkan BE refill sampai audio nyata siap.
+            playable_seconds = 0.0
+        prep_sec = 2.0
         in_flight_seconds = round(len(active_processing) * prep_sec, 2)
         buffer_seconds = round(playable_seconds + in_flight_seconds, 2)
         queued_videos_count = utterance_pending
@@ -1536,7 +1548,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
 
     if ai_mode and get_visual_worker is not None:
         os.environ["AI_WORKER_FPS"] = os.environ.get(
-            "AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "25")
+            "AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "30")
         )
         host_raw = (
             req.host_name
@@ -1585,7 +1597,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
             bridge.output_folder = output_dir
         print(
             f"[AI-Worker] STAGE: LIVE pipeline aktif @ "
-            f"{os.environ.get('AI_WORKER_FPS', '25')}fps "
+            f"{os.environ.get('AI_WORKER_FPS', '30')}fps "
             f"(RTMP connected / handshake selesai)"
         )
         broadcaster_process = None
@@ -1620,6 +1632,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
 
 @app.post("/stream/stop-broadcast")
 async def stop_broadcast():
+    """ACK cepat — terminate/join berat di background agar FE tidak hang."""
     global broadcaster_process, total_videos_rendered, current_broadcast_env
     global \
         _broadcast_boot_state, \
@@ -1633,20 +1646,13 @@ async def stop_broadcast():
     _broadcast_started_at = 0.0
     if _broadcast_boot_task and not _broadcast_boot_task.done():
         _broadcast_boot_task.cancel()
-    _terminate_broadcaster(timeout=10.0)
-    if stop_visual_broadcast is not None:
-        stop_visual_broadcast()
-    visual_worker = None
-    _clear_speech_bridge_queue()
 
-    # Jangan biarkan FE/status baca "connected" dari sesi lama.
+    # Soft status dulu supaya poll FE tidak melihat "connected".
     if write_rtmp_status is not None:
         try:
             write_rtmp_status(output_dir, "disconnected")
         except Exception:
             pass
-
-    total_videos_rendered = 0
 
     flag_path = os.path.join(output_dir, "playback_active.flag")
     if os.path.exists(flag_path):
@@ -1655,8 +1661,29 @@ async def stop_broadcast():
         except Exception:
             pass
 
-    _cleanup_playable_outputs(output_dir)
+    _clear_speech_bridge_queue()
+    total_videos_rendered = 0
+    vw = visual_worker
+    visual_worker = None
 
+    def _bg_stop() -> None:
+        try:
+            _terminate_broadcaster(timeout=6.0)
+        except Exception as exc:
+            print(f"[AI-Worker] bg stop broadcaster: {exc}")
+        try:
+            if stop_visual_broadcast is not None:
+                stop_visual_broadcast()
+            elif vw is not None and hasattr(vw, "stop"):
+                vw.stop()
+        except Exception as exc:
+            print(f"[AI-Worker] bg stop visual: {exc}")
+        try:
+            _cleanup_playable_outputs(output_dir)
+        except Exception as exc:
+            print(f"[AI-Worker] bg cleanup: {exc}")
+
+    threading.Thread(target=_bg_stop, name="StopBroadcastBg", daemon=True).start()
     return {"success": True, "status": "stopped"}
 
 

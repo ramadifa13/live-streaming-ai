@@ -496,13 +496,16 @@ else
     echo "[WARN] voxcpm2_tts/setup.sh tidak ditemukan di $SCRIPT_DIR"
 fi
 
-# Sync voice assets ke network volume
-mkdir -p /workspace/voices/default_host
-if [ -f "$WORKER_DIR/voices/default_host/reference.wav" ]; then
-    cp -n "$WORKER_DIR/voices/default_host/reference.wav" /workspace/voices/default_host/reference.wav || true
-elif [ -f "$SCRIPT_DIR/voices/default_host/reference.wav" ]; then
-    cp -n "$SCRIPT_DIR/voices/default_host/reference.wav" /workspace/voices/default_host/reference.wav || true
-fi
+# Sync katalog suara perempuan ke network volume
+for vid in girl_cute_kids girl_warm_youthful girl_warm_friendly girl_calm_professional; do
+    mkdir -p "/workspace/voices/$vid"
+    if [ -f "$WORKER_DIR/voices/$vid/reference.wav" ]; then
+        cp -n "$WORKER_DIR/voices/$vid/reference.wav" "/workspace/voices/$vid/reference.wav" || true
+    elif [ -f "$SCRIPT_DIR/voices/$vid/reference.wav" ]; then
+        cp -n "$SCRIPT_DIR/voices/$vid/reference.wav" "/workspace/voices/$vid/reference.wav" || true
+    fi
+done
+rm -rf /workspace/voices/default_host 2>/dev/null || true
 
 
 # ------------------------------------------------------------

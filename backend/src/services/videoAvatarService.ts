@@ -1,4 +1,4 @@
-/**
+﻿/**
  * videoAvatarService.ts
  *
  * AI Avatar Video Generation Service.
@@ -23,7 +23,7 @@ export type VideoJobStatus = "queued" | "processing" | "done" | "error";
 export interface VideoJob {
   jobId: string;
   status: VideoJobStatus;
-  progress: number; // 0–100
+  progress: number; // 0â€“100
   stage: string; // Human-readable current stage label
   videoUrl?: string;
   proxyVideoUrl?: string; // Backend-proxied URL to avoid CORS
@@ -65,7 +65,7 @@ export async function generateAvatarVideo(
 
   jobStore.set(jobId, job);
 
-  // Start async generation (do NOT await — return immediately)
+  // Start async generation (do NOT await â€” return immediately)
   runGeneration(jobId, params, provider).catch((err) => {
     const j = jobStore.get(jobId);
     if (j) {
@@ -110,11 +110,11 @@ async function runGeneration(
 ): Promise<void> {
   switch (provider) {
     case "liveportrait":
-      // Never boot the paid RunPod GPU pod for pre-live previews/video-ads —
+      // Never boot the paid RunPod GPU pod for pre-live previews/video-ads â€”
       // only an actual live session is allowed to use the real GPU worker.
       if (!isLiveSessionActive()) {
         console.log(
-          "[VideoGen] No active live session — using mock renderer instead of RunPod GPU.",
+          "[VideoGen] No active live session â€” using mock renderer instead of RunPod GPU.",
         );
         return runMock(jobId, params);
       }
@@ -177,7 +177,7 @@ async function runLivePortrait(
         avatarImagePath = parsed.pathname; // e.g. "/avatars/host_3d_dinamis_namira.png"
       }
     } catch {
-      // Not a full URL — use as-is
+      // Not a full URL â€” use as-is
     }
 
     // Extract avatar name from the image path to ensure we get the actual filename
@@ -203,9 +203,9 @@ async function runLivePortrait(
     try {
       const ttsRes = await synthesizeSpeech({
         text: params.scriptText,
-        voiceId: process.env.VOICE_ID || "default_host",
-        host: process.env.VOICE_ID || "default_host",
-        voice: process.env.VOICE_ID || "default_host",
+        voiceId: process.env.VOICE_ID || "girl_cute_kids",
+        host: process.env.VOICE_ID || "girl_cute_kids",
+        voice: process.env.VOICE_ID || "girl_cute_kids",
         avatarName: finalAvatarFileName,
         tone: params.tone,
         style: params.tone,
@@ -223,8 +223,8 @@ async function runLivePortrait(
       avatar_name: finalAvatarFileName,
       avatar_image_path: avatarImagePath,
       text: params.scriptText,
-      voice: process.env.VOICE_ID || "default_host",
-      voice_id: process.env.VOICE_ID || "default_host",
+      voice: process.env.VOICE_ID || "girl_cute_kids",
+      voice_id: process.env.VOICE_ID || "girl_cute_kids",
       speed:
         params.tone === "Energetic" || params.tone === "Semangat" ? 1.1 : 1.0,
       tone: params.tone || "Persuasif",
@@ -323,7 +323,7 @@ async function runLivePortrait(
     updateJob(jobId, {
       status: "done",
       progress: 100,
-      stage: `${engineLabel} — Video siap!`,
+      stage: `${engineLabel} â€” Video siap!`,
       videoUrl: finalVideoUrl,
     });
     await releaseGpuForJob();
@@ -342,7 +342,7 @@ async function runLivePortrait(
 }
 
 // ---------------------------------------------------------------------------
-// MOCK PROVIDER — realistic simulation, no API key needed
+// MOCK PROVIDER â€” realistic simulation, no API key needed
 // ---------------------------------------------------------------------------
 
 async function runMock(

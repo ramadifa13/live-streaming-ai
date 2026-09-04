@@ -44,17 +44,20 @@ echo "[*] VoxCPM2 dedicated venv"
 bash voxcpm2_tts/setup.sh
 
 echo "[*] Worker .env + assets + restart API (VoxCPM2 bridge on :8091)"
-mkdir -p "$WORKER_DIR" /workspace/voices/default_host /workspace/models/voxcpm2
-if [ -f "$REPO_DIR/deploy/voices/default_host/reference.wav" ]; then
-  cp -n "$REPO_DIR/deploy/voices/default_host/reference.wav" \
-    /workspace/voices/default_host/reference.wav || true
-fi
+mkdir -p "$WORKER_DIR" /workspace/voices /workspace/models/voxcpm2
+for vid in girl_cute_kids girl_warm_youthful girl_warm_friendly girl_calm_professional; do
+  mkdir -p "/workspace/voices/$vid"
+  if [ -f "$REPO_DIR/deploy/voices/$vid/reference.wav" ]; then
+    cp -n "$REPO_DIR/deploy/voices/$vid/reference.wav" \
+      "/workspace/voices/$vid/reference.wav" || true
+  fi
+done
 cp -n .env.example "$WORKER_DIR/.env"
 # Pastikan VoxCPM2 + MuseTalk flags ada di .env worker
 grep -q '^TTS_ENABLED=' "$WORKER_DIR/.env" || cat >> "$WORKER_DIR/.env" <<'EOF'
 
 TTS_ENABLED=true
-VOICE_ID=default_host
+VOICE_ID=girl_cute_kids
 TTS_LANGUAGE=id
 VOXCPM2_MODEL_PATH=/workspace/models/voxcpm2
 VOICE_ROOT=/workspace/voices

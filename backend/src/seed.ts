@@ -1,4 +1,4 @@
-import prisma from "./lib/prisma.js";
+﻿import prisma from "./lib/prisma.js";
 
 async function seedDatabase() {
   const avatarCount = await prisma.avatar.count();
@@ -10,7 +10,7 @@ async function seedDatabase() {
           type: "3D",
           style: "Energetic",
           language: "Indonesia",
-          voice: "default_host",
+          voice: "girl_cute_kids",
           sampleAudioUrl: null,
           description: "AI host utama untuk live streaming",
         },
@@ -18,7 +18,7 @@ async function seedDatabase() {
     });
     console.log("Seeded default avatar Namira");
   } else {
-    // Map legacy voice slugs → default_host; hapus sample MP3 statis
+    // Map legacy voice slugs â†’ girl_cute_kids; hapus sample MP3 statis
     await prisma.avatar.updateMany({
       where: {
         OR: [
@@ -30,7 +30,7 @@ async function seedDatabase() {
         ],
       },
       data: {
-        voice: "default_host",
+        voice: "girl_cute_kids",
         sampleAudioUrl: null,
       },
     });

@@ -60,7 +60,7 @@ export interface HostConfig {
   productId: string;
   avatarName: string;
   voice?: string;
-  /** VoxCPM2 voice_id (default_host) */
+  /** VoxCPM2 voice_id (female catalog) */
   voiceId?: string;
   /** Optional natural-language style control for VoxCPM2 */
   style?: string;
@@ -77,7 +77,7 @@ export interface HostConfig {
   /**
    * Durasi sesi sebenarnya dalam ms. Plan hanya bucket (1H/2H/8H/24H), sehingga
    * sesi 3 jam ter-map ke plan "2H" dan loop generasi berhenti satu jam lebih
-   * awal — GPU menganggur tetapi tetap ditagih. Nilai ini dipakai bila ada.
+   * awal â€” GPU menganggur tetapi tetap ditagih. Nilai ini dipakai bila ada.
    */
   maxDurationMs?: number;
   product?: ProductSnapshot;
@@ -153,7 +153,7 @@ interface HostMemory {
   ctas: string[];
   claims: string[];
   modes: HostMode[];
-  /** Kelas sapaan terakhir (halo/guys/kak/...) — anti-repeat opening. */
+  /** Kelas sapaan terakhir (halo/guys/kak/...) â€” anti-repeat opening. */
   greetings: string[];
   commentFingerprints: string[];
   lastResponseAt: number;
@@ -201,10 +201,10 @@ interface HostRuntimeState {
   abortController: AbortController;
   isLive: boolean;
   pipelineReady: boolean;
-  /** Soft pause — hold generasi + speech; RTMP tetap. */
+  /** Soft pause â€” hold generasi + speech; RTMP tetap. */
   isPaused: boolean;
   generationRunning: boolean;
-  /** Monotonic id — recovery loop tidak bentrok dengan finally lama. */
+  /** Monotonic id â€” recovery loop tidak bentrok dengan finally lama. */
   generationLoopId: number;
   preliveRunning: boolean;
 
@@ -219,7 +219,7 @@ interface HostRuntimeState {
   memory: HostMemory;
   /** Marathon conversation memory (CTA cooldown, cycle, recent products). */
   conversation: HostConversationMemory;
-  /** Per-product memory — survives product switches (P1→P2→P3→P1). */
+  /** Per-product memory â€” survives product switches (P1â†’P2â†’P3â†’P1). */
   productMemories: Map<string, ProductMemory>;
   pendingComments: PendingComment[];
   processedCommentIds: Set<string>;
@@ -267,17 +267,17 @@ interface PlanPolicy {
   modeMaxMs: number;
   /** Trigger recycle/refill lokal saat sisa baris di bawah ini. */
   scriptBankLow: number;
-  /** Batas refill LLM live per sesi — marathon lebih rendah (lokal-first). */
+  /** Batas refill LLM live per sesi â€” marathon lebih rendah (lokal-first). */
   scriptBankLlmRefillMax: number;
   scriptBankLlmRefillCooldownMs: number;
 }
 
 const LIVE_MIN_BUFFER = Number(process.env.LIVE_MIN_BUFFER_SECONDS || 6);
 /** Minimal ucapan playable siap sebelum tombol Go Live. */
-const GO_LIVE_MIN_UTTERANCES = Number(process.env.GO_LIVE_MIN_UTTERANCES || 2);
+const GO_LIVE_MIN_UTTERANCES = Number(process.env.GO_LIVE_MIN_UTTERANCES || 3);
 
 const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
-  // Buffer realtime ai_worker: default 6s (bukan 10–18) supaya Go confirm lebih cepat.
+  // Buffer realtime ai_worker: default 6s (bukan 10â€“18) supaya Go confirm lebih cepat.
   "1H": {
     durationMs: 60 * 60 * 1000,
     minBufferSeconds: LIVE_MIN_BUFFER,
@@ -348,8 +348,8 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   },
 };
 
-/** Estimasi durasi clip pendek (speech 20–35 kata ≈ 8–14 detik). */
-const FALLBACK_SPEECH_SECONDS = 12;
+/** Estimasi durasi clip pendek (speech 20â€“35 kata â‰ˆ 8â€“14 detik). */
+const FALLBACK_SPEECH_SECONDS = 5;
 const IN_FLIGHT_RENDER_SECONDS = 10;
 
 function isAiWorkerBroadcastMode(mode: string): boolean {
@@ -708,13 +708,13 @@ class LiveHostOrchestrator {
     if (!state) return;
     state.abortController.abort();
     this.sessions.delete(sessionId);
-    console.log(`[LiveHost] 🛑 Session ${sessionId} dihentikan.`);
+    console.log(`[LiveHost] ðŸ›‘ Session ${sessionId} dihentikan.`);
   }
 
   public stopAll(): void {
     for (const [sessionId, state] of this.sessions.entries()) {
       state.abortController.abort();
-      console.log(`[LiveHost] 🛑 Session ${sessionId} dihentikan (stopAll).`);
+      console.log(`[LiveHost] ðŸ›‘ Session ${sessionId} dihentikan (stopAll).`);
     }
     this.sessions.clear();
   }
@@ -737,7 +737,7 @@ class LiveHostOrchestrator {
       state.catalog.find((item) => item.id === productId) ||
       (state.config.product?.id === productId ? state.config.product : undefined);
 
-    // Persist memory produk lama — jangan dihapus saat ganti banner/produk.
+    // Persist memory produk lama â€” jangan dihapus saat ganti banner/produk.
     if (state.product?.id) {
       const prev = getOrCreateProductMemory(state.productMemories, state.product.id);
       state.conversation.recentProducts.push(state.product.id);
@@ -783,7 +783,7 @@ class LiveHostOrchestrator {
     }
 
     console.log(
-      `[LiveHost] 🔄 Product switched: session=${sessionId}, product=${productId}, entry=${productMemory.entryMode}, visits=${productMemory.visitCount}`,
+      `[LiveHost] ðŸ”„ Product switched: session=${sessionId}, product=${productId}, entry=${productMemory.entryMode}, visits=${productMemory.visitCount}`,
     );
   }
 
@@ -799,7 +799,7 @@ class LiveHostOrchestrator {
     state.lastActivityAt = Date.now();
 
     console.log(
-      `[LiveHost] ✅ Session ${sessionId} LIVE — plan=${state.config.plan || "2H"}`,
+      `[LiveHost] âœ… Session ${sessionId} LIVE â€” plan=${state.config.plan || "2H"}`,
     );
 
     if (!state.generationRunning) {
@@ -878,7 +878,7 @@ class LiveHostOrchestrator {
     this.sessions.set(config.sessionId, state);
 
     console.log(
-      `[LiveHost] 🎬 Background pipeline start: session=${config.sessionId}, plan=${state.config.plan}`,
+      `[LiveHost] ðŸŽ¬ Background pipeline start: session=${config.sessionId}, plan=${state.config.plan}`,
     );
 
     // Warmup GPU job default OFF untuk ai_worker (berebut VRAM dengan init).
@@ -907,7 +907,7 @@ class LiveHostOrchestrator {
         wait: false,
       });
 
-      console.log(`[LiveHost] 🔥 Worker warmup submitted: ${sessionId}`);
+      console.log(`[LiveHost] ðŸ”¥ Worker warmup submitted: ${sessionId}`);
     } catch (err: any) {
       console.warn(`[LiveHost] Worker warmup non-fatal: ${err?.message || err}`);
     }
@@ -963,7 +963,7 @@ class LiveHostOrchestrator {
     };
 
     console.log(
-      `[LiveHost] 🔁 Retry start-broadcast (${state.broadcastRetryCount}/8): ${sessionId}`,
+      `[LiveHost] ðŸ” Retry start-broadcast (${state.broadcastRetryCount}/8): ${sessionId}`,
     );
 
     try {
@@ -1061,7 +1061,7 @@ class LiveHostOrchestrator {
     state.generationRunning = true;
     const myLoopId = ++state.generationLoopId;
 
-    console.log(`[LiveHost] 🎙️ Runtime supervisor ACTIVE: ${sessionId}`);
+    console.log(`[LiveHost] ðŸŽ™ï¸ Runtime supervisor ACTIVE: ${sessionId}`);
 
     let shouldRecover = false;
     try {
@@ -1076,7 +1076,7 @@ class LiveHostOrchestrator {
           break;
         }
         if (this.isSessionExpired(s)) {
-          console.log(`[LiveHost] ⏹️ Plan ${s.config.plan} selesai: ${sessionId}`);
+          console.log(`[LiveHost] â¹ï¸ Plan ${s.config.plan} selesai: ${sessionId}`);
           try {
             this.onSessionExpired?.(sessionId);
           } catch (err: any) {
@@ -1094,7 +1094,7 @@ class LiveHostOrchestrator {
         }
         if (isFatalRtmpFailure(s.lastQueue)) {
           console.log(
-            `[LiveHost] RTMP fatal saat live — menghentikan generasi: ${sessionId}`,
+            `[LiveHost] RTMP fatal saat live â€” menghentikan generasi: ${sessionId}`,
           );
           this.onSessionExpired?.(sessionId);
           break;
@@ -1122,10 +1122,19 @@ class LiveHostOrchestrator {
           continue;
         }
 
+        const queueDepth = isAiWorkerBroadcastMode(s.lastQueue.broadcastMode)
+          ? Math.max(
+              s.lastQueue.utteranceQueueCount || 0,
+              s.lastQueue.readyUtteranceCount || 0,
+            )
+          : s.lastQueue.queuedVideos || 0;
+
         const needsRefill =
           s.lastQueue.bufferSeconds < policy.targetBufferSeconds ||
           s.lastQueue.bufferSeconds < policy.minBufferSeconds ||
-          s.lastQueue.queuedVideos === 0;
+          s.lastQueue.queuedVideos === 0 ||
+          queueDepth < 2 ||
+          queueDepth < GO_LIVE_MIN_UTTERANCES;
 
         if (needsRefill) {
           await this.generateAndQueueNext(sessionId, "live");
@@ -1148,7 +1157,7 @@ class LiveHostOrchestrator {
       console.log(`[LiveHost] Runtime supervisor stopped: ${sessionId}`);
     }
 
-    // Recovery SETELAH finally clear flag — hindari double supervisor.
+    // Recovery SETELAH finally clear flag â€” hindari double supervisor.
     if (shouldRecover) {
       await sleep(2500);
       const s = this.sessions.get(sessionId);
@@ -1299,7 +1308,7 @@ class LiveHostOrchestrator {
     // Threshold lebih agresif: refill lebih awal supaya host tidak kehabisan naskah.
     if (remaining > scriptBankLow * 1.5 && freshCount > SCRIPT_BANK_FRESH_LOW + 6) return;
 
-    // 1) Selalu recycle lokal dulu — anti-idle tanpa rate limit.
+    // 1) Selalu recycle lokal dulu â€” anti-idle tanpa rate limit.
     const recycled = recycleLocalScriptBank(
       this.toScriptFacts(state.product),
       state.catalog,
@@ -1360,7 +1369,7 @@ class LiveHostOrchestrator {
     const lines = await generateScriptBankLines(
       this.toBrainInput(state, product, {
         userQuestion: localExhausted
-          ? "Variasi bank ucapan hampir habis — buat baris BARU dengan angle/topik berbeda. Jangan ulang pembuka atau poin yang sama. Bahasa natural host live, jangan mengarang fakta."
+          ? "Variasi bank ucapan hampir habis â€” buat baris BARU dengan angle/topik berbeda. Jangan ulang pembuka atau poin yang sama. Bahasa natural host live, jangan mengarang fakta."
           : "Isi ulang bank ucapan otonom. Bahasa natural host live, jangan kaku/robot, jangan mengarang fakta.",
         requestedMode: state.currentMode,
         requestedIntent: "SELL",
@@ -1419,7 +1428,7 @@ class LiveHostOrchestrator {
       cycleId,
       salesMemory: state.conversation.sales,
     };
-    // Hardening: bank kosong / hampir habis → inject recycle lokal segera (hindari host diam).
+    // Hardening: bank kosong / hampir habis â†’ inject recycle lokal segera (hindari host diam).
     if (remainingScriptLines(state.scriptBank) < 8) {
       const boost = recycleLocalScriptBank(
         this.toScriptFacts(product),
@@ -1450,7 +1459,7 @@ class LiveHostOrchestrator {
       state.lastQueue.queuedVideos === 0 ||
       (state.lastQueue.bufferSeconds > 0 && state.lastQueue.bufferSeconds <= 4) ||
       state.lastQueue.bufferSeconds < policy.minBufferSeconds;
-    // Filler hanya saat kritis — jangan prefer hanya karena ritme/slot filler.
+    // Filler hanya saat kritis â€” jangan prefer hanya karena ritme/slot filler.
     const preferFiller = bufferCritical;
 
     const phaseTopics = phasePreferTopics(elapsedMinutes, cycleId);
@@ -1488,7 +1497,7 @@ class LiveHostOrchestrator {
       )[0];
 
     if (!hostResponse) {
-      // Emergency synthetic — host tidak boleh diam total.
+      // Emergency synthetic â€” host tidak boleh diam total.
       const facts = this.toScriptFacts(product);
       const emergencySeed = seedLocalScriptBank(facts, state.catalog, memoryOpts);
       mergeScriptLines(state.scriptBank, emergencySeed, recent);
@@ -1567,7 +1576,7 @@ class LiveHostOrchestrator {
           sessionId,
           {
             ...hostResponse,
-            speech: `${product.name || "Produk ini"} — ${hostResponse.speech}`.slice(0, 180),
+            speech: `${product.name || "Produk ini"} â€” ${hostResponse.speech}`.slice(0, 180),
           },
           source,
           hostResponse.topic || topic.topic,
@@ -1621,7 +1630,7 @@ class LiveHostOrchestrator {
       const userQuestion = [
         `Ada komentar baru dari ${author ? `Kak ${author}` : "penonton"}.`,
         `Komentar: "${comment.text}".`,
-        "Jawab spesifik pertanyaan penonton — jangan mengulang isi komentar panjang-panjang.",
+        "Jawab spesifik pertanyaan penonton â€” jangan mengulang isi komentar panjang-panjang.",
         "Pakai fakta produk yang ada; jika tidak ada di data, jujur bilang cek detail di etalase.",
         "CTA hanya jika benar-benar relevan.",
       ].join(" ");
@@ -1666,7 +1675,7 @@ class LiveHostOrchestrator {
     state.counters.duplicateResponsesPrevented++;
     const attempts = (comment.attempts || 0) + 1;
     if (attempts < 2) {
-      // Re-queue sekali — jangan drop diam-diam.
+      // Re-queue sekali â€” jangan drop diam-diam.
       state.pendingComments.push({
         ...comment,
         attempts,
@@ -1722,7 +1731,7 @@ class LiveHostOrchestrator {
     const recent = state.memory.utterances.slice(-18);
     const allowRepeat = Boolean(opts?.allowRepeatWhenCritical);
 
-    // Sapaan berulang (halo/hai/guys/kak) → strip atau tolak.
+    // Sapaan berulang (halo/hai/guys/kak) â†’ strip atau tolak.
     const greetingClass = detectGreetingClass(speech);
     if (
       greetingClass &&
@@ -1777,9 +1786,9 @@ class LiveHostOrchestrator {
           voiceId:
             state.config.voiceId ||
             process.env.VOICE_ID ||
-            "default_host",
-          host: state.config.avatarName || state.config.voice || "default_host",
-          voice: state.config.avatarName || state.config.voice || "default_host",
+            "girl_cute_kids",
+          host: state.config.voice || state.config.avatarName || "girl_cute_kids",
+          voice: state.config.voice || state.config.avatarName || "girl_cute_kids",
           avatarName: state.config.avatarName,
           tone: state.config.tone,
           emotion: response.emotion,
@@ -1796,7 +1805,7 @@ class LiveHostOrchestrator {
           console.warn(
             `[LiveHost] TTS failed (no fallback): ${ttsResult.message}`,
           );
-          // Jangan submit utterance tanpa audio — worker tidak boleh fallback engine lama.
+          // Jangan submit utterance tanpa audio â€” worker tidak boleh fallback engine lama.
           continue;
         }
       } catch (err: any) {
@@ -1832,7 +1841,7 @@ class LiveHostOrchestrator {
     });
 
     console.log(
-      `[LiveHost] 🗣️ queued source=${source} mode=${response.mode} topic=${response.topic || fallbackTopic} action=${response.action} segments=${segments.map((s) => s.action).join(">")}`,
+      `[LiveHost] ðŸ—£ï¸ queued source=${source} mode=${response.mode} topic=${response.topic || fallbackTopic} action=${response.action} segments=${segments.map((s) => s.action).join(">")}`,
     );
 
     return true;
@@ -1936,7 +1945,7 @@ class LiveHostOrchestrator {
       state.lastQueue.queuedVideos === 0 ||
       (state.lastQueue.bufferSeconds > 0 && state.lastQueue.bufferSeconds <= 4);
 
-    // Buffer kritis → topik pendek berbasis fakta, bukan stall filler.
+    // Buffer kritis â†’ topik pendek berbasis fakta, bukan stall filler.
     if (bufferCritical) {
       const shortTopics = ["micro_tip", "benefit", "how_to_use", "value", "faq"];
       for (const topic of shortTopics) {
@@ -2099,7 +2108,7 @@ class LiveHostOrchestrator {
     }
 
     console.log(
-      `[LiveHost] 💬 comment priority=${comment.priority} intent=${comment.intent} from=${comment.authorName || "Audience"}`,
+      `[LiveHost] ðŸ’¬ comment priority=${comment.priority} intent=${comment.intent} from=${comment.authorName || "Audience"}`,
     );
   }
 
@@ -2205,7 +2214,7 @@ class LiveHostOrchestrator {
 
       let queuedVideos = Number(raw.queued_videos_count || 0);
       if (aiWorker) {
-        // Hanya antrian playable saat ini — bukan lifetime ready_videos_count.
+        // Hanya antrian playable saat ini â€” bukan lifetime ready_videos_count.
         queuedVideos = utteranceQueueCount;
       } else {
         queuedVideos = Math.max(queuedVideos, readyVideos);
@@ -2387,13 +2396,11 @@ class LiveHostOrchestrator {
     const rtmpOk = !rtmpRequired || queue.rtmpConnected;
     const aiWorker = isAiWorkerBroadcastMode(queue.broadcastMode);
     const playableReady = aiWorker
-      ? queue.readyUtteranceCount >= GO_LIVE_MIN_UTTERANCES ||
-        queue.utteranceQueueCount >= GO_LIVE_MIN_UTTERANCES
+      ? queue.readyUtteranceCount >= GO_LIVE_MIN_UTTERANCES &&
+        queue.bufferSeconds >= Math.min(policy.minBufferSeconds, 8)
       : queue.queuedVideos >= GO_LIVE_MIN_UTTERANCES &&
         queue.bufferSeconds >= policy.minBufferSeconds;
-    const bufferReady = aiWorker
-      ? playableReady
-      : playableReady && queue.bufferSeconds >= policy.minBufferSeconds;
+    const bufferReady = playableReady;
 
     // Recompute tiap poll (hysteresis: jangan sticky forever).
     const fatalRtmp = isFatalRtmpFailure(queue);
@@ -2422,7 +2429,7 @@ class LiveHostOrchestrator {
       ) {
         state.rtmpFailStopping = true;
         console.log(
-          `[LiveHost] RTMP gagal — menghentikan sesi ${sessionId} setelah ${Math.round(waitMs / 1000)}s.`,
+          `[LiveHost] RTMP gagal â€” menghentikan sesi ${sessionId} setelah ${Math.round(waitMs / 1000)}s.`,
         );
         this.onSessionExpired?.(sessionId);
       }
@@ -2444,7 +2451,7 @@ class LiveHostOrchestrator {
         (state.counters.generated === 0 && offlineMs >= 90_000));
     const workerError = workerStuck
       ? state.lastWorkerError?.includes("502")
-        ? "Worker GPU crash atau tidak merespons (HTTP 502). Bukan masalah Stream Key — coba mulai ulang sesi."
+        ? "Worker GPU crash atau tidak merespons (HTTP 502). Bukan masalah Stream Key â€” coba mulai ulang sesi."
         : state.lastWorkerError ||
           "Worker GPU tidak merespons. Coba mulai ulang sesi live."
       : "";
@@ -2457,7 +2464,7 @@ class LiveHostOrchestrator {
       ) {
         state.workerFailStopping = true;
         console.log(
-          `[LiveHost] Worker offline — menghentikan sesi ${sessionId} setelah ${Math.round(WORKER_FAIL_STOP_MS / 1000)}s.`,
+          `[LiveHost] Worker offline â€” menghentikan sesi ${sessionId} setelah ${Math.round(WORKER_FAIL_STOP_MS / 1000)}s.`,
         );
         this.onSessionExpired?.(sessionId);
       }
@@ -2482,10 +2489,10 @@ class LiveHostOrchestrator {
     ) {
       stageIndex = 1;
       stageText =
-        "Menyiapkan wajah & gerak host AI… Pertama kali bisa 2–5 menit. Tetap di halaman ini.";
+        "Menyiapkan wajah & gerak host AIâ€¦ Pertama kali bisa 2â€“5 menit. Tetap di halaman ini.";
     } else if (!queue.warmedUp && queue.queuedVideos === 0 && state.counters.submitted === 0) {
       stageIndex = 1;
-      stageText = "Menyalakan mesin AI di cloud… Mohon tunggu.";
+      stageText = "Menyalakan mesin AI di cloudâ€¦ Mohon tunggu.";
     } else if (
       (aiWorker
         ? queue.utteranceQueueCount < GO_LIVE_MIN_UTTERANCES &&
@@ -2496,19 +2503,19 @@ class LiveHostOrchestrator {
     ) {
       stageIndex = 2;
       stageText = aiWorker
-        ? `Menyiapkan kata pembuka host (${Math.max(queue.readyUtteranceCount, queue.utteranceQueueCount)}/${GO_LIVE_MIN_UTTERANCES})…`
-        : "Menyiapkan video pembuka host…";
+        ? `Menyiapkan kata pembuka host (${Math.max(queue.readyUtteranceCount, queue.utteranceQueueCount)}/${GO_LIVE_MIN_UTTERANCES})â€¦`
+        : "Menyiapkan video pembuka hostâ€¦";
     } else if (rtmpRequired && !queue.rtmpConnected) {
       stageIndex = 3;
       stageText =
         queue.rtmpHint ||
-        "Menyambungkan siaran ke Instagram… Tunggu sampai status jadi Terhubung.";
+        "Menyambungkan siaran ke Instagramâ€¦ Tunggu sampai status jadi Terhubung.";
     } else if (!state.isLive) {
       stageIndex = 4;
       stageText = "Siap! Cek preview di Instagram, lalu tekan tombol hijau di bawah.";
     } else {
       stageIndex = 5;
-      stageText = `Host sedang live — buffer ${Math.round(queue.bufferSeconds)} detik.`;
+      stageText = `Host sedang live â€” buffer ${Math.round(queue.bufferSeconds)} detik.`;
     }
 
     return {

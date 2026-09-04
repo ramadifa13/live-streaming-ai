@@ -25,7 +25,6 @@ export const LiveChatPanel: React.FC = () => {
   const selectedTone = useAiHostStore((state) => state.selectedTone);
   const selectedVoice = useAiHostStore((state) => state.selectedVoice);
   const selectedLang = useAiHostStore((state) => state.selectedLang);
-  const speechSpeed = useAiHostStore((state) => state.speechSpeed);
   const speakText = useAiHostStore((state) => state.speakText);
 
   const showToast = useDashboardUIStore((state) => state.showToast);
@@ -100,13 +99,13 @@ export const LiveChatPanel: React.FC = () => {
         time: now,
       });
 
-      // Prelive/step 4: VoxCPM2 — voice_id / lang / speed sama seperti Step 2.
+      // Prelive: sample lokal (tidak hit pod).
       await speakText(replyText, {
         avatar: selectedAvatar.name,
         tone: selectedTone,
         voice: selectedVoice,
         lang: selectedLang,
-        speed: speechSpeed,
+        localPreviewOnly: true,
       }).catch(() => {});
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal uji komentar");

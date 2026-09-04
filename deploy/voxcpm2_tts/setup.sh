@@ -7,7 +7,7 @@ DEPLOY_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VENV_DIR="${VOXCPM2_VENV:-/workspace/voxcpm2_env}"
 MODEL_DIR="${VOXCPM2_MODEL_PATH:-/workspace/models/voxcpm2}"
 VOICE_ROOT="${VOICE_ROOT:-/workspace/voices}"
-VOICE_ID="${VOICE_ID:-default_host}"
+VOICE_ID="${VOICE_ID:-girl_cute_kids}"
 
 echo "================================================"
 echo " VoxCPM2 TTS setup (dedicated venv)"

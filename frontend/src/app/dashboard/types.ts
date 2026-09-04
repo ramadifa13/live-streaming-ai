@@ -90,7 +90,7 @@ export interface Avatar {
   language: string;
   /** female | male — visual host only */
   gender: "female" | "male";
-  /** VoxCPM2 voice_id (default_host) */
+  /** VoxCPM2 voice_id (female catalog) */
   voice: string;
   voiceId?: string;
   sampleAudioUrl?: string;

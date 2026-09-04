@@ -5,7 +5,7 @@ export CUDA_HOME=/usr/local/cuda-11.8
 export LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64:${LD_LIBRARY_PATH:-}
 export TMPDIR=/workspace/tmp
 export PIP_CACHE_DIR=/workspace/tmp/pip_cache
-mkdir -p "$TMPDIR" "$PIP_CACHE_DIR" /workspace/ai_live_worker /workspace/voices/default_host /workspace/models/voxcpm2
+mkdir -p "$TMPDIR" "$PIP_CACHE_DIR" /workspace/ai_live_worker /workspace/voices /workspace/models/voxcpm2
 
 if [[ -f /workspace/.hf_token ]]; then
   export HF_TOKEN="$(tr -d '\r\n' </workspace/.hf_token)"
@@ -22,7 +22,7 @@ echo "[BOOT] MuseTalk setup start $(date -Iseconds)"
 bash setup.sh
 
 echo "[BOOT] VoxCPM2 setup start $(date -Iseconds)"
-bash voxcpm2_tts/setup.sh
+VOICE_ID="${VOICE_ID:-girl_cute_kids}" bash voxcpm2_tts/setup.sh
 
 echo "[BOOT] env + sync + restart $(date -Iseconds)"
 cp -n .env.example /workspace/ai_live_worker/.env || true
@@ -30,7 +30,7 @@ if ! grep -q '^TTS_ENABLED=' /workspace/ai_live_worker/.env 2>/dev/null; then
   cat >> /workspace/ai_live_worker/.env <<'EOF'
 
 TTS_ENABLED=true
-VOICE_ID=default_host
+VOICE_ID=girl_cute_kids
 TTS_LANGUAGE=id
 VOXCPM2_MODEL_PATH=/workspace/models/voxcpm2
 VOICE_ROOT=/workspace/voices
@@ -42,9 +42,16 @@ VOXCPM2_READY_TIMEOUT=600
 MUSETALK_BATCH_SIZE=16
 EOF
 fi
-mkdir -p /workspace/ai_live_worker/voices/default_host
-cp -n /workspace/voices/default_host/reference.wav /workspace/voices/default_host/reference.wav 2>/dev/null || true
-cp -n /workspace/voices/default_host/reference.wav /workspace/ai_live_worker/voices/default_host/reference.wav 2>/dev/null || true
+# Sync katalog suara perempuan (bukan default_host)
+for vid in girl_cute_kids girl_warm_youthful girl_warm_friendly girl_calm_professional; do
+  mkdir -p "/workspace/voices/$vid"
+  src="voices/$vid/reference.wav"
+  if [[ -f "$src" ]]; then
+    cp -n "$src" "/workspace/voices/$vid/reference.wav" 2>/dev/null || true
+  fi
+done
+# Hapus leftover default_host jika ada
+rm -rf /workspace/voices/default_host /workspace/ai_live_worker/voices/default_host 2>/dev/null || true
 
 FORCE_ASSETS=1 bash sync.sh --restart
 

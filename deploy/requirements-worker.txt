@@ -1,8 +1,12 @@
 # ==========================================
-# RUNPOD AI WORKER — pinned (harus cocok setup.sh)
+# RUNPOD AI WORKER (MuseTalk) — pinned
+# Cocok dengan setup yang sudah jalan di pod L40S:
+#   venv: /workspace/ai_live_worker/env
+#   torch 2.1.x + cu118 (diinstall TERPISAH di setup.sh, bukan di file ini)
+#   MMCV / MMDet / MMPose via `mim` di setup.sh
+#
 # JANGAN pakai MuseTalk/requirements.txt upstream (numpy/torch/transformers beda).
-# Torch + torchvision + torchaudio diinstall TERPISAH di setup (cu118).
-# MMCV / MMDet / MMPose diinstall via `mim` di setup (bukan pip di file ini).
+# VoxCPM2 TIDAK di file ini — lihat voxcpm2_tts/requirements.txt (venv terpisah).
 # ==========================================
 
 # API
@@ -25,7 +29,7 @@ omegaconf>=2.3.0
 einops==0.7.0
 timm==0.9.16
 
-# Audio
+# Audio (Whisper features + speech bridge)
 librosa==0.10.2.post1
 soundfile==0.12.1
 ffmpeg-python==0.2.0

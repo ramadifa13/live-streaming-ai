@@ -39,7 +39,6 @@ export const LiveControlBar: React.FC = () => {
   const selectedTone = useAiHostStore((state) => state.selectedTone);
   const selectedVoice = useAiHostStore((state) => state.selectedVoice);
   const selectedLang = useAiHostStore((state) => state.selectedLang);
-  const speechSpeed = useAiHostStore((state) => state.speechSpeed);
 
   const products = useProductStore((state) => state.products);
   const activeFeaturedProduct = useProductStore((state) => state.activeFeaturedProduct);
@@ -185,10 +184,9 @@ export const LiveControlBar: React.FC = () => {
           autoModeration: automations.autoModeration,
           avatarName: selectedAvatar.name,
           tone: selectedTone,
-          voice: selectedVoice || selectedAvatar.voice || "default_host",
-          voiceId: selectedVoice || selectedAvatar.voice || "default_host",
+          voice: selectedVoice || selectedAvatar.voice || "girl_cute_kids",
+          voiceId: selectedVoice || selectedAvatar.voice || "girl_cute_kids",
           lang: selectedLang,
-          speechSpeed,
           accessToken: connectedAccount?.accessToken,
           liveChatId: connectedAccount?.liveChatId,
           liveVideoId: connectedAccount?.liveVideoId,
@@ -404,7 +402,7 @@ export const LiveControlBar: React.FC = () => {
                   <p className="text-slate-500 leading-none">AI Host &amp; Suara</p>
                   <p className="font-medium text-slate-200 mt-1">
                     {selectedAvatar.name} · {selectedVoice || selectedAvatar.voice} ·{" "}
-                    {selectedLang.toUpperCase()} · {speechSpeed.toFixed(2)}×
+                    {selectedLang.toUpperCase()}
                   </p>
                 </div>
               </div>

@@ -365,7 +365,7 @@ class SpeechBridge:
         """Idle tetap jalan sampai job siap + preroll mulut selesai (tanpa freeze frame)."""
         if self._current is not None:
             return
-        preroll_timeout = float(os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.0"))
+        preroll_timeout = float(os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "1.0"))
         candidate = None
         with self._lock:
             while self._pending:
@@ -410,10 +410,16 @@ class SpeechBridge:
 
         if not candidate.lipsync_ready.is_set():
             waited = time.monotonic() - (candidate.primed_at or candidate.created_at)
-            if waited < preroll_timeout:
+            # Tunggu preroll lebih lama — mulai dengan mouths parsial = patah di awal kalimat.
+            hard_cap = max(1.2, preroll_timeout) * 3.0
+            if waited < hard_cap:
                 with self._lock:
                     self._pending.appendleft(candidate)
                 return
+            print(
+                f"[SpeechBridge] Preroll lambat {candidate.task_id} "
+                f"({waited:.1f}s) — mulai dengan mouths parsial"
+            )
 
         with self._lock:
             self._current = candidate
@@ -557,9 +563,34 @@ class SpeechBridge:
         with self._lock:
             n = 0
             for job in self._pending:
-                if job.ready.is_set() and not job.error and job.num_frames > 0:
+                if (
+                    job.ready.is_set()
+                    and not job.error
+                    and job.num_frames > 0
+                    and job.whisper_chunks is not None
+                ):
                     n += 1
             return n
+
+    def queued_audio_seconds(self, fps: float = float(TARGET_FPS)) -> float:
+        """Durasi aktual antrian + sisa current (bukan 12s × count)."""
+        rate = max(1.0, float(fps))
+        with self._lock:
+            total_frames = 0
+            if self._current is not None and self._current.num_frames > 0:
+                remain = max(0, int(self._current.num_frames) - int(self._frame_cursor))
+                total_frames += remain
+            for job in self._pending:
+                if (
+                    job.error
+                    or job.num_frames <= 0
+                    or job.whisper_chunks is None
+                ):
+                    continue
+                if not job.ready.is_set():
+                    continue
+                total_frames += int(job.num_frames)
+            return round(total_frames / rate, 2)
 
     def is_speaking(self) -> bool:
         return self._current is not None

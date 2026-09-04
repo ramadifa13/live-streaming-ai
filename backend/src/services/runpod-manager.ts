@@ -685,8 +685,9 @@ export async function getGpuControlStatus(podId: string | null) {
 }
 
 /**
- * URL worker GPU. Pod dinamis (on-demand) SELALU pakai proxy RunPod per-podId —
- * jangan override dengan RUNPOD_WORKER_URL=localhost di VPS.
+ * URL worker GPU.
+ * - Mode STATIS: RUNPOD_POD_ID + RUNPOD_WORKER_URL terisi → pakai URL yang dikonfigurasi.
+ * - Mode ON-DEMAND: POD_ID kosong → URL dari podId sesi (proxy RunPod), bukan localhost.
  */
 export function getWorkerUrl(podId?: string | null): string | null {
   const staticPodId = getStaticPodId();
@@ -699,14 +700,13 @@ export function getWorkerUrl(podId?: string | null): string | null {
   const configuredIsLocal =
     configuredUrl.includes("localhost") || configuredUrl.includes("127.0.0.1");
 
-  // Pod statis: pakai RUNPOD_WORKER_URL jika diisi. Pod on-demand baru: selalu proxy ID baru.
-  const useConfiguredUrl =
-    Boolean(configuredUrl) &&
-    Boolean(staticPodId) &&
-    (!resolvedPodId || resolvedPodId === staticPodId) &&
-    (!configuredIsLocal || !isProdLike());
-
-  if (useConfiguredUrl) {
+  // Mode statis eksplisit: kedua env terisi → selalu prefer WORKER_URL untuk pod itu.
+  if (
+    staticPodId &&
+    configuredUrl &&
+    !configuredIsLocal &&
+    (!resolvedPodId || resolvedPodId === staticPodId)
+  ) {
     return configuredUrl;
   }
 
@@ -714,10 +714,7 @@ export function getWorkerUrl(podId?: string | null): string | null {
     return `https://${resolvedPodId}-8000.proxy.runpod.net`;
   }
 
-  if (
-    configuredUrl &&
-    !configuredIsLocal
-  ) {
+  if (configuredUrl && !configuredIsLocal) {
     return configuredUrl;
   }
 

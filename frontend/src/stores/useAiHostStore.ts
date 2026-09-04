@@ -3,6 +3,7 @@ import { Avatar, LiveSalesScript, Product } from "@/app/dashboard/types";
 import {
   avatars,
   DEFAULT_VOICE_ID,
+  localVoicePreviewUrl,
   type TtsLangCode,
 } from "@/app/dashboard/constants";
 import { aiService, VideoScriptData } from "@/services/aiService";
@@ -47,6 +48,8 @@ interface AiHostState {
       tone?: string;
       avatar?: string;
       speed?: number;
+      /** Pre-live: putar sample lokal, jangan hit pod. */
+      localPreviewOnly?: boolean;
     },
   ) => Promise<void>;
   stopAudio: () => void;
@@ -128,33 +131,22 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
       state.selectedVoice ||
       state.selectedAvatar.voice ||
       DEFAULT_VOICE_ID;
-    const lang = (opts?.lang || state.selectedLang || "id").toString();
+    const langRaw = (opts?.lang || state.selectedLang || "id").toString();
+    const lang = langRaw === "en" ? "en" : "id";
 
     try {
-      const blob = await aiService.synthesizeTTS({
-        text,
-        voice: voiceId,
-        voiceId,
-        avatarName: opts?.avatar || state.selectedAvatar.name,
-        speed: opts?.speed ?? state.speechSpeed ?? 1,
-        tone: opts?.tone || state.selectedTone,
-        lang,
-        allowOfflineSynth: true,
-      });
-      const url = URL.createObjectURL(blob);
+      // Pre-live FE: selalu sample lokal — tidak hit pod.
+      const url = localVoicePreviewUrl(voiceId, lang);
       const audio = new Audio(url);
       activeAudio = audio;
-
       set({ isPlayingAudio: true, isSynthesizingAudio: false });
 
       audio.onended = () => {
-        URL.revokeObjectURL(url);
         set({ isPlayingAudio: false, isAvatarSpeaking: false });
         activeAudio = null;
       };
 
       audio.onerror = () => {
-        URL.revokeObjectURL(url);
         set({
           isPlayingAudio: false,
           isAvatarSpeaking: false,
@@ -163,10 +155,14 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
         activeAudio = null;
       };
 
-      await audio.play().catch(() => {});
+      await audio.play().catch(() => {
+        throw new Error(
+          `Sample lokal tidak ditemukan: ${url}. Generate dulu preview VoxCPM2.`,
+        );
+      });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      console.warn("[speakText] TTS preview notice:", errorMessage);
+      console.warn("[speakText] local preview notice:", errorMessage);
       set({
         isPlayingAudio: false,
         isAvatarSpeaking: false,

@@ -19,7 +19,7 @@ async function main() {
 
   const result = await synthesizeSpeech({
     text: "Halo kak, selamat datang di live hari ini. Ini tes suara VoxCPM2.",
-    voiceId: process.env.VOICE_ID || "default_host",
+    voiceId: process.env.VOICE_ID || "girl_cute_kids",
     lang: "id",
     allowOfflineSynth: true,
     podId: process.env.RUNPOD_POD_ID || null,

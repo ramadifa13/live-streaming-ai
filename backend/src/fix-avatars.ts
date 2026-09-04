@@ -1,4 +1,4 @@
-import prisma from "./lib/prisma.js";
+﻿import prisma from "./lib/prisma.js";
 
 async function fix() {
   const existing1 = await prisma.avatar.findUnique({ where: { id: "1" } });
@@ -11,10 +11,10 @@ async function fix() {
         type: "3d",
         style: "realistic",
         language: "id",
-        voice: "default_host",
+        voice: "girl_cute_kids",
         sampleAudioUrl: null,
         isActive: true,
-        description: "Host 3D dinamis - Namira (VoxCPM2 default_host)",
+        description: "Host 3D dinamis - Namira (VoxCPM2 girl_cute_kids)",
       },
     });
     console.log("Created avatar id=1 (Namira)");
@@ -22,11 +22,11 @@ async function fix() {
     await prisma.avatar.update({
       where: { id: "1" },
       data: {
-        voice: "default_host",
+        voice: "girl_cute_kids",
         sampleAudioUrl: null,
       },
     });
-    console.log("Updated avatar id=1 — voice=default_host (VoxCPM2)");
+    console.log("Updated avatar id=1 â€” voice=girl_cute_kids (VoxCPM2)");
   }
 
   await prisma.avatar.updateMany({

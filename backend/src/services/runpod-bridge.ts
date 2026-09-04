@@ -72,6 +72,7 @@ async function workerRequest(
   podId: string | null | undefined,
   path: string,
   init?: RequestInit,
+  timeoutMs = 60_000,
 ) {
   const baseUrl = getWorkerUrl(podId);
   if (!baseUrl) {
@@ -79,7 +80,7 @@ async function workerRequest(
       "Worker GPU belum siap (podId kosong). Tunggu boot RunPod selesai.",
     );
   }
-  const signal = init?.signal || AbortSignal.timeout(60000);
+  const signal = init?.signal || AbortSignal.timeout(timeoutMs);
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
@@ -103,11 +104,12 @@ async function workerRequestWithRetry(
   path: string,
   init?: RequestInit,
   retries = 6,
+  timeoutMs = 60_000,
 ): Promise<any> {
   let lastError: Error | null = null;
   for (let attempt = 0; attempt < retries; attempt += 1) {
     try {
-      return await workerRequest(podId, path, init);
+      return await workerRequest(podId, path, init, timeoutMs);
     } catch (err: any) {
       lastError = err;
       const status = Number(err.message?.match(/\d{3}/)?.[0]);
@@ -119,7 +121,7 @@ async function workerRequestWithRetry(
         err.name === "TimeoutError" ||
         err.name === "AbortError" ||
         /timeout|aborted/i.test(String(err.message || ""));
-      if (isTransient) {
+      if (isTransient && attempt < retries - 1) {
         const backoff = 1000 * Math.pow(2, attempt);
         console.warn(
           `[RunPodBridge] Worker connection retry in ${backoff}ms (${err.message})...`,
@@ -312,9 +314,18 @@ export async function updateRunPodBroadcastProduct(
 export async function stopRunPodBroadcast(
   podId: string | null | undefined,
 ): Promise<RunPodBroadcastResult> {
-  return workerRequestWithRetry(podId, "/stream/stop-broadcast", {
-    method: "POST",
-  });
+  // Stop harus cepat: timeout pendek, max 1 retry — jangan hang UI end-live.
+  return workerRequestWithRetry(
+    podId,
+    "/stream/stop-broadcast",
+    { method: "POST" },
+    2,
+    12_000,
+  ).catch((err) => ({
+    success: false,
+    status: "error",
+    message: err instanceof Error ? err.message : String(err),
+  }));
 }
 
 export async function getRunPodBroadcastStatus(
@@ -490,7 +501,7 @@ export async function forwardToRunPodGPU(
         const { synthesizeSpeech } = await import("./tts.js");
         const ttsRes = await synthesizeSpeech({
           text: stripActionTagsForTts(params.text),
-          voiceId: params.voice || process.env.VOICE_ID || "default_host",
+          voiceId: params.voice || process.env.VOICE_ID || "girl_cute_kids",
           host: params.voice || avatarName,
           voice: params.voice || avatarName,
           avatarName,
@@ -519,8 +530,8 @@ export async function forwardToRunPodGPU(
           avatar_name: avatarName,
           avatar_image_path: params.avatarImagePath || "avatars/namira.png",
           text: params.text,
-          voice: params.voice || process.env.VOICE_ID || "default_host",
-          voice_id: params.voice || process.env.VOICE_ID || "default_host",
+          voice: params.voice || process.env.VOICE_ID || "girl_cute_kids",
+          voice_id: params.voice || process.env.VOICE_ID || "girl_cute_kids",
           speed: params.speed || 1.0,
           tone: params.tone || "Casual",
           style: params.tone || "Casual",

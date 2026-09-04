@@ -63,8 +63,9 @@ export async function ttsRoutes(server: FastifyInstance) {
         data: {
           host: voiceId,
           voiceId,
-          sampleAudioUrl: null,
-          note: "Ganti reference di voices/<voice_id>/reference.wav. Preview memakai VoxCPM2 di AI Worker.",
+          sampleAudioUrl: `/voices/${voiceId}/preview_id.wav`,
+          sampleAudioUrlEn: `/voices/${voiceId}/preview_en.wav`,
+          note: "Pre-live memakai sample lokal. Live memakai VoxCPM2 di AI Worker.",
         },
       };
     },

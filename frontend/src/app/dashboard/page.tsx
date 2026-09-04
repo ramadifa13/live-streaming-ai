@@ -236,8 +236,6 @@ export default function Dashboard() {
               if (res?.summary) setSessionSummary(res.summary);
             });
 
-          liveSessionService.stopBroadcast(currentLiveSessionId);
-
           return maxAllowedSeconds;
         }
         return nextSec;

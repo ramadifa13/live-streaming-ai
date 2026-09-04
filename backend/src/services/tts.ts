@@ -12,7 +12,7 @@ import fs from "fs";
 import { getWorkerUrl } from "./runpod-manager.js";
 
 export interface HostVoice {
-  /** voice_id for VoxCPM2 (e.g. default_host) */
+  /** voice_id for VoxCPM2 */
   id: string;
   name: string;
   gender: "female" | "male";
@@ -20,16 +20,39 @@ export interface HostVoice {
   style: string;
 }
 
-/** Host voices — visual host maps to voice_id via resolveVoiceId(). */
+/** Female host voices — pre-live filter + live VoxCPM2 voice_id. */
 export const HOST_VOICES: HostVoice[] = [
   {
-    id: "default_host",
-    name: "Default Host",
+    id: "girl_cute_kids",
+    name: "girl - cute kids",
     gender: "female",
     locale: "id-ID",
-    style: "Energetic",
+    style: "Cute Kids",
+  },
+  {
+    id: "girl_warm_youthful",
+    name: "girl - warm & youthful",
+    gender: "female",
+    locale: "id-ID",
+    style: "Warm & Youthful",
+  },
+  {
+    id: "girl_warm_friendly",
+    name: "girl - warm & friendly",
+    gender: "female",
+    locale: "id-ID",
+    style: "Warm & Friendly",
+  },
+  {
+    id: "girl_calm_professional",
+    name: "girl - calm & professional",
+    gender: "female",
+    locale: "id-ID",
+    style: "Calm & Professional",
   },
 ];
+
+export const DEFAULT_VOICE_ID = "girl_cute_kids";
 
 export interface SynthesizeRequest {
   text: string;
@@ -305,34 +328,40 @@ async function ensureWav16kMono(input: Buffer): Promise<Buffer> {
   });
 }
 
-/** Resolve ke voice_id VoxCPM2 (default_host). Legacy host slug → default_host. */
+/** Resolve ke voice_id VoxCPM2. Legacy host slug → suara perempuan default. */
 export function resolveVoiceId(
   voiceOrHost?: string,
   avatarName?: string,
 ): string {
   const defaultVoice =
-    (process.env.VOICE_ID || "default_host").trim() || "default_host";
+    (process.env.VOICE_ID || DEFAULT_VOICE_ID).trim() || DEFAULT_VOICE_ID;
   const raw = String(voiceOrHost || avatarName || defaultVoice)
     .trim()
     .toLowerCase()
-    .replace(/\.(png|jpg|jpeg|mp4|onnx|wav|mp3)$/i, "");
+    .replace(/\.(png|jpg|jpeg|mp4|onnx|wav|mp3)$/i, "")
+    .replace(/\s+/g, "_")
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
   const base = raw.includes("/") ? raw.split("/").pop()! : raw;
 
   if (!base || base.startsWith("id-id-") || base.startsWith("id_id_")) {
     return defaultVoice;
   }
   if (HOST_VOICES.some((h) => h.id === base)) return base;
-  // Legacy avatar / host slugs
+  // Alias lama
   if (
+    base === "default_host" ||
     base === "namira" ||
     base.includes("namira") ||
     base.includes("siti") ||
-    base.includes("ardi") ||
-    base.includes("budi")
+    base.includes("default")
   ) {
     return defaultVoice;
   }
-  return base || defaultVoice;
+  if (HOST_VOICES.some((h) => h.id === base)) return base;
+  return defaultVoice;
 }
 
 /** @deprecated Gunakan resolveVoiceId */
@@ -509,6 +538,6 @@ export async function synthesizeSpeech(
 
 export async function warmUpTTS(): Promise<void> {
   console.log(
-    `[TTS] Engine=VoxCPM2 voice_id=${process.env.VOICE_ID || "default_host"} — inference di AI Worker GPU`,
+    `[TTS] Engine=VoxCPM2 voice_id=${process.env.VOICE_ID || DEFAULT_VOICE_ID} — inference di AI Worker GPU`,
   );
 }

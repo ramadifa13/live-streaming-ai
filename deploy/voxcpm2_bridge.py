@@ -134,7 +134,7 @@ def stop() -> None:
 
 def synthesize(
     text: str,
-    voice_id: str = "default_host",
+    voice_id: str = "girl_cute_kids",
     language: str = "id",
     style: Optional[str] = None,
     emotion: Optional[str] = None,
@@ -150,7 +150,7 @@ def synthesize(
 
     payload: Dict[str, Any] = {
         "text": text,
-        "voice_id": voice_id or "default_host",
+        "voice_id": voice_id or "girl_cute_kids",
         "language": language or "id",
         "native_sr": False,
     }

@@ -264,8 +264,7 @@ export const useLiveSessionStore = create<LiveSessionState>()(
           pipelineStatus: null,
         });
 
-        await liveSessionService.stopBroadcast(state.currentLiveSessionId);
-
+        // Satu panggilan saja — BE /stop menghentikan worker + ringkasan.
         const stopRes = await liveSessionService.stopSession({
           sessionId: state.currentLiveSessionId,
           durationSeconds: state.liveSeconds,

@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+﻿import Fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import dotenv from "dotenv";
@@ -27,7 +27,7 @@ await server.register(cors, {
 
 await server.register(multipart, {
   limits: {
-    fileSize: 25 * 1024 * 1024, // 25 MB – matches bodyLimit
+    fileSize: 25 * 1024 * 1024, // 25 MB â€“ matches bodyLimit
   },
 });
 
@@ -56,7 +56,7 @@ async function seedDatabase() {
           type: "3D",
           style: "Energetic",
           language: "Indonesia",
-          voice: "default_host",
+          voice: "girl_cute_kids",
           sampleAudioUrl: null,
           description: "AI host utama untuk demo live streaming",
         },
@@ -74,7 +74,7 @@ async function seedDatabase() {
         ],
       },
       data: {
-        voice: "default_host",
+        voice: "girl_cute_kids",
         sampleAudioUrl: null,
       },
     });
@@ -97,7 +97,7 @@ try {
   await server.listen({ port, host });
   console.log(`Backend ready at http://${host}:${port}`);
   console.log(
-    `[TTS] Engine=VoxCPM2 voice_id=${process.env.VOICE_ID || "default_host"} (AI Worker GPU)`,
+    `[TTS] Engine=VoxCPM2 voice_id=${process.env.VOICE_ID || "girl_cute_kids"} (AI Worker GPU)`,
   );
 
   import("./services/runpod-manager.js").then((m) => m.startIdleMonitor());

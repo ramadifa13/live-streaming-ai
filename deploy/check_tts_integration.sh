@@ -29,7 +29,7 @@ echo "2) Venv + model + voice"
 VENV="${VOXCPM2_VENV:-/workspace/voxcpm2_env}"
 MODEL="${VOXCPM2_MODEL_PATH:-/workspace/models/voxcpm2}"
 VOICE_ROOT="${VOICE_ROOT:-/workspace/voices}"
-VOICE_ID="${VOICE_ID:-default_host}"
+VOICE_ID="${VOICE_ID:-girl_cute_kids}"
 [ -x "$VENV/bin/python" ] && ok "venv $VENV" || bad "venv missing — jalankan bash voxcpm2_tts/setup.sh"
 if [ -d "$MODEL" ] && [ -n "$(ls -A "$MODEL" 2>/dev/null || true)" ]; then
   ok "model dir $MODEL"
@@ -41,6 +41,13 @@ if [ -f "$VOICE_ROOT/$VOICE_ID/reference.wav" ]; then
 else
   warn "reference.wav belum ada — VOXCPM2_ALLOW_VOICE_DESIGN harus 1"
 fi
+for vid in girl_cute_kids girl_warm_youthful girl_warm_friendly girl_calm_professional; do
+  if [ -f "$VOICE_ROOT/$vid/reference.wav" ]; then
+    ok "catalog $vid"
+  else
+    warn "catalog missing $VOICE_ROOT/$vid/reference.wav"
+  fi
+done
 
 echo
 echo "3) Env keys (worker .env)"
@@ -87,7 +94,7 @@ fi
 
 if curl -sf --max-time 120 -X POST "$API/tts/synthesize" \
   -H "Content-Type: application/json" \
-  -d '{"text":"Halo kak, ini tes VoxCPM2.","voice_id":"default_host","language":"id"}' \
+  -d '{"text":"Halo kak, ini tes VoxCPM2.","voice_id":"girl_cute_kids","language":"id"}' \
   -o /tmp/vox_smoke.wav; then
   BYTES=$(wc -c < /tmp/vox_smoke.wav | tr -d ' ')
   HEAD=$(head -c 4 /tmp/vox_smoke.wav || true)
