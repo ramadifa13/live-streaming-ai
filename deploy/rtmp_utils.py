@@ -60,7 +60,18 @@ USER_HINT_FFMPEG = (
 )
 
 
-def extract_rtmp_hostname(publish_url: str) -> str:
+def is_deferred_rtmp_ack(publish_url: str) -> bool:
+    """Instagram/Facebook sering tidak ACK sampai user klik Siarkan di app."""
+    host = extract_rtmp_hostname(publish_url).lower()
+    return any(
+        token in host
+        for token in (
+            "instagram.com",
+            "facebook.com",
+            "fbcdn.net",
+            "cdninstagram.com",
+        )
+    )
     try:
         parsed = urlparse((publish_url or "").strip())
         return (parsed.hostname or "").strip()

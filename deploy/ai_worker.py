@@ -62,7 +62,7 @@ BBOX_SMOOTH_WINDOW = int(os.environ.get("AI_WORKER_BBOX_SMOOTH", "7"))
 RAW_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RAW_QUEUE", "24"))
 RENDER_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RENDER_QUEUE", "48"))
 RAW_QUEUE_BLOCK_SEC = float(os.environ.get("AI_WORKER_RAW_BLOCK_SEC", "0.25"))
-MASK_FEATHER_PX = int(os.environ.get("AI_WORKER_MASK_FEATHER", "8"))
+MASK_FEATHER_PX = int(os.environ.get("AI_WORKER_MASK_FEATHER", "3"))
 AMBIENT_MIN_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MIN_SEC", "4"))
 AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "6"))
 
@@ -72,12 +72,12 @@ BROADCAST_MAX_LAG = int(os.environ.get("AI_WORKER_BROADCAST_MAX_LAG", "8"))
 BROADCAST_RENDER_WAIT_SEC = float(
     os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.10")
 )
-MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.72"))
-MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0.06"))
-MOUTH_MAX_DELTA = float(os.environ.get("MUSETALK_MAX_DELTA", "36"))
+MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "1.0"))
+MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0"))
+MOUTH_MAX_DELTA = float(os.environ.get("MUSETALK_MAX_DELTA", "0"))
 MOUTH_FRAME_DELTA = float(os.environ.get("MUSETALK_FRAME_DELTA", "0"))
 LIPSYNC_PREROLL_FRAMES = int(os.environ.get("MUSETALK_PREROLL_FRAMES", "6"))
-LIPSYNC_WAIT_SEC = float(os.environ.get("MUSETALK_MOUTH_WAIT_SEC", "0.15"))
+LIPSYNC_WAIT_SEC = float(os.environ.get("MUSETALK_MOUTH_WAIT_SEC", "0"))
 LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "0"))
 LIPSYNC_PREROLL_TIMEOUT_SEC = float(
     os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.0")
@@ -314,8 +314,10 @@ def _pcm_rms(pcm: bytes) -> float:
 
 
 def _mouth_strength_for_pcm(pcm: bytes) -> float:
-    """Buka mulut mengikuti volume, tetap lembut untuk bibir tipis."""
-    base = max(0.55, min(0.92, MOUTH_STRENGTH))
+    """Volume hanya meredam jika STRENGTH < 1. Clamp 0.92 lama = mix idle = bibir buram."""
+    if float(MOUTH_STRENGTH) >= 0.999:
+        return 1.0
+    base = max(0.0, min(1.0, float(MOUTH_STRENGTH)))
     rms = _pcm_rms(pcm)
     t = float(np.clip((rms - 0.010) / 0.11, 0.0, 1.0))
     return base * (0.88 + 0.12 * t)
@@ -1191,6 +1193,7 @@ class LipSyncEngine:
         self._talk_clip_name = "idle_1"
         self._last_mouth_256: Optional[np.ndarray] = None
         self._prev_composed: Optional[np.ndarray] = None
+        self._feather_cache: dict = {}
         self._square_pad = True
         try:
             from inference import musetalk_visual_params
@@ -1363,27 +1366,32 @@ class LipSyncEngine:
                     print(f"[LipSync] WARNING: Using last mouth for idx={idx} (cursor={cursor})")
                 return last
             if time.perf_counter() >= deadline:
-                if attempt == 0:
-                    print(f"[LipSync] ERROR: Timeout waiting for mouth idx={idx} (cursor={cursor}, last={'yes' if last is not None else 'no'})")
                 return last
             time.sleep(0.004)
             attempt += 1
 
     def _material_for(self, clip: ClipAsset, cidx: int) -> Optional[Tuple]:
+        n = len(clip.mask_materials_cycle) if clip.mask_materials_cycle else 0
+        cache_idx = cidx % n if n else cidx
+        key = (clip.name, cache_idx)
+        cached = self._feather_cache.get(key)
+        if cached is not None:
+            return cached
+        mat = None
         if self._face_registry is not None:
             mat = self._face_registry.get_material(clip, cidx)
-            if mat is not None:
-                return mat
-        if clip.mask_materials_cycle:
+        if mat is None and clip.mask_materials_cycle:
             raw = clip.mask_materials_cycle[cidx % len(clip.mask_materials_cycle)]
             if raw:
                 mask_array, crop_box, face_box = raw
-                return (
+                mat = (
                     feather_mask(mask_array),
                     crop_box,
                     tuple(int(v) for v in face_box),
                 )
-        return None
+        if mat is not None:
+            self._feather_cache[key] = mat
+        return mat
 
     def _compose_mouth(
         self,
@@ -1418,11 +1426,12 @@ class LipSyncEngine:
             if orig.size == 0:
                 print(f"[LipSync] ERROR: Empty orig crop for face_box={face_box}")
                 return body
-            # Tajamkan patch 256→bbox; jangan temporal/frame-delta tinggi (itu bikin burem).
-            blur = cv2.GaussianBlur(mouth, (0, 0), 0.8)
-            mouth = cv2.addWeighted(mouth, 1.45, blur, -0.45, 0)
+            # Jangan mix/unsharp: VAE 256 + lerp idle = bibir buram.
             strength = _mouth_strength_for_pcm(pcm)
-            damped = _dampen_generated_mouth(orig, mouth, strength)
+            if strength >= 0.999 and float(MOUTH_MAX_DELTA) <= 0:
+                damped = mouth
+            else:
+                damped = _dampen_generated_mouth(orig, mouth, strength)
             if (
                 self._prev_composed is not None
                 and self._prev_composed.shape == damped.shape
@@ -1491,8 +1500,10 @@ class LipSyncEngine:
 
         mouth = self._wait_mouth(mouth_idx)
         if mouth is None:
+            with self._lock:
+                mouth = self._last_mouth_256
+        if mouth is None:
             metrics.inc("lipsync_cache_miss")
-            print(f"[LipSync] WARNING: No mouth for idx={mouth_idx} (total={total}) - skipping lip-sync")
             return pkt.frame
         metrics.inc("lipsync_cache_hit")
 
@@ -1836,12 +1847,14 @@ class StreamBroadcaster:
                 "-rtmp_live",
                 "live",
                 "-stimeout",
-                "15000000",
+                "30000000",
                 "-rw_timeout",
-                "15000000",
-                self.rtmp_url,
+                "30000000",
             ]
         )
+        if self.rtmp_url.lower().startswith("rtmps://"):
+            cmd.extend(["-tls_verify", "0"])
+        cmd.append(self.rtmp_url)
         return cmd
 
     @staticmethod
@@ -2434,7 +2447,7 @@ class AIVisualWorker:
             unet_config=os.path.join(models_root, "musetalkV15", "musetalk.json"),
             whisper_dir=os.path.join(models_root, "whisper"),
             vae_type="sd-vae-ft-mse",
-            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "4")),
+            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "8")),
         )
 
         original_cwd = os.getcwd()
@@ -2504,7 +2517,7 @@ class AIVisualWorker:
         self._engine = LipSyncEngine(
             models,
             self._bank,
-            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "4")),
+            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "8")),
             face_registry=self._face_registry,
         )
         if self._bridge is not None:
@@ -2564,14 +2577,22 @@ class AIVisualWorker:
         if not self.rtmp_url or not self.output_folder:
             return
         try:
-            from rtmp_utils import read_rtmp_status, USER_HINT_CONNECTING_SLOW
+            from rtmp_utils import (
+                is_deferred_rtmp_ack,
+                read_rtmp_status,
+                write_rtmp_status,
+                USER_HINT_CONNECTING_SLOW,
+            )
         except ImportError:
             return
 
-        deadline = time.monotonic() + self._rtmp_connect_timeout_sec()
+        deferred = is_deferred_rtmp_ack(self.rtmp_url)
+        started = time.monotonic()
+        deadline = started + self._rtmp_connect_timeout_sec()
         print(
             f"[AIVisualWorker] Menunggu RTMP connected "
-            f"(max {int(self._rtmp_connect_timeout_sec())}s)..."
+            f"(max {int(self._rtmp_connect_timeout_sec())}s"
+            f"{', Instagram/FB: lanjut jika FFmpeg hidup' if deferred else ''})..."
         )
         while time.monotonic() < deadline:
             if self._stop.is_set():
@@ -2589,11 +2610,40 @@ class AIVisualWorker:
                     err
                     or "FFmpeg RTMP berhenti saat handshake — gunakan Stream Key baru."
                 )
+            alive_sec = time.monotonic() - started
+            if (
+                deferred
+                and self._broadcaster is not None
+                and self._broadcaster.is_alive()
+                and alive_sec >= 8.0
+            ):
+                try:
+                    write_rtmp_status(self.output_folder, "connected")
+                except Exception:
+                    pass
+                self._rtmp_connected = True
+                print(
+                    "[AIVisualWorker] RTMP Instagram/Facebook: FFmpeg masih handshake. "
+                    "Lanjut idle — klik Siarkan di app (key sekali pakai)."
+                )
+                return
             time.sleep(0.5)
 
         state, err = read_rtmp_status(self.output_folder)
         if state == "connected":
             self._rtmp_connected = True
+            return
+        if (
+            deferred
+            and self._broadcaster is not None
+            and self._broadcaster.is_alive()
+        ):
+            try:
+                write_rtmp_status(self.output_folder, "connected")
+            except Exception:
+                pass
+            self._rtmp_connected = True
+            print("[AIVisualWorker] Timeout handshake IG — FFmpeg hidup, lanjut pipeline.")
             return
         raise RuntimeError(err or USER_HINT_CONNECTING_SLOW)
 
