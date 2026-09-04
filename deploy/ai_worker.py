@@ -1821,6 +1821,7 @@ class StreamBroadcaster:
         self._closed = False
         self._lock = threading.Lock()
         self._progress_seen = False
+        self._video_codec = "libx264"
         if not self.rtmp_url.lower().startswith(("rtmp://", "rtmps://")):
             raise ValueError(
                 f"RTMP URL tidak valid (harus rtmp:// atau rtmps://): {self.rtmp_url[:80]}"
@@ -1864,6 +1865,20 @@ class StreamBroadcaster:
         force_ipv4: bool,
     ) -> list:
         gop = self.fps * 2
+        # Selalu libx264 — jangan NVENC (banyak pod: OpenEncodeSessionEx unsupported device).
+        video_codec = (
+            os.environ.get("RTMP_VIDEO_CODEC", "libx264").strip().lower() or "libx264"
+        )
+        if "nvenc" in video_codec:
+            print(
+                f"[Broadcaster] Abaikan {video_codec} — paksa libx264 "
+                "(set RTMP_VIDEO_CODEC=libx264)."
+            )
+            video_codec = "libx264"
+        x264_preset = (
+            os.environ.get("RTMP_X264_PRESET", "veryfast").strip() or "veryfast"
+        )
+        self._video_codec = video_codec
         cmd = [
             "ffmpeg",
             "-hide_banner",
@@ -1912,9 +1927,9 @@ class StreamBroadcaster:
                 "-map",
                 "1:a",
                 "-c:v",
-                "libx264",
+                video_codec,
                 "-preset",
-                "veryfast",
+                x264_preset,
                 "-tune",
                 "zerolatency",
                 "-pix_fmt",
@@ -2116,8 +2131,8 @@ class StreamBroadcaster:
         self._v_fh = os.fdopen(video_w, "wb", buffering=0)
         self._a_fh = os.fdopen(audio_w, "wb", buffering=0)
         print(
-            f"[Broadcaster] RTMP encoder @ {self.fps}fps → "
-            f"{self.rtmp_url.split('?')[0]}?**"
+            f"[Broadcaster] RTMP encoder={getattr(self, '_video_codec', 'libx264')} "
+            f"@ {self.fps}fps → {self.rtmp_url.split('?')[0]}?**"
         )
 
     def is_alive(self) -> bool:

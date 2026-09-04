@@ -1257,7 +1257,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         with open(log_path, "w", encoding="utf-8") as fh:
             fh.write(
                 f"=== broadcast start {time.strftime('%Y-%m-%d %H:%M:%S')} "
-                f"codec=libx264 ===\n"
+                f"codec={os.environ.get('RTMP_VIDEO_CODEC', 'libx264')} ===\n"
             )
     except Exception:
         pass
