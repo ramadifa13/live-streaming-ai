@@ -1820,6 +1820,7 @@ class StreamBroadcaster:
         self._stderr_log = None
         self._closed = False
         self._lock = threading.Lock()
+        self._progress_seen = False
         if not self.rtmp_url.lower().startswith(("rtmp://", "rtmps://")):
             raise ValueError(
                 f"RTMP URL tidak valid (harus rtmp:// atau rtmps://): {self.rtmp_url[:80]}"
@@ -2080,9 +2081,13 @@ class StreamBroadcaster:
             try:
                 from rtmp_utils import FfmpegLogWatcher, write_rtmp_status
 
+                def _on_progress() -> None:
+                    self._progress_seen = True
+                    write_rtmp_status(out_dir, "connected")
+
                 watcher = FfmpegLogWatcher(
                     on_fatal=lambda hint: write_rtmp_status(out_dir, "failed", hint),
-                    on_progress=lambda: write_rtmp_status(out_dir, "connected"),
+                    on_progress=_on_progress,
                 )
 
                 def _drain_stderr() -> None:
@@ -2117,6 +2122,10 @@ class StreamBroadcaster:
 
     def is_alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
+
+    def has_progress(self) -> bool:
+        """True setelah FFmpeg menulis frame=/bitrate (publish nyata, bukan soft-connect)."""
+        return bool(self._progress_seen)
 
     @staticmethod
     def _write_all(fh, data: bytes) -> None:
@@ -2708,17 +2717,36 @@ class AIVisualWorker:
         started = time.monotonic()
         deadline = started + self._rtmp_connect_timeout_sec()
         print(
-            f"[AIVisualWorker] Menunggu RTMP connected "
+            f"[AIVisualWorker] Menunggu RTMP publish (frame=) "
             f"(max {int(self._rtmp_connect_timeout_sec())}s"
-            f"{', Instagram/FB: lanjut jika FFmpeg hidup' if deferred else ''})..."
+            f"{', Instagram/FB: butuh frame sebelum connected' if deferred else ''})..."
         )
         while time.monotonic() < deadline:
             if self._stop.is_set():
                 break
             state, err = read_rtmp_status(self.output_folder)
-            if state == "connected":
+            progress = bool(
+                self._broadcaster is not None and self._broadcaster.has_progress()
+            )
+            # Hard connected = status connected DAN (non-IG ATAU sudah ada frame=).
+            if state == "connected" and (progress or not deferred):
                 self._rtmp_connected = True
-                print("[AIVisualWorker] RTMP connected.")
+                print("[AIVisualWorker] RTMP connected (publish aktif).")
+                return
+            if progress:
+                try:
+                    write_rtmp_status(self.output_folder, "connected")
+                except Exception:
+                    pass
+                self._rtmp_connected = True
+                print(
+                    "[AIVisualWorker] RTMP connected — FFmpeg sudah kirim frame ke ingest."
+                    + (
+                        " Preview IG harus muncul; klik Siarkan di app bila siap."
+                        if deferred
+                        else ""
+                    )
+                )
                 return
             if state == "failed":
                 raise RuntimeError(err or "RTMP gagal — cek ai_worker_rtmp.log")
@@ -2728,41 +2756,26 @@ class AIVisualWorker:
                     err
                     or "FFmpeg RTMP berhenti saat handshake — gunakan Stream Key baru."
                 )
-            alive_sec = time.monotonic() - started
-            if (
-                deferred
-                and self._broadcaster is not None
-                and self._broadcaster.is_alive()
-                and alive_sec >= 8.0
-            ):
-                try:
-                    write_rtmp_status(self.output_folder, "connected")
-                except Exception:
-                    pass
-                self._rtmp_connected = True
-                print(
-                    "[AIVisualWorker] RTMP Instagram/Facebook: FFmpeg masih handshake. "
-                    "Lanjut idle — klik Siarkan di app (key sekali pakai)."
-                )
-                return
             time.sleep(0.5)
 
         state, err = read_rtmp_status(self.output_folder)
-        if state == "connected":
-            self._rtmp_connected = True
-            return
-        if (
-            deferred
-            and self._broadcaster is not None
-            and self._broadcaster.is_alive()
-        ):
+        progress = bool(
+            self._broadcaster is not None and self._broadcaster.has_progress()
+        )
+        if progress or (state == "connected" and not deferred):
             try:
                 write_rtmp_status(self.output_folder, "connected")
             except Exception:
                 pass
             self._rtmp_connected = True
-            print("[AIVisualWorker] Timeout handshake IG — FFmpeg hidup, lanjut pipeline.")
             return
+        if self._broadcaster is not None and self._broadcaster.is_alive():
+            raise RuntimeError(
+                "FFmpeg hidup tapi belum ada frame publish ke RTMP. "
+                "Biasanya Stream Key/URL salah, key kadaluarsa, atau jaringan pod. "
+                "Buat siaran baru di Instagram Producer, tempel key baru, lalu Go Live ulang. "
+                "Cek ai_worker_rtmp.log."
+            )
         raise RuntimeError(err or USER_HINT_CONNECTING_SLOW)
 
     def start(
@@ -2986,11 +2999,21 @@ def start_visual_broadcast(
 def stop_visual_broadcast(*, destroy: bool = True) -> None:
     """Stop pipeline/RTMP. destroy=False menjaga model di memori (Go Live ulang cepat)."""
     global _visual_worker_singleton
+    out = ""
     with _visual_lock:
         if _visual_worker_singleton is not None:
+            out = getattr(_visual_worker_singleton, "output_folder", "") or ""
             _visual_worker_singleton.stop(clear_queue=destroy)
             if destroy:
                 _visual_worker_singleton = None
+    folder = out or os.environ.get("OUTPUT_FOLDER", "")
+    if folder:
+        try:
+            from rtmp_utils import write_rtmp_status
+
+            write_rtmp_status(folder, "disconnected")
+        except Exception:
+            pass
 
 
 def pause_visual_broadcast(output_folder: str = "") -> dict:

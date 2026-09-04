@@ -193,6 +193,8 @@ bash /workspace/live-streaming-ai/deploy/sync.sh --restart
 ### Edit env worker
 
 ```bash
+apt update
+apt install -y nano
 nano /workspace/ai_live_worker/.env
 bash /workspace/live-streaming-ai/deploy/sync.sh --restart
 ```

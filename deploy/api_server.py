@@ -1074,7 +1074,9 @@ async def start_broadcast(req: BroadcastRequest):
                 and current_broadcast_env.get("RTMP_URL") == final_rtmp_url
                 and current_broadcast_env.get("STREAM_KEY") == final_stream_key
             )
-            if same_target or current_broadcast_env is None:
+            # Hanya skip jika target RTMP/key sama. Env None + status connected
+            # sering stale setelah stop — jangan skip start ke key baru.
+            if same_target:
                 print(
                     "[AI-Worker] start-broadcast diabaikan — AIVisualWorker sudah "
                     "connected dengan target yang sama."
@@ -1249,6 +1251,16 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         _clear_speech_bridge_queue()
     if write_rtmp_status is not None:
         write_rtmp_status(output_dir, "connecting")
+    # Reset log supaya error NVENC/sesi lama tidak mengacaukan diagnosis.
+    try:
+        log_path = os.path.join(output_dir, "ai_worker_rtmp.log")
+        with open(log_path, "w", encoding="utf-8") as fh:
+            fh.write(
+                f"=== broadcast start {time.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"codec=libx264 ===\n"
+            )
+    except Exception:
+        pass
     _broadcast_started_at = time.time()
 
     total_videos_rendered = 0
@@ -1424,6 +1436,12 @@ async def stop_broadcast():
     visual_worker = None
     _clear_speech_bridge_queue()
 
+    # Jangan biarkan FE/status baca "connected" dari sesi lama.
+    if write_rtmp_status is not None:
+        try:
+            write_rtmp_status(output_dir, "disconnected")
+        except Exception:
+            pass
 
     total_videos_rendered = 0
 
