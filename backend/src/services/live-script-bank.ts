@@ -2,10 +2,79 @@ import type {
   HostIntent,
   HostMode,
   HostResponse,
-  LunaAction,
   LunaEmotion,
 } from "./groq-brain.js";
 import { inferCtaPointAction, normalizeLunaAction } from "./groq-brain.js";
+import {
+  BANNER_CTA_COOLDOWN_MS,
+  CTA_COOLDOWN_MS,
+  PRICE_MENTION_COOLDOWN_MS,
+  avoidAnglesFromMemory,
+  buildBannerCtaSpeech,
+  contentRepeatGuard,
+  inferSalesRule,
+  inferSemanticKey,
+  isExactRepeat,
+  isLexicalRepeat,
+  marathonCycleId,
+  openingPhrase as marathonOpeningPhrase,
+  preferFreshTopics,
+  preferredAnglesForCycle,
+  productReference,
+  salesRuleGuard,
+  type BannerCTAContext,
+  type HostConversationMemory,
+  type ProductEntryMode,
+  type ProductMemory,
+  type SalesRule,
+  type SalesRuleMemory,
+  type SpeechBehavior,
+} from "./live-marathon-memory.js";
+
+export type {
+  BannerCTAContext,
+  ContentAngle,
+  HostConversationMemory,
+  ProductEntryMode,
+  ProductMemory,
+  RepeatScore,
+  SalesRule,
+  SalesRuleMemory,
+  SpeechBehavior,
+  UsageRecord,
+} from "./live-marathon-memory.js";
+
+export {
+  BANNER_CTA_COOLDOWN_MS,
+  CTA_COOLDOWN_MS,
+  MAX_CYCLE_MINUTES,
+  PRICE_MENTION_COOLDOWN_MS,
+  RECENT_SPEECH_LIMIT,
+  SEMANTIC_DECAY_MS,
+  SEMANTIC_MEMORY_LIMIT,
+  avoidAnglesFromMemory,
+  buildBannerCtaSpeech,
+  contentRepeatGuard,
+  emptyHostConversationMemory,
+  emptyProductMemory,
+  emptySalesRuleMemory,
+  getOrCreateProductMemory,
+  inferContentAngle,
+  inferSalesRule,
+  inferSemanticKey,
+  isExactRepeat,
+  isLexicalRepeat,
+  isSemanticRepeat,
+  marathonCycleId,
+  preferFreshTopics,
+  preferredAnglesForCycle,
+  productReference,
+  recordSalesRuleUse,
+  recordSpeechUsage,
+  salesRuleGuard,
+  scoreRepeat,
+  touchProductVisit,
+} from "./live-marathon-memory.js";
 
 export interface ScriptProductFacts {
   id: string;
@@ -152,6 +221,9 @@ const PARAPHRASE_OPENERS = [
   "Yang perlu dicatat — ",
 ];
 
+/** Max fraction of recycle lines that may get a paraphrase opener (anti AI-template). */
+const PARAPHRASE_VARIANT_RATE = Number(process.env.LIVE_PARAPHRASE_VARIANT_RATE || 0.18);
+
 const LLM_COMMENT_INTENTS = new Set<HostIntent>([
   "OBJECTION",
   "BUYING_INTENT",
@@ -255,32 +327,7 @@ function normalize(text: string): string {
 }
 
 function similar(a: string, b: string): boolean {
-  const na = normalize(a);
-  const nb = normalize(b);
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-
-  const aa = new Set(na.split(" ").filter((x) => x.length >= 3));
-  const bb = new Set(nb.split(" ").filter((x) => x.length >= 3));
-  if (!aa.size || !bb.size) return false;
-  let hits = 0;
-  for (const token of aa) if (bb.has(token)) hits++;
-  const jaccard = hits / Math.sqrt(aa.size * bb.size);
-  if (jaccard >= 0.72) return true;
-
-  // Bigram overlap — tangkap paraphrase dekat ("sering bepergian" ≈ "suka traveling").
-  const bigrams = (s: string) => {
-    const t = s.split(" ").filter(Boolean);
-    const out = new Set<string>();
-    for (let i = 0; i < t.length - 1; i++) out.add(`${t[i]} ${t[i + 1]}`);
-    return out;
-  };
-  const ba = bigrams(na);
-  const bb2 = bigrams(nb);
-  if (!ba.size || !bb2.size) return false;
-  let bHits = 0;
-  for (const g of ba) if (bb2.has(g)) bHits++;
-  return bHits / Math.min(ba.size, bb2.size) >= 0.55;
+  return isExactRepeat(a, b) || isLexicalRepeat(a, b);
 }
 
 function similarToAny(speech: string, recent: string[]): boolean {
@@ -288,7 +335,7 @@ function similarToAny(speech: string, recent: string[]): boolean {
 }
 
 function openingPhrase(speech: string, words = 4): string {
-  return normalize(speech).split(" ").filter(Boolean).slice(0, words).join(" ");
+  return marathonOpeningPhrase(speech, words);
 }
 
 function sharesOpening(speech: string, recent: string[]): boolean {
@@ -298,14 +345,22 @@ function sharesOpening(speech: string, recent: string[]): boolean {
   return hasRecentGreetingClass(speech, recent, 6);
 }
 
-/** Variasi pembuka agar recycle tidak terdengar sama persis. */
+/** Variasi pembuka terbatas — jangan jadi mekanisme naturalness utama. */
 function withParaphraseVariants(items: HostResponse[]): HostResponse[] {
   const out: HostResponse[] = [];
+  let variantsAdded = 0;
+  const maxVariants = Math.max(1, Math.floor(items.length * PARAPHRASE_VARIANT_RATE));
   for (const item of items) {
     out.push(item);
     if (FILLER_TOPICS.has(item.topic || "")) continue;
+    if (variantsAdded >= maxVariants) continue;
+    if (Math.random() > PARAPHRASE_VARIANT_RATE) continue;
     const speech = item.speech.trim();
     if (!speech || speech.split(" ").length < 8) continue;
+    // Skip jika sudah punya opener template.
+    if (/^(nah|oke jadi|yang penting|intinya|biar jelas|singkatnya|jadi gini)\b/i.test(speech)) {
+      continue;
+    }
     const opener = PARAPHRASE_OPENERS[Math.floor(Math.random() * PARAPHRASE_OPENERS.length)] || "";
     if (!opener) continue;
     const body = speech.charAt(0).toLowerCase() + speech.slice(1);
@@ -315,57 +370,80 @@ function withParaphraseVariants(items: HostResponse[]): HostResponse[] {
       ...item,
       speech: clampSpeech(variant, FILLER_TOPICS.has(item.topic) ? 16 : 32),
     });
+    variantsAdded++;
   }
   return out;
 }
 
 /** Hook penjualan product-agnostic (intent-first) — cocok semua kategori. */
-function intentAgnosticHooks(product: ScriptProductFacts): HostResponse[] {
-  const name = product.name || "produk ini";
+function intentAgnosticHooks(
+  product: ScriptProductFacts,
+  entryMode: ProductEntryMode = "continuing",
+): HostResponse[] {
+  const name = ref(product, entryMode);
   const price = product.price || "harga live";
-  const fact = pickFact(factChunks(product), `kelebihan ${name}`);
+  const fact = pickFact(factChunks(product), `kelebihan ${product.name || "produk ini"}`);
   const need = domainNeed(product.category || "");
-  const speeches: Array<{ speech: string; topic: string; mode: HostMode; cta?: HostResponse["ctaType"] }> = [
+  const speeches: Array<{
+    speech: string;
+    topic: string;
+    mode: HostMode;
+    cta?: HostResponse["ctaType"];
+    behavior?: SpeechBehavior;
+  }> = [
     {
-      speech: `Kalau kamu lagi cari solusi ${need}, ${name} patut dicek — ${fact}.`,
+      speech:
+        entryMode === "re_entry"
+          ? `Tadi kita sempat bahas ${name}. Sekarang dari sisi kebutuhan ${need}: ${fact}.`
+          : `Kalau kamu lagi cari solusi ${need}, ${name} patut dicek — ${fact}.`,
       topic: "problem",
       mode: "ENGAGE",
+      behavior: entryMode === "re_entry" ? "transition" : "observation",
     },
     {
       speech: `Poin utamanya: ${fact}. Itu yang bikin ${name} relevan di live ini.`,
       topic: "benefit",
       mode: "SELL",
+      behavior: "clarification",
     },
     {
       speech: `Dipakai sehari-hari juga masuk akal: ${fact}.`,
       topic: "use_case",
       mode: "ENGAGE",
+      behavior: "scenario",
     },
     {
       speech: `Bandingin value-nya: ${fact} dengan harga live ${price}.`,
       topic: "value",
       mode: "SELL",
       cta: "SOFT",
+      behavior: "comparison",
     },
     {
       speech: `Yang masih ragu, fokuskan dulu: ${fact}. Baru putuskan.`,
       topic: "objection",
       mode: "OBJECTION",
+      behavior: "thinking",
     },
     {
       speech: `${name} cocok kalau ${need} memang prioritasmu sekarang.`,
       topic: "buyer_fit",
       mode: "ENGAGE",
+      behavior: "audience_engagement",
     },
     {
       speech: `Mau lanjut? Cek ${name} di etalase — live ${price}.`,
       topic: "soft_cta",
       mode: "SELL",
       cta: "SOFT",
+      behavior: "soft_cta",
     },
   ];
   return speeches.map((s) =>
-    line(s.speech, s.topic, s.mode, s.cta ? { ctaType: s.cta } : undefined),
+    line(s.speech, s.topic, s.mode, {
+      ctaType: s.cta,
+      behavior: s.behavior,
+    }),
   );
 }
 
@@ -459,8 +537,15 @@ function line(
 ): HostResponse {
   const emotions: LunaEmotion[] = ["warm", "neutral", "happy", "excited"];
   const maxWords = FILLER_TOPICS.has(topic) ? 16 : 32;
+  const clamped = clampSpeech(speech, maxWords);
+  const semanticKey = extras?.semanticKey || inferSemanticKey(clamped, topic);
+  const salesRule =
+    extras?.salesRule ||
+    (extras?.ctaType && extras.ctaType !== "NONE"
+      ? inferSalesRule(topic, extras.ctaType) || undefined
+      : undefined);
   return {
-    speech: clampSpeech(speech, maxWords),
+    speech: clamped,
     action: extras?.action
       ? normalizeLunaAction(extras.action)
       : inferCtaPointAction(speech, topic),
@@ -472,7 +557,19 @@ function line(
     target_product_id: extras?.target_product_id ?? null,
     interruptible: extras?.interruptible ?? true,
     claims: extras?.claims || [],
+    behavior: extras?.behavior,
+    semanticKey,
+    salesRule: salesRule || undefined,
+    cycleId: extras?.cycleId,
   };
+}
+
+function ref(
+  product: ScriptProductFacts,
+  entryMode: ProductEntryMode = "continuing",
+  forceName = false,
+): string {
+  return productReference(product.name || "produk ini", entryMode, { forceName });
 }
 
 function pickFact(facts: string[], fallback: string): string {
@@ -527,59 +624,67 @@ function fillerLines(product: ScriptProductFacts): HostResponse[] {
   );
 }
 
-function promoPitchLines(product: ScriptProductFacts): HostResponse[] {
-  const name = product.name || "produk ini";
+function promoPitchLines(
+  product: ScriptProductFacts,
+  entryMode: ProductEntryMode = "continuing",
+): HostResponse[] {
+  const name = ref(product, entryMode);
   const price = product.price || "harga live";
-  const benefit = pickFact(splitFacts(product.benefits), pickFact(splitFacts(product.description), `kelebihan ${name}`));
+  const benefit = pickFact(
+    splitFacts(product.benefits),
+    pickFact(splitFacts(product.description), `kelebihan ${product.name || "produk ini"}`),
+  );
   const usage = pickFact(splitFacts(product.usage), "ikutin cara pakai di kemasan");
   return [
     line(
       `${greet()}yang lagi dicari: ${name}. Plus-nya ${benefit}. Live price ${price} — cek keranjang kalau cocok.`,
       "promo_pitch",
       "SELL",
-      { ctaType: "SOFT" },
+      { ctaType: "SOFT", behavior: "soft_cta" },
     ),
     line(
       `Hook singkat: ${name} fokus buat yang butuh ${benefit}. Harganya ${price}. Nggak dipaksa, cek dulu.`,
       "promo_pitch",
       "SELL",
-      { ctaType: "SOFT" },
+      { ctaType: "SOFT", behavior: "clarification" },
     ),
     line(
       `${greet()}${name} — ${benefit}. Cara pakainya ${usage}. Live ${price}, keranjang siap kalau kamu yakin.`,
       "promo_pitch",
       "SELL",
-      { ctaType: "DIRECT" },
+      { ctaType: "DIRECT", behavior: "direct_cta" },
     ),
     line(
       `Kalau fokusnya ${benefit}, coba lihat ${name} di live ini ${price}. Soft aja: cek keranjangnya.`,
       "promo_pitch",
       "SELL",
-      { ctaType: "SOFT" },
+      { ctaType: "SOFT", behavior: "soft_cta" },
     ),
     line(
       `${greet()}ringkas: ${name}, ${benefit}, harga ${price}. Kalau nyambung, baru klik keranjang.`,
       "promo_pitch",
       "SELL",
-      { ctaType: "SOFT" },
+      { ctaType: "SOFT", behavior: "soft_cta" },
     ),
     line(
-      `Bestie yang nanya ${name} — ${benefit}, live cuma ${price}.`,
+      `Yang nanya ${name} — ${benefit}, live ${price}.`,
       "promo_pitch",
       "SELL",
-      { ctaType: "SOFT" },
+      { ctaType: "SOFT", behavior: "answer" },
     ),
     line(
-      `${greet()}lagi viral nih yang nyari ${name}. ${benefit}. ${price} di live.`,
+      `${greet()}banyak yang nanya ${name}. ${benefit}. ${price} di live.`,
       "promo_pitch",
       "SELL",
-      { ctaType: "DIRECT" },
+      { ctaType: "DIRECT", behavior: "observation" },
     ),
     line(
-      `Yang baru join, kita bahas ${name}: ${benefit}. Harganya ${price}.`,
+      entryMode === "new_viewer" || entryMode === "first_intro"
+        ? `Yang baru join, kita bahas ${name}: ${benefit}. Harganya ${price}.`
+        : `Sekilas lagi soal ${name}: ${benefit}. Harganya ${price}.`,
       "promo_pitch",
       "SELL",
-      { ctaType: "SOFT" },
+      { ctaType: "SOFT", behavior: "audience_engagement" },
     ),
   ];
 }
@@ -663,7 +768,7 @@ function stockLines(
         { intent: "ANNOUNCEMENT", ctaType: "SOFT" },
       ),
       line(
-        `Info stok: ${name} sisa ${stock}. Itu angka etalase, bukan drama.`,
+        `Info stok: ${name} sisa ${stock}. Itu angka etalase saat ini.`,
         "value",
         "ENGAGE",
         { intent: "ANNOUNCEMENT" },
@@ -673,28 +778,27 @@ function stockLines(
   return lines;
 }
 
-function bannerLines(product: ScriptProductFacts): HostResponse[] {
+function bannerLines(
+  product: ScriptProductFacts,
+  entryMode: ProductEntryMode = "continuing",
+): HostResponse[] {
   if (!product.hasBanner) return [];
-  const name = product.name || "produk ini";
-  return [
-    line(
-      `${greet()}lihat banner atas ya — ringkasan ${name} ada di situ biar gampang dicek.`,
-      "banner_callout",
-      "ENGAGE",
-      { intent: "SOCIAL" },
-    ),
-    line(
-      `Banner bawah juga nunjukin ${name}. Kalau chat rame, banner tetap kebaca.`,
-      "banner_callout",
-      "SELL",
-      { intent: "SOCIAL" },
-    ),
-    line(
-      `${greet()}nggak harus buru-buru. Banner atas-bawah udah nunjukin info ${name}.`,
-      "banner_callout",
-      "ENGAGE",
-    ),
-  ];
+  const name = ref(product, entryMode);
+  const contexts: BannerCTAContext[] =
+    entryMode === "re_entry"
+      ? ["product_transition", "soft_reminder", "detail", "checkout"]
+      : entryMode === "first_intro" || entryMode === "new_viewer"
+        ? ["new_viewer", "info", "detail", "price"]
+        : ["info", "price", "variant", "detail", "checkout", "soft_reminder", "confused_buyer", "audience_question"];
+  return contexts.map((ctx) => {
+    const built = buildBannerCtaSpeech(name, ctx);
+    return line(built.speech, "banner_callout", ctx === "checkout" ? "SELL" : "ENGAGE", {
+      intent: "SOCIAL",
+      ctaType: "SOFT",
+      salesRule: built.salesRule,
+      behavior: "soft_cta",
+    });
+  });
 }
 
 function deflectionLines(product: ScriptProductFacts): HostResponse[] {
@@ -724,12 +828,13 @@ function deflectionLines(product: ScriptProductFacts): HostResponse[] {
 function combinatorialLines(
   product: ScriptProductFacts,
   catalog: Array<{ name: string }>,
+  entryMode: ProductEntryMode = "continuing",
 ): HostResponse[] {
-  const name = product.name || "produk ini";
+  const name = ref(product, entryMode);
   const price = product.price || "harga live";
   const need = domainNeed(product.category || "");
   const facts = factChunks(product);
-  const other = catalog.find((item) => item.name && item.name !== name)?.name;
+  const other = catalog.find((item) => item.name && item.name !== product.name)?.name;
 
   const frames: Array<{
     topic: string;
@@ -777,13 +882,13 @@ function combinatorialLines(
       ? `${name} soal ${fact}. Kalau mau opsi lain, ada ${other} di etalase.`
       : `Fokus ${name} dulu: ${fact}.` },
     { topic: "promo_pitch", mode: "SELL", build: (fact) => `${greet()}yang lagi scroll, ${name} ${price} — ${fact}.`, extras: { ctaType: "SOFT" } },
-    { topic: "promo_pitch", mode: "SELL", build: (fact) => `Bestie, ${name} worth banget kalau ${fact}.`, extras: { ctaType: "SOFT" } },
+    { topic: "promo_pitch", mode: "SELL", build: (fact) => `Kalau ${fact} penting buatmu, ${name} patut dicek.`, extras: { ctaType: "SOFT" } },
     { topic: "benefit", mode: "SELL", build: (fact) => `Ini yang bikin ${name} beda: ${fact}.`, extras: { ctaType: "NONE" } },
-    { topic: "benefit", mode: "ENGAGE", build: (fact) => `${greet()}trust me, ${fact} — itu kekuatan ${name}.` },
-    { topic: "value", mode: "SELL", build: (fact) => `Harga ${price}, dapat ${fact}. Hitung sendiri worth-nya.`, extras: { ctaType: "PRICE", intent: "PRICE" } },
+    { topic: "benefit", mode: "ENGAGE", build: (fact) => `${greet()}dari info produknya, ${fact} — itu kekuatan ${name}.` },
+    { topic: "value", mode: "SELL", build: (fact) => `Harga ${price}, dapat ${fact}. Hitung sendiri apakah masuk.`, extras: { ctaType: "PRICE", intent: "PRICE" } },
     { topic: "objection", mode: "OBJECTION", build: (fact) => `Takut nggak cocok? Cek dulu: ${fact}.`, extras: { intent: "OBJECTION" } },
     { topic: "use_case", mode: "ENGAGE", build: (fact) => `Pas banget ${name} kalau ${fact}.`, extras: { intent: "SOCIAL" } },
-    { topic: "micro_tip", mode: "DEMO", build: (fact) => `${greet()}pro tip pakai ${name}: ${fact}.` },
+    { topic: "micro_tip", mode: "DEMO", build: (fact) => `${greet()}tips pakai ${name}: ${fact}.` },
     { topic: "closing_loop", mode: "CLOSING", build: (fact) => `Udah jelas kan? ${name} — ${fact}. ${price}.`, extras: { ctaType: "SOFT" } },
   ];
 
@@ -933,16 +1038,41 @@ export function pickScriptBankCommentLine(
   return bestScore >= 2 ? best : null;
 }
 
-/** Preferensi topik berdasarkan fase sesi (menit). Marathon 8–24 jam punya rotasi lebih lebar. */
-export function phasePreferTopics(elapsedMinutes: number): string[] {
+/** Preferensi topik berdasarkan fase sesi (menit) + offset cycle marathon. */
+export function phasePreferTopics(elapsedMinutes: number, cycleId?: number): string[] {
+  const cycle = cycleId ?? marathonCycleId(elapsedMinutes);
+  const cycleTopics = preferredAnglesForCycle(cycle).map((angle) => {
+    const map: Record<string, string> = {
+      benefit: "benefit",
+      feature: "benefit",
+      usage: "how_to_use",
+      discovery: "micro_tip",
+      problem_solution: "problem",
+      target_audience: "buyer_fit",
+      common_mistake: "reframe",
+      how_to_choose: "comparison",
+      scenario: "use_case",
+      comparison: "comparison",
+      faq: "faq",
+      objection: "objection",
+      story: "mini_story",
+      engagement: "social_engagement",
+      observation: "social_engagement",
+      care: "micro_tip",
+      variant: "catalog_bridge",
+      price_context: "price_context",
+      catalog: "catalog_bridge",
+    };
+    return map[angle] || "benefit";
+  });
+
+  let base: string[];
   if (elapsedMinutes < 8) {
-    return ["problem", "benefit", "social_engagement", "buyer_fit", "how_to_use", "micro_tip"];
-  }
-  if (elapsedMinutes < 45) {
-    return ["how_to_use", "value", "faq", "objection", "micro_tip", "use_case", "promo_pitch", "benefit"];
-  }
-  if (elapsedMinutes < 180) {
-    return [
+    base = ["problem", "benefit", "social_engagement", "buyer_fit", "how_to_use", "micro_tip"];
+  } else if (elapsedMinutes < 45) {
+    base = ["how_to_use", "value", "faq", "objection", "micro_tip", "use_case", "promo_pitch", "benefit"];
+  } else if (elapsedMinutes < 180) {
+    base = [
       "value",
       "faq",
       "objection",
@@ -956,9 +1086,8 @@ export function phasePreferTopics(elapsedMinutes: number): string[] {
       "price_context",
       "buyer_fit",
     ];
-  }
-  if (elapsedMinutes < 480) {
-    return [
+  } else if (elapsedMinutes < 480) {
+    base = [
       "benefit",
       "use_case",
       "value",
@@ -972,21 +1101,23 @@ export function phasePreferTopics(elapsedMinutes: number): string[] {
       "reframe",
       "mini_story",
     ];
+  } else {
+    base = [
+      "closing_loop",
+      "soft_cta",
+      "value",
+      "promo_pitch",
+      "catalog_bridge",
+      "social_engagement",
+      "buyer_fit",
+      "benefit",
+      "use_case",
+      "micro_tip",
+      "reframe",
+      "faq",
+    ];
   }
-  return [
-    "closing_loop",
-    "soft_cta",
-    "value",
-    "promo_pitch",
-    "catalog_bridge",
-    "social_engagement",
-    "buyer_fit",
-    "benefit",
-    "use_case",
-    "micro_tip",
-    "reframe",
-    "faq",
-  ];
+  return preferFreshTopics([...cycleTopics, ...base], undefined, cycle);
 }
 
 export function nextRhythmTopic(slotCursor: number): { topic: string; nextCursor: number } {
@@ -1002,13 +1133,34 @@ export interface TakeScriptOptions {
   preferFiller?: boolean;
   avoidCta?: boolean;
   recentTopics?: string[];
+  productMemory?: ProductMemory;
+  salesMemory?: SalesRuleMemory;
+  conversation?: HostConversationMemory;
+  now?: number;
+  cycleId?: number;
+  preferUnusedAngles?: boolean;
+}
+
+export interface SeedScriptOptions {
+  entryMode?: ProductEntryMode;
+  productMemory?: ProductMemory;
+  cycleId?: number;
 }
 
 export function seedLocalScriptBank(
   product: ScriptProductFacts,
   catalog: Array<{ name: string; benefits?: string }>,
+  options?: SeedScriptOptions,
 ): HostResponse[] {
-  const name = product.name || "produk ini";
+  const entryMode: ProductEntryMode =
+    options?.entryMode ||
+    options?.productMemory?.entryMode ||
+    "continuing";
+  const cycleId = options?.cycleId ?? 0;
+  const name =
+    entryMode === "first_intro"
+      ? ref(product, entryMode, true)
+      : ref(product, entryMode);
   const price = product.price || "harga live";
   const category = product.category || "kebutuhan sehari-hari";
   const merged = mergeProductKnowledge(product.description, {
@@ -1025,8 +1177,8 @@ export function seedLocalScriptBank(
   const anyFact =
     pickFact(benefits, "") ||
     pickFact(description, "") ||
-    pickFact(copyLines, `keunggulan ${name} yang paling kerasa`) ||
-    `info resmi ${name}`;
+    pickFact(copyLines, `keunggulan ${product.name || "produk ini"} yang paling kerasa`) ||
+    `info resmi ${product.name || "produk ini"}`;
 
   const audienceLines: HostResponse[] = audience.length
     ? audience.map((fact) =>
@@ -1034,93 +1186,165 @@ export function seedLocalScriptBank(
           `${greet()}${name} cocok buat yang ${fact}.`,
           "buyer_fit",
           "ENGAGE",
+          { behavior: "audience_engagement", cycleId },
         ),
       )
     : [];
 
   const copywritingLines: HostResponse[] = copyLines.length
     ? copyLines.map((fact) =>
-        line(
-          `${greet()}${fact}`,
-          "benefit",
-          "SELL",
-        ),
+        line(`${greet()}${fact}`, "benefit", "SELL", { behavior: "clarification", cycleId }),
       )
     : [];
 
+  const reEntryLead: HostResponse[] =
+    entryMode === "re_entry"
+      ? [
+          line(
+            `Tadi kita sempat bahas ${name}. Sekarang aku mau lihat dari sisi yang belum sempat dibahas.`,
+            "reframe",
+            "ENGAGE",
+            { behavior: "transition", cycleId },
+          ),
+          line(
+            `Balik lagi ke ${name} — angle-nya beda dari sebelumnya ya.`,
+            "reframe",
+            "ENGAGE",
+            { behavior: "transition", cycleId },
+          ),
+        ]
+      : [];
+
   const drafts: HostResponse[] = [
+    ...reEntryLead,
     line(
-      `${greet()}kalau sering ribet soal ${category}, ${name} ngebantu di ${anyFact}.`,
+      entryMode === "re_entry"
+        ? `Kalau dari sisi ${category}, ${name} masih relevan karena ${anyFact}.`
+        : `${greet()}kalau sering ribet soal ${category}, ${name} ngebantu di ${anyFact}.`,
       "problem",
       "ENGAGE",
+      { behavior: entryMode === "re_entry" ? "transition" : "observation", cycleId },
     ),
     line(
       `Yang paling kepakai dari ${name}: ${pickFact(benefits, anyFact)}. Pilih yang ketemu kebutuhanmu.`,
       "benefit",
       "SELL",
+      { behavior: "clarification", cycleId },
     ),
     line(
       `Cara pakainya jangan dibikin ribet: ${pickFact(usage, "ikutin petunjuk di kemasan aja")}.`,
       "how_to_use",
       "DEMO",
+      { behavior: "product_demo", cycleId },
     ),
     line(
       `${name} lebih nyambung buat yang cari solusi ${category}, bukan yang cuma ikut ramai.`,
       "buyer_fit",
       "ENGAGE",
+      { behavior: "audience_engagement", cycleId },
     ),
     line(
       `Masih ragu? Wajar banget. Yang sering ditanya: ${pickFact(faq, anyFact)}.`,
       "objection",
       "OBJECTION",
+      { behavior: "thinking", cycleId },
     ),
     line(
       `Soal value, ukur ${pickFact(benefits, anyFact)} versus harga live ${price}.`,
       "value",
       "SELL",
+      { behavior: "comparison", cycleId },
     ),
     ...audienceLines,
     ...copywritingLines,
-    ...promoPitchLines(product),
+    ...promoPitchLines(product, entryMode),
     ...fillerLines(product),
     ...bridgeLines(product, catalog),
     ...stockLines(product, catalog),
     ...deflectionLines(product),
-    ...bannerLines(product),
+    ...bannerLines(product, entryMode),
     ...faqAnswerLines(product.faqPack?.length ? product.faqPack : buildDefaultFaqPack(product)),
-    ...intentAgnosticHooks(product),
+    ...intentAgnosticHooks(product, entryMode),
     ...categorySalesHooks(product),
     ...crossFactLines(product),
-    ...combinatorialLines(product, catalog),
-  ];
+    ...combinatorialLines(product, catalog, entryMode),
+  ].map((item) => ({
+    ...item,
+    cycleId: item.cycleId ?? cycleId,
+    semanticKey: item.semanticKey || inferSemanticKey(item.speech, item.topic),
+  }));
 
+  const hotKeys = avoidAnglesFromMemory(options?.productMemory);
   const unique: HostResponse[] = [];
   const seen = new Set<string>();
+  const deferred: HostResponse[] = [];
+
   for (const item of shuffled(drafts)) {
     const key = normalize(item.speech);
     const minWords = FILLER_TOPICS.has(item.topic) ? 5 : 8;
     if (!key || seen.has(key) || item.speech.split(" ").length < minWords) continue;
+    const sem = item.semanticKey || inferSemanticKey(item.speech, item.topic);
+    if (hotKeys.has(sem) || hotKeys.has(normalize(item.topic || ""))) {
+      deferred.push(item);
+      continue;
+    }
     seen.add(key);
     unique.push(item);
     if (unique.length >= SCRIPT_BANK_CAP) break;
   }
+  // Isi sisa kapasitas dengan deferred (angle lama) hanya jika perlu.
+  for (const item of deferred) {
+    if (unique.length >= SCRIPT_BANK_CAP) break;
+    const key = normalize(item.speech);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item);
+  }
   return unique;
 }
 
-/** Isi ulang lokal tanpa LLM — multi-round shuffle + parafrase agar marathon tidak loop. */
+/** Isi ulang lokal tanpa LLM — multi-round shuffle + parafrase terbatas, memory-aware. */
 export function recycleLocalScriptBank(
   product: ScriptProductFacts,
   catalog: Array<{ name: string; benefits?: string }>,
   recent: string[] = [],
+  options?: SeedScriptOptions & { salesMemory?: SalesRuleMemory; now?: number },
 ): HostResponse[] {
   const merged: HostResponse[] = [];
   const seen = new Set<string>();
+  const now = options?.now ?? Date.now();
   for (let round = 0; round < RECYCLE_ROUNDS; round++) {
-    const fresh = withParaphraseVariants(seedLocalScriptBank(product, catalog));
+    const fresh = withParaphraseVariants(
+      seedLocalScriptBank(product, catalog, {
+        entryMode: options?.entryMode,
+        productMemory: options?.productMemory,
+        cycleId: options?.cycleId,
+      }),
+    );
     for (const item of shuffled(fresh)) {
       const key = normalize(item.speech);
       if (!key || seen.has(key)) continue;
       if (similarToAny(item.speech, recent) || sharesOpening(item.speech, recent)) continue;
+      const content = contentRepeatGuard({
+        speech: item.speech,
+        topic: item.topic,
+        ctaType: item.ctaType,
+        recentSpeeches: recent,
+        productMemory: options?.productMemory,
+        now,
+      });
+      if (content.blocked && item.ctaType === "NONE") continue;
+      const sales = salesRuleGuard({
+        salesRule: (item.salesRule as SalesRule | undefined) || inferSalesRule(item.topic, item.ctaType),
+        ctaType: item.ctaType,
+        topic: item.topic,
+        salesMemory: options?.salesMemory,
+        now,
+        ctaCooldownMs: CTA_COOLDOWN_MS,
+        bannerCooldownMs: BANNER_CTA_COOLDOWN_MS,
+        priceCooldownMs: PRICE_MENTION_COOLDOWN_MS,
+      });
+      if (sales.blocked) continue;
       seen.add(key);
       merged.push(item);
       if (merged.length >= RECYCLE_BATCH) break;
@@ -1143,6 +1367,8 @@ export function takeScriptLine(
       ? preferModeOrOptions
       : { preferMode: preferModeOrOptions, preferTopic };
 
+  const now = options.now ?? Date.now();
+  const cycleId = options.cycleId ?? 0;
   const avoidTopics = new Set(
     (options.avoidTopics || []).map((t) => normalize(t)).filter(Boolean),
   );
@@ -1152,40 +1378,102 @@ export function takeScriptLine(
   const primaryTopic = options.preferTopic
     ? normalize(String(options.preferTopic))
     : "";
-  const preferTopics = new Set(
-    (options.preferTopics || [])
-      .map((t) => normalize(String(t)))
-      .filter((t) => Boolean(t) && t !== primaryTopic),
-  );
+  let preferTopicsList = (options.preferTopics || [])
+    .map((t) => normalize(String(t)))
+    .filter((t) => Boolean(t) && t !== primaryTopic);
+  if (options.preferUnusedAngles && options.productMemory) {
+    preferTopicsList = preferFreshTopics(
+      preferTopicsList.length ? preferTopicsList : RHYTHM_SLOTS.slice(),
+      options.productMemory,
+      cycleId,
+    );
+  }
+  const preferTopics = new Set(preferTopicsList);
+  const cycleAngles = new Set(preferredAnglesForCycle(cycleId));
+  const hotSemantic = avoidAnglesFromMemory(options.productMemory, now);
 
   const rank = (item: HostResponse): number => {
     let score = 0;
     const topicKey = normalize(item.topic || "");
     if (options.preferFiller && FILLER_TOPICS.has(item.topic)) score += 8;
-    // Slot ritme (+9) di atas topik fase (+5) — tanpa double-count preferTopic.
     if (primaryTopic && topicKey === primaryTopic) score += 9;
     else if (preferTopics.has(topicKey)) score += 5;
     if (options.preferMode && item.mode === options.preferMode) score += 2;
     if (!similarToAny(item.speech, recent)) score += 4;
     if (!sharesOpening(item.speech, recent)) score += 3;
     if (!hasRecentGreetingClass(item.speech, recent, 8)) score += 2;
-    // Marathon: hindari topik yang sama beruntun lebih agresif
     if (recentTopics.has(topicKey)) score -= 8;
     if (options.avoidCta && item.ctaType && item.ctaType !== "NONE") score -= 5;
     if (avoidTopics.has(topicKey)) score -= 6;
     if (FILLER_TOPICS.has(item.topic) && !options.preferFiller) score -= 6;
+
+    const sem = item.semanticKey || inferSemanticKey(item.speech, item.topic);
+    if (hotSemantic.has(sem)) score -= 10;
+    if (cycleAngles.size && options.preferUnusedAngles) {
+      if (preferTopics.has(topicKey)) score += 2;
+    }
+
+    const content = contentRepeatGuard({
+      speech: item.speech,
+      topic: item.topic,
+      ctaType: item.ctaType,
+      recentSpeeches: recent,
+      recentTopics: options.recentTopics,
+      productMemory: options.productMemory,
+      now,
+    });
+    if (content.blocked && item.ctaType === "NONE") score -= 20;
+    else score -= Math.round(content.score.overall * 8);
+
+    const sales = salesRuleGuard({
+      salesRule: (item.salesRule as SalesRule | undefined) || inferSalesRule(item.topic, item.ctaType),
+      ctaType: item.ctaType,
+      topic: item.topic,
+      salesMemory: options.salesMemory,
+      now,
+    });
+    if (sales.blocked) score -= 15;
+
     return score;
   };
 
-  let bestIndex = 0;
+  let bestIndex = -1;
   let bestScore = -Infinity;
   for (let i = 0; i < bank.lines.length; i++) {
-    const score = rank(bank.lines[i]!);
+    const item = bank.lines[i]!;
+    // Hard reject exact content repeats (non-CTA).
+    if (
+      item.ctaType === "NONE" &&
+      recent.some((r) => isExactRepeat(item.speech, r))
+    ) {
+      continue;
+    }
+    const sales = salesRuleGuard({
+      salesRule: (item.salesRule as SalesRule | undefined) || inferSalesRule(item.topic, item.ctaType),
+      ctaType: item.ctaType,
+      topic: item.topic,
+      salesMemory: options.salesMemory,
+      now,
+    });
+    if (sales.blocked && !options.preferFiller) continue;
+
+    const score = rank(item);
     if (score > bestScore) {
       bestScore = score;
       bestIndex = i;
     }
   }
+
+  if (bestIndex < 0) {
+    // Fallback: allow any non-exact line.
+    for (let i = 0; i < bank.lines.length; i++) {
+      const item = bank.lines[i]!;
+      if (recent.some((r) => isExactRepeat(item.speech, r))) continue;
+      bestIndex = i;
+      break;
+    }
+  }
+  if (bestIndex < 0) return null;
 
   const [picked] = bank.lines.splice(bestIndex, 1);
   return picked || null;

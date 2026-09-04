@@ -277,6 +277,10 @@ export const HostResponseSchema = z.object({
   target_product_id: z.string().nullable().default(null),
   interruptible: z.boolean().default(true),
   claims: z.array(z.string()).default([]),
+  behavior: z.string().optional(),
+  semanticKey: z.string().optional(),
+  salesRule: z.string().optional(),
+  cycleId: z.number().optional(),
 });
 export type HostResponse = z.infer<typeof HostResponseSchema>;
 

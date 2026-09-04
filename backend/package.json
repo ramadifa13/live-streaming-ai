@@ -8,6 +8,7 @@
     "build": "node ./scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "lint": "tsc --noEmit",
+    "test:script-bank": "tsx --test src/services/live-script-bank.test.ts",
     "piper:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File piper_tts/setup.ps1",
     "tts:test": "tsx test-tts.ts"
   },

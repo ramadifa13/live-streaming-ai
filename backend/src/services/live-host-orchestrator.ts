@@ -24,12 +24,16 @@ import {
   commentNeedsLlm,
   countFreshScriptLines,
   detectGreetingClass,
+  emptyHostConversationMemory,
   emptyScriptBank,
   FILLER_TOPICS,
+  getOrCreateProductMemory,
   hasRecentGreetingClass,
+  marathonCycleId,
   mergeScriptLines,
   nextRhythmTopic,
   phasePreferTopics,
+  recordSpeechUsage,
   recycleLocalScriptBank,
   remainingScriptLines,
   RHYTHM_SLOTS,
@@ -38,8 +42,11 @@ import {
   pickScriptBankCommentLine,
   stripLeadingGreeting,
   takeScriptLine,
+  touchProductVisit,
   shouldUseLlmForComment,
   type FaqPackEntry,
+  type HostConversationMemory,
+  type ProductMemory,
   type ScriptBankState,
   type ScriptProductFacts,
 } from "./live-script-bank.js";
@@ -198,6 +205,10 @@ interface HostRuntimeState {
   productCacheExpiresAt: number;
 
   memory: HostMemory;
+  /** Marathon conversation memory (CTA cooldown, cycle, recent products). */
+  conversation: HostConversationMemory;
+  /** Per-product memory — survives product switches (P1→P2→P3→P1). */
+  productMemories: Map<string, ProductMemory>;
   pendingComments: PendingComment[];
   processedCommentIds: Set<string>;
 
@@ -679,6 +690,18 @@ class LiveHostOrchestrator {
       state.catalog.find((item) => item.id === productId) ||
       (state.config.product?.id === productId ? state.config.product : undefined);
 
+    // Persist memory produk lama — jangan dihapus saat ganti banner/produk.
+    if (state.product?.id) {
+      const prev = getOrCreateProductMemory(state.productMemories, state.product.id);
+      state.conversation.recentProducts.push(state.product.id);
+      state.conversation.recentProducts = state.conversation.recentProducts.slice(-24);
+      if (state.product.category) {
+        state.conversation.recentCategories.push(state.product.category);
+        state.conversation.recentCategories = state.conversation.recentCategories.slice(-24);
+      }
+      void prev;
+    }
+
     state.config.productId = productId;
     if (found) {
       state.config.product = found;
@@ -687,6 +710,15 @@ class LiveHostOrchestrator {
       state.product = undefined;
     }
     state.productCacheExpiresAt = found ? Date.now() + PRODUCT_CACHE_TTL_MS : 0;
+
+    const productMemory = touchProductVisit(
+      getOrCreateProductMemory(state.productMemories, productId),
+    );
+    const elapsedMinutes = Math.round(this.elapsedMs(state) / 60_000);
+    const cycleId = marathonCycleId(elapsedMinutes);
+    state.conversation.currentCycle = cycleId;
+
+    // Reset bank untuk produk baru, tapi seed dengan entryMode dari memory (re_entry vs first).
     state.scriptBank = emptyScriptBank(productId);
     if (found?.scriptBank?.length) {
       state.scriptBank.lines = found.scriptBank.slice();
@@ -696,10 +728,15 @@ class LiveHostOrchestrator {
     state.memory.topics.push("product_switch");
     state.currentMode = "ENGAGE";
     state.modeStartedAt = Date.now();
-    state.slotCursor = 0;
+    // Re-entry: jangan paksa cursor ke 0 supaya ritme tidak selalu intro yang sama.
+    if (productMemory.entryMode === "re_entry") {
+      state.slotCursor = Math.max(state.slotCursor, 3);
+    } else {
+      state.slotCursor = 0;
+    }
 
     console.log(
-      `[LiveHost] 🔄 Product switched: session=${sessionId}, product=${productId}`,
+      `[LiveHost] 🔄 Product switched: session=${sessionId}, product=${productId}, entry=${productMemory.entryMode}, visits=${productMemory.visitCount}`,
     );
   }
 
@@ -759,6 +796,8 @@ class LiveHostOrchestrator {
         lastCommentResponseAt: 0,
         lastSalesAt: 0,
       },
+      conversation: emptyHostConversationMemory(now),
+      productMemories: new Map(),
       pendingComments: [],
       processedCommentIds: new Set(),
       currentMode: "ENGAGE",
@@ -1142,21 +1181,39 @@ class LiveHostOrchestrator {
     }
     if (remainingScriptLines(state.scriptBank) > 0) return;
 
+    const productMemory = getOrCreateProductMemory(state.productMemories, product.id);
+    if (productMemory.visitCount === 0) {
+      touchProductVisit(productMemory);
+    }
+    const elapsedMinutes = Math.round(this.elapsedMs(state) / 60_000);
+    const cycleId = marathonCycleId(elapsedMinutes);
+    state.conversation.currentCycle = cycleId;
+    const seedOpts = {
+      entryMode: productMemory.entryMode,
+      productMemory,
+      cycleId,
+    };
+
     if (product.scriptBank && product.scriptBank.length > 0) {
       state.scriptBank.lines = product.scriptBank.slice();
       // Pastikan selalu ada filler lokal agar buffer rendah tidak idle.
       mergeScriptLines(
         state.scriptBank,
-        recycleLocalScriptBank(this.toScriptFacts(product), state.catalog).filter((l) =>
-          FILLER_TOPICS.has(l.topic),
-        ),
+        recycleLocalScriptBank(this.toScriptFacts(product), state.catalog, [], {
+          ...seedOpts,
+          salesMemory: state.conversation.sales,
+        }).filter((l) => FILLER_TOPICS.has(l.topic)),
         state.memory.utterances.slice(-12),
       );
     } else {
-      state.scriptBank.lines = seedLocalScriptBank(this.toScriptFacts(product), state.catalog);
+      state.scriptBank.lines = seedLocalScriptBank(
+        this.toScriptFacts(product),
+        state.catalog,
+        seedOpts,
+      );
     }
     console.log(
-      `[LiveHost] Script bank seeded: session=${state.config.sessionId} lines=${state.scriptBank.lines.length} source=${product.scriptBank?.length ? "payload+local-filler" : "local"}`,
+      `[LiveHost] Script bank seeded: session=${state.config.sessionId} lines=${state.scriptBank.lines.length} entry=${productMemory.entryMode} cycle=${cycleId} source=${product.scriptBank?.length ? "payload+local-filler" : "local"}`,
     );
   }
 
@@ -1172,6 +1229,17 @@ class LiveHostOrchestrator {
 
     const recentWindow = policy.memoryUtterances >= 55 ? 36 : 24;
     const recent = state.memory.utterances.slice(-recentWindow);
+    const productMemory = state.product
+      ? getOrCreateProductMemory(state.productMemories, state.product.id)
+      : undefined;
+    const elapsedMinutes = Math.round(this.elapsedMs(state) / 60_000);
+    const cycleId = marathonCycleId(elapsedMinutes);
+    const recycleOpts = {
+      entryMode: productMemory?.entryMode,
+      productMemory,
+      cycleId,
+      salesMemory: state.conversation.sales,
+    };
 
     const remaining = remainingScriptLines(state.scriptBank);
     const freshCount = countFreshScriptLines(state.scriptBank, recent);
@@ -1184,6 +1252,7 @@ class LiveHostOrchestrator {
       this.toScriptFacts(state.product),
       state.catalog,
       recent,
+      recycleOpts,
     );
     const addedLocal = mergeScriptLines(state.scriptBank, recycled, recent);
     state.scriptBank.lastRefillAt = Date.now();
@@ -1252,6 +1321,12 @@ class LiveHostOrchestrator {
       this.toScriptFacts(product),
       state.catalog,
       state.memory.utterances.slice(-24),
+      {
+        entryMode: getOrCreateProductMemory(state.productMemories, product.id).entryMode,
+        productMemory: getOrCreateProductMemory(state.productMemories, product.id),
+        cycleId: marathonCycleId(Math.round(this.elapsedMs(state) / 60_000)),
+        salesMemory: state.conversation.sales,
+      },
     );
     const added = mergeScriptLines(
       state.scriptBank,
@@ -1282,18 +1357,30 @@ class LiveHostOrchestrator {
 
     this.seedScriptBank(state, product);
     this.maybeRefillScriptBank(sessionId);
+    const productMemory = getOrCreateProductMemory(state.productMemories, product.id);
+    const elapsedMinutes = Math.round(this.elapsedMs(state) / 60_000);
+    const cycleId = marathonCycleId(elapsedMinutes);
+    state.conversation.currentCycle = cycleId;
+    const memoryOpts = {
+      entryMode: productMemory.entryMode,
+      productMemory,
+      cycleId,
+      salesMemory: state.conversation.sales,
+    };
     // Hardening: bank kosong / hampir habis → inject recycle lokal segera (hindari host diam).
     if (remainingScriptLines(state.scriptBank) < 8) {
       const boost = recycleLocalScriptBank(
         this.toScriptFacts(product),
         state.catalog,
         state.memory.utterances.slice(-16),
+        memoryOpts,
       );
       mergeScriptLines(state.scriptBank, boost, state.memory.utterances.slice(-16));
       if (remainingScriptLines(state.scriptBank) === 0) {
         state.scriptBank.lines = seedLocalScriptBank(
           this.toScriptFacts(product),
           state.catalog,
+          memoryOpts,
         );
       }
     }
@@ -1314,35 +1401,50 @@ class LiveHostOrchestrator {
     // Filler hanya saat kritis — jangan prefer hanya karena ritme/slot filler.
     const preferFiller = bufferCritical;
 
-    const elapsedMinutes = Math.round(this.elapsedMs(state) / 60_000);
-    const phaseTopics = phasePreferTopics(elapsedMinutes);
+    const phaseTopics = phasePreferTopics(elapsedMinutes, cycleId);
+    const takeOptsBase = {
+      productMemory,
+      salesMemory: state.conversation.sales,
+      now: Date.now(),
+      cycleId,
+      preferUnusedAngles: true,
+      recentTopics,
+    };
 
     let hostResponse =
       takeScriptLine(state.scriptBank, recent, {
+        ...takeOptsBase,
         preferMode: requestedMode,
         preferTopic: topic.topic,
         preferTopics: [topic.topic, ...phaseTopics],
         avoidTopics: recentTopics,
         preferFiller,
         avoidCta,
-        recentTopics,
       }) ||
       takeScriptLine(state.scriptBank, recent, {
+        ...takeOptsBase,
         preferMode: requestedMode,
         preferFiller: false,
         avoidCta,
-        recentTopics,
       }) ||
-      takeScriptLine(state.scriptBank, recent, {}) ||
-      recycleLocalScriptBank(this.toScriptFacts(product), state.catalog, recent)[0];
+      takeScriptLine(state.scriptBank, recent, takeOptsBase) ||
+      recycleLocalScriptBank(
+        this.toScriptFacts(product),
+        state.catalog,
+        recent,
+        memoryOpts,
+      )[0];
 
     if (!hostResponse) {
       // Emergency synthetic — host tidak boleh diam total.
       const facts = this.toScriptFacts(product);
-      const emergencySeed = seedLocalScriptBank(facts, state.catalog);
+      const emergencySeed = seedLocalScriptBank(facts, state.catalog, memoryOpts);
       mergeScriptLines(state.scriptBank, emergencySeed, recent);
       hostResponse =
-        takeScriptLine(state.scriptBank, recent, { preferFiller: true }) ||
+        takeScriptLine(state.scriptBank, recent, {
+          ...takeOptsBase,
+          preferFiller: true,
+        }) ||
         emergencySeed[0] || {
           speech: `${product.name || "Produk ini"} masih tersedia di live, cek etalase ya.`,
           action: "IDLE" as const,
@@ -1377,15 +1479,25 @@ class LiveHostOrchestrator {
       state.counters.duplicateResponsesPrevented++;
       const retry =
         takeScriptLine(state.scriptBank, recent, {
+          ...takeOptsBase,
           preferMode: requestedMode,
           avoidTopics: [hostResponse.topic, ...recentTopics],
           avoidCta: true,
         }) ||
         takeScriptLine(state.scriptBank, recent, {
+          ...takeOptsBase,
           avoidTopics: [hostResponse.topic, ...recentTopics],
         }) ||
-        takeScriptLine(state.scriptBank, recent, { preferFiller: true }) ||
-        recycleLocalScriptBank(this.toScriptFacts(product), state.catalog, recent)[0];
+        takeScriptLine(state.scriptBank, recent, {
+          ...takeOptsBase,
+          preferFiller: true,
+        }) ||
+        recycleLocalScriptBank(
+          this.toScriptFacts(product),
+          state.catalog,
+          recent,
+          memoryOpts,
+        )[0];
       if (retry) {
         const retryAccepted = await this.processHostResponse(
           sessionId,
@@ -1682,6 +1794,27 @@ class LiveHostOrchestrator {
     memory.claims = memory.claims.slice(-policy.memoryClaims);
     memory.modes = memory.modes.slice(-20);
     memory.greetings = memory.greetings.slice(-12);
+
+    const productId = state.product?.id || state.config.productId;
+    if (productId) {
+      const productMemory = getOrCreateProductMemory(state.productMemories, productId);
+      const cycleId =
+        typeof response.cycleId === "number"
+          ? response.cycleId
+          : marathonCycleId(Math.round(this.elapsedMs(state) / 60_000));
+      recordSpeechUsage({
+        productMemory,
+        conversation: state.conversation,
+        speech: response.speech,
+        topic: response.topic,
+        semanticKey: response.semanticKey,
+        salesRule: response.salesRule as any,
+        ctaType: response.ctaType,
+        productId,
+        category: state.product?.category,
+        cycleId,
+      });
+    }
   }
 
   private hasRepeatedStructure(speech: string, recent: string[]): boolean {
@@ -1731,7 +1864,8 @@ class LiveHostOrchestrator {
   private chooseAutonomousTopic(state: HostRuntimeState) {
     const recent = new Set(state.memory.topics.slice(-3));
     const elapsedMinutes = Math.round(this.elapsedMs(state) / 60_000);
-    const phaseBoost = new Set(phasePreferTopics(elapsedMinutes));
+    const cycleId = marathonCycleId(elapsedMinutes);
+    const phaseBoost = new Set(phasePreferTopics(elapsedMinutes, cycleId));
     const bufferCritical =
       state.lastQueue.queuedVideos === 0 ||
       (state.lastQueue.bufferSeconds > 0 && state.lastQueue.bufferSeconds <= 4);
