@@ -73,45 +73,48 @@ def _normalize_to_16k_wav(src_path: str) -> str:
 def _feature_debug_shape(obj) -> str:
     if obj is None:
         return "None"
-    shape = getattr(obj, "shape", None)
-    if shape is not None:
-        return str(shape)
+    if torch.is_tensor(obj):
+        return str(tuple(obj.shape))
     if isinstance(obj, (list, tuple)):
         n = len(obj)
         first = obj[0] if n else None
-        inner = getattr(first, "shape", type(first).__name__)
+        if torch.is_tensor(first):
+            inner = tuple(first.shape)
+        else:
+            inner = getattr(first, "shape", type(first).__name__)
         return f"list[{n}] first={inner}"
     return type(obj).__name__
 
 
-def _coerce_whisper_features(features):
-    """HF extractor kadang mengembalikan list, bukan Tensor."""
-    if features is None:
+def _as_whisper_feature_list(raw_features):
+    """MuseTalk get_audio_feature mengembalikan list of mel tensors (bukan satu Tensor).
+
+    get_whisper_chunk melakukan ``for segment in features`` — jangan di-stack.
+    """
+    if raw_features is None:
         raise ValueError("Whisper features kosong")
-    if hasattr(features, "input_features") and not hasattr(features, "shape"):
-        features = features.input_features
-    elif isinstance(features, dict) and "input_features" in features:
-        features = features["input_features"]
-    if isinstance(features, (list, tuple)):
-        arrs = [np.asarray(x, dtype=np.float32) for x in features]
-        if not arrs:
+    if hasattr(raw_features, "input_features") and not torch.is_tensor(raw_features):
+        raw_features = raw_features.input_features
+    elif isinstance(raw_features, dict) and "input_features" in raw_features:
+        raw_features = raw_features["input_features"]
+
+    if torch.is_tensor(raw_features):
+        items = [raw_features]
+    elif isinstance(raw_features, (list, tuple)):
+        if not raw_features:
             raise ValueError("Whisper features list kosong")
-        try:
-            features = np.stack(arrs, axis=0)
-        except ValueError:
-            features = np.concatenate(
-                [a[None, ...] if a.ndim >= 1 else np.array([a]) for a in arrs],
-                axis=0,
-            )
-    if isinstance(features, np.ndarray):
-        features = torch.from_numpy(features)
-    if not torch.is_tensor(features):
-        features = torch.as_tensor(features)
-    if features.dtype not in (torch.float16, torch.float32, torch.bfloat16):
-        features = features.float()
-    if features.dim() == 2:
-        features = features.unsqueeze(0)
-    return features
+        items = list(raw_features)
+    else:
+        items = [raw_features]
+
+    out = []
+    for item in items:
+        if not torch.is_tensor(item):
+            item = torch.as_tensor(np.asarray(item, dtype=np.float32))
+        if item.dim() == 2:
+            item = item.unsqueeze(0)
+        out.append(item)
+    return out
 
 
 def _extract_pcm_stereo(audio_path: str, sample_rate: int = SAMPLE_RATE) -> bytes:
@@ -315,8 +318,11 @@ class SpeechBridge:
                 f"[SpeechBridge] Audio features: raw={_feature_debug_shape(raw_features)}, "
                 f"librosa_len={librosa_len}"
             )
-            features = _coerce_whisper_features(raw_features)
-            print(f"[SpeechBridge] Audio features tensor: shape={tuple(features.shape)}")
+            features = _as_whisper_feature_list(raw_features)
+            print(
+                f"[SpeechBridge] Audio feature segments={len(features)} "
+                f"first={tuple(features[0].shape)}"
+            )
             chunks = ap.get_whisper_chunk(
                 features,
                 device,
@@ -327,7 +333,12 @@ class SpeechBridge:
                 audio_padding_length_left=2,
                 audio_padding_length_right=2,
             )
-            if not torch.is_tensor(chunks):
+            if isinstance(chunks, (list, tuple)):
+                chunks = torch.cat(
+                    [c if torch.is_tensor(c) else torch.as_tensor(c) for c in chunks],
+                    dim=0,
+                )
+            elif not torch.is_tensor(chunks):
                 chunks = torch.as_tensor(chunks)
             print(f"[SpeechBridge] Whisper chunks: shape={tuple(chunks.shape)}")
         except Exception as e:
