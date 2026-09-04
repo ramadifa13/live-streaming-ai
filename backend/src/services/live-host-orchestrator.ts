@@ -907,8 +907,13 @@ class LiveHostOrchestrator {
     state.broadcastRetryAt = now + 15_000;
 
     const product = state.product || state.config.product;
-    const httpMediaOnly = (url?: string) =>
-      url && /^https?:\/\//i.test(url) ? url : undefined;
+    const liveOverlayMedia = (url?: string) => {
+      const u = (url || "").trim();
+      if (!u) return undefined;
+      if (/^https?:\/\//i.test(u)) return u;
+      if (/^data:image\//i.test(u)) return u;
+      return undefined;
+    };
 
     console.log(
       `[LiveHost] 🔁 Retry start-broadcast (${state.broadcastRetryCount}/8): ${sessionId}`,
@@ -922,8 +927,8 @@ class LiveHostOrchestrator {
         productPrice: product?.price
           ? String(product.price).replace(/\D/g, "")
           : undefined,
-        productImageUrl: httpMediaOnly(product?.image),
-        bannerImageUrl: httpMediaOnly(product?.bannerImage),
+        productImageUrl: liveOverlayMedia(product?.image),
+        bannerImageUrl: liveOverlayMedia(product?.bannerImage),
         hostName: state.config.avatarName || "namira",
         waitForReady: false,
       });

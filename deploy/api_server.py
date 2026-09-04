@@ -1477,7 +1477,25 @@ async def update_stream_product(req: UpdateProductRequest):
         "product_image_url": req.product_image_url or req.productImageUrl or "",
         "banner_image_url": req.banner_image_url or req.bannerImageUrl or "",
     }
-    with open(update_file, "w") as f:
+    # Render overlay dulu (support http + data:image), baru signal hot-reload.
+    try:
+        from broadcaster import prepare_overlay_files
+
+        prepare_overlay_files(
+            output_dir,
+            product_name=payload["product_name"],
+            product_price=payload["product_price"],
+            product_image_url=payload["product_image_url"],
+            banner_image_url=payload["banner_image_url"],
+        )
+        print(
+            "[AI-Worker] Overlay di-render ulang "
+            f"(product_img={'ya' if payload['product_image_url'] else 'tidak'}, "
+            f"banner={'ya' if payload['banner_image_url'] else 'tidak'})"
+        )
+    except Exception as overlay_err:
+        print(f"[AI-Worker] update-product overlay notice: {overlay_err}")
+    with open(update_file, "w", encoding="utf-8") as f:
         json.dump(payload, f)
     return {"success": True, "message": "Product overlay update queued for hot-swap"}
 

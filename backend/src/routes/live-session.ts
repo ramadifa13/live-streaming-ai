@@ -365,9 +365,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       }
     }
 
-    // Jangan kirim data-URL base64 ke worker (bisa >5MB → timeout POST).
-    const httpMediaOnly = (url?: string) =>
-      url && /^https?:\/\//i.test(url) ? url : undefined;
+    // http(s) atau data:image base64 (hasil upload studio). Worker sudah support decode.
+    const liveOverlayMedia = (url?: string) => {
+      const u = (url || "").trim();
+      if (!u) return undefined;
+      if (/^https?:\/\//i.test(u)) return u;
+      if (/^data:image\//i.test(u)) return u;
+      return undefined;
+    };
 
     // Daftarkan orchestrator dulu agar pipeline-status bisa poll saat MuseTalk boot.
     if (managedSession && liveSession && parsed.data.sessionId) {
@@ -393,8 +398,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       streamKey,
       productName,
       productPrice,
-      productImageUrl: httpMediaOnly(productImageUrl),
-      bannerImageUrl: httpMediaOnly(bannerImageUrl),
+      productImageUrl: liveOverlayMedia(productImageUrl),
+      bannerImageUrl: liveOverlayMedia(bannerImageUrl),
       platform,
       stockCount,
       ctaLabel,
@@ -821,11 +826,18 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         const switchedProd = snapshot || managedSession?.product;
         if (switchedProd) {
           const podId = managedSession?.podId;
+          const overlayMedia = (url?: string) => {
+            const u = (url || "").trim();
+            if (!u) return undefined;
+            if (/^https?:\/\//i.test(u)) return u;
+            if (/^data:image\//i.test(u)) return u;
+            return undefined;
+          };
           updateRunPodBroadcastProduct(podId, {
             productName: switchedProd.name,
             productPrice: String(switchedProd.price),
-            productImageUrl: switchedProd.image || undefined,
-            bannerImageUrl: switchedProd.bannerImage || undefined,
+            productImageUrl: overlayMedia(switchedProd.image),
+            bannerImageUrl: overlayMedia(switchedProd.bannerImage),
           }).catch(() => {});
         }
       }

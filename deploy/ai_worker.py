@@ -68,6 +68,8 @@ AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "6"))
 
 IDLE_BREATH_CHANCE = float(os.environ.get("AI_WORKER_IDLE_BREATH_CHANCE", "0.18"))
 IDLE_FALLBACK_AFTER = int(os.environ.get("AI_WORKER_IDLE_FALLBACK_AFTER", "2"))
+# Hold talk (idle_2) antar-utterance: kalau BE diam / reload, balik ke idle_1.
+HOLD_TALK_MAX_SEC = float(os.environ.get("AI_WORKER_HOLD_TALK_SEC", "2.5"))
 BROADCAST_MAX_LAG = int(os.environ.get("AI_WORKER_BROADCAST_MAX_LAG", "8"))
 BROADCAST_RENDER_WAIT_SEC = float(
     os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.10")
@@ -765,6 +767,7 @@ class VideoStateMachine:
         self._talk_pinned = False
         self._hold_pose_for_infer = False
         self._talk_target: Optional[str] = None
+        self._hold_talk_since: Optional[float] = None
         self._talk_streak_name: Optional[str] = None
         self._talk_streak_count = 0
         self._schedule_next_ambient()
@@ -946,6 +949,7 @@ class VideoStateMachine:
             self._playthrough_lock = True
             self._talk_loop_count = 0
             self._talk_pinned = True
+            self._hold_talk_since = None
             self._hold_pose_for_infer = False
             target = self._talk_target or self._pick_next_talk_clip()
             if not self.bank.clip_has_musetalk(target):
@@ -1055,15 +1059,47 @@ class VideoStateMachine:
                 self.state = PlayState.TALK
                 self._talk_pinned = True
                 self._hold_pose_for_infer = False
+                self._hold_talk_since = time.perf_counter()
                 print(
                     "[StateMachine] Utterance selesai → hold talk (utterance berikutnya siap)"
                 )
             else:
                 self._talk_pinned = False
+                self._hold_talk_since = None
                 if not self.pending_action:
                     self.pending_action = self.bank._idle_name
                 self.state = PlayState.IDLE
                 print("[StateMachine] Utterance selesai → idle_1 (end pose tercapai)")
+
+    def release_stale_hold_talk(
+        self, *, queue_has_ready: bool, max_sec: float = HOLD_TALK_MAX_SEC
+    ) -> bool:
+        """Lepas hold talk → idle_1 jika antrian kosong terlalu lama (BE diam/reload)."""
+        with self._lock:
+            if self._utterance_active or not self._talk_pinned:
+                self._hold_talk_since = None
+                return False
+            if queue_has_ready:
+                # Masih ada utterance siap — reset timer, tunggu begin_utterance.
+                self._hold_talk_since = time.perf_counter()
+                return False
+            now = time.perf_counter()
+            if self._hold_talk_since is None:
+                self._hold_talk_since = now
+                return False
+            if (now - self._hold_talk_since) < max(0.5, float(max_sec)):
+                return False
+            self._talk_pinned = False
+            self._talk_target = None
+            self._hold_talk_since = None
+            if not self.pending_action:
+                self.pending_action = self.bank._idle_name
+            self.state = PlayState.IDLE
+            print(
+                f"[StateMachine] Hold talk timeout ({max_sec:.1f}s) → idle_1 "
+                "(tidak ada utterance berikutnya)"
+            )
+            return True
 
     def _clip_span(self, clip: ClipAsset) -> int:
         return max(1, clip.end_pose - clip.base_pose_frame + 1)
@@ -1815,6 +1851,15 @@ def frame_fetcher_loop(
                 sm.end_utterance(another_utterance_ready=another_ready)
                 bridge.signal_visual_complete()
 
+        # BE reload / diam: jangan stuck hold-talk di idle_2.
+        if bridge is not None and not bridge.is_utterance_active():
+            queue_ready = (
+                bridge.has_ready_pending()
+                if hasattr(bridge, "has_ready_pending")
+                else False
+            )
+            sm.release_stale_hold_talk(queue_has_ready=queue_ready)
+
         was_speaking = is_speech or (
             bridge is not None
             and bridge.is_utterance_active()
@@ -2399,6 +2444,22 @@ def broadcaster_loop(
             update_file = os.path.join(out_dir, "update_overlay.json")
             if os.path.exists(update_file):
                 try:
+                    # Baca payload dulu — render ulang jika API belum sempat prepare
+                    # (http / data:image base64).
+                    try:
+                        with open(update_file, "r", encoding="utf-8") as uf:
+                            upd = json.load(uf)
+                        from broadcaster import prepare_overlay_files
+
+                        prepare_overlay_files(
+                            out_dir,
+                            product_name=upd.get("product_name", ""),
+                            product_price=upd.get("product_price", ""),
+                            product_image_url=upd.get("product_image_url", ""),
+                            banner_image_url=upd.get("banner_image_url", ""),
+                        )
+                    except Exception as prep_err:
+                        print(f"[Broadcaster] Overlay prepare notice: {prep_err}")
                     os.remove(update_file)
                     for candidate in (
                         os.path.join(out_dir, "overlay_live.png"),

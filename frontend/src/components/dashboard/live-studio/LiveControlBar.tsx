@@ -235,8 +235,14 @@ export const LiveControlBar: React.FC = () => {
         connectingStageText: "Menghubungkan RTMP ke platform...",
       });
 
-      const httpMediaOnly = (url?: string) =>
-        url && /^https?:\/\//i.test(url) ? url : undefined;
+      // http(s) atau data:image (upload studio) — worker decode base64.
+      const liveOverlayMedia = (url?: string) => {
+        const u = (url || "").trim();
+        if (!u) return undefined;
+        if (/^https?:\/\//i.test(u)) return u;
+        if (/^data:image\//i.test(u)) return u;
+        return undefined;
+      };
 
       let bcastJson: {
         success?: boolean;
@@ -254,8 +260,8 @@ export const LiveControlBar: React.FC = () => {
             avatarVideo: avatarIdleVideoPath(selectedAvatar.id),
             productName: activeFeaturedProduct.name,
             productPrice: String(activeFeaturedProduct.price).replace(/\D/g, ""),
-            productImageUrl: httpMediaOnly(activeFeaturedProduct.image),
-            bannerImageUrl: httpMediaOnly(activeFeaturedProduct.bannerImage),
+            productImageUrl: liveOverlayMedia(activeFeaturedProduct.image),
+            bannerImageUrl: liveOverlayMedia(activeFeaturedProduct.bannerImage),
             platform: selectedPlatform,
             stockCount: activeFeaturedProduct.stock,
             ctaLabel: selectedPlatform === "Instagram Live" ? "DM Sekarang" : "Beli Sekarang",
