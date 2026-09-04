@@ -247,7 +247,7 @@ class SpeechBridge:
             name=f"Prep-{task_id[:24]}",
             daemon=True,
         ).start()
-        print(f"[SpeechBridge] Enqueued {task_id} action={action or 'talk'}")
+        print(f"[SpeechBridge] Enqueued {task_id} action={action or 'idle_1'}")
         return job
 
     def _prepare_job(self, job: UtteranceJob) -> None:

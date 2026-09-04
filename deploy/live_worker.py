@@ -245,22 +245,19 @@ class AILiveWorker:
 
         clean_name = host_name.lower().replace(".png", "").replace(".jpg", "").replace(".mp4", "").strip()
 
-        gesture_tokens = (
-            "idle",
-            "idle_1",
-            "idle_2",
-            "idle_3",
-        )
+        # Hanya idle_1..idle_4 (tidak ada file bare *_idle.mp4).
+        idle_tokens = ("idle_1", "idle_2", "idle_3", "idle_4")
         is_specific_clip = any(
             clean_name == token or clean_name.endswith("_" + token)
-            for token in gesture_tokens
+            for token in idle_tokens
         )
         if is_specific_clip:
             exact_names = [f"{clean_name}.mp4"]
         else:
+            # Host name saja → prefer idle_1
             exact_names = [
-                f"{clean_name}_idle.mp4",
-                f"{clean_name}.mp4",
+                f"{clean_name}_idle_1.mp4",
+                f"{clean_name}_idle_2.mp4",
             ]
         for d in candidate_dirs:
             if not os.path.exists(d):
@@ -270,12 +267,16 @@ class AILiveWorker:
                 if os.path.exists(p):
                     return p
 
-        # 2. Cek variasi nama / substring
+        # 2. Cek substring hanya untuk idle_1..4
         for d in candidate_dirs:
             if os.path.exists(d):
-                for f in os.listdir(d):
-                    if f.endswith(".mp4") and not f.startswith("temp_") and (
-                        clean_name in f.lower()
+                for f in sorted(os.listdir(d)):
+                    fl = f.lower()
+                    if (
+                        f.endswith(".mp4")
+                        and not f.startswith("temp_")
+                        and clean_name in fl
+                        and any(t in fl for t in idle_tokens)
                     ):
                         return os.path.join(d, f)
 
@@ -284,13 +285,15 @@ class AILiveWorker:
         if env_idle and os.path.exists(env_idle):
             return env_idle
 
-        # 4. Fallback: clip gerak natural, baru ke namira.mp4
+        # 4. Fallback: namira_idle_1..4 saja
         for d in candidate_dirs:
             if not os.path.exists(d):
                 continue
             for fallback in (
-                "namira_idle.mp4",
-                "namira.mp4",
+                "namira_idle_1.mp4",
+                "namira_idle_2.mp4",
+                "namira_idle_3.mp4",
+                "namira_idle_4.mp4",
             ):
                 p = os.path.join(d, fallback)
                 if os.path.exists(p):
@@ -300,50 +303,28 @@ class AILiveWorker:
             if os.path.exists(d):
                 mp4s = [
                     f
-                    for f in os.listdir(d)
-                    if f.endswith(".mp4") and not f.startswith("temp_")
+                    for f in sorted(os.listdir(d))
+                    if f.endswith(".mp4")
+                    and not f.startswith("temp_")
+                    and any(t in f.lower() for t in idle_tokens)
                 ]
                 if mp4s:
                     return os.path.join(d, mp4s[0])
         return None
 
     def _resolve_action_clip(self, host_type, host_name, action_tag):
-        """Pilih clip. Point CTA off → selalu idle_1 / idle."""
+        """Pilih clip — hanya idle_1..idle_4 secara langsung (tanpa alias)."""
         host = (host_name or "namira").lower().strip()
-        action = (action_tag or "idle").lower().strip().replace("-", "_")
-        if action in (
-            "talk",
-            "talk_expressive",
-            "expressive",
-            "wave",
-            "raise_hand",
-            "nod",
-            "laugh",
-            "think",
-            "point_up",
-            "point_down",
-        ):
+        action = (action_tag or "idle_1").lower().strip().replace("-", "_")
+        if action not in ("idle_1", "idle_2", "idle_3", "idle_4"):
             action = "idle_1"
-        aliases = {
-            "idle": ["idle_1", "idle"],
-            "idle_1": ["idle_1", "idle"],
-            "idle_2": ["idle_2"],
-            "idle_3": ["idle_3"],
-        }
-        variants = aliases.get(action, ["idle_1", "idle"])
-        candidates = []
-        for variant in variants:
-            candidates.extend(
-                [
-                    f"{host}_{variant}",
-                    variant,
-                    f"namira_{variant}",
-                ]
-            )
-        candidates.append(f"{host}_idle")
-        candidates.append("namira_idle")
-        candidates.append(host)
-        candidates.append("namira")
+        candidates = [
+            f"{host}_{action}",
+            action,
+            f"namira_{action}",
+        ]
+        if action != "idle_1":
+            candidates.extend([f"{host}_idle_1", "idle_1", "namira_idle_1"])
 
         seen = set()
         for name in candidates:
@@ -354,7 +335,7 @@ class AILiveWorker:
             if found:
                 print(f"[ACTION] {action} → {os.path.basename(found)}")
                 return found
-        return self._get_idle_video(host_type, host)
+        return self._get_idle_video(host_type, f"{host}_idle_1")
 
     async def run_pipeline(
         self,
@@ -368,17 +349,15 @@ class AILiveWorker:
     ):
         """Fungsi Pemicu Utama — Zero-Latency High Speed Pipeline"""
         pipeline_start = time.time()
-
-        # 1. Parse Action Tags (e.g. [WAVE], [NOD]) — juga terima field action dari backend
         import re
 
-        action_tag = (action or "").strip().lower()
-        match = re.search(r"\[([A-Z_]+)\]", text_answer or "")
+        action_tag = (action or "idle_1").strip().lower().replace("-", "_")
+        match = re.search(r"\[(idle_[1-4]|IDLE_[1-4])\]", text_answer or "", re.I)
         if match:
             action_tag = match.group(1).lower()
-            text_answer = re.sub(r"\[[A-Z_]+\]", "", text_answer).strip()
-        if not action_tag or action_tag in ("none", "null", "talk", "talk_expressive"):
-            action_tag = "idle"
+            text_answer = re.sub(r"\[(idle_[1-4]|IDLE_[1-4])\]", "", text_answer, flags=re.I).strip()
+        if action_tag not in ("idle_1", "idle_2", "idle_3", "idle_4"):
+            action_tag = "idle_1"
 
         print(
             f"\n[MEMPROSES] {task_id} | Host: {host_name} ({host_type.upper()}) | Action: {action_tag}"
@@ -388,7 +367,7 @@ class AILiveWorker:
 
         if not idle_video:
             print(
-                f"[ERROR] Video '{host_name}.mp4' tidak ada di folder assets/{host_type}"
+                f"[ERROR] Video idle_1..4 untuk '{host_name}' tidak ada di folder assets/{host_type}"
             )
             return None
 

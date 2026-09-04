@@ -88,9 +88,9 @@ JOB_TTL_SECONDS = 3600
 AVG_RENDER_SECONDS = 10.0
 IDLE_CLIP_BASENAMES = {
     "namira_idle_1.mp4",
-    "namira_idle.mp4",
-    "namira.mp4",
-    "idle.mp4",
+    "namira_idle_2.mp4",
+    "namira_idle_3.mp4",
+    "namira_idle_4.mp4",
 }
 
 _duration_cache: Dict[tuple, float] = {}
@@ -210,7 +210,9 @@ def _cleanup_playable_outputs(folder: str, idle_abs: str = "") -> None:
             if name.endswith(".mp4"):
                 if idle_abs and os.path.abspath(path) == idle_abs:
                     continue
-                if name in IDLE_CLIP_BASENAMES or name.endswith("idle.mp4"):
+                if name in IDLE_CLIP_BASENAMES or any(
+                    name.endswith(f"idle_{n}.mp4") for n in ("1", "2", "3", "4")
+                ):
                     continue
                 try:
                     os.remove(path)
@@ -654,14 +656,9 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                 if _broadcast_boot_state == "starting":
                     bridge = get_speech_bridge(output_dir)
                     if bridge is not None:
-                        action_tag = (req.action or "idle").strip().lower()
-                        if not action_tag or action_tag in (
-                            "none",
-                            "null",
-                            "talk",
-                            "talk_expressive",
-                        ):
-                            action_tag = "idle"
+                        action_tag = (req.action or "idle_1").strip().lower().replace("-", "_")
+                        if action_tag not in ("idle_1", "idle_2", "idle_3", "idle_4"):
+                            action_tag = "idle_1"
                         bridge.enqueue(
                             audio_path,
                             task_id=task_id,
@@ -684,14 +681,9 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
                     "created_at": time.time(),
                 }
                 return
-            action_tag = (req.action or "idle").strip().lower()
-            if not action_tag or action_tag in (
-                "none",
-                "null",
-                "talk",
-                "talk_expressive",
-            ):
-                action_tag = "idle"
+            action_tag = (req.action or "idle_1").strip().lower().replace("-", "_")
+            if action_tag not in ("idle_1", "idle_2", "idle_3", "idle_4"):
+                action_tag = "idle_1"
             visual_worker.enqueue_utterance(
                 audio_path,
                 task_id=task_id,
@@ -1218,14 +1210,11 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     if not resolved_idle or not os.path.exists(resolved_idle):
         for candidate in [
             "/workspace/ai_live_worker/assets/3d/namira_idle_1.mp4",
-            "/workspace/ai_live_worker/assets/3d/namira_idle.mp4",
-            "/workspace/ai_live_worker/assets/3d/namira.mp4",
+            "/workspace/ai_live_worker/assets/3d/namira_idle_2.mp4",
             "/workspace/live-streaming-ai/deploy/assets/3d/namira_idle_1.mp4",
-            "/workspace/live-streaming-ai/deploy/assets/3d/namira_idle.mp4",
-            "/workspace/live-streaming-ai/deploy/assets/3d/namira.mp4",
+            "/workspace/live-streaming-ai/deploy/assets/3d/namira_idle_2.mp4",
             os.path.join(os.path.dirname(__file__), "assets/3d/namira_idle_1.mp4"),
-            os.path.join(os.path.dirname(__file__), "assets/3d/namira_idle.mp4"),
-            os.path.join(os.path.dirname(__file__), "assets/3d/namira.mp4"),
+            os.path.join(os.path.dirname(__file__), "assets/3d/namira_idle_2.mp4"),
         ]:
             if os.path.exists(candidate):
                 resolved_idle = candidate

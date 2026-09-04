@@ -228,13 +228,10 @@ export type HostIntent =
 
 export const LunaActionEnum = z.enum([
   "IDLE",
-  // Kept for schema/LLM noise; normalizeLunaAction always maps → IDLE (point CTA off).
-  "POINT_UP",
-  "POINT_DOWN",
 ]);
 export type LunaAction = z.infer<typeof LunaActionEnum>;
 
-/** All actions → IDLE while multi-idle-only. Point CTA re-enable later. */
+/** Semua action legacy → IDLE. Body = idle_1..4 di worker. */
 export function normalizeLunaAction(_action: unknown): LunaAction {
   return "IDLE";
 }
@@ -283,7 +280,7 @@ export const HostResponseSchema = z.object({
 });
 export type HostResponse = z.infer<typeof HostResponseSchema>;
 
-/** Point CTA off — always IDLE. Re-enable heuristic when point assets return. */
+/** Point/gesture off — selalu IDLE. Worker memilih idle_1..4. */
 export function inferCtaPointAction(_speech: string, _topic?: string): LunaAction {
   return "IDLE";
 }
@@ -576,9 +573,8 @@ ANTI-LOOP:
 - Jangan menggunakan struktur kalimat yang sama seperti 1–2 respons terakhir.
 
 GERAKAN AVATAR (action):
-- Hanya IDLE untuk sekarang. Body = multi-idle di worker (idle_1 rest saat bicara; idle_2/3 rotasi saat diam).
-- POINT_UP / POINT_DOWN ditunda — jangan keluarkan (akan di-normalize ke IDLE).
-Action lama (TALK_EXPRESSIVE/WAVE/NOD/LAUGH/THINK) sudah dihapus — jangan keluarkan.
+- Hanya IDLE. Body clip dipilih worker dari idle_1 / idle_2 / idle_3 / idle_4.
+- Jangan keluarkan POINT_UP, POINT_DOWN, WAVE, RAISE_HAND, NOD, LAUGH, THINK, TALK_EXPRESSIVE.
 
 OUTPUT:
 Kembalikan SATU JSON murni, tanpa markdown, dengan schema:

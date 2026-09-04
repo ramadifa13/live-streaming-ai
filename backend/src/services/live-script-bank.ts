@@ -186,8 +186,50 @@ const TOPIC_MODES: Record<string, HostMode[]> = {
   banner_callout: ["ENGAGE", "SELL"],
 };
 
-/** Sapaan jarang — "Halo/Kak" tiap kalimat terdengar seperti loop robot. */
+/** Sapaan jarang — dikelompokkan supaya "Halo"/"Hai" dihitung satu kelas. */
+export const GREETING_CLASSES: Array<{ id: string; pattern: RegExp }> = [
+  { id: "halo", pattern: /^(halo|hai|hey|hi)\b/i },
+  { id: "guys", pattern: /^(guys|gaste|gas)\b/i },
+  { id: "kak", pattern: /^(kak|kakak)\b/i },
+  { id: "teman", pattern: /^(teman[- ]?teman|semuanya|semua)\b/i },
+  { id: "selamat", pattern: /^(selamat\s+(datang|pagi|siang|sore|malam))\b/i },
+];
+
 const RARE_GREETINGS = ["Kak, ", "Guys, "];
+
+/** Deteksi kelas sapaan di awal kalimat (untuk anti-repeat). */
+export function detectGreetingClass(speech: string): string | null {
+  const head = String(speech || "")
+    .replace(/^\s+/, "")
+    .slice(0, 48);
+  for (const g of GREETING_CLASSES) {
+    if (g.pattern.test(head)) return g.id;
+  }
+  return null;
+}
+
+export function hasRecentGreetingClass(
+  speech: string,
+  recentSpeeches: string[],
+  window = 8,
+): boolean {
+  const cls = detectGreetingClass(speech);
+  if (!cls) return false;
+  return recentSpeeches.slice(-window).some((item) => detectGreetingClass(item) === cls);
+}
+
+export function stripLeadingGreeting(speech: string): string {
+  const raw = String(speech || "").trim();
+  if (!raw) return raw;
+  const stripped = raw
+    .replace(
+      /^(halo|hai|hey|hi|guys|kak|kakak|teman[- ]?teman|semuanya|semua|selamat\s+(datang|pagi|siang|sore|malam))[,!.\s]+/i,
+      "",
+    )
+    .trim();
+  if (!stripped) return raw;
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1);
+}
 
 function clampSpeech(text: string, maxWords = 32): string {
   const words = text.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
@@ -213,12 +255,32 @@ function normalize(text: string): string {
 }
 
 function similar(a: string, b: string): boolean {
-  const aa = new Set(normalize(a).split(" ").filter((x) => x.length >= 3));
-  const bb = new Set(normalize(b).split(" ").filter((x) => x.length >= 3));
+  const na = normalize(a);
+  const nb = normalize(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+
+  const aa = new Set(na.split(" ").filter((x) => x.length >= 3));
+  const bb = new Set(nb.split(" ").filter((x) => x.length >= 3));
   if (!aa.size || !bb.size) return false;
   let hits = 0;
   for (const token of aa) if (bb.has(token)) hits++;
-  return hits / Math.sqrt(aa.size * bb.size) >= 0.78;
+  const jaccard = hits / Math.sqrt(aa.size * bb.size);
+  if (jaccard >= 0.72) return true;
+
+  // Bigram overlap — tangkap paraphrase dekat ("sering bepergian" ≈ "suka traveling").
+  const bigrams = (s: string) => {
+    const t = s.split(" ").filter(Boolean);
+    const out = new Set<string>();
+    for (let i = 0; i < t.length - 1; i++) out.add(`${t[i]} ${t[i + 1]}`);
+    return out;
+  };
+  const ba = bigrams(na);
+  const bb2 = bigrams(nb);
+  if (!ba.size || !bb2.size) return false;
+  let bHits = 0;
+  for (const g of ba) if (bb2.has(g)) bHits++;
+  return bHits / Math.min(ba.size, bb2.size) >= 0.55;
 }
 
 function similarToAny(speech: string, recent: string[]): boolean {
@@ -232,7 +294,8 @@ function openingPhrase(speech: string, words = 4): string {
 function sharesOpening(speech: string, recent: string[]): boolean {
   const open = openingPhrase(speech);
   if (!open || open.split(" ").length < 3) return false;
-  return recent.some((item) => openingPhrase(item) === open);
+  if (recent.some((item) => openingPhrase(item) === open)) return true;
+  return hasRecentGreetingClass(speech, recent, 6);
 }
 
 /** Variasi pembuka agar recycle tidak terdengar sama persis. */
@@ -256,7 +319,57 @@ function withParaphraseVariants(items: HostResponse[]): HostResponse[] {
   return out;
 }
 
-/** Hook penjualan spesifik kategori — tetap dari fakta produk. */
+/** Hook penjualan product-agnostic (intent-first) — cocok semua kategori. */
+function intentAgnosticHooks(product: ScriptProductFacts): HostResponse[] {
+  const name = product.name || "produk ini";
+  const price = product.price || "harga live";
+  const fact = pickFact(factChunks(product), `kelebihan ${name}`);
+  const need = domainNeed(product.category || "");
+  const speeches: Array<{ speech: string; topic: string; mode: HostMode; cta?: HostResponse["ctaType"] }> = [
+    {
+      speech: `Kalau kamu lagi cari solusi ${need}, ${name} patut dicek — ${fact}.`,
+      topic: "problem",
+      mode: "ENGAGE",
+    },
+    {
+      speech: `Poin utamanya: ${fact}. Itu yang bikin ${name} relevan di live ini.`,
+      topic: "benefit",
+      mode: "SELL",
+    },
+    {
+      speech: `Dipakai sehari-hari juga masuk akal: ${fact}.`,
+      topic: "use_case",
+      mode: "ENGAGE",
+    },
+    {
+      speech: `Bandingin value-nya: ${fact} dengan harga live ${price}.`,
+      topic: "value",
+      mode: "SELL",
+      cta: "SOFT",
+    },
+    {
+      speech: `Yang masih ragu, fokuskan dulu: ${fact}. Baru putuskan.`,
+      topic: "objection",
+      mode: "OBJECTION",
+    },
+    {
+      speech: `${name} cocok kalau ${need} memang prioritasmu sekarang.`,
+      topic: "buyer_fit",
+      mode: "ENGAGE",
+    },
+    {
+      speech: `Mau lanjut? Cek ${name} di etalase — live ${price}.`,
+      topic: "soft_cta",
+      mode: "SELL",
+      cta: "SOFT",
+    },
+  ];
+  return speeches.map((s) =>
+    line(s.speech, s.topic, s.mode, s.cta ? { ctaType: s.cta } : undefined),
+  );
+}
+
+/** Hook kategori = bonus kecil, bukan sumber utama (product-agnostic first). */
 function categorySalesHooks(product: ScriptProductFacts): HostResponse[] {
   const name = product.name || "produk ini";
   const price = product.price || "harga live";
@@ -266,48 +379,41 @@ function categorySalesHooks(product: ScriptProductFacts): HostResponse[] {
     {
       match: /skincare|beauty|makeup/,
       speeches: [
-        `${greet()}yang kulitnya lagi rewel, ${name} bisa jadi andalan — ${fact}.`,
-        `Buat rutinitas skincare, ${name} ${price} worth dicek kalau ${fact} emang kamu butuh.`,
-        `Yang suka perawatan simple, ${name} praktis: ${fact}.`,
+        `Yang fokus perawatan, ${name} relevan karena ${fact}.`,
+        `Rutinitas simple: ${name} — ${fact}. Live ${price}.`,
       ],
     },
     {
       match: /fashion|pakaian|hijab|sepatu|aksesoris/,
       speeches: [
-        `${greet()}mau tampilan lebih rapi? ${name} — ${fact}. Live ${price}.`,
-        `Yang cari outfit praktis, ${name} nyambung karena ${fact}.`,
-        `Styling gampang pakai ${name}: ${fact}.`,
+        `Buat tampilan lebih rapi, ${name} — ${fact}. Live ${price}.`,
+        `Styling praktis pakai ${name}: ${fact}.`,
       ],
     },
     {
       match: /makanan|minuman|fnb|kuliner/,
       speeches: [
-        `${greet()}buat ngemil atau stock dapur, ${name} — ${fact}. Harga live ${price}.`,
-        `Yang doyan coba-coba rasa baru, ${name} pas: ${fact}.`,
+        `Buat stok atau coba rasa baru, ${name} — ${fact}. Harga live ${price}.`,
       ],
     },
     {
       match: /elektronik|gadget/,
       speeches: [
-        `${greet()}butuh gadget yang praktis? ${name}: ${fact}. Live ${price}.`,
-        `Yang suka fitur simpel, ${name} nyambung — ${fact}.`,
+        `Yang cari perangkat praktis, ${name}: ${fact}. Live ${price}.`,
       ],
     },
     {
-      match: /kesehatan|herbal|ibu|bayi/,
+      match: /kesehatan|herbal|ibu|bayi|rumah|tangga/,
       speeches: [
-        `${greet()}yang prioritaskan kebutuhan sehat, ${name} — ${fact}.`,
-        `Buat yang cari solusi aman, ${name} fokus di ${fact}. Live ${price}.`,
+        `Yang prioritaskan ${domainNeed(cat)}, ${name} — ${fact}.`,
       ],
     },
   ];
   const matched = templates.find((t) => t.match.test(cat));
-  const speeches = matched?.speeches || [
-    `${greet()}yang lagi cari solusi praktis, ${name} — ${fact}. Live ${price}.`,
-    `Buat kebutuhan harian, ${name} nyambung: ${fact}.`,
-    `Yang mau coba produk baru, ${name} ${price} — ${fact}.`,
-  ];
-  return speeches.map((speech) => line(speech, "promo_pitch", "SELL", { ctaType: "SOFT" }));
+  if (!matched) return [];
+  return matched.speeches.map((speech) =>
+    line(speech, "promo_pitch", "SELL", { ctaType: "SOFT" }),
+  );
 }
 
 /** Kombinasi 2 fakta → variasi ekstra tanpa LLM. */
@@ -340,8 +446,8 @@ function shuffled<T>(items: T[]): T[] {
 }
 
 function greet(): string {
-  // ~10% saja pakai sapaan — sisanya langsung ke isi supaya tidak terdengar loop "Halo".
-  if (Math.random() > 0.1) return "";
+  // ~5% saja pakai sapaan — sisanya langsung ke isi.
+  if (Math.random() > 0.05) return "";
   return RARE_GREETINGS[Math.floor(Math.random() * RARE_GREETINGS.length)] || "";
 }
 
@@ -982,6 +1088,7 @@ export function seedLocalScriptBank(
     ...deflectionLines(product),
     ...bannerLines(product),
     ...faqAnswerLines(product.faqPack?.length ? product.faqPack : buildDefaultFaqPack(product)),
+    ...intentAgnosticHooks(product),
     ...categorySalesHooks(product),
     ...crossFactLines(product),
     ...combinatorialLines(product, catalog),
@@ -1061,6 +1168,7 @@ export function takeScriptLine(
     if (options.preferMode && item.mode === options.preferMode) score += 2;
     if (!similarToAny(item.speech, recent)) score += 4;
     if (!sharesOpening(item.speech, recent)) score += 3;
+    if (!hasRecentGreetingClass(item.speech, recent, 8)) score += 2;
     // Marathon: hindari topik yang sama beruntun lebih agresif
     if (recentTopics.has(topicKey)) score -= 8;
     if (options.avoidCta && item.ctaType && item.ctaType !== "NONE") score -= 5;

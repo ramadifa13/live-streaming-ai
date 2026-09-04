@@ -86,6 +86,9 @@ LIPSYNC_PREROLL_TIMEOUT_SEC = float(
 
 ALLOWED_GESTURES: frozenset = frozenset()
 
+# Hanya idle_1..idle_4 yang dipakai sebagai clip tubuh.
+IDLE_CLIP_NAMES = frozenset({"idle_1", "idle_2", "idle_3", "idle_4"})
+
 TALK_CLIP_DEFAULT = (
     os.environ.get("AI_WORKER_TALK_CLIP") or "idle_2"
 ).strip().lower() or "idle_2"
@@ -95,18 +98,19 @@ CRASH_FALLBACK_CLIP = (
 
 
 def _ambient_gesture_names() -> List[str]:
-    """Legacy ambient gestures — default off. Idle variants pakai AI_WORKER_IDLE_VARIANTS."""
+    """Legacy ambient gestures — default off (tidak dipakai)."""
     raw = (os.environ.get("AI_WORKER_AMBIENT_GESTURES") or "off").strip()
     if raw.lower() in ("0", "off", "false", "none", "no", ""):
         return []
-    names = [n.strip() for n in raw.split(",") if n.strip()]
-    return [n for n in names if n.lower().replace("-", "_") in ALLOWED_GESTURES]
+    # Hanya izinkan idle_1..4 jika ada yang di-set lewat env.
+    names = [n.strip().lower().replace("-", "_") for n in raw.split(",") if n.strip()]
+    return [n for n in names if n in IDLE_CLIP_NAMES]
 
 
 def _talk_clip_pool_names() -> List[str]:
-    """Clip tubuh saat bicara: idle_2/3/4. idle_1 hanya cadangan crash."""
+    """Clip tubuh saat bicara: idle_1/2/3/4 (idle_1 ikut pool talking)."""
     raw = (
-        os.environ.get("AI_WORKER_TALK_CLIPS") or "idle_2,idle_3,idle_4"
+        os.environ.get("AI_WORKER_TALK_CLIPS") or "idle_2,idle_3,idle_4,idle_1"
     ).strip()
     if raw.lower() in ("0", "off", "false", "none", "no", ""):
         return [TALK_CLIP_DEFAULT]
@@ -114,10 +118,10 @@ def _talk_clip_pool_names() -> List[str]:
 
 
 def _idle_variant_names() -> List[str]:
-    """Rotasi tubuh (diam + bicara): default sama pool talk idle_2/3/4."""
-    raw = (os.environ.get("AI_WORKER_IDLE_VARIANTS") or "idle_2,idle_3,idle_4").strip()
+    """True idle saat diam: default hanya idle_1 (tanpa rotasi ambient ke 2/3/4)."""
+    raw = (os.environ.get("AI_WORKER_IDLE_VARIANTS") or "idle_1").strip()
     if raw.lower() in ("0", "off", "false", "none", "no", ""):
-        return list(_talk_clip_pool_names())
+        return [CRASH_FALLBACK_CLIP]
     return [n.strip().lower().replace("-", "_") for n in raw.split(",") if n.strip()]
 
 
@@ -125,28 +129,20 @@ def _is_idle_clip_name(name: Optional[str]) -> bool:
     if not name:
         return False
     key = name.lower().strip().replace("-", "_")
-    return key == "idle" or key.startswith("idle_")
+    return key in IDLE_CLIP_NAMES
 
 
 def _is_neutral_action(tag: Optional[str]) -> bool:
+    """True jika bukan idle_1..4 — diarahkan ke true idle (idle_1)."""
     if not tag:
         return True
     key = tag.lower().strip().replace("-", "_")
-    return key in (
-        "none",
-        "null",
-        "idle",
-        "talk",
-        "talk_expressive",
-        "expressive",
-    )
+    return key not in IDLE_CLIP_NAMES
 
 
 def _is_allowed_gesture(tag: Optional[str]) -> bool:
-    if not tag or _is_neutral_action(tag) or _is_idle_clip_name(tag):
-        return False
-    key = tag.lower().strip().replace("-", "_")
-    return key in ALLOWED_GESTURES
+    """Gesture non-idle dimatikan — fokus idle_1..4 saja."""
+    return False
 
 
 try:
@@ -197,10 +193,7 @@ def get_audio_chunk() -> Tuple[bytes, bool]:
 
 
 def get_llm_action() -> Optional[str]:
-    """Return pending gesture tag, e.g. ``point_up``, or None."""
-    bridge = get_speech_bridge()
-    if bridge is not None:
-        return bridge.get_llm_action()
+    """Action LLM — gesture non-idle off; body dipilih state machine dari idle_1..4."""
     return None
 
 
@@ -403,24 +396,6 @@ class _OverlapTransition:
 class AssetBank:
     """Decode all host clips into RAM and precompute MuseTalk materials."""
 
-    ACTION_ALIASES = {
-        "talk": "idle_2",
-        "talk_expressive": "idle_2",
-        "expressive": "idle_2",
-        "idle": "idle_2",
-        "idle_1": "idle_1",
-        "idle_2": "idle_2",
-        "idle_3": "idle_3",
-        "idle_4": "idle_4",
-        "wave": "idle_1",
-        "raise_hand": "idle_1",
-        "nod": "idle_1",
-        "laugh": "idle_1",
-        "think": "idle_1",
-        "point_up": "idle_1",
-        "point_down": "idle_1",
-    }
-
     def crash_fallback_name(self) -> str:
         if CRASH_FALLBACK_CLIP in self.clips:
             return CRASH_FALLBACK_CLIP
@@ -451,16 +426,30 @@ class AssetBank:
             return [fb]
         return []
 
-    def pick_talk_clip(self, prefer: Optional[str] = None) -> str:
+    def pick_talk_clip(
+        self,
+        prefer: Optional[str] = None,
+        *,
+        exclude: Optional[str] = None,
+        avoid_repeat: Optional[str] = None,
+    ) -> str:
+        """Pilih clip bicara dari pool. avoid_repeat = clip yang sudah 2x beruntun."""
         ready = self.talk_clips_ready()
-        if prefer in ready:
+        if not ready:
+            return self.crash_fallback_name()
+        pool = list(ready)
+        if avoid_repeat and len(pool) > 1:
+            pool = [c for c in pool if c != avoid_repeat] or list(ready)
+        if exclude and len(pool) > 1:
+            narrowed = [c for c in pool if c != exclude]
+            if narrowed:
+                pool = narrowed
+        if prefer in pool and prefer != avoid_repeat:
             return prefer
-        if ready:
-            return random.choice(ready)
-        return self.crash_fallback_name()
+        return random.choice(pool)
 
     def talk_clip_name(self) -> str:
-        """Clip bicara aktif: pool idle_2/3/4, fallback idle_1 jika pool kosong."""
+        """Clip bicara default di pool (bukan satu-satunya — rotasi via pick_talk_clip)."""
         ready = self.talk_clips_ready()
         if ready:
             if TALK_CLIP_DEFAULT in ready:
@@ -469,25 +458,20 @@ class AssetBank:
         return self.crash_fallback_name()
 
     def idle_variant_clips(self) -> List[str]:
-        """Rotasi tubuh idle_2/3/4 (bukan idle_1 cadangan)."""
+        """Varian ambient saat diam — default hanya idle_1."""
         out: List[str] = []
-        fb = self.crash_fallback_name()
-        for name in _idle_variant_names() or _talk_clip_pool_names():
+        for name in _idle_variant_names():
             resolved = self.resolve_action(name)
-            if (
-                resolved in self.clips
-                and resolved not in out
-                and resolved != fb
-            ):
+            if resolved in self.clips and resolved not in out:
                 out.append(resolved)
-        return out or list(self.talk_clip_pool())
+        return out
 
     def __init__(self, assets_dir: str, host: str = "namira", models_bundle=None):
         self.assets_dir = assets_dir
         self.host = host.lower()
         self.models = models_bundle
         self.clips: Dict[str, ClipAsset] = {}
-        self._idle_name = "idle_2"
+        self._idle_name = "idle_1"
 
     def discover_and_load(self) -> None:
         if not os.path.isdir(self.assets_dir):
@@ -532,11 +516,8 @@ class AssetBank:
             )
 
         self._idle_name = self._pick_primary_idle()
-        if "idle" not in self.clips and self._idle_name in self.clips:
-            self.clips["idle"] = self.clips[self._idle_name]
-            print(f"[AssetBank] Alias idle → {self._idle_name}")
         print(
-            f"[AssetBank] Primary idle/talk={self.talk_clip_name()}, "
+            f"[AssetBank] Primary idle={self._idle_name} talk={self.talk_clip_name()}, "
             f"variants={self.idle_variant_clips()}"
         )
 
@@ -544,11 +525,12 @@ class AssetBank:
             self._warm_musetalk_materials()
 
     def _pick_primary_idle(self) -> str:
-        for key in (TALK_CLIP_DEFAULT, "idle_2", "idle", CRASH_FALLBACK_CLIP, "idle_1"):
+        """Diam = idle_1."""
+        for key in (CRASH_FALLBACK_CLIP, "idle_1"):
             if key in self.clips:
                 return key
         for k in sorted(self.clips):
-            if _is_idle_clip_name(k) and k != CRASH_FALLBACK_CLIP:
+            if _is_idle_clip_name(k):
                 return k
         return next(iter(self.clips))
 
@@ -556,12 +538,12 @@ class AssetBank:
         """Decode ke RAM: semua idle_* (+ point jika ada di env)."""
         raw = (
             os.environ.get("AI_WORKER_EAGER_CLIPS")
-            or "idle_1,idle_2,idle_3,idle_4,idle"
+            or "idle_1,idle_2,idle_3,idle_4"
         ).strip()
         if raw.lower() in ("all", "*"):
             return list(self.clips.keys()) if self.clips else ["idle_1"]
         names = [n.strip() for n in raw.split(",") if n.strip()]
-        for must in ("idle_1", "idle", TALK_CLIP_DEFAULT):
+        for must in ("idle_1", TALK_CLIP_DEFAULT):
             if must and must not in names:
                 names.append(must)
         return names
@@ -728,20 +710,15 @@ class AssetBank:
         return frames
 
     def resolve_action(self, tag: Optional[str]) -> str:
+        """Hanya idle_1..idle_4. Tag lain / kosong → idle_1 (tanpa alias)."""
         if not tag:
             return self._idle_name
         raw = tag.lower().strip().replace("-", "_")
-        if (
-            raw not in ALLOWED_GESTURES
-            and not _is_idle_clip_name(raw)
-            and raw not in self.ACTION_ALIASES
-        ):
-            if raw not in self.clips:
-                return self._idle_name
-        key = self.ACTION_ALIASES.get(raw, raw)
-        if key in self.clips:
-            return key
-        for candidate in (f"{self.host}_{key}", key, f"namira_{key}"):
+        if raw not in IDLE_CLIP_NAMES:
+            return self._idle_name
+        if raw in self.clips:
+            return raw
+        for candidate in (f"{self.host}_{raw}", f"namira_{raw}"):
             if candidate in self.clips:
                 return candidate
         return self._idle_name
@@ -787,6 +764,9 @@ class VideoStateMachine:
         self._next_ambient_at = 0.0
         self._talk_pinned = False
         self._hold_pose_for_infer = False
+        self._talk_target: Optional[str] = None
+        self._talk_streak_name: Optional[str] = None
+        self._talk_streak_count = 0
         self._schedule_next_ambient()
 
     def _schedule_next_ambient(self) -> None:
@@ -794,12 +774,16 @@ class VideoStateMachine:
         if not self._idle_variants and not self._ambient_names:
             self._next_ambient_at = 0.0
             return
+        # Hanya ambient gesture legacy — jangan rotasi idle_1 → idle_2 saat diam.
+        if not self._ambient_names:
+            self._next_ambient_at = 0.0
+            return
         self._next_ambient_at = time.monotonic() + random.uniform(
             AMBIENT_MIN_SEC, AMBIENT_MAX_SEC
         )
 
     def _choose_next_idle_variant(self, exclude: Optional[str] = None) -> Optional[str]:
-        """Pilih idle berikutnya — tidak boleh sama dengan clip sekarang (hindari 2→2)."""
+        """Pilih idle berikutnya — tidak boleh sama dengan clip sekarang."""
         cur = exclude or self.current_name
         variants = [
             c for c in self._idle_variants if c in self.bank.clips and c != cur
@@ -808,8 +792,25 @@ class VideoStateMachine:
             return random.choice(variants)
         return None
 
+    def _pick_next_talk_clip(self) -> str:
+        """Rotasi talk: boleh 2x sama beruntun, lalu wajib beda (random)."""
+        avoid = None
+        if (
+            self._talk_streak_name
+            and self._talk_streak_count >= 2
+            and self._talk_streak_name in self.bank.talk_clips_ready()
+        ):
+            avoid = self._talk_streak_name
+        choice = self.bank.pick_talk_clip(avoid_repeat=avoid)
+        if choice == self._talk_streak_name:
+            self._talk_streak_count += 1
+        else:
+            self._talk_streak_name = choice
+            self._talk_streak_count = 1
+        return choice
+
     def _maybe_queue_ambient_gesture(self) -> None:
-        """Saat diam di idle_1 terlalu lama: mulai rotasi idle_2/3/4 (tanpa ulang clip sama)."""
+        """Legacy ambient gestures saja — idle diam tetap idle_1."""
         if self._utterance_active or self._playthrough_lock or self._talk_pinned:
             return
         if self.state != PlayState.IDLE or self._overlap is not None:
@@ -819,18 +820,18 @@ class VideoStateMachine:
         self._schedule_next_ambient()
         if self.pending_action or self._action_queue:
             return
-
+        if not self._ambient_names:
+            return
         allowed = set(self._idle_variants) | {
             self.bank._idle_name,
-            "idle",
         }
         if self.current_name not in allowed:
             return
-        tag = self._choose_next_idle_variant()
+        tag = random.choice(self._ambient_names)
         if not tag:
             return
         self.pending_action = tag
-        print(f"[StateMachine] Ambient idle → {tag}")
+        print(f"[StateMachine] Ambient gesture → {tag}")
 
     def reset_after_stop(self) -> None:
         """Reset state setelah pause/stop — hindari utterance stuck di Go Live berikutnya."""
@@ -842,12 +843,13 @@ class VideoStateMachine:
             self._playthrough_lock = False
             self._talk_pinned = False
             self._hold_pose_for_infer = False
+            self._talk_target = None
             self._overlap = None
             self._talk_loop_count = 0
             self.pending_action = None
             self._action_queue.clear()
             self.state = PlayState.IDLE
-            self.current_name = self.bank.pick_talk_clip()
+            self.current_name = self.bank._idle_name
             try:
                 self.frame_idx = self.bank.idle_clip.base_pose_frame
             except Exception:
@@ -876,65 +878,77 @@ class VideoStateMachine:
             if not tag:
                 return
             key = tag.lower().strip().replace("-", "_")
-            if _is_neutral_action(tag):
-                self._action_queue.append(self.bank._idle_name)
-                return
-
-            if _is_idle_clip_name(key):
-                target = self.bank.resolve_action(key)
-                if self._playthrough_lock or self._utterance_active:
-                    self._action_queue.append(target)
-                else:
-                    self.pending_action = target
-                return
-            if not _is_allowed_gesture(tag):
-                print(f"[StateMachine] Gesture diabaikan (bukan CTA point): {tag}")
-                return
+            # Hanya idle_1..4; selain itu → idle_1.
+            target = self.bank.resolve_action(key)
             if self._playthrough_lock or self._utterance_active:
-                self._action_queue.append(tag)
-                print(f"[StateMachine] Action queued (playthrough): {tag}")
-                return
-            self.pending_action = tag
+                self._action_queue.append(target)
+            else:
+                self.pending_action = target
 
     def pin_talk_body(self) -> int:
-        """Kunci ke idle_2/3/4 yang punya MuseTalk; idle_1 hanya jika pool gagal."""
+        """Siapkan clip bicara untuk infer — tubuh tetap bergerak (tanpa freeze).
+
+        Infer memakai base pose clip target; audio + cut ke talk di begin_utterance.
+        """
         with self._lock:
             self._talk_pinned = True
-            self._hold_pose_for_infer = True
+            self._hold_pose_for_infer = False
             self.pending_action = None
             if self._utterance_active:
+                self._talk_target = self.current_name
                 return int(self.frame_idx)
-            prefer = self.current_name
-            target = self.bank.pick_talk_clip(prefer=prefer)
-            if not self.bank.clip_has_musetalk(target):
-                target = self.bank.crash_fallback_name()
-            if self.current_name != target:
-                self._cut_to_clip(target, PlayState.IDLE, lock_face=False)
-            return int(self.frame_idx)
+            # Reuse target jika sudah di-pin (hindari double-pick di on_start).
+            if self._talk_target and self.bank.clip_has_musetalk(self._talk_target):
+                target = self._talk_target
+            else:
+                target = self._pick_next_talk_clip()
+                if not self.bank.clip_has_musetalk(target):
+                    target = self.bank.crash_fallback_name()
+                self._talk_target = target
+            talk_clip = self.bank.get_clip(target)
+            if talk_clip is None:
+                return int(self.frame_idx)
+            # Sudah di talk clip (hold antar-utterance): lanjut dari frame sekarang.
+            if self.current_name == target and self.state == PlayState.TALK:
+                return int(self.frame_idx)
+            print(
+                f"[StateMachine] Pin talk → {target} (playthrough, no freeze)"
+            )
+            return int(talk_clip.base_pose_frame)
 
     def begin_utterance(self) -> None:
-        """Lock playthrough; stay on idle talk body (no idle↔talk_expressive cut)."""
+        """Lock playthrough; cut ke talk clip yang sudah di-pin — audio mulai bersamaan."""
         with self._lock:
             if self._utterance_active:
                 return
+            was_hold_talk = (
+                self.state == PlayState.TALK
+                and self._talk_pinned
+                and self._talk_target == self.current_name
+            )
             self._utterance_active = True
             self._utterance_audio_done = False
             self._playthrough_lock = True
             self._talk_loop_count = 0
             self._talk_pinned = True
             self._hold_pose_for_infer = False
-            target = self.bank.pick_talk_clip(prefer=self.current_name)
+            target = self._talk_target or self._pick_next_talk_clip()
             if not self.bank.clip_has_musetalk(target):
                 target = self.bank.crash_fallback_name()
+            self._talk_target = target
             if self.current_name != target:
                 self._cut_to_clip(target, PlayState.TALK, lock_face=True)
             else:
                 self._overlap = None
                 self.state = PlayState.TALK
-                if self._face_registry:
-                    talk_clip = self.bank.get_clip(target)
-                    if talk_clip is not None:
-                        self._face_registry.lock_from_clip(talk_clip, self.frame_idx)
+                talk_clip = self.bank.get_clip(target)
+                if talk_clip is not None and not was_hold_talk:
+                    # Sinkron dengan infer (base pose) supaya mulut cocok.
+                    self.frame_idx = talk_clip.base_pose_frame
+                    if self._face_registry:
+                        self._face_registry.lock_from_clip(
+                            talk_clip, self.frame_idx
+                        )
 
     def mark_utterance_audio_done(self) -> None:
         with self._lock:
@@ -981,7 +995,7 @@ class VideoStateMachine:
         return self.frame_idx >= clip.end_pose
 
     def utterance_visual_complete(self) -> bool:
-        """True when audio+visual selesai (termasuk post-speech gesture jika ada)."""
+        """True when audio selesai DAN clip mencapai end pose (visual tail, no freeze)."""
         if not self._utterance_active:
             return False
         if not self._utterance_audio_done:
@@ -993,7 +1007,10 @@ class VideoStateMachine:
             return self.frame_idx >= clip.end_pose
         if self._scheduled_gesture:
             return False
-        return True
+        clip = self.bank.get_clip(self.current_name)
+        if clip is None:
+            return True
+        return self.frame_idx >= clip.end_pose
 
     def end_utterance(self, *, another_utterance_ready: bool = False) -> None:
         with self._lock:
@@ -1003,6 +1020,7 @@ class VideoStateMachine:
             self._talk_loop_count = 0
             self._scheduled_gesture = None
             self._post_speech_gesture_active = False
+            self._talk_target = None
             if self._face_registry:
                 self._face_registry.release_lock()
             self._drain_action_queue()
@@ -1021,7 +1039,7 @@ class VideoStateMachine:
                 if not self.pending_action:
                     self.pending_action = self.bank._idle_name
                 self.state = PlayState.IDLE
-                print("[StateMachine] Utterance selesai → transisi (end pose tercapai)")
+                print("[StateMachine] Utterance selesai → idle_1 (end pose tercapai)")
 
     def _clip_span(self, clip: ClipAsset) -> int:
         return max(1, clip.end_pose - clip.base_pose_frame + 1)
@@ -1113,7 +1131,7 @@ class VideoStateMachine:
         return True
 
     def _advance_frame_index(self, clip: ClipAsset, is_speech: bool) -> None:
-        """Advance index; seamless loop at base pose; hold end pose then overlap ke idle."""
+        """Advance index; seamless loop saat bicara; setelah audio selesai mainkan ke end (no freeze)."""
         self.frame_idx += 1
         end_pf = clip.end_pose
         base_pf = clip.base_pose_frame
@@ -1121,6 +1139,12 @@ class VideoStateMachine:
         if self.state == PlayState.TALK and (
             self._utterance_active or self._talk_pinned
         ):
+            # Audio masih jalan / video lebih pendek: loop clip yang sama (smooth).
+            if self._utterance_active and self._utterance_audio_done:
+                # Visual tail: jangan loop lagi — lanjut sampai end_pose lalu complete.
+                if self.frame_idx > end_pf:
+                    self.frame_idx = end_pf
+                return
             if self.frame_idx > end_pf:
                 self.frame_idx = base_pf
                 self._talk_loop_count += 1
@@ -1133,6 +1157,7 @@ class VideoStateMachine:
                     and not self._utterance_active
                     and not self._talk_pinned
                     and not self.pending_action
+                    and len(self._idle_variants) > 1
                     and self.current_name in self._idle_variants
                 ):
                     nxt = self._choose_next_idle_variant(exclude=self.current_name)
@@ -1148,8 +1173,8 @@ class VideoStateMachine:
             self._playthrough_lock = False
             if not self._utterance_active:
                 if not self.pending_action:
-                    nxt = self._choose_next_idle_variant(exclude=self.current_name)
-                    self.pending_action = nxt or self.bank._idle_name
+                    # Kembali ke idle_1 setelah action non-loop.
+                    self.pending_action = self.bank._idle_name
                 self._drain_action_queue()
 
     def _drain_action_queue(self) -> None:
@@ -1173,7 +1198,9 @@ class VideoStateMachine:
             frame: np.ndarray
 
             if self._hold_pose_for_infer and not self._utterance_active:
+                # Legacy path — sebaiknya tidak dipakai; tubuh harus tetap maju.
                 body, cycle_idx = clip.forward_at(self.frame_idx)
+                self._advance_frame_index(clip, is_speech)
                 frame = body.copy()
             elif self._overlap is not None and self._overlap.step < len(
                 self._overlap.pairs
@@ -2439,12 +2466,12 @@ class AIVisualWorker:
         self._rtmp_connected = False
 
     def _on_utterance_ready(self, job) -> None:
-        """Mulai inferensi mulut — pose tubuh di-freeze sampai audio start."""
+        """Mulai inferensi mulut — tubuh tetap bergerak (tanpa freeze)."""
         start_idx = 0
         body = None
         if self._sm:
             start_idx = self._sm.pin_talk_body()
-            body = self._sm.current_name
+            body = self._sm._talk_target or self._sm.current_name
         if self._engine:
             self._engine.set_utterance(
                 job, start_frame_idx=start_idx, body_clip=body
@@ -2473,7 +2500,9 @@ class AIVisualWorker:
             job, "task_id", None
         ):
             start_idx = self._sm.pin_talk_body() if self._sm else 0
-            body = self._sm.current_name if self._sm else None
+            body = (
+                (self._sm._talk_target or self._sm.current_name) if self._sm else None
+            )
             self._engine.set_utterance(
                 job, start_frame_idx=start_idx, body_clip=body
             )
@@ -2583,7 +2612,7 @@ class AIVisualWorker:
         ready = self._bank.talk_clips_ready()
         if not ready:
             raise RuntimeError(
-                "Tidak ada clip bicara dengan MuseTalk (idle_2/3/4 atau fallback idle_1)"
+                "Tidak ada clip bicara dengan MuseTalk (idle_2/3/4/1)"
             )
         for talk_clip_name in ready:
             talk_clip = self._bank.clips.get(talk_clip_name)

@@ -23,8 +23,10 @@ import {
   buildLocalCommentResponse,
   commentNeedsLlm,
   countFreshScriptLines,
+  detectGreetingClass,
   emptyScriptBank,
   FILLER_TOPICS,
+  hasRecentGreetingClass,
   mergeScriptLines,
   nextRhythmTopic,
   phasePreferTopics,
@@ -34,6 +36,7 @@ import {
   seedLocalScriptBank,
   mergeProductKnowledge,
   pickScriptBankCommentLine,
+  stripLeadingGreeting,
   takeScriptLine,
   shouldUseLlmForComment,
   type FaqPackEntry,
@@ -135,6 +138,8 @@ interface HostMemory {
   ctas: string[];
   claims: string[];
   modes: HostMode[];
+  /** Kelas sapaan terakhir (halo/guys/kak/...) — anti-repeat opening. */
+  greetings: string[];
   commentFingerprints: string[];
   lastResponseAt: number;
   lastCommentResponseAt: number;
@@ -748,6 +753,7 @@ class LiveHostOrchestrator {
         ctas: [],
         claims: [],
         modes: [],
+        greetings: [],
         commentFingerprints: [],
         lastResponseAt: 0,
         lastCommentResponseAt: 0,
@@ -1170,7 +1176,8 @@ class LiveHostOrchestrator {
     const remaining = remainingScriptLines(state.scriptBank);
     const freshCount = countFreshScriptLines(state.scriptBank, recent);
     // Keluar awal hanya jika buffer cukup DAN masih ada variasi segar.
-    if (remaining > scriptBankLow && freshCount > SCRIPT_BANK_FRESH_LOW + 4) return;
+    // Threshold lebih agresif: refill lebih awal supaya host tidak kehabisan naskah.
+    if (remaining > scriptBankLow * 1.5 && freshCount > SCRIPT_BANK_FRESH_LOW + 6) return;
 
     // 1) Selalu recycle lokal dulu — anti-idle tanpa rate limit.
     const recycled = recycleLocalScriptBank(
@@ -1275,6 +1282,21 @@ class LiveHostOrchestrator {
 
     this.seedScriptBank(state, product);
     this.maybeRefillScriptBank(sessionId);
+    // Hardening: bank kosong / hampir habis → inject recycle lokal segera (hindari host diam).
+    if (remainingScriptLines(state.scriptBank) < 8) {
+      const boost = recycleLocalScriptBank(
+        this.toScriptFacts(product),
+        state.catalog,
+        state.memory.utterances.slice(-16),
+      );
+      mergeScriptLines(state.scriptBank, boost, state.memory.utterances.slice(-16));
+      if (remainingScriptLines(state.scriptBank) === 0) {
+        state.scriptBank.lines = seedLocalScriptBank(
+          this.toScriptFacts(product),
+          state.catalog,
+        );
+      }
+    }
 
     const topic = this.chooseAutonomousTopic(state);
     const requestedMode = this.resolveModeForTopic(state, topic.modes);
@@ -1287,7 +1309,8 @@ class LiveHostOrchestrator {
     const avoidCta = recentCtas.filter((c) => c && c !== "NONE").length >= 1;
     const bufferCritical =
       state.lastQueue.queuedVideos === 0 ||
-      (state.lastQueue.bufferSeconds > 0 && state.lastQueue.bufferSeconds <= 4);
+      (state.lastQueue.bufferSeconds > 0 && state.lastQueue.bufferSeconds <= 4) ||
+      state.lastQueue.bufferSeconds < policy.minBufferSeconds;
     // Filler hanya saat kritis — jangan prefer hanya karena ritme/slot filler.
     const preferFiller = bufferCritical;
 
@@ -1314,9 +1337,27 @@ class LiveHostOrchestrator {
       recycleLocalScriptBank(this.toScriptFacts(product), state.catalog, recent)[0];
 
     if (!hostResponse) {
-      state.counters.failed++;
-      await sleep(GENERATION_BACKOFF_MS);
-      return;
+      // Emergency synthetic — host tidak boleh diam total.
+      const facts = this.toScriptFacts(product);
+      const emergencySeed = seedLocalScriptBank(facts, state.catalog);
+      mergeScriptLines(state.scriptBank, emergencySeed, recent);
+      hostResponse =
+        takeScriptLine(state.scriptBank, recent, { preferFiller: true }) ||
+        emergencySeed[0] || {
+          speech: `${product.name || "Produk ini"} masih tersedia di live, cek etalase ya.`,
+          action: "IDLE" as const,
+          emotion: "warm" as const,
+          intent: "SELL" as const,
+          mode: "SELL" as const,
+          topic: "filler",
+          ctaType: "SOFT" as const,
+          target_product_id: product.id,
+          interruptible: true,
+          claims: [],
+        };
+      console.warn(
+        `[LiveHost] Emergency script line used (bank was empty) session=${sessionId}`,
+      );
     }
 
     hostResponse = {
@@ -1329,6 +1370,7 @@ class LiveHostOrchestrator {
       hostResponse,
       source,
       topic.topic,
+      { allowRepeatWhenCritical: bufferCritical },
     );
 
     if (!accepted) {
@@ -1342,16 +1384,32 @@ class LiveHostOrchestrator {
         takeScriptLine(state.scriptBank, recent, {
           avoidTopics: [hostResponse.topic, ...recentTopics],
         }) ||
-        takeScriptLine(state.scriptBank, recent, { preferFiller: true });
+        takeScriptLine(state.scriptBank, recent, { preferFiller: true }) ||
+        recycleLocalScriptBank(this.toScriptFacts(product), state.catalog, recent)[0];
       if (retry) {
         const retryAccepted = await this.processHostResponse(
           sessionId,
           retry,
           source,
           retry.topic || topic.topic,
+          { allowRepeatWhenCritical: true },
         );
         if (retryAccepted) return;
         state.counters.duplicateResponsesPrevented++;
+      }
+      // Last resort: force-queue something so buffer tidak drop ke 0.
+      if (bufferCritical && hostResponse) {
+        const forced = await this.processHostResponse(
+          sessionId,
+          {
+            ...hostResponse,
+            speech: `${product.name || "Produk ini"} — ${hostResponse.speech}`.slice(0, 180),
+          },
+          source,
+          hostResponse.topic || topic.topic,
+          { allowRepeatWhenCritical: true },
+        );
+        if (forced) return;
       }
       await sleep(150);
     }
@@ -1488,15 +1546,36 @@ class LiveHostOrchestrator {
     response: HostResponse,
     source: "prelive" | "live" | "comment",
     fallbackTopic: string,
+    opts?: { allowRepeatWhenCritical?: boolean },
   ): Promise<boolean> {
     const state = this.sessions.get(sessionId);
     if (!state) return false;
 
-    const speech = response.speech.trim();
-    if (!speech || speech.length < 3) return false;
+    const speechRaw = response.speech.trim();
+    if (!speechRaw || speechRaw.length < 3) return false;
+
+    let speech = speechRaw;
+    const recent = state.memory.utterances.slice(-18);
+    const allowRepeat = Boolean(opts?.allowRepeatWhenCritical);
+
+    // Sapaan berulang (halo/hai/guys/kak) → strip atau tolak.
+    const greetingClass = detectGreetingClass(speech);
+    if (
+      greetingClass &&
+      (hasRecentGreetingClass(speech, recent, 8) ||
+        state.memory.greetings.slice(-3).includes(greetingClass))
+    ) {
+      if (!allowRepeat) {
+        const stripped = stripLeadingGreeting(speech);
+        if (stripped !== speech && stripped.length >= 8) {
+          speech = stripped;
+        } else {
+          return false;
+        }
+      }
+    }
 
     const normalized = normalizeText(speech);
-    const recent = state.memory.utterances.slice(-18);
 
     // Semantic-ish anti-repeat gate tanpa additional embedding API.
     const maxSimilarity = recent.reduce(
@@ -1504,12 +1583,16 @@ class LiveHostOrchestrator {
       0,
     );
 
-    if (maxSimilarity >= 0.88 || this.hasRepeatedStructure(speech, recent)) {
+    if (
+      !allowRepeat &&
+      (maxSimilarity >= 0.82 || this.hasRepeatedStructure(speech, recent))
+    ) {
       return false;
     }
 
-    // Jangan dua CTA identik berturut-turut.
+    // Jangan dua CTA identik berturut-turut (kecuali buffer kritis).
     if (
+      !allowRepeat &&
       response.ctaType !== "NONE" &&
       state.memory.ctas.length > 0 &&
       normalizeText(state.memory.ctas[state.memory.ctas.length - 1] || "") ===
@@ -1590,12 +1673,15 @@ class LiveHostOrchestrator {
       if (claim?.trim()) memory.claims.push(claim.trim());
     }
     memory.modes.push(response.mode);
+    const greetClass = detectGreetingClass(response.speech);
+    if (greetClass) memory.greetings.push(greetClass);
 
     memory.utterances = memory.utterances.slice(-policy.memoryUtterances);
     memory.topics = memory.topics.slice(-policy.memoryTopics);
     memory.ctas = memory.ctas.slice(-policy.memoryCtas);
     memory.claims = memory.claims.slice(-policy.memoryClaims);
     memory.modes = memory.modes.slice(-20);
+    memory.greetings = memory.greetings.slice(-12);
   }
 
   private hasRepeatedStructure(speech: string, recent: string[]): boolean {
@@ -1604,11 +1690,22 @@ class LiveHostOrchestrator {
 
     const firstFive = tokens.slice(0, 5).join(" ");
     const lastFive = tokens.slice(-5).join(" ");
+    const bigrams = new Set<string>();
+    for (let i = 0; i < tokens.length - 1; i++) {
+      bigrams.add(`${tokens[i]} ${tokens[i + 1]}`);
+    }
 
-    for (const previous of recent.slice(-4)) {
+    for (const previous of recent.slice(-6)) {
       const p = normalizeText(previous).split(" ").filter(Boolean);
       if (p.slice(0, 5).join(" ") === firstFive) return true;
       if (p.slice(-5).join(" ") === lastFive) return true;
+      // Overlap bigram tinggi = paraphrase dekat
+      let hits = 0;
+      for (let i = 0; i < p.length - 1; i++) {
+        if (bigrams.has(`${p[i]} ${p[i + 1]}`)) hits++;
+      }
+      const denom = Math.min(bigrams.size, Math.max(1, p.length - 1));
+      if (hits / denom >= 0.6) return true;
     }
     return false;
   }
@@ -1619,6 +1716,14 @@ class LiveHostOrchestrator {
     for (const utterance of recent) {
       const tokens = normalizeText(utterance).split(" ").filter(Boolean);
       if (tokens.length >= 4) phrases.push(tokens.slice(0, 4).join(" "));
+    }
+    // Minta LLM hindari sapaan yang baru dipakai.
+    for (const g of state.memory.greetings.slice(-4)) {
+      if (g === "halo") phrases.push("halo", "hai semuanya", "hai guys");
+      if (g === "guys") phrases.push("guys", "hai guys");
+      if (g === "kak") phrases.push("kak", "kakak");
+      if (g === "selamat") phrases.push("selamat datang");
+      if (g === "teman") phrases.push("teman-teman", "semuanya");
     }
     return phrases;
   }
@@ -1987,8 +2092,8 @@ class LiveHostOrchestrator {
       ? `${state.config.avatarName.toLowerCase().trim()}.png`
       : "namira.png";
 
-    // Point CTA off — selalu IDLE (tanpa tag di text).
-    const gesture = "IDLE";
+    // Body clip = idle_1..4 di worker (tanpa alias IDLE/talk/gesture).
+    const gesture = "idle_1";
     const cleanText = String(text || "").replace(/^\s*\[[A-Z_]+\]\s*/i, "").trim();
     const taggedText = cleanText;
 

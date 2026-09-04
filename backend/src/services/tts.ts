@@ -61,40 +61,162 @@ export interface SynthesizeResponse {
   sampleAudioUrl?: string;
 }
 
+/**
+ * Normalize text for Piper TTS only — jangan ubah data produk mentah.
+ * Pipeline: Raw Product → Script → sanitizeForLiveTTS → Piper
+ */
 export function sanitizeForLiveTTS(text: string): string {
   if (!text) return "";
-  return (
-    text
-      .replace(/\[[A-Z_]+\]/gi, "")
-      .replace(
-        /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu,
-        "",
-      )
-      .replace(/Rp\s?(\d+(?:\.\d+)?(?:\,\d+)?)/gi, "$1 rupiah ")
-      .replace(/\$(\d+(?:\.\d+)?)/g, "$1 dollar ")
-      .replace(/\b(\d+)k\b/gi, "$1 ribu ")
-      .replace(/(\d+)%/g, "$1 persen")
-      .replace(/\bBPOM\b/g, "B P O M")
-      .replace(/\bORI\b/gi, "original")
-      .replace(/\bCO\b/g, "check out")
-      .replace(/\bCOD\b/g, "C O D")
-      .replace(/\bFYP\b/g, "F Y P")
-      .replace(/\bDM\b/g, "D M")
-      .replace(/&/g, " dan ")
-      .replace(/</g, "")
-      .replace(/>/g, "")
-      .replace(/['"]/g, "")
-      .replace(
-        /\b(yuk|nah|khusus hari ini|mumpung lagi promo|jangan sampai kehabisan)\b/gi,
-        ", $1",
-      )
-      .replace(/[!]{2,}/g, "!")
-      .replace(/[?]{2,}/g, "?")
-      .replace(/[.]{4,}/g, "...")
-      .replace(/,{2,}/g, ",")
-      .replace(/\s+/g, " ")
-      .trim()
-  );
+  let out = text
+    .replace(/\[[A-Z_]+\]/gi, "")
+    .replace(
+      /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu,
+      "",
+    );
+
+  out = normalizeCurrencyForTts(out);
+  out = normalizePercentsAndUnits(out);
+  out = normalizeAbbreviations(out);
+
+  return out
+    .replace(/&/g, " dan ")
+    .replace(/</g, "")
+    .replace(/>/g, "")
+    .replace(/['"]/g, "")
+    .replace(
+      /\b(yuk|nah|khusus hari ini|mumpung lagi promo|jangan sampai kehabisan)\b/gi,
+      ", $1",
+    )
+    .replace(/[!]{2,}/g, "!")
+    .replace(/[?]{2,}/g, "?")
+    .replace(/[.]{4,}/g, "...")
+    .replace(/,{2,}/g, ",")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Rp / Rp. / $ + format ID (25.000) atau US (25,000) → bacaan natural. */
+export function normalizeCurrencyForTts(text: string): string {
+  return text
+    .replace(
+      /\bRp\.?\s*([\d.,]+)\b/gi,
+      (_m, raw: string) => `${idNumberToSpoken(parseIdAmount(raw))} rupiah`,
+    )
+    .replace(
+      /\$\s*([\d.,]+)\b/g,
+      (_m, raw: string) => `${idNumberToSpoken(parseIdAmount(raw))} dollar`,
+    )
+    .replace(/\b(\d+)k\b/gi, (_m, n: string) => `${idNumberToSpoken(Number(n) * 1000)}`);
+}
+
+function parseIdAmount(raw: string): number {
+  const s = String(raw || "").trim();
+  if (!s) return NaN;
+  // 25.000 / 1.250.000 (ID) vs 25,000 / 1,250.50 (mixed)
+  if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) {
+    return Number(s.replace(/\./g, "").replace(",", "."));
+  }
+  if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) {
+    return Number(s.replace(/,/g, ""));
+  }
+  if (/^\d+,\d+$/.test(s) && !s.includes(".")) {
+    // 25,5 → 25.5
+    return Number(s.replace(",", "."));
+  }
+  return Number(s.replace(/[^\d.]/g, ""));
+}
+
+const ID_ONES = [
+  "",
+  "satu",
+  "dua",
+  "tiga",
+  "empat",
+  "lima",
+  "enam",
+  "tujuh",
+  "delapan",
+  "sembilan",
+  "sepuluh",
+  "sebelas",
+  "dua belas",
+  "tiga belas",
+  "empat belas",
+  "lima belas",
+  "enam belas",
+  "tujuh belas",
+  "delapan belas",
+  "sembilan belas",
+];
+
+/** Konversi angka ke bacaan ID untuk TTS (hingga ratusan juta). */
+export function idNumberToSpoken(n: number): string {
+  if (!Number.isFinite(n)) return "";
+  const rounded = Math.round(n);
+  if (rounded === 0) return "nol";
+  if (rounded < 0) return `minus ${idNumberToSpoken(-rounded)}`;
+  if (rounded < 20) return ID_ONES[rounded] || String(rounded);
+  if (rounded < 100) {
+    const tens = Math.floor(rounded / 10);
+    const ones = rounded % 10;
+    const tensWord =
+      tens === 1 ? "sepuluh" : tens === 2 ? "dua puluh" : `${ID_ONES[tens]} puluh`;
+    return ones ? `${tensWord} ${ID_ONES[ones]}` : tens === 1 ? "sepuluh" : tensWord;
+  }
+  if (rounded < 200) {
+    const rest = rounded - 100;
+    return rest ? `seratus ${idNumberToSpoken(rest)}` : "seratus";
+  }
+  if (rounded < 1000) {
+    const hundreds = Math.floor(rounded / 100);
+    const rest = rounded % 100;
+    const head = `${ID_ONES[hundreds]} ratus`;
+    return rest ? `${head} ${idNumberToSpoken(rest)}` : head;
+  }
+  if (rounded < 1_000_000) {
+    const thousands = Math.floor(rounded / 1000);
+    const rest = rounded % 1000;
+    const head =
+      thousands === 1 ? "seribu" : `${idNumberToSpoken(thousands)} ribu`;
+    return rest ? `${head} ${idNumberToSpoken(rest)}` : head;
+  }
+  if (rounded < 1_000_000_000) {
+    const millions = Math.floor(rounded / 1_000_000);
+    const rest = rounded % 1_000_000;
+    const head = `${idNumberToSpoken(millions)} juta`;
+    return rest ? `${head} ${idNumberToSpoken(rest)}` : head;
+  }
+  // Fallback besar: biarkan digit tanpa pemisah agar Piper tidak baca "titik"
+  return String(rounded);
+}
+
+function normalizePercentsAndUnits(text: string): string {
+  return text
+    .replace(/(\d+(?:[.,]\d+)?)\s*%/g, (_m, n: string) => {
+      const num = parseIdAmount(n);
+      return Number.isFinite(num) ? `${idNumberToSpoken(num)} persen` : `${n} persen`;
+    })
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*ml\b/gi, "$1 mililiter")
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*mg\b/gi, "$1 miligram")
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*gr\b/gi, "$1 gram")
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*g\b/gi, "$1 gram")
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*kg\b/gi, "$1 kilogram")
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*cm\b/gi, "$1 sentimeter")
+    .replace(/\b(\d+)\s*[x×]\s*(\d+)\b/gi, "$1 kali $2")
+    .replace(/\+/g, " plus ");
+}
+
+function normalizeAbbreviations(text: string): string {
+  return text
+    .replace(/\bBPOM\b/g, "B P O M")
+    .replace(/\bORI\b/gi, "original")
+    .replace(/\bCO\b/g, "check out")
+    .replace(/\bCOD\b/g, "C O D")
+    .replace(/\bFYP\b/g, "F Y P")
+    .replace(/\bDM\b/g, "D M")
+    .replace(/\bSKU\b/gi, "S K U")
+    .replace(/\bFAQ\b/gi, "F A Q")
+    .replace(/\bONGKIR\b/gi, "ongkos kirim");
 }
 
 export function getPiperLengthScale(
