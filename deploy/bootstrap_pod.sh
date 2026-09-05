@@ -38,10 +38,10 @@ fi
 cd "$REPO_DIR/deploy"
 
 echo "[*] MuseTalk setup (idempotent jika .setup_complete ada)"
-bash setup.sh
+GIT_PULL=0 bash setup.sh
 
 echo "[*] VoxCPM2 dedicated venv"
-bash voxcpm2_tts/setup.sh
+VOICE_ID="${VOICE_ID:-girl_cute_kids}" bash voxcpm2_tts/setup.sh
 
 echo "[*] Worker .env + assets + restart API (VoxCPM2 bridge on :8091)"
 mkdir -p "$WORKER_DIR" /workspace/voices /workspace/models/voxcpm2

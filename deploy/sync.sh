@@ -2,10 +2,12 @@
 # sync.sh — satu pintu sync/redeploy AI worker di RunPod.
 #
 # Usage (di pod):
-#   bash deploy/sync.sh              # salin file deploy → /workspace/ai_live_worker
-#   bash deploy/sync.sh --restart    # sync + restart api (tanpa git pull)
-#   bash deploy/sync.sh --pull --restart   # git pull + sync + restart
-#   FORCE_ASSETS=1 bash deploy/sync.sh --restart   # timpa assets
+#   bash deploy/sync.sh                      # salin deploy/ → worker
+#   bash deploy/sync.sh --restart            # git pull + sync + restart API (default)
+#   bash deploy/sync.sh --pull --restart     # sama (eksplisit)
+#   SKIP_PULL=1 bash deploy/sync.sh --restart  # restart tanpa git pull
+#   FORCE_ASSETS=1 bash deploy/sync.sh --restart
+#   FORCE_GIT_RESET=1 bash deploy/sync.sh --pull --restart
 #
 # Diimpor juga oleh start.sh (fungsi sync_worker_files / bootstrap_worker_env).
 
@@ -14,8 +16,70 @@ set -euo pipefail
 REPO_DIR="${REPO_DIR:-/workspace/live-streaming-ai}"
 WORKER_DIR="${WORKER_DIR:-/workspace/ai_live_worker}"
 DEPLOY_DIR="${DEPLOY_DIR:-$REPO_DIR/deploy}"
-# 0 = jangan timpa asset yang sudah ada (start biasa), 1 = timpa semua asset (redeploy)
+REPO_URL="${REPO_URL:-https://github.com/ramadifa13/live-streaming-ai.git}"
+REPO_BRANCH="${REPO_BRANCH:-main}"
+# 0 = jangan timpa asset yang sudah ada, 1 = timpa semua asset
 FORCE_ASSETS="${FORCE_ASSETS:-0}"
+
+export_cuda_env() {
+	export PATH="/usr/local/cuda-11.8/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+	export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-11.8}"
+	export LD_LIBRARY_PATH="/usr/local/cuda-11.8/lib64:${LD_LIBRARY_PATH:-}"
+	export TMPDIR="${TMPDIR:-/workspace/tmp}"
+	export PIP_CACHE_DIR="${PIP_CACHE_DIR:-/workspace/tmp/pip_cache}"
+	mkdir -p "$TMPDIR" "$PIP_CACHE_DIR" 2>/dev/null || true
+}
+
+# Pastikan $REPO_DIR adalah git repo (clone / restore .git jika folder copy-paste).
+ensure_git_repo() {
+	mkdir -p "$(dirname "$REPO_DIR")"
+	if [ -d "$REPO_DIR/.git" ]; then
+		return 0
+	fi
+
+	if [ ! -d "$REPO_DIR" ]; then
+		echo "[git] Clone $REPO_URL → $REPO_DIR (branch $REPO_BRANCH)"
+		git clone --branch "$REPO_BRANCH" "$REPO_URL" "$REPO_DIR"
+		DEPLOY_DIR="$REPO_DIR/deploy"
+		return 0
+	fi
+
+	echo "[git] $REPO_DIR ada tapi BUKAN git repo — restore dari origin/$REPO_BRANCH"
+	echo "      (file lokal akan ditimpa oleh remote; cocok untuk pod deploy)"
+	cd "$REPO_DIR"
+	git init
+	git remote remove origin 2>/dev/null || true
+	git remote add origin "$REPO_URL"
+	git fetch --depth 1 origin "$REPO_BRANCH"
+	git checkout -f -B "$REPO_BRANCH" "origin/$REPO_BRANCH"
+	DEPLOY_DIR="$REPO_DIR/deploy"
+	echo "[git] Repo OK: $(git rev-parse --short HEAD 2>/dev/null || echo '?') @ $REPO_BRANCH"
+}
+
+pull_repo() {
+	ensure_git_repo || return 1
+	cd "$REPO_DIR"
+	echo "[pull] fetch/pull origin $REPO_BRANCH ..."
+	git fetch origin "$REPO_BRANCH" 2>/dev/null || git fetch origin || true
+	local br
+	br="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+	if [ "$br" != "$REPO_BRANCH" ]; then
+		git checkout -B "$REPO_BRANCH" "origin/$REPO_BRANCH" 2>/dev/null \
+			|| git checkout "$REPO_BRANCH" 2>/dev/null \
+			|| true
+	fi
+	if [ "${FORCE_GIT_RESET:-0}" = "1" ]; then
+		echo "[pull] FORCE_GIT_RESET=1 — hard reset ke origin/$REPO_BRANCH"
+		git reset --hard "origin/$REPO_BRANCH"
+	else
+		if ! git pull --ff-only origin "$REPO_BRANCH" 2>/dev/null; then
+			echo "[WARN] ff-only pull gagal — hard reset ke origin/$REPO_BRANCH"
+			git reset --hard "origin/$REPO_BRANCH" || true
+		fi
+	fi
+	DEPLOY_DIR="$REPO_DIR/deploy"
+	echo "[pull] HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo '?') branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+}
 
 # Hapus TTS engine lama (Piper/Supertonic) — VoxCPM2 adalah satu-satunya TTS.
 purge_legacy_tts() {
@@ -50,6 +114,27 @@ purge_legacy_tts() {
 	_strip_legacy_tts_env "${WORKER_DIR:-}/.env"
 	_strip_legacy_tts_env "${DEPLOY_DIR:-}/.env"
 	echo "[TTS] Sisa Piper/Supertonic dihapus. TTS aktif = VoxCPM2."
+}
+
+sync_girl_voices() {
+	local src_root=""
+	if [ -d "$DEPLOY_DIR/voices" ]; then
+		src_root="$DEPLOY_DIR/voices"
+	elif [ -d "$WORKER_DIR/voices" ]; then
+		src_root="$WORKER_DIR/voices"
+	else
+		return 0
+	fi
+	mkdir -p /workspace/voices "$WORKER_DIR/voices"
+	local vid
+	for vid in girl_cute_kids girl_warm_youthful girl_warm_friendly girl_calm_professional; do
+		mkdir -p "/workspace/voices/$vid" "$WORKER_DIR/voices/$vid"
+		if [ -f "$src_root/$vid/reference.wav" ]; then
+			cp -n "$src_root/$vid/reference.wav" "/workspace/voices/$vid/reference.wav" 2>/dev/null || true
+			cp -n "$src_root/$vid/reference.wav" "$WORKER_DIR/voices/$vid/reference.wav" 2>/dev/null || true
+		fi
+	done
+	rm -rf /workspace/voices/default_host "$WORKER_DIR/voices/default_host" 2>/dev/null || true
 }
 
 bootstrap_worker_env() {
@@ -213,7 +298,7 @@ ensure_worker_python_deps() {
 		return 1
 	fi
 
-	echo "[DEPS] Python API dependencies OK."
+	echo "[DEPS] Python API dependencies OK (venv: $py)."
 }
 
 sync_worker_files() {
@@ -243,6 +328,8 @@ sync_worker_files() {
 		cp -rf "$DEPLOY_DIR/voices/." "$WORKER_DIR/voices/"
 		cp -rn "$DEPLOY_DIR/voices/." /workspace/voices/ 2>/dev/null || true
 	fi
+	sync_girl_voices
+
 	if [ "${START_SH_RUNNING:-0}" = "1" ]; then
 		for shf in "$DEPLOY_DIR"/*.sh; do
 			[ -f "$shf" ] || continue
@@ -293,6 +380,8 @@ sync_worker_files() {
 
 	fix_shell_eol "$WORKER_DIR"
 	fix_shell_eol "$DEPLOY_DIR"
+	chmod +x "$WORKER_DIR"/*.sh "$DEPLOY_DIR"/*.sh 2>/dev/null || true
+	chmod +x "$WORKER_DIR/voxcpm2_tts"/*.sh "$DEPLOY_DIR/voxcpm2_tts"/*.sh 2>/dev/null || true
 
 	echo "[SYNC] Selesai."
 }
@@ -312,51 +401,57 @@ fix_shell_eol() {
 
 _cli_pull=0
 _cli_restart=0
+_cli_already_pulled=0
 for _arg in "$@"; do
 	case "$_arg" in
 		--pull) _cli_pull=1 ;;
 		--restart) _cli_restart=1 ;;
+		--already-pulled) _cli_already_pulled=1 ;;
 		-h|--help)
 			echo "Usage: bash sync.sh [--pull] [--restart]"
-			echo "  (no flags)   sync files only"
-			echo "  --restart    sync + FORCE_RESTART start.sh"
-			echo "  --pull       checkout main, lalu git pull origin main"
+			echo "  (no flags)     sync files only"
+			echo "  --restart      git pull (default) + sync + start.sh"
+			echo "  --pull         git pull eksplisit (juga default saat --restart)"
+			echo "  SKIP_PULL=1    lewati git pull saat --restart"
+			echo "  FORCE_ASSETS=1 timpa assets"
+			echo "  FORCE_GIT_RESET=1  hard reset ke origin/main"
 			exit 0
 			;;
 	esac
 done
 
+# --restart selalu pull, kecuali SKIP_PULL=1 atau sudah di-pull di re-exec.
+if [ "$_cli_restart" = "1" ] && [ "${SKIP_PULL:-0}" != "1" ] && [ "$_cli_already_pulled" != "1" ]; then
+	_cli_pull=1
+fi
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+	export_cuda_env
 	echo "============================================================"
 	echo " AI Live Worker — sync.sh"
+	echo " REPO=$REPO_DIR  WORKER=$WORKER_DIR"
 	echo "============================================================"
 
 	if [ "$_cli_pull" = "1" ]; then
-		if [ -d "$REPO_DIR/.git" ]; then
-			cd "$REPO_DIR"
-			echo "[pull] pindah ke branch main, lalu fetch/pull origin main ..."
-			git fetch origin main 2>/dev/null || true
-			if git show-ref --verify --quiet refs/heads/main; then
-				git checkout main || echo "[WARN] git checkout main gagal"
-			else
-				git checkout -B main origin/main || echo "[WARN] git checkout -B main gagal"
+		pull_repo || echo "[WARN] pull_repo gagal — lanjut sync dari file lokal"
+		# Re-exec script TERBARU dari repo setelah pull (hindari jalanin sync.sh usang).
+		if [ "$_cli_already_pulled" != "1" ] && [ -f "$REPO_DIR/deploy/sync.sh" ]; then
+			_self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || realpath "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+			_new="$(readlink -f "$REPO_DIR/deploy/sync.sh" 2>/dev/null || realpath "$REPO_DIR/deploy/sync.sh" 2>/dev/null || echo "$REPO_DIR/deploy/sync.sh")"
+			if [ "$_self" != "$_new" ] || [ "$_cli_restart" = "1" ]; then
+				echo "[pull] Re-exec sync.sh terbaru dari repo ..."
+				_flags=()
+				[ "$_cli_restart" = "1" ] && _flags+=(--restart)
+				_flags+=(--already-pulled)
+				exec bash "$REPO_DIR/deploy/sync.sh" "${_flags[@]}"
 			fi
-			_br="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-			echo "[pull] branch sekarang: ${_br:-?}"
-			if [ "${FORCE_GIT_RESET:-0}" = "1" ]; then
-				git reset --hard origin/main
-			else
-				git pull origin main 2>/dev/null || echo "[WARN] git pull gagal — lanjut sync lokal"
-			fi
-		else
-			echo "[WARN] Repo git tidak ada di $REPO_DIR — lewati --pull"
 		fi
 	fi
 
 	if [ "$_cli_restart" = "1" ]; then
 		FORCE_ASSETS="${FORCE_ASSETS:-1}"
 	fi
-	export REPO_DIR WORKER_DIR DEPLOY_DIR FORCE_ASSETS
+	export REPO_DIR WORKER_DIR DEPLOY_DIR FORCE_ASSETS REPO_URL REPO_BRANCH
 
 	sync_worker_files
 	bootstrap_worker_env
@@ -364,8 +459,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	ensure_worker_python_deps || true
 
 	echo "[check] invariant worker ..."
+	_inv_py="$WORKER_DIR/env/bin/python"
+	[ -x "$_inv_py" ] || _inv_py="python3"
 	if [ -f "$WORKER_DIR/check_invariants.py" ]; then
-		python3 "$WORKER_DIR/check_invariants.py" || {
+		"$_inv_py" "$WORKER_DIR/check_invariants.py" || {
 			echo "[ERROR] Invariant gagal — batalkan restart. Perbaiki kode lalu sync lagi."
 			exit 1
 		}
@@ -380,7 +477,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 		SKIP_WATCHDOG=1 FORCE_RESTART=1 bash start.sh
 		echo "[OK] Sync + restart selesai."
 		echo "     Health: curl -s http://127.0.0.1:\${PORT:-8000}/health"
+		echo "     TTS:    curl -s http://127.0.0.1:\${PORT:-8000}/tts/health"
 		echo "     Log:    tail -f $WORKER_DIR/api_server.log"
+		echo "     Python: $WORKER_DIR/env/bin/python   ← JANGAN pakai python3 sistem"
 	else
 		echo "[OK] Sync selesai (tanpa restart)."
 		echo "     Restart: bash $DEPLOY_DIR/sync.sh --restart"

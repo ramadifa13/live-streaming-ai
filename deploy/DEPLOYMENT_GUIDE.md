@@ -180,28 +180,33 @@ sync.sh menghapus folder/env Piper dan Supertonic.
 
 ## 6. Redeploy worker
 
-Dari shell pod:
+Dari shell pod (**satu perintah**):
 
 ```bash
-# kode terbaru + restart API
-bash /workspace/live-streaming-ai/deploy/sync.sh --pull --restart
+bash /workspace/live-streaming-ai/deploy/redeploy.sh
+# alias: bash deploy/sync.sh --restart   ← otomatis git pull + sync + start (venv)
+```
 
+Opsi:
+
+```bash
 # timpa assets (idle clips, dll.)
-FORCE_ASSETS=1 bash /workspace/live-streaming-ai/deploy/sync.sh --pull --restart
+FORCE_ASSETS=1 bash /workspace/live-streaming-ai/deploy/redeploy.sh
 
-# git reset keras lalu sync (hati-hati: buang perubahan lokal di repo pod)
-FORCE_GIT_RESET=1 bash /workspace/live-streaming-ai/deploy/sync.sh --pull --restart
+# git reset keras lalu sync (buang perubahan lokal di repo pod)
+FORCE_GIT_RESET=1 bash /workspace/live-streaming-ai/deploy/redeploy.sh
+
+# tanpa git pull
+SKIP_PULL=1 bash /workspace/live-streaming-ai/deploy/sync.sh --restart
 
 # background
-nohup bash /workspace/live-streaming-ai/deploy/sync.sh --pull --restart \
+nohup bash /workspace/live-streaming-ai/deploy/redeploy.sh \
   > /workspace/ai_live_worker/redeploy.log 2>&1 &
 ```
 
-Tanpa git pull (hanya salin `deploy/` → worker):
+Jika `git pull` gagal (`not a git repository`): `sync.sh` otomatis restore `.git` dari GitHub lalu pull.
 
-```bash
-bash /workspace/live-streaming-ai/deploy/sync.sh --restart
-```
+**Penting:** API harus dijalankan dengan `/workspace/ai_live_worker/env/bin/python` (lewat `start.sh` / `redeploy.sh`), bukan `python3` sistem.
 
 ### Edit env worker
 

@@ -1,26 +1,57 @@
-# AI Worker Pod — Setup cepat
+# AI Worker Pod — Setup & run cepat
 
-Worker GPU: **VoxCPM2 TTS** + **MuseTalk** + RTMP (RTX 4090).
+Worker GPU: **VoxCPM2 TTS** + **MuseTalk** + RTMP.
 
 Panduan lengkap: [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md).
 
-## Pod yang sudah ada (bersihkan engine TTS lama)
+## Perintah yang paling sering dipakai
 
 ```bash
-pkill -f 'piper_tts/server.py|uvicorn.*8090|supertonic' || true
-rm -rf /workspace/piper_tts /workspace/supertonic_tts
-cd /workspace/live-streaming-ai
-git checkout main
-git pull origin main
-bash deploy/sync.sh --pull --restart
-# Setup VoxCPM2 (sekali / setelah update deps)
-bash deploy/voxcpm2_tts/setup.sh
-FORCE_ASSETS=1 bash deploy/sync.sh --restart
-curl -s http://127.0.0.1:8000/health
-curl -s http://127.0.0.1:8000/tts/health
+# Update kode (git pull / restore .git) + sync + restart API (pakai venv)
+bash /workspace/live-streaming-ai/deploy/redeploy.sh
+
+# Sama:
+bash /workspace/live-streaming-ai/deploy/sync.sh --restart
 ```
 
-## Setup MuseTalk + VoxCPM2 baru
+**Jangan** `python3 api_server.py` — pakai venv lewat `start.sh` / `sync.sh --restart`.
+
+```bash
+# Cek
+curl -s http://127.0.0.1:8000/health
+curl -s http://127.0.0.1:8000/tts/health
+tail -f /workspace/ai_live_worker/api_server.log
+```
+
+## Folder bukan git repo? (`fatal: not a git repository`)
+
+`sync.sh --restart` otomatis **restore `.git`** dari GitHub lalu pull. Atau:
+
+```bash
+bash /workspace/live-streaming-ai/deploy/sync.sh --pull --restart
+```
+
+## Pod yang sudah ada (update)
+
+```bash
+bash /workspace/live-streaming-ai/deploy/redeploy.sh
+# atau paksa timpa assets + hard reset git:
+FORCE_ASSETS=1 FORCE_GIT_RESET=1 bash /workspace/live-streaming-ai/deploy/redeploy.sh
+```
+
+## Setup MuseTalk + VoxCPM2 baru (pertama kali)
+
+```bash
+export HF_TOKEN="hf_xxx"
+# simpan token (opsional):
+# echo "$HF_TOKEN" > /workspace/.hf_token && chmod 600 /workspace/.hf_token
+
+bash /workspace/live-streaming-ai/deploy/bootstrap_pod.sh
+# atau:
+bash /workspace/live-streaming-ai/deploy/run_bootstrap.sh
+```
+
+Manual:
 
 ```bash
 cd /workspace
@@ -29,17 +60,22 @@ cd /workspace/live-streaming-ai/deploy
 export HF_TOKEN="hf_xxx"
 bash setup.sh
 cp -n .env.example /workspace/ai_live_worker/.env
-# Pastikan VOXCPM2_MODEL_PATH, VOICE_ROOT, VOXCPM2_VENV terisi
 FORCE_ASSETS=1 bash sync.sh --restart
-curl -s http://127.0.0.1:8000/health
-curl -s http://127.0.0.1:8000/tts/health
+```
+
+## Start saja (tanpa pull)
+
+```bash
+cd /workspace/ai_live_worker
+bash start.sh
+# atau dengan pull:
+GIT_PULL=1 bash start.sh
 ```
 
 ## Ganti reference voice
 
-Timpa `/workspace/voices/<voice_id>/reference.wav` (contoh `girl_cute_kids`) lalu:
-
 ```bash
+# Timpa /workspace/voices/girl_cute_kids/reference.wav lalu:
 curl -s -X POST http://127.0.0.1:8000/tts/invalidate-voice \
   -H 'Content-Type: application/json' \
   -d '{"voice_id":"girl_cute_kids"}'

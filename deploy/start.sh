@@ -4,8 +4,32 @@ set -euo pipefail
 # Jangan timpa start.sh saat sedang dijalankan (bash baca file incremental → syntax error).
 export START_SH_RUNNING=1
 
+# CUDA / path (wajib di image RunPod PyTorch)
+export PATH="/usr/local/cuda-11.8/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-11.8}"
+export LD_LIBRARY_PATH="/usr/local/cuda-11.8/lib64:${LD_LIBRARY_PATH:-}"
+export TMPDIR="${TMPDIR:-/workspace/tmp}"
+mkdir -p "$TMPDIR" 2>/dev/null || true
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKER_DIR="/workspace/ai_live_worker"
+WORKER_DIR="${WORKER_DIR:-/workspace/ai_live_worker}"
+REPO_DIR="${REPO_DIR:-/workspace/live-streaming-ai}"
+DEPLOY_DIR="${DEPLOY_DIR:-$REPO_DIR/deploy}"
+
+# Opsional: git pull sebelum start (GIT_PULL=1 atau --pull)
+_do_pull=0
+for _a in "$@"; do
+	[ "$_a" = "--pull" ] && _do_pull=1
+done
+if [ "${GIT_PULL:-0}" = "1" ] || [ "$_do_pull" = "1" ]; then
+	if [ -f "$DEPLOY_DIR/sync.sh" ]; then
+		# shellcheck source=sync.sh
+		source "$DEPLOY_DIR/sync.sh"
+		pull_repo || echo "[WARN] git pull gagal — lanjut start lokal"
+		DEPLOY_DIR="$REPO_DIR/deploy"
+		SYNC_SCRIPT="$DEPLOY_DIR/sync.sh"
+	fi
+fi
 
 if [ -d "$WORKER_DIR" ] && [ -f "$WORKER_DIR/api_server.py" ]; then
 	cd "$WORKER_DIR"
@@ -15,7 +39,8 @@ elif [ -f "$SCRIPT_DIR/api_server.py" ]; then
 else
 	echo "[ERROR] Worker belum disiapkan."
 	echo "        Jalankan setup terlebih dahulu:"
-	echo "          cd /workspace/live-streaming-ai/deploy && bash setup.sh"
+	echo "          cd /workspace/live-streaming-ai/deploy && export HF_TOKEN=hf_... && bash setup.sh"
+	echo "        Atau update+start: bash /workspace/live-streaming-ai/deploy/sync.sh --restart"
 	exit 1
 fi
 
@@ -45,14 +70,13 @@ if [ ! -f "$WORKER_DIR/api_server.py" ]; then
 	exit 1
 fi
 
-REPO_DIR="${REPO_DIR:-/workspace/live-streaming-ai}"
-DEPLOY_DIR="${DEPLOY_DIR:-$REPO_DIR/deploy}"
 SYNC_SCRIPT="${SYNC_SCRIPT:-$DEPLOY_DIR/sync.sh}"
 if [ -f "$SYNC_SCRIPT" ]; then
 	# shellcheck source=sync.sh
 	source "$SYNC_SCRIPT"
 	bootstrap_worker_env
 	purge_legacy_tts
+	sync_girl_voices 2>/dev/null || true
 fi
 
 # Load worker .env (BROADCAST_MODE / MuseTalk flags)
@@ -122,8 +146,9 @@ stop_supervisor() {
 
 cleanup_worker_stack() {
 	stop_supervisor
-	echo "[INFO] Membersihkan proses worker (api_server, broadcaster, ffmpeg RTMP) ..."
+	echo "[INFO] Membersihkan proses worker (api_server, voxcpm2, broadcaster, ffmpeg RTMP) ..."
 	pkill -9 -f "[a]pi_server.py" 2>/dev/null || true
+	pkill -9 -f "[v]oxcpm2_tts/worker.py" 2>/dev/null || true
 	pkill -9 -f "[b]roadcaster.py" 2>/dev/null || true
 	pkill -9 -f "[f]rame_feed.py" 2>/dev/null || true
 	pkill -9 -f "ffmpeg.*rtmp" 2>/dev/null || true
@@ -148,6 +173,7 @@ if [ -f "$WORKER_DIR/env/bin/python" ]; then
 	export PATH="$WORKER_DIR/env/bin:$PATH"
 	# shellcheck disable=SC1091
 	source "$WORKER_DIR/env/bin/activate" || true
+	echo "[INFO] Python worker = $PYTHON_BIN  (JANGAN pakai /usr/bin/python3 sistem)"
 else
 	echo "[ERROR] Python venv tidak ditemukan di $WORKER_DIR/env"
 	echo "        Jalankan setup terlebih dahulu:"
@@ -156,7 +182,16 @@ else
 fi
 
 if [ -f "$SYNC_SCRIPT" ]; then
-	ensure_worker_python_deps "$PYTHON_BIN"
+	ensure_worker_python_deps "$PYTHON_BIN" || {
+		echo "[ERROR] fastapi/uvicorn belum siap di venv."
+		echo "        Coba: $PYTHON_BIN -m pip install -r $WORKER_DIR/requirements-worker.txt"
+		exit 1
+	}
+fi
+if ! "$PYTHON_BIN" -c "import fastapi, uvicorn" 2>/dev/null; then
+	echo "[ERROR] fastapi tidak ada di $PYTHON_BIN"
+	echo "        Fix: $PYTHON_BIN -m pip install fastapi uvicorn pydantic"
+	exit 1
 fi
 
 export COQUI_TOS_AGREED=1

@@ -19,9 +19,26 @@ export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-11.8}"
 export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:7b}"
 export PIP_NO_CACHE_DIR=1
 
-if [ -f "$WORKER_DIR/.setup_complete" ] && [ -d "$WORKER_DIR/env" ] && [ -d "$WORKER_DIR/models" ]; then
+# Opsional: git pull dulu (GIT_PULL=1) supaya setup pakai kode terbaru.
+REPO_DIR="${REPO_DIR:-/workspace/live-streaming-ai}"
+if [ "${GIT_PULL:-0}" = "1" ] && [ -f "$SCRIPT_DIR/sync.sh" ]; then
+    # shellcheck source=sync.sh
+    source "$SCRIPT_DIR/sync.sh"
+    pull_repo || echo "[WARN] git pull gagal — lanjut setup dari tree lokal"
+fi
+
+if [ -f "$WORKER_DIR/.setup_complete" ] && [ -d "$WORKER_DIR/env" ] && [ -d "$WORKER_DIR/models" ] \
+    && [ "${FORCE_SETUP:-0}" != "1" ]; then
     echo "[INFO] MuseTalk sudah complete — lewati install MuseTalk."
-    echo "Start: cd /workspace/ai_live_worker && bash start.sh"
+    echo "       Update kode + restart API:"
+    echo "         bash $SCRIPT_DIR/sync.sh --restart"
+    echo "       Setup ulang paksa: FORCE_SETUP=1 bash $SCRIPT_DIR/setup.sh"
+    # Pastikan fastapi masih ada di venv (sering hilang kalau salah pakai python sistem).
+    if [ -x "$PYTHON_BIN" ] && ! "$PYTHON_BIN" -c "import fastapi, uvicorn" 2>/dev/null; then
+        echo "[DEPS] fastapi hilang di venv — install cepat requirements-worker.txt ..."
+        "$PYTHON_BIN" -m pip install --no-cache-dir -r "$SCRIPT_DIR/requirements-worker.txt" \
+            || "$PYTHON_BIN" -m pip install --no-cache-dir "fastapi>=0.104" "uvicorn>=0.24" "pydantic>=2"
+    fi
     exit 0
 fi
 
