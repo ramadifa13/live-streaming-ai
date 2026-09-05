@@ -1,0 +1,12 @@
+{
+  "queries": 1000,
+  "asset_count": 4,
+  "p50_ms": 0.006300004315562546,
+  "p95_ms": 0.07090000144671649,
+  "max_ms": 0.706300008459948,
+  "mean_ms": 0.02715850027743727,
+  "fallback_same_asset_rate": 0.444,
+  "engineering_target_p95_ms": 10.0,
+  "meets_target": true,
+  "label": "ENGINEERING TARGET"
+}

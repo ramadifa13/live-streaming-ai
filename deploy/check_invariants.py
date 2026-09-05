@@ -93,12 +93,42 @@ def check_fps_lock() -> None:
     print("[INVARIANT] FPS env OK")
 
 
+def check_motion_package_present() -> None:
+    """Phase 1: package must exist; live flags must remain documented as default-off."""
+    motion = ROOT / "motion"
+    if not (motion / "__init__.py").is_file():
+        _fail("deploy/motion package hilang")
+    for name in ("schemas.py", "library.py", "features.py", "build_graph.py"):
+        if not (motion / name).is_file():
+            _fail(f"deploy/motion/{name} hilang")
+    env_ex = ROOT / ".env.example"
+    if env_ex.is_file():
+        text = env_ex.read_text(encoding="utf-8", errors="replace")
+        for flag in (
+            "AI_MOTION_LIBRARY=0",
+            "AI_MOTION_MATCH=0",
+            "AI_SPEECH_BODY_DECOUPLE=0",
+            "AI_FRAME_BUFFER=0",
+            "AI_BEHAVIOR_ENGINE=0",
+            "AI_GPU_COMPOSITOR=0",
+            "AI_WORKER_OF_TRANSITIONS=0",
+        ):
+            if flag not in text:
+                _fail(f".env.example missing default-off flag {flag}")
+    # Guard: ai_worker must not yet hard-depend on motion matcher (Phase 1)
+    worker = (ROOT / "ai_worker.py").read_text(encoding="utf-8", errors="replace")
+    if "from motion." in worker or "import motion." in worker:
+        _fail("ai_worker.py must not import motion.* in Phase 1 (flags-off offline only)")
+    print("[INVARIANT] motion Phase-1 package OK (offline, worker decoupled)")
+
+
 def main() -> None:
     check_rtmp_utils()
     check_lipsync_not_forced_on_any_clip()
     check_seamless_contract()
     check_validate_assets_script()
     check_fps_lock()
+    check_motion_package_present()
     print("[INVARIANT] semua cek lolos")
 
 

@@ -1,10 +1,14 @@
 # Motion Engine — Production Implementation Specification
 
-**Status:** Implementation-ready  
+**Status:** Implementation-ready (amended)  
 **Date:** 2026-09-05  
 **Scope:** Incremental migration of the live AI host pipeline from Rest-Pose Loop body to Motion Library + Graph + Matching, while keeping MuseTalk 1.5 as the face/lip-sync engine.
 
 **Non-goals:** Full rewrite of `ai_worker.py` in one PR; skeletal Unity Motion Matching copy-paste; generative video on the live critical path; 20–45s playback latency.
+
+> **Performance & migration lock:** See [`MOTION_ENGINE_PHASE1_PLAN.md`](./MOTION_ENGINE_PHASE1_PLAN.md).  
+> Where that plan conflicts with this spec (buffer defaults, A/V rings, pose features, phase order, graph acceptance, VRAM policy), **the plan wins**.  
+> Work proceeds only on branch `feature/motion-engine-migration`. All feature flags default **OFF**.
 
 ---
 

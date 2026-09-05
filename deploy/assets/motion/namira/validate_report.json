@@ -1,0 +1,12 @@
+{
+  "avatar_id": "namira",
+  "count": 4,
+  "errors": [],
+  "warnings": [
+    "idle_1: opencv_proxy features (install mediapipe for richer joints)",
+    "idle_2: opencv_proxy features (install mediapipe for richer joints)",
+    "idle_3: opencv_proxy features (install mediapipe for richer joints)",
+    "idle_4: opencv_proxy features (install mediapipe for richer joints)"
+  ],
+  "ok": true
+}

@@ -1,0 +1,8 @@
+{
+  "pose_native": 0.12,
+  "vel_native": 0.14,
+  "pose_soft": 0.22,
+  "vel_soft": 0.24,
+  "energy_max_delta": 0.35,
+  "version": 1
+}
