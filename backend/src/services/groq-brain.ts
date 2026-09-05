@@ -231,7 +231,7 @@ export const LunaActionEnum = z.enum([
 ]);
 export type LunaAction = z.infer<typeof LunaActionEnum>;
 
-/** Semua action legacy → IDLE. Body = idle_1..4 di worker. */
+/** Semua action → IDLE hint. Body = idle/talk* di worker. */
 export function normalizeLunaAction(_action: unknown): LunaAction {
   return "IDLE";
 }
@@ -284,7 +284,7 @@ export const HostResponseSchema = z.object({
 });
 export type HostResponse = z.infer<typeof HostResponseSchema>;
 
-/** Point/gesture off — selalu IDLE. Worker memilih idle_1..4. */
+/** Point/gesture off — selalu IDLE. Worker memilih idle/talk*. */
 export function inferCtaPointAction(_speech: string, _topic?: string): LunaAction {
   return "IDLE";
 }
@@ -577,7 +577,7 @@ ANTI-LOOP:
 - Jangan menggunakan struktur kalimat yang sama seperti 1–2 respons terakhir.
 
 GERAKAN AVATAR (action):
-- Hanya IDLE. Body clip dipilih worker dari idle_1 / idle_2 / idle_3 / idle_4.
+- Hanya IDLE. Body clip dipilih worker dari idle / talk / talk_2 / talk_3.
 - Jangan keluarkan POINT_UP, POINT_DOWN, WAVE, RAISE_HAND, NOD, LAUGH, THINK, TALK_EXPRESSIVE.
 
 OUTPUT:

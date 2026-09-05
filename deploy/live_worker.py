@@ -245,19 +245,17 @@ class AILiveWorker:
 
         clean_name = host_name.lower().replace(".png", "").replace(".jpg", "").replace(".mp4", "").strip()
 
-        # Hanya idle_1..idle_4 (tidak ada file bare *_idle.mp4).
-        idle_tokens = ("idle_1", "idle_2", "idle_3", "idle_4")
+        body_tokens = ("talk_2", "talk_3", "talk", "idle")
         is_specific_clip = any(
             clean_name == token or clean_name.endswith("_" + token)
-            for token in idle_tokens
+            for token in body_tokens
         )
         if is_specific_clip:
             exact_names = [f"{clean_name}.mp4"]
         else:
-            # Host name saja → prefer idle_1
             exact_names = [
-                f"{clean_name}_idle_1.mp4",
-                f"{clean_name}_idle_2.mp4",
+                f"{clean_name}_idle.mp4",
+                f"{clean_name}_talk.mp4",
             ]
         for d in candidate_dirs:
             if not os.path.exists(d):
@@ -267,7 +265,6 @@ class AILiveWorker:
                 if os.path.exists(p):
                     return p
 
-        # 2. Cek substring hanya untuk idle_1..4
         for d in candidate_dirs:
             if os.path.exists(d):
                 for f in sorted(os.listdir(d)):
@@ -276,24 +273,25 @@ class AILiveWorker:
                         f.endswith(".mp4")
                         and not f.startswith("temp_")
                         and clean_name in fl
-                        and any(t in fl for t in idle_tokens)
+                        and any(
+                            fl.endswith("_" + t + ".mp4") or fl == t + ".mp4"
+                            for t in body_tokens
+                        )
                     ):
                         return os.path.join(d, f)
 
-        # 3. Cek file IDLE_VIDEO dari env
         env_idle = os.environ.get("IDLE_VIDEO")
         if env_idle and os.path.exists(env_idle):
             return env_idle
 
-        # 4. Fallback: namira_idle_1..4 saja
         for d in candidate_dirs:
             if not os.path.exists(d):
                 continue
             for fallback in (
-                "namira_idle_1.mp4",
-                "namira_idle_2.mp4",
-                "namira_idle_3.mp4",
-                "namira_idle_4.mp4",
+                "namira_idle.mp4",
+                "namira_talk.mp4",
+                "namira_talk_2.mp4",
+                "namira_talk_3.mp4",
             ):
                 p = os.path.join(d, fallback)
                 if os.path.exists(p):
@@ -306,25 +304,32 @@ class AILiveWorker:
                     for f in sorted(os.listdir(d))
                     if f.endswith(".mp4")
                     and not f.startswith("temp_")
-                    and any(t in f.lower() for t in idle_tokens)
+                    and any(
+                        f.lower().endswith("_" + t + ".mp4") or f.lower() == t + ".mp4"
+                        for t in body_tokens
+                    )
                 ]
                 if mp4s:
                     return os.path.join(d, mp4s[0])
         return None
 
     def _resolve_action_clip(self, host_type, host_name, action_tag):
-        """Pilih clip — hanya idle_1..idle_4 secara langsung (tanpa alias)."""
+        """Pilih clip — idle / talk / talk_2 / talk_3."""
         host = (host_name or "namira").lower().strip()
-        action = (action_tag or "idle_1").lower().strip().replace("-", "_")
-        if action not in ("idle_1", "idle_2", "idle_3", "idle_4"):
-            action = "idle_1"
+        action = (action_tag or "talk").lower().strip().replace("-", "_")
+        if action in ("speak", "speaking"):
+            action = "talk"
+        if action in ("rest", "neutral"):
+            action = "idle"
+        if action not in ("idle", "talk", "talk_2", "talk_3"):
+            action = "talk"
         candidates = [
             f"{host}_{action}",
             action,
             f"namira_{action}",
         ]
-        if action != "idle_1":
-            candidates.extend([f"{host}_idle_1", "idle_1", "namira_idle_1"])
+        if action != "idle":
+            candidates.extend([f"{host}_idle", "idle", "namira_idle"])
 
         seen = set()
         for name in candidates:
@@ -335,7 +340,7 @@ class AILiveWorker:
             if found:
                 print(f"[ACTION] {action} → {os.path.basename(found)}")
                 return found
-        return self._get_idle_video(host_type, f"{host}_idle_1")
+        return self._get_idle_video(host_type, f"{host}_idle")
 
     async def run_pipeline(
         self,
@@ -351,13 +356,26 @@ class AILiveWorker:
         pipeline_start = time.time()
         import re
 
-        action_tag = (action or "idle_1").strip().lower().replace("-", "_")
-        match = re.search(r"\[(idle_[1-4]|IDLE_[1-4])\]", text_answer or "", re.I)
+        action_tag = (action or "talk").strip().lower().replace("-", "_")
+        match = re.search(
+            r"\[(talk_2|talk_3|talk|idle|TALK_2|TALK_3|TALK|IDLE)\]",
+            text_answer or "",
+            re.I,
+        )
         if match:
-            action_tag = match.group(1).lower()
-            text_answer = re.sub(r"\[(idle_[1-4]|IDLE_[1-4])\]", "", text_answer, flags=re.I).strip()
-        if action_tag not in ("idle_1", "idle_2", "idle_3", "idle_4"):
-            action_tag = "idle_1"
+            action_tag = match.group(1).lower().replace("-", "_")
+            text_answer = re.sub(
+                r"\[(talk_2|talk_3|talk|idle|TALK_2|TALK_3|TALK|IDLE)\]",
+                "",
+                text_answer,
+                flags=re.I,
+            ).strip()
+        if action_tag in ("speak", "speaking"):
+            action_tag = "talk"
+        if action_tag in ("rest", "neutral"):
+            action_tag = "idle"
+        if action_tag not in ("idle", "talk", "talk_2", "talk_3"):
+            action_tag = "talk"
 
         print(
             f"\n[MEMPROSES] {task_id} | Host: {host_name} ({host_type.upper()}) | Action: {action_tag}"
@@ -367,7 +385,7 @@ class AILiveWorker:
 
         if not idle_video:
             print(
-                f"[ERROR] Video idle_1..4 untuk '{host_name}' tidak ada di folder assets/{host_type}"
+                f"[ERROR] Video idle/talk untuk '{host_name}' tidak ada di folder assets/{host_type}"
             )
             return None
 

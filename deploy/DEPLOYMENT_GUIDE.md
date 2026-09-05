@@ -388,7 +388,7 @@ curl -s https://livio.id/api/health
 
 - `PORT=8000`, `BROADCAST_MODE=ai_worker`, `WORKER_REQUIRE_AUDIO=1`.
 - `VOICE_ID=girl_cute_kids`, `VOICE_ROOT=/workspace/voices`, `VOXCPM2_VENV=/workspace/voxcpm2_env`.
-- L40S: `MUSETALK_BATCH_SIZE=16`, `AI_WORKER_HOLD_TALK_SEC=20`, `MUSETALK_PREROLL_TIMEOUT_SEC=1.5`, `AI_WORKER_TALK_CLIPS=idle_2,idle_3,idle_4`, `AI_WORKER_TALK_STREAK=8`.
+- L40S: `MUSETALK_BATCH_SIZE=16`, `AI_WORKER_HOLD_TALK_SEC=90`, `MUSETALK_PREROLL_TIMEOUT_SEC=2.5`, `MUSETALK_HARD_PREROLL=1`, `AI_WORKER_TALK_CLIP=talk`, `AI_WORKER_PIN_TALK=1`, `AI_WORKER_TALK_STREAK=999`, `AI_WORKER_OVERLAP_FRAMES=12`. Assets: `namira_idle.mp4` + `namira_talk.mp4` (+ `talk_2`/`talk_3`). Validate: `python validate_idle_assets.py --assets-dir assets/3d --write-meta`.
 - Jangan install Piper/Supertonic.
 
 **Frontend**:
@@ -405,8 +405,8 @@ Worker **bukan** merender MP4 lalu concatenate — tubuh loop di RAM + lipsync M
 |---|---|
 | Soft cut + soft loop wrap | Hindari hard pose jump mid-speech |
 | Complete utterance setelah audio (+ grace singkat), **bukan** tunggu `end_pose` | Hilangkan mute talking-body & delay kalimat berikutnya |
-| Hold talk 20s | Jangan jatuh ke idle_1 saat TTS lambat |
-| Talk pool tanpa `idle_1` | Bedakan rest vs talk |
+| Hold talk 90s | Jangan jatuh ke idle saat TTS lambat |
+| Talk pool `talk,talk_2,talk_3` | Bedakan rest (`idle`) vs talk |
 | Script bank **tidak** harus match durasi clip | Clip loop mengikuti audio; yang penting buffer audio nyata |
 
 ---

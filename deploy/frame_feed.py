@@ -6,7 +6,7 @@ secara kontinu:
 
   • Idle dipotong per frame saat clip AI baru siap (tidak menunggu chunk 1.5s).
   • Tidak ada spawn worker FFmpeg antar kalimat → jeda/gap RTMP mengecil.
-  • Visual idle memakai namira_idle_1.mp4 (atau IDLE_VIDEO), bukan gesture lain.
+  • Visual idle memakai namira_idle.mp4 (atau IDLE_VIDEO), bukan gesture lain.
 
 Aktifkan dengan BROADCAST_MODE=frame_feed (default tetap segment).
 """
@@ -144,7 +144,7 @@ class _PrefetchCache:
 
 
 def _prefer_idle_visual(idle_path: str) -> str:
-    """Pakai idle_1..4 sebagai visual idle bila tersedia."""
+    """Pakai namira_idle.mp4 sebagai visual idle bila tersedia."""
     return prefer_idle_clip(idle_path)
 
 
@@ -898,7 +898,7 @@ if __name__ == "__main__":
     OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "/workspace/ai_live_worker/output")
     IDLE_VIDEO = os.environ.get(
         "IDLE_VIDEO",
-        "/workspace/ai_live_worker/assets/3d/namira_idle_1.mp4",
+        "/workspace/ai_live_worker/assets/3d/namira_idle.mp4",
     )
 
     PRODUCT_NAME = os.environ.get("PRODUCT_NAME", "")

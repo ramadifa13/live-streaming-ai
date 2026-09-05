@@ -36,7 +36,14 @@ except ImportError:
     def get_telemetry():  # type: ignore
         return _NoopTelemetry()
 
-TARGET_FPS = int(os.environ.get("AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "30")))
+TARGET_FPS = int(
+    os.environ.get(
+        "AI_WORKER_FPS",
+        "30"
+        if (os.environ.get("BROADCAST_MODE") or "").strip().lower() == "ai_worker"
+        else os.environ.get("FRAME_FEED_FPS", "30"),
+    )
+)
 SAMPLE_RATE = 44100
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
 BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2
@@ -247,7 +254,7 @@ class SpeechBridge:
             name=f"Prep-{task_id[:24]}",
             daemon=True,
         ).start()
-        print(f"[SpeechBridge] Enqueued {task_id} action={action or 'idle_1'}")
+        print(f"[SpeechBridge] Enqueued {task_id} action={action or 'talk'}")
         return job
 
     def _prepare_job(self, job: UtteranceJob) -> None:
@@ -365,7 +372,7 @@ class SpeechBridge:
         """Idle tetap jalan sampai job siap + preroll mulut selesai (tanpa freeze frame)."""
         if self._current is not None:
             return
-        preroll_timeout = float(os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "1.0"))
+        preroll_timeout = float(os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.5"))
         candidate = None
         with self._lock:
             while self._pending:
@@ -410,7 +417,25 @@ class SpeechBridge:
 
         if not candidate.lipsync_ready.is_set():
             waited = time.monotonic() - (candidate.primed_at or candidate.created_at)
-            # Tunggu preroll lebih lama — mulai dengan mouths parsial = patah di awal kalimat.
+            hard_preroll = (
+                os.environ.get("MUSETALK_HARD_PREROLL") or "1"
+            ).strip().lower() in ("1", "true", "yes", "on")
+            preroll_timeout = float(
+                os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.5")
+            )
+            # Hard preroll: jangan mulai dengan mouths parsial — tunggu sampai ready.
+            if hard_preroll:
+                # Unbounded wait until lipsync_ready (worker sets after full preroll
+                # or preroll deadline force). Re-queue and retry next tick.
+                with self._lock:
+                    self._pending.appendleft(candidate)
+                if int(waited) > 0 and int(waited) % 5 == 0:
+                    print(
+                        f"[SpeechBridge] Waiting hard preroll {candidate.task_id} "
+                        f"({waited:.1f}s)"
+                    )
+                return
+            # Soft legacy: tunggu lalu mulai parsial.
             hard_cap = max(1.2, preroll_timeout) * 3.0
             if waited < hard_cap:
                 with self._lock:
@@ -558,7 +583,7 @@ class SpeechBridge:
 
         Dipakai `end_utterance(another_utterance_ready=...)`. Kalau `_current`
         ikut dihitung, hold-talk selalu aktif meski antrian kosong → stuck di
-        idle_2 saat BE mati/reload.
+        Hold talk agar tubuh tidak lompat ke idle saat BE mati/reload.
         """
         with self._lock:
             n = 0

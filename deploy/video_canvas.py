@@ -52,31 +52,26 @@ def fit_bgr(frame, width: int = CANVAS_W, height: int = CANVAS_H):
     return canvas
 
 
+def _host_from_idle_path(idle_path: str) -> str:
+    stem = os.path.splitext(os.path.basename(idle_path))[0].lower()
+    for suffix in ("_talk_2", "_talk_3", "_talk", "_idle"):
+        if stem.endswith(suffix):
+            host = stem[: -len(suffix)]
+            return host or "namira"
+    return stem or "namira"
+
+
 def prefer_idle_clip(idle_path: str) -> str:
-    """Pilih visual idle_1..4 — tidak ada bare *_idle.mp4."""
+    """Pilih visual idle (static) — namira_idle.mp4."""
     if not idle_path:
         return idle_path
     directory = os.path.dirname(idle_path) or "."
-    base = os.path.basename(idle_path)
-    stem = os.path.splitext(base)[0]
-    host = (
-        stem.replace("_idle_1", "")
-        .replace("_idle_2", "")
-        .replace("_idle_3", "")
-        .replace("_idle_4", "")
-        .replace("_idle", "")
-        .replace("_talk", "")
-        or "namira"
-    )
+    host = _host_from_idle_path(idle_path)
     for name in (
-        f"{host}_idle_1.mp4",
-        f"{host}_idle_2.mp4",
-        f"{host}_idle_3.mp4",
-        f"{host}_idle_4.mp4",
-        "namira_idle_1.mp4",
-        "namira_idle_2.mp4",
-        "namira_idle_3.mp4",
-        "namira_idle_4.mp4",
+        f"{host}_idle.mp4",
+        "namira_idle.mp4",
+        f"{host}_talk.mp4",
+        "namira_talk.mp4",
     ):
         candidate = os.path.join(directory, name)
         if os.path.exists(candidate):
@@ -87,5 +82,20 @@ def prefer_idle_clip(idle_path: str) -> str:
 
 
 def prefer_talk_clip(idle_path: str) -> str:
-    """Talk body = idle pool (prefer idle_1 sebagai true idle/fallback)."""
+    """Talk body — namira_talk.mp4."""
+    if not idle_path:
+        return idle_path
+    directory = os.path.dirname(idle_path) or "."
+    host = _host_from_idle_path(idle_path)
+    for name in (
+        f"{host}_talk.mp4",
+        "namira_talk.mp4",
+        f"{host}_talk_2.mp4",
+        "namira_talk_2.mp4",
+        f"{host}_talk_3.mp4",
+        "namira_talk_3.mp4",
+    ):
+        candidate = os.path.join(directory, name)
+        if os.path.exists(candidate):
+            return candidate
     return prefer_idle_clip(idle_path)

@@ -1,4 +1,4 @@
-import {
+﻿import {
   forwardToRunPodGPU,
   getRunPodQueueStatus,
   startRunPodBroadcast,
@@ -1497,7 +1497,6 @@ class LiveHostOrchestrator {
       )[0];
 
     if (!hostResponse) {
-      // Emergency synthetic â€” host tidak boleh diam total.
       const facts = this.toScriptFacts(product);
       const emergencySeed = seedLocalScriptBank(facts, state.catalog, memoryOpts);
       mergeScriptLines(state.scriptBank, emergencySeed, recent);
@@ -2320,8 +2319,8 @@ class LiveHostOrchestrator {
       ? `${state.config.avatarName.toLowerCase().trim()}.png`
       : "namira.png";
 
-    // Body clip = idle_1..4 di worker (tanpa alias IDLE/talk/gesture).
-    const gesture = "idle_1";
+    // Body hint: worker resolve "talk" → pinned talk clip.
+    const gesture = "talk";
     const cleanText = String(text || "").replace(/^\s*\[[A-Z_]+\]\s*/i, "").trim();
     const taggedText = cleanText;
 

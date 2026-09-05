@@ -1005,7 +1005,7 @@ if __name__ == "__main__":
     OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "/workspace/ai_live_worker/output")
     IDLE_VIDEO = os.environ.get(
         "IDLE_VIDEO",
-        "/workspace/ai_live_worker/assets/3d/namira_idle_1.mp4",
+        "/workspace/ai_live_worker/assets/3d/namira_idle.mp4",
     )
     
     PRODUCT_NAME = os.environ.get("PRODUCT_NAME", "")

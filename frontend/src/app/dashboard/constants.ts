@@ -73,7 +73,7 @@ export function localVoicePreviewUrl(
 
 export function avatarIdleVideoPath(avatarId: string): string {
   const id = (avatarId || "namira").toLowerCase();
-  return `/avatars/${id}_idle_1.mp4`;
+  return `/avatars/${id}_idle.mp4`;
 }
 
 export const avatars: Avatar[] = [
