@@ -1,5 +1,5 @@
 {
-  "id": "idle_1",
+  "id": "idle",
   "avatar_id": "namira",
   "level": "behavior_segment",
   "state": "IDLE",
@@ -7,7 +7,7 @@
   "duration_ms": 3046.44,
   "fps": 29.542679324063496,
   "frame_count": 90,
-  "media_uri": "../../3d/namira_idle_1.mp4",
+  "media_uri": "../../3d/namira_idle.mp4",
   "entry_pose": {
     "joints_xy": [
       0.50625,
@@ -181,7 +181,7 @@
     "generic"
   ],
   "transition_candidates": [
-    "idle",
+    "idle_1",
     "talk_3",
     "talk"
   ],

@@ -17,52 +17,8 @@ _DEPLOY = Path(__file__).resolve().parent.parent
 if str(_DEPLOY) not in sys.path:
     sys.path.insert(0, str(_DEPLOY))
 
-from motion.features import pose_l2, velocity_l2  # noqa: E402
 from motion.library import MotionLibrary, default_motion_root  # noqa: E402
-from motion.schemas import MotionAsset, states_as_list  # noqa: E402
-
-
-def score_pair(current: MotionAsset, cand: MotionAsset, *, thr_pose: float) -> float:
-    pose_d = pose_l2(current.exit_pose, cand.entry_pose)
-    vel_d = velocity_l2(current.exit_velocity, cand.entry_velocity)
-    energy_d = abs(current.energy - cand.energy)
-    state_d = 0.0
-    # Prefer staying in-family unless querying different state
-    cost = pose_d + 0.75 * vel_d + 0.5 * energy_d + state_d
-    if pose_d > thr_pose * 2.5:
-        cost += 1.0
-    return cost
-
-
-def select_next(
-    library: MotionLibrary,
-    current: MotionAsset,
-    *,
-    desired_state: Optional[str],
-    exclude: List[str],
-    rng: random.Random,
-) -> MotionAsset:
-    thr = library.thresholds.pose_native
-    pool = library.all()
-    scored = []
-    for a in pool:
-        if a.id == current.id or a.id in exclude:
-            continue
-        if desired_state and desired_state not in states_as_list(a.state):
-            # soft filter — still allow with penalty
-            penalty = 1.2
-        else:
-            penalty = 0.0
-        scored.append((score_pair(current, a, thr_pose=thr) + penalty, a))
-    if not scored:
-        # Fallback hierarchy: any idle
-        idles = library.query(states_contains="IDLE")
-        return idles[0] if idles else current
-    scored.sort(key=lambda x: x[0])
-    best, second = scored[0], scored[1] if len(scored) > 1 else None
-    if second and second[0] <= best[0] * 1.15 and rng.random() < 0.10:
-        return second[1]
-    return best[1]
+from motion.matcher import MotionGraphIndex, MotionMatcher, MotionQuery  # noqa: E402
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -81,19 +37,32 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     rng = random.Random(args.seed)
+    matcher = MotionMatcher(lib, MotionGraphIndex.from_library(lib), rng=rng)
     current = assets[0]
     exclude: List[str] = []
     times: List[float] = []
     fallbacks = 0
 
-    for i in range(args.queries):
+    for _i in range(args.queries):
         desired = rng.choice(["IDLE", "SPEAKING", "EXPLAINING", None])
-        t0 = time.perf_counter()
-        nxt = select_next(
-            lib, current, desired_state=desired, exclude=exclude[-8:], rng=rng
+        q = MotionQuery(
+            avatar_id=args.avatar,
+            current_asset_id=current.id,
+            current_pose=current.exit_pose,
+            current_velocity=current.exit_velocity,
+            energy=current.energy,
+            desired_state=desired,
+            semantic_tags=list(current.semantic_tags),
+            gaze=current.gaze,
+            hand=current.hand,
+            exclude_asset_ids=exclude[-8:],
+            memory=matcher.memory,
         )
+        t0 = time.perf_counter()
+        cand = matcher.select_next(q)
         dt = (time.perf_counter() - t0) * 1000.0
         times.append(dt)
+        nxt = lib.get(cand.asset_id) or current
         if nxt.id == current.id:
             fallbacks += 1
         exclude.append(nxt.id)
@@ -113,6 +82,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "engineering_target_p95_ms": 10.0,
         "meets_target": p95 < 10.0,
         "label": "ENGINEERING TARGET",
+        "phase": 2,
     }
     out = lib.avatar_dir / "matcher_bench.json"
     lib.ensure_dirs()

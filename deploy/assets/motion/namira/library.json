@@ -2,10 +2,11 @@
   "avatar_id": "namira",
   "version": 1,
   "asset_ids": [
+    "idle",
     "idle_1",
-    "idle_2",
-    "idle_3",
-    "idle_4"
+    "talk",
+    "talk_2",
+    "talk_3"
   ],
-  "count": 4
+  "count": 5
 }

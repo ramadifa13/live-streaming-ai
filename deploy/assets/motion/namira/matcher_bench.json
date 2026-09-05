@@ -1,12 +1,13 @@
 {
-  "queries": 1000,
-  "asset_count": 4,
-  "p50_ms": 0.006300004315562546,
-  "p95_ms": 0.07090000144671649,
-  "max_ms": 0.706300008459948,
-  "mean_ms": 0.02715850027743727,
-  "fallback_same_asset_rate": 0.444,
+  "queries": 200,
+  "asset_count": 5,
+  "p50_ms": 0.03260000084992498,
+  "p95_ms": 0.19729998894035816,
+  "max_ms": 1.3881000049877912,
+  "mean_ms": 0.08658849947096314,
+  "fallback_same_asset_rate": 0.33,
   "engineering_target_p95_ms": 10.0,
   "meets_target": true,
-  "label": "ENGINEERING TARGET"
+  "label": "ENGINEERING TARGET",
+  "phase": 2
 }

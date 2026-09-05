@@ -94,11 +94,19 @@ def check_fps_lock() -> None:
 
 
 def check_motion_package_present() -> None:
-    """Phase 1: package must exist; live flags must remain documented as default-off."""
+    """Phase 1–2: package must exist; live flags must remain documented as default-off."""
     motion = ROOT / "motion"
     if not (motion / "__init__.py").is_file():
         _fail("deploy/motion package hilang")
-    for name in ("schemas.py", "library.py", "features.py", "build_graph.py"):
+    for name in (
+        "schemas.py",
+        "library.py",
+        "features.py",
+        "build_graph.py",
+        "matcher.py",
+        "transition.py",
+        "runtime.py",
+    ):
         if not (motion / name).is_file():
             _fail(f"deploy/motion/{name} hilang")
     env_ex = ROOT / ".env.example"
@@ -115,11 +123,18 @@ def check_motion_package_present() -> None:
         ):
             if flag not in text:
                 _fail(f".env.example missing default-off flag {flag}")
-    # Guard: ai_worker must not yet hard-depend on motion matcher (Phase 1)
+    # Guard: no top-level hard import of motion.* (lazy importlib only when flag ON)
     worker = (ROOT / "ai_worker.py").read_text(encoding="utf-8", errors="replace")
-    if "from motion." in worker or "import motion." in worker:
-        _fail("ai_worker.py must not import motion.* in Phase 1 (flags-off offline only)")
-    print("[INVARIANT] motion Phase-1 package OK (offline, worker decoupled)")
+    for line in worker.splitlines():
+        s = line.strip()
+        if s.startswith("#"):
+            continue
+        if s.startswith("from motion.") or s.startswith("import motion"):
+            _fail(
+                "ai_worker.py must not top-level import motion.* "
+                "(use importlib behind AI_MOTION_MATCH)"
+            )
+    print("[INVARIANT] motion Phase-2 package OK (matcher gated; flags default off)")
 
 
 def main() -> None:

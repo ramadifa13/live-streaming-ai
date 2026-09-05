@@ -1,12 +1,12 @@
 {
-  "asset_count": 4,
-  "edge_count": 12,
-  "critical_total": 0,
-  "critical_ok": 0,
-  "critical_coverage": null,
+  "asset_count": 5,
+  "edge_count": 18,
+  "critical_total": 4,
+  "critical_ok": 4,
+  "critical_coverage": 1.0,
   "critical_gaps": [],
   "dead_end_critical_nodes": [],
-  "fallback_edge_rate": 0.75,
+  "fallback_edge_rate": 0.6111111111111112,
   "reachable_from_idle": 1.0,
   "pass": false,
   "note": "pass=false is expected on tiny MVP seeds; targets are ENGINEERING TARGETS to calibrate as library grows."

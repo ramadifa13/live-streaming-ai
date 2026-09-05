@@ -122,8 +122,8 @@ MOUTH_MISS_BODY_ONLY = (
 
 ALLOWED_GESTURES: frozenset = frozenset()
 
-# Body clips: idle = true rest (static); talk / talk_2 / talk_3 = sales body.
-TRUE_IDLE_NAMES = frozenset({"idle"})
+# Body clips: idle / idle_1 = true rest; talk / talk_2 / talk_3 = sales body.
+TRUE_IDLE_NAMES = frozenset({"idle", "idle_1"})
 TALK_CLIP_NAMES = frozenset({"talk", "talk_2", "talk_3"})
 BODY_CLIP_NAMES = TRUE_IDLE_NAMES | TALK_CLIP_NAMES
 
@@ -136,7 +136,9 @@ if TALK_CLIP_DEFAULT not in TALK_CLIP_NAMES:
 CRASH_FALLBACK_CLIP = (
     os.environ.get("AI_WORKER_CRASH_CLIP") or "idle"
 ).strip().lower().replace("-", "_") or "idle"
-if CRASH_FALLBACK_CLIP not in TRUE_IDLE_NAMES:
+if CRASH_FALLBACK_CLIP not in TRUE_IDLE_NAMES and not (
+    CRASH_FALLBACK_CLIP.startswith("idle_") and CRASH_FALLBACK_CLIP[5:].isdigit()
+):
     CRASH_FALLBACK_CLIP = "idle"
 
 
@@ -156,7 +158,7 @@ def _ambient_gesture_names() -> List[str]:
         for n in raw.split(",")
         if n.strip()
     ]
-    return [n for n in names if n in BODY_CLIP_NAMES]
+    return [n for n in names if _is_body_clip_name(n)]
 
 
 def _talk_clip_pool_names() -> List[str]:
@@ -177,8 +179,8 @@ def _talk_clip_pool_names() -> List[str]:
 
 
 def _idle_variant_names() -> List[str]:
-    """True idle saat diam: default hanya idle."""
-    raw = (os.environ.get("AI_WORKER_IDLE_VARIANTS") or "idle").strip()
+    """True idle saat diam: default idle + idle_1."""
+    raw = (os.environ.get("AI_WORKER_IDLE_VARIANTS") or "idle,idle_1").strip()
     if raw.lower() in ("0", "off", "false", "none", "no", ""):
         return [CRASH_FALLBACK_CLIP]
     out = []
@@ -186,7 +188,7 @@ def _idle_variant_names() -> List[str]:
         if not n.strip():
             continue
         key = _normalize_clip_name(n.strip())
-        if key in TRUE_IDLE_NAMES and key not in out:
+        if _is_true_idle_name(key) and key not in out:
             out.append(key)
     return out or [CRASH_FALLBACK_CLIP]
 
@@ -194,7 +196,11 @@ def _idle_variant_names() -> List[str]:
 def _is_true_idle_name(name: Optional[str]) -> bool:
     if not name:
         return False
-    return _normalize_clip_name(name) in TRUE_IDLE_NAMES
+    key = _normalize_clip_name(name)
+    if key in TRUE_IDLE_NAMES:
+        return True
+    # Allow idle_5+ without editing the frozenset each time.
+    return key.startswith("idle_") and key[5:].isdigit()
 
 
 def _is_talk_clip_name(name: Optional[str]) -> bool:
@@ -203,12 +209,16 @@ def _is_talk_clip_name(name: Optional[str]) -> bool:
     return _normalize_clip_name(name) in TALK_CLIP_NAMES
 
 
-def _is_idle_clip_name(name: Optional[str]) -> bool:
-    """True untuk semua body clip yang diizinkan (idle + talk*)."""
+def _is_body_clip_name(name: Optional[str]) -> bool:
     if not name:
         return False
     key = _normalize_clip_name(name)
-    return key in BODY_CLIP_NAMES
+    return key in BODY_CLIP_NAMES or _is_true_idle_name(key) or _is_talk_clip_name(key)
+
+
+def _is_idle_clip_name(name: Optional[str]) -> bool:
+    """True untuk semua body clip yang diizinkan (idle + talk*)."""
+    return _is_body_clip_name(name)
 
 
 def _is_neutral_action(tag: Optional[str]) -> bool:
@@ -613,7 +623,7 @@ class AssetBank:
         for fname in mp4s:
             path = os.path.join(self.assets_dir, fname)
             name = self._clip_name_from_file(fname)
-            if name not in BODY_CLIP_NAMES:
+            if not _is_body_clip_name(name):
                 print(f"[AssetBank] skip unknown clip {fname} → {name}")
                 continue
             if name in self.clips:
@@ -681,16 +691,16 @@ class AssetBank:
         return next(iter(self.clips))
 
     def _eager_clip_names(self) -> List[str]:
-        """Decode ke RAM: idle + semua talk*."""
+        """Decode ke RAM: idle* + semua talk*."""
         raw = (
             os.environ.get("AI_WORKER_EAGER_CLIPS")
-            or "idle,talk,talk_2,talk_3"
+            or "idle,idle_1,talk,talk_2,talk_3"
         ).strip()
         if raw.lower() in ("all", "*"):
             return list(self.clips.keys()) if self.clips else ["idle"]
         names = [_normalize_clip_name(n.strip()) for n in raw.split(",") if n.strip()]
-        names = [n for n in names if n in BODY_CLIP_NAMES]
-        for must in ("idle", TALK_CLIP_DEFAULT):
+        names = [n for n in names if _is_body_clip_name(n)]
+        for must in ("idle", "idle_1", TALK_CLIP_DEFAULT):
             if must and must not in names:
                 names.append(must)
         return names
@@ -952,9 +962,45 @@ class VideoStateMachine:
             AMBIENT_MIN_SEC, AMBIENT_MAX_SEC
         )
 
+    def _motion_pick(
+        self, *, desired_state: str, exclude: Optional[str] = None
+    ) -> Optional[str]:
+        """Phase 2: MotionMatcher pick when AI_MOTION_MATCH=1; else None."""
+        try:
+            import importlib
+
+            runtime = importlib.import_module("motion.runtime")
+            if not runtime.motion_match_enabled():
+                return None
+            eng = runtime.get_motion_runtime(self.bank.host)
+            if eng is None:
+                return None
+            excl = {exclude} if exclude else set()
+            excl.add(self.current_name)
+            pick = eng.pick_next_clip(
+                current_clip=self.current_name,
+                desired_state=desired_state,
+                bank_clip_names=set(self.bank.clips.keys()),
+                exclude_clips=excl,
+            )
+            if pick is None:
+                return None
+            if pick.plan is not None:
+                # Soft overlap length hint for next cut (best-effort).
+                self.overlap_frames = max(
+                    4, min(int(pick.plan.overlap_frames), OVERLAP_FRAMES_MAX)
+                )
+            return pick.clip_name
+        except Exception as err:
+            print(f"[StateMachine] motion match notice: {err}")
+            return None
+
     def _choose_next_idle_variant(self, exclude: Optional[str] = None) -> Optional[str]:
         """Pilih idle berikutnya — tidak boleh sama dengan clip sekarang."""
         cur = exclude or self.current_name
+        matched = self._motion_pick(desired_state="IDLE", exclude=cur)
+        if matched and matched in self.bank.clips and matched != cur:
+            return matched
         variants = [
             c for c in self._idle_variants if c in self.bank.clips and c != cur
         ]
@@ -965,6 +1011,26 @@ class VideoStateMachine:
     def _pick_next_talk_clip(self) -> str:
         """Pin talk clip (continuous body) — rotasi sangat jarang."""
         metrics = get_telemetry()
+        # Phase 2: matcher ignores PIN_TALK when AI_MOTION_MATCH=1.
+        matched = self._motion_pick(desired_state="SPEAKING")
+        if matched and self.bank.clip_has_musetalk(matched):
+            if self._talk_streak_name != matched:
+                self._talk_streak_name = matched
+                self._talk_streak_count = 1
+                metrics.inc("talk_clip_rotate")
+            else:
+                self._talk_streak_count += 1
+            return matched
+        if matched and matched in self.bank.clips:
+            # Idle-only MVP: speak using matched body clip (often idle_*) until talk assets exist.
+            if self._talk_streak_name != matched:
+                self._talk_streak_name = matched
+                self._talk_streak_count = 1
+                metrics.inc("motion_match_speak_fallback")
+            else:
+                self._talk_streak_count += 1
+            return matched
+
         # Single body timeline: selalu AI_WORKER_TALK_CLIP jika ready.
         if PIN_TALK_SCENE:
             pinned = self.bank.talk_clip_name()
@@ -1401,8 +1467,26 @@ class VideoStateMachine:
         return pairs, target_cycles
 
     def _start_talk_loop_wrap(self, clip: ClipAsset) -> None:
-        """Loop mid-speech: soft wrap bila seamless; else ping-pong (no morph)."""
+        """Loop mid-speech: soft wrap bila seamless; else ping-pong (no morph).
+
+        Phase 2 (AI_MOTION_MATCH=1): prefer matcher→next asset instead of ping-pong.
+        """
         metrics = get_telemetry()
+        matched = self._motion_pick(desired_state="SPEAKING", exclude=clip.name)
+        if matched and matched in self.bank.clips:
+            metrics.inc("motion_match_loop")
+            self._talk_direction = 1
+            self._talk_loop_count += 1
+            new_state = (
+                PlayState.TALK
+                if (self._utterance_active or self._talk_pinned)
+                else PlayState.IDLE
+            )
+            self._cut_to_clip(matched, new_state, lock_face=self._utterance_active, soft=True)
+            self._talk_target = matched
+            print(f"[StateMachine] Motion match loop → {matched}")
+            return
+
         if not clip.is_seamless_loop:
             # Non-seamless: reverse direction instead of end→base morph.
             self._talk_direction = -1

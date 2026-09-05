@@ -1,6 +1,6 @@
-"""Motion Engine Phase 1 — offline Motion Library + Graph (live path untouched).
+"""Motion Engine — Phase 1 offline library + Phase 2 matcher (flag-gated).
 
-Enable later via AI_MOTION_LIBRARY=1. Default is off; this package is offline tooling.
+**Default:** live path uses legacy VSM. Enable matcher only with `AI_MOTION_MATCH=1`.
 """
 
 from .schemas import (
@@ -19,4 +19,4 @@ __all__ = [
     "VelocityFeature",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

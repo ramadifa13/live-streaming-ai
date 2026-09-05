@@ -1,13 +1,13 @@
 {
-  "id": "idle_4",
+  "id": "talk_3",
   "avatar_id": "namira",
-  "level": "micro",
-  "state": "IDLE",
-  "gesture": "none",
+  "level": "behavior_segment",
+  "state": "EXPLAINING",
+  "gesture": "open_hand",
   "duration_ms": 4046.4399999999996,
   "fps": 29.655697353723273,
   "frame_count": 120,
-  "media_uri": "../../3d/namira_idle_4.mp4",
+  "media_uri": "../../3d/namira_talk_3.mp4",
   "entry_pose": {
     "joints_xy": [
       0.5055555555555555,
@@ -172,18 +172,19 @@
     "scale_delta": 0.0,
     "acceleration_proxy": 0.0
   },
-  "energy": 0.11611613364890218,
+  "energy": 0.30611613364890217,
   "gaze": "camera",
   "hand": "neutral",
   "emotion": "neutral",
   "semantic_tags": [
-    "idle",
-    "micro"
+    "talk",
+    "explain"
   ],
   "transition_candidates": [
+    "idle",
     "idle_1",
-    "idle_2",
-    "idle_3"
+    "talk",
+    "talk_2"
   ],
   "musetalk_material_key": null,
   "face_bbox_stable": null,
