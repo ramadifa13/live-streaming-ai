@@ -105,8 +105,9 @@ MOUTH_MISS_BODY_ONLY = (
 ALLOWED_GESTURES: frozenset = frozenset()
 
 # Body clips: idle = true rest (static); talk / talk_2 / talk_3 = sales body.
-TRUE_IDLE_NAMES = frozenset({"idle"})
-TALK_CLIP_NAMES = frozenset({"talk", "talk_2", "talk_3"})
+# Mendukung namira_idle_1 .. namira_idle_4 dari assets/3d
+TRUE_IDLE_NAMES = frozenset({"idle", "idle_1", "idle_2", "idle_3", "idle_4"})
+TALK_CLIP_NAMES = frozenset({"talk", "talk_2", "talk_3", "idle_2", "idle_3", "idle_4"})
 BODY_CLIP_NAMES = TRUE_IDLE_NAMES | TALK_CLIP_NAMES
 
 TALK_CLIP_DEFAULT = (
@@ -650,7 +651,7 @@ class AssetBank:
 
     def _pick_primary_idle(self) -> str:
         """Diam = idle (static)."""
-        for key in (CRASH_FALLBACK_CLIP, "idle"):
+        for key in (CRASH_FALLBACK_CLIP, "idle", "idle_1"):
             if key in self.clips:
                 return key
         for k in sorted(self.clips):
@@ -660,7 +661,7 @@ class AssetBank:
         for k in sorted(self.clips):
             if _is_talk_clip_name(k):
                 return k
-        return next(iter(self.clips))
+        return next(iter(self.clips), CRASH_FALLBACK_CLIP)
 
     def _eager_clip_names(self) -> List[str]:
         """Decode ke RAM: idle + semua talk*."""

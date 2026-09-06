@@ -1440,10 +1440,13 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     resolved_idle = req.idle_video or req.idleVideo or ""
     if not resolved_idle or not os.path.exists(resolved_idle):
         for candidate in [
+            "/workspace/ai_live_worker/assets/3d/namira_idle_1.mp4",
             "/workspace/ai_live_worker/assets/3d/namira_idle.mp4",
             "/workspace/ai_live_worker/assets/3d/namira_talk.mp4",
+            "/workspace/live-streaming-ai/deploy/assets/3d/namira_idle_1.mp4",
             "/workspace/live-streaming-ai/deploy/assets/3d/namira_idle.mp4",
             "/workspace/live-streaming-ai/deploy/assets/3d/namira_talk.mp4",
+            os.path.join(os.path.dirname(__file__), "assets/3d/namira_idle_1.mp4"),
             os.path.join(os.path.dirname(__file__), "assets/3d/namira_idle.mp4"),
             os.path.join(os.path.dirname(__file__), "assets/3d/namira_talk.mp4"),
         ]:

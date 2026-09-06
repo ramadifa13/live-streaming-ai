@@ -70,6 +70,8 @@ def prefer_idle_clip(idle_path: str) -> str:
     for name in (
         f"{host}_idle.mp4",
         "namira_idle.mp4",
+        f"{host}_idle_1.mp4",
+        "namira_idle_1.mp4",
         f"{host}_talk.mp4",
         "namira_talk.mp4",
     ):
