@@ -33,6 +33,13 @@ except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from video_canvas import ffmpeg_fit_filter, prefer_idle_clip
 
+try:
+    from overlay_generator import prepare_overlay_files as generate_overlay_files
+except ImportError:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from overlay_generator import prepare_overlay_files as generate_overlay_files
+
+
 class AIBroadcaster:
     def __init__(self, rtmp_url, idle_video_path, output_folder,
                  product_name="", product_price="", product_image_url="", banner_image_url=""):
@@ -74,6 +81,13 @@ class AIBroadcaster:
     def _prepare_overlay_assets(self):
         tmp_dir = os.path.join(self.output_folder, "tmp_assets")
         os.makedirs(tmp_dir, exist_ok=True)
+        self.overlay_png_path = generate_overlay_files(
+            output_folder=self.output_folder,
+            product_name=self.product_name,
+            product_price=self.product_price,
+            product_image_url=self.product_image_url,
+            banner_image_url=self.banner_image_url,
+        )
 
         if self.product_image_url and self.product_image_url.strip():
             p_url = self.product_image_url.strip()
@@ -1072,4 +1086,12 @@ def prepare_overlay_files(
     dummy.overlay_png_path = None
     dummy._prepare_overlay_assets()
     return dummy.overlay_png_path
+    return generate_overlay_files(
+        output_folder=output_folder,
+        product_name=product_name,
+        product_price=product_price,
+        product_image_url=product_image_url,
+        banner_image_url=banner_image_url,
+    )
+
 

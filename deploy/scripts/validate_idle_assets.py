@@ -124,6 +124,9 @@ def validate_dir(
             if stem in want or not clips:
                 if stem in want or stem.startswith("idle") or stem.startswith("talk"):
                     targets.append((stem, p))
+        if stem in want or not clips:
+            if stem in want or stem.startswith("idle") or stem.startswith("talk"):
+                targets.append((stem, p))
 
     if not targets:
         # Fallback: all mp4s that look like idle_* / talk_*
