@@ -46,7 +46,10 @@ class AILiveWorker:
         # Warmup berat (load model ke VRAM & pre-cache avatar) — jangan blokir HTTP startup.
         self._warmed_up = False
         warmup_flag = (os.environ.get("MUSETALK_WARMUP_ON_START") or "0").strip().lower()
-        if warmup_flag in ("1", "true", "yes", "on"):
+        marker_path = os.path.join(self.base_dir, ".musetalk_warmed_up")
+        if os.path.exists(marker_path):
+            print("[WARMUP] MuseTalk already warmed up – skipping")
+        elif warmup_flag in ("1", "true", "yes", "on"):
             threading.Thread(
                 target=self._warmup_musetalk_safe,
                 name="MuseTalkWarmup",
