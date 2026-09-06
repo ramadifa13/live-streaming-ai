@@ -76,9 +76,14 @@ def check_seamless_contract() -> None:
 
 
 def check_validate_assets_script() -> None:
-    path = ROOT / "validate_idle_assets.py"
-    if not path.is_file():
-        _fail("validate_idle_assets.py hilang")
+    candidates = [
+        ROOT / "validate_idle_assets.py",
+        ROOT / "scripts" / "validate_idle_assets.py",
+        ROOT.parent / "deploy" / "scripts" / "validate_idle_assets.py",
+    ]
+    path = next((p for p in candidates if p.is_file()), None)
+    if path is None:
+        _fail("validate_idle_assets.py hilang (root atau scripts/)")
     text = path.read_text(encoding="utf-8", errors="replace")
     for needle in ("seamless_score", "write-meta", "_ssim_gray"):
         if needle not in text:

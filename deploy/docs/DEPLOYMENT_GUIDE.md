@@ -78,8 +78,8 @@ Simpan `RUNPOD_API_KEY`, volume ID, (opsional) pod ID + URL proxy ke backend `.e
 
 Venv **terpisah** dari MuseTalk (konflik torch). `api_server` spawn `127.0.0.1:8091` saat startup.
 
-Requirements: [`deploy/voxcpm2_tts/requirements.txt`](voxcpm2_tts/requirements.txt)  
-MuseTalk worker: [`deploy/requirements-worker.txt`](requirements-worker.txt)
+Requirements: [`deploy/voxcpm2_tts/requirements.txt`](../voxcpm2_tts/requirements.txt)  
+MuseTalk worker: [`deploy/requirements-worker.txt`](../requirements-worker.txt)
 
 Endpoints: `GET /tts/health`, `POST /tts/synthesize`, `POST /tts/invalidate-voice`.
 
@@ -388,7 +388,7 @@ curl -s https://livio.id/api/health
 
 - `PORT=8000`, `BROADCAST_MODE=ai_worker`, `WORKER_REQUIRE_AUDIO=1`.
 - `VOICE_ID=girl_cute_kids`, `VOICE_ROOT=/workspace/voices`, `VOXCPM2_VENV=/workspace/voxcpm2_env`.
-- L40S: `MUSETALK_BATCH_SIZE=16`, `AI_WORKER_HOLD_TALK_SEC=90`, `MUSETALK_PREROLL_TIMEOUT_SEC=2.5`, `MUSETALK_HARD_PREROLL=1`, `AI_WORKER_TALK_CLIP=talk`, `AI_WORKER_PIN_TALK=1`, `AI_WORKER_TALK_STREAK=999`, `AI_WORKER_OVERLAP_FRAMES=12`. Assets: `namira_idle.mp4` + `namira_talk.mp4` (+ `talk_2`/`talk_3`). Validate: `python validate_idle_assets.py --assets-dir assets/3d --write-meta`.
+- L40S: `MUSETALK_BATCH_SIZE=16`, `AI_WORKER_HOLD_TALK_SEC=90`, `MUSETALK_PREROLL_TIMEOUT_SEC=2.5`, `MUSETALK_HARD_PREROLL=1`, `AI_WORKER_TALK_CLIP=talk`, `AI_WORKER_PIN_TALK=1`, `AI_WORKER_TALK_STREAK=999`, `AI_WORKER_OVERLAP_FRAMES=12`. Assets: `namira_idle.mp4` + `namira_talk.mp4` (+ `talk_2`/`talk_3`). Validate: `python scripts/validate_idle_assets.py --assets-dir assets/3d --write-meta`.
 - Jangan install Piper/Supertonic.
 
 **Frontend**:

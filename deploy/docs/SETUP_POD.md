@@ -2,7 +2,8 @@
 
 Worker GPU: **VoxCPM2 TTS** + **MuseTalk** + RTMP.
 
-Panduan lengkap: [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md).
+Panduan lengkap: [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md).  
+Indeks folder: [../README.md](../README.md).
 
 ## Perintah yang paling sering dipakai
 
@@ -48,7 +49,7 @@ export HF_TOKEN="hf_xxx"
 
 bash /workspace/live-streaming-ai/deploy/bootstrap_pod.sh
 # atau:
-bash /workspace/live-streaming-ai/deploy/run_bootstrap.sh
+bash /workspace/live-streaming-ai/deploy/scripts/run_bootstrap.sh
 ```
 
 Manual:

@@ -3,7 +3,7 @@
 # Usage (di pod):
 #   bash /workspace/ai_live_worker/check_tts_integration.sh
 #   # atau dari repo:
-#   bash deploy/check_tts_integration.sh
+#   bash deploy/scripts/check_tts_integration.sh
 set -euo pipefail
 
 WORKER_DIR="${WORKER_DIR:-/workspace/ai_live_worker}"

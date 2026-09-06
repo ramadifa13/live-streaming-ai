@@ -318,9 +318,23 @@ sync_worker_files() {
 		mkdir -p "$WORKER_DIR/voxcpm2_tts"
 		cp -rf "$DEPLOY_DIR/voxcpm2_tts/." "$WORKER_DIR/voxcpm2_tts/"
 	fi
-	if [ -f "$DEPLOY_DIR/check_tts_integration.sh" ]; then
-		cp -f "$DEPLOY_DIR/check_tts_integration.sh" "$WORKER_DIR/check_tts_integration.sh"
+	# Helper scripts (ops) — tetap flat di worker agar path lama tetap jalan
+	_tts_check=""
+	if [ -f "$DEPLOY_DIR/scripts/check_tts_integration.sh" ]; then
+		_tts_check="$DEPLOY_DIR/scripts/check_tts_integration.sh"
+	elif [ -f "$DEPLOY_DIR/check_tts_integration.sh" ]; then
+		_tts_check="$DEPLOY_DIR/check_tts_integration.sh"
+	fi
+	if [ -n "$_tts_check" ]; then
+		cp -f "$_tts_check" "$WORKER_DIR/check_tts_integration.sh"
 		chmod +x "$WORKER_DIR/check_tts_integration.sh" 2>/dev/null || true
+	fi
+	if [ -f "$DEPLOY_DIR/scripts/validate_idle_assets.py" ]; then
+		cp -f "$DEPLOY_DIR/scripts/validate_idle_assets.py" "$WORKER_DIR/validate_idle_assets.py"
+	fi
+	if [ -f "$DEPLOY_DIR/scripts/_start_worker.sh" ]; then
+		cp -f "$DEPLOY_DIR/scripts/_start_worker.sh" "$WORKER_DIR/_start_worker.sh"
+		chmod +x "$WORKER_DIR/_start_worker.sh" 2>/dev/null || true
 	fi
 	if [ -d "$DEPLOY_DIR/voices" ]; then
 		echo "[SYNC] Menyalin voices/ ..."
@@ -380,7 +394,9 @@ sync_worker_files() {
 
 	fix_shell_eol "$WORKER_DIR"
 	fix_shell_eol "$DEPLOY_DIR"
+	fix_shell_eol "$DEPLOY_DIR/scripts"
 	chmod +x "$WORKER_DIR"/*.sh "$DEPLOY_DIR"/*.sh 2>/dev/null || true
+	chmod +x "$DEPLOY_DIR/scripts"/*.sh 2>/dev/null || true
 	chmod +x "$WORKER_DIR/voxcpm2_tts"/*.sh "$DEPLOY_DIR/voxcpm2_tts"/*.sh 2>/dev/null || true
 
 	echo "[SYNC] Selesai."

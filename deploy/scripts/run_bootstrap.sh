@@ -32,7 +32,7 @@ else
 fi
 
 cd "$REPO_DIR/deploy"
-chmod +x *.sh voxcpm2_tts/*.sh 2>/dev/null || true
+chmod +x *.sh scripts/*.sh voxcpm2_tts/*.sh 2>/dev/null || true
 
 echo "[BOOT] MuseTalk setup start $(date -Iseconds)"
 bash setup.sh
