@@ -663,6 +663,7 @@ def _synthesize_voxcpm2_wav(
         import io
         import soundfile as sf
         import numpy as np
+        data, sr = sf.read(io.BytesIO(wav_bytes))
         # Resample to 16kHz mono (MuseTalk requirement)
         if sr != 16000:
             try:
