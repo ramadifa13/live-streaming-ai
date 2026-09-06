@@ -57,11 +57,11 @@ AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "6"))
 
 IDLE_BREATH_CHANCE = float(os.environ.get("AI_WORKER_IDLE_BREATH_CHANCE", "0.18"))
 IDLE_FALLBACK_AFTER = int(os.environ.get("AI_WORKER_IDLE_FALLBACK_AFTER", "2"))
-# Hold talk antar-utterance: kalau BE diam / reload, balik ke idle (static).
-# Default 20s — TTS+MuseTalk di GPU yang sama sering >10s refill.
-HOLD_TALK_MAX_SEC = float(os.environ.get("AI_WORKER_HOLD_TALK_SEC", "20"))
+# Hold talk antar-utterance: kalau tidak ada suara baru, segera balik ke idle_1.
+HOLD_TALK_MAX_SEC = float(os.environ.get("AI_WORKER_HOLD_TALK_SEC", "1.0"))
 # Pin talk clip panjang (continuous body timeline) — rotasi tiap 1-2 utterance agar bervariasi.
 TALK_STREAK_BEFORE_ROTATE = int(os.environ.get("AI_WORKER_TALK_STREAK", "2"))
+
 # 0 = rotasi alami antar talk/gesture clips (idle_2, idle_3, idle_4). 1 = kunci ke 1 clip saja.
 PIN_TALK_SCENE = (os.environ.get("AI_WORKER_PIN_TALK") or "0").strip().lower() in (
     "1",
@@ -1299,28 +1299,23 @@ class VideoStateMachine:
             if self._face_registry:
                 self._face_registry.release_lock()
             self._drain_action_queue()
-            # Selalu hold talk dulu — jangan langsung idle (anti-gap).
-            # Idle hanya lewat release_stale_hold_talk setelah timeout panjang.
-            if self.bank.clip_has_musetalk(self.current_name):
+            # Jika ada utterance berikutnya siap, pertahankan gesture talk.
+            # Jika tidak ada suara lagi (diam), segera transisi kembali ke idle_1.
+            if self.bank.clip_has_musetalk(self.current_name) and another_utterance_ready:
                 self.pending_action = None
                 self.state = PlayState.TALK
                 self._talk_pinned = True
                 self._hold_pose_for_infer = False
                 self._hold_talk_since = time.perf_counter()
-                why = (
-                    "utterance berikutnya siap"
-                    if another_utterance_ready
-                    else "tunggu generate berikutnya"
-                )
-                print(f"[StateMachine] Utterance selesai → hold talk ({why})")
+                print("[StateMachine] Utterance selesai → lanjut talk (utterance berikutnya siap)")
             else:
                 self._talk_pinned = False
                 self._hold_talk_since = None
                 self._talk_target = None
-                if not self.pending_action:
-                    self.pending_action = self.bank._idle_name
                 self.state = PlayState.IDLE
-                print("[StateMachine] Utterance selesai → idle")
+                self.pending_action = self.bank._idle_name
+                print(f"[StateMachine] Utterance selesai → kembali ke idle ({self.bank._idle_name})")
+
 
     def release_stale_hold_talk(
         self, *, queue_has_ready: bool, max_sec: float = HOLD_TALK_MAX_SEC

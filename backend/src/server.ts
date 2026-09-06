@@ -27,7 +27,7 @@ await server.register(cors, {
 
 await server.register(multipart, {
   limits: {
-    fileSize: 25 * 1024 * 1024, // 25 MB â€“ matches bodyLimit
+    fileSize: 25 * 1024 * 1024, // 25 MB  matches bodyLimit
   },
 });
 
@@ -89,16 +89,11 @@ try {
     await seedDatabase();
     console.log("Database seeded successfully.");
   } catch (dbErr) {
-    console.warn(
-      "[Database] Database notice (will use fallback store if offline):",
-      dbErr,
-    );
+    console.warn("[Database] Database notice (will use fallback store if offline):", dbErr);
   }
   await server.listen({ port, host });
   console.log(`Backend ready at http://${host}:${port}`);
-  console.log(
-    `[TTS] Engine=VoxCPM2 voice_id=${process.env.VOICE_ID || "girl_cute_kids"} (AI Worker GPU)`,
-  );
+  console.log(`[TTS] Engine=VoxCPM2 voice_id=${process.env.VOICE_ID || "girl_cute_kids"} (AI Worker GPU)`);
 
   import("./services/runpod-manager.js").then((m) => m.startIdleMonitor());
   import("./services/tts.js").then((m) => m.warmUpTTS());

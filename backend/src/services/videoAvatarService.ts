@@ -23,7 +23,7 @@ export type VideoJobStatus = "queued" | "processing" | "done" | "error";
 export interface VideoJob {
   jobId: string;
   status: VideoJobStatus;
-  progress: number; // 0â€“100
+  progress: number; // 0100
   stage: string; // Human-readable current stage label
   videoUrl?: string;
   proxyVideoUrl?: string; // Backend-proxied URL to avoid CORS
@@ -49,9 +49,7 @@ export interface GenerateVideoParams {
 // PUBLIC API
 // ---------------------------------------------------------------------------
 
-export async function generateAvatarVideo(
-  params: GenerateVideoParams,
-): Promise<VideoJob> {
+export async function generateAvatarVideo(params: GenerateVideoParams): Promise<VideoJob> {
   const jobId = crypto.randomUUID();
   const provider = (process.env.AVATAR_PROVIDER ?? "mock").toLowerCase();
 
@@ -65,7 +63,7 @@ export async function generateAvatarVideo(
 
   jobStore.set(jobId, job);
 
-  // Start async generation (do NOT await â€” return immediately)
+  // Start async generation (do NOT await  return immediately)
   runGeneration(jobId, params, provider).catch((err) => {
     const j = jobStore.get(jobId);
     if (j) {
@@ -84,9 +82,7 @@ export function getVideoJob(jobId: string): VideoJob | undefined {
 }
 
 /** Fetch video bytes from provider URL and store as a data URI for CORS-free frontend playback */
-export async function fetchVideoAsDataUri(
-  videoUrl: string,
-): Promise<string | null> {
+export async function fetchVideoAsDataUri(videoUrl: string): Promise<string | null> {
   try {
     const res = await fetch(videoUrl);
     if (!res.ok) return null;
@@ -103,19 +99,13 @@ export async function fetchVideoAsDataUri(
 // INTERNAL: run generation for a given provider
 // ---------------------------------------------------------------------------
 
-async function runGeneration(
-  jobId: string,
-  params: GenerateVideoParams,
-  provider: string,
-): Promise<void> {
+async function runGeneration(jobId: string, params: GenerateVideoParams, provider: string): Promise<void> {
   switch (provider) {
     case "liveportrait":
-      // Never boot the paid RunPod GPU pod for pre-live previews/video-ads â€”
+      // Never boot the paid RunPod GPU pod for pre-live previews/video-ads
       // only an actual live session is allowed to use the real GPU worker.
       if (!isLiveSessionActive()) {
-        console.log(
-          "[VideoGen] No active live session â€” using mock renderer instead of RunPod GPU.",
-        );
+        console.log("[VideoGen] No active live session  using mock renderer instead of RunPod GPU.");
         return runMock(jobId, params);
       }
       return runLivePortrait(jobId, params);
@@ -130,10 +120,7 @@ async function runGeneration(
 // LIVEPORTRAIT / GPU WORKER PROVIDER (Runs locally on RunPod GPU port 8000)
 // ---------------------------------------------------------------------------
 
-async function runLivePortrait(
-  jobId: string,
-  params: GenerateVideoParams,
-): Promise<void> {
+async function runLivePortrait(jobId: string, params: GenerateVideoParams): Promise<void> {
   updateJob(jobId, {
     status: "processing",
     progress: 5,
@@ -163,10 +150,7 @@ async function runLivePortrait(
   try {
     // Extract avatar name from image path (e.g. "avatars/host_3d_dinamis_namira.png" -> "Namira")
     const avatarName = params.avatarName || "Namira";
-    const cleanAvatarName = avatarName.replace(
-      /\.(png|jpg|jpeg|mp4|webm|webp)$/i,
-      "",
-    );
+    const cleanAvatarName = avatarName.replace(/\.(png|jpg|jpeg|mp4|webm|webp)$/i, "");
 
     // Convert http://localhost:3000/avatars/x.jpg -> just the path part
     // so the worker can resolve it from its local filesystem
@@ -177,7 +161,7 @@ async function runLivePortrait(
         avatarImagePath = parsed.pathname; // e.g. "/avatars/host_3d_dinamis_namira.png"
       }
     } catch {
-      // Not a full URL â€” use as-is
+      // Not a full URL  use as-is
     }
 
     // Extract avatar name from the image path to ensure we get the actual filename
@@ -187,10 +171,7 @@ async function runLivePortrait(
       const parts = avatarImagePath.split("/");
       const filename = parts[parts.length - 1];
       if (filename) {
-        finalAvatarFileName = filename.replace(
-          /\.(png|jpg|jpeg|mp4|webm|webp)$/i,
-          "",
-        );
+        finalAvatarFileName = filename.replace(/\.(png|jpg|jpeg|mp4|webm|webp)$/i, "");
       }
     }
 
@@ -225,8 +206,7 @@ async function runLivePortrait(
       text: params.scriptText,
       voice: process.env.VOICE_ID || "girl_cute_kids",
       voice_id: process.env.VOICE_ID || "girl_cute_kids",
-      speed:
-        params.tone === "Energetic" || params.tone === "Semangat" ? 1.1 : 1.0,
+      speed: params.tone === "Energetic" || params.tone === "Semangat" ? 1.1 : 1.0,
       tone: params.tone || "Persuasif",
       style: params.tone || "Persuasif",
       audio_base64: audioBase64,
@@ -269,12 +249,9 @@ async function runLivePortrait(
       pollCount++;
 
       try {
-        const statusRes = await fetch(
-          `${workerUrl}/stream/status/${workerJobId}`,
-          {
-            signal: AbortSignal.timeout(10_000),
-          },
-        );
+        const statusRes = await fetch(`${workerUrl}/stream/status/${workerJobId}`, {
+          signal: AbortSignal.timeout(10_000),
+        });
 
         if (!statusRes.ok) continue; // retry on transient error
 
@@ -310,20 +287,14 @@ async function runLivePortrait(
     }
 
     // Build absolute URL: if relative path (/live_videos/xxx.mp4), prepend worker base
-    const finalVideoUrl = rawUrl.startsWith("http")
-      ? rawUrl
-      : `${workerUrl}${rawUrl}`;
+    const finalVideoUrl = rawUrl.startsWith("http") ? rawUrl : `${workerUrl}${rawUrl}`;
 
-    const engineLabel =
-      finalData.engine ||
-      (finalData.lip_sync_active
-        ? "SadTalker Neural Lip-Sync"
-        : "FFmpeg Motion");
+    const engineLabel = finalData.engine || (finalData.lip_sync_active ? "SadTalker Neural Lip-Sync" : "FFmpeg Motion");
 
     updateJob(jobId, {
       status: "done",
       progress: 100,
-      stage: `${engineLabel} â€” Video siap!`,
+      stage: `${engineLabel}  Video siap!`,
       videoUrl: finalVideoUrl,
     });
     await releaseGpuForJob();
@@ -342,13 +313,10 @@ async function runLivePortrait(
 }
 
 // ---------------------------------------------------------------------------
-// MOCK PROVIDER â€” realistic simulation, no API key needed
+// MOCK PROVIDER  realistic simulation, no API key needed
 // ---------------------------------------------------------------------------
 
-async function runMock(
-  jobId: string,
-  params: GenerateVideoParams,
-): Promise<void> {
+async function runMock(jobId: string, params: GenerateVideoParams): Promise<void> {
   const stages = [
     { progress: 5, stage: "Menganalisis foto avatar...", delay: 800 },
     {
@@ -380,8 +348,7 @@ async function runMock(
     updateJob(jobId, { progress: step.progress, stage: step.stage });
   }
 
-  const allowFallback =
-    (process.env.ALLOW_MEDIA_FALLBACK ?? "false").toLowerCase() === "true";
+  const allowFallback = (process.env.ALLOW_MEDIA_FALLBACK ?? "false").toLowerCase() === "true";
   const nameLow = (params.avatarName || "").toLowerCase();
   const videoUrl = allowFallback
     ? nameLow.includes("nana") || nameLow.includes("2d")
@@ -407,10 +374,7 @@ async function runMock(
 // REPLICATE PROVIDER (EchoMimic)
 // ---------------------------------------------------------------------------
 
-async function runReplicate(
-  jobId: string,
-  params: GenerateVideoParams,
-): Promise<void> {
+async function runReplicate(jobId: string, params: GenerateVideoParams): Promise<void> {
   const token = process.env.REPLICATE_API_TOKEN;
   if (!token) throw new Error("REPLICATE_API_TOKEN not set in .env");
 
@@ -427,8 +391,7 @@ async function runReplicate(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      version:
-        "75e71f10cd1e7a6b1c2e7d2b09afdb86e1f18571f4c7da35eef7d6fa3d783a63",
+      version: "75e71f10cd1e7a6b1c2e7d2b09afdb86e1f18571f4c7da35eef7d6fa3d783a63",
       input: {
         ref_image_path: params.avatarImageUrl,
         audio_path: params.audioUrl ?? params.avatarImageUrl,
@@ -441,8 +404,7 @@ async function runReplicate(
     }),
   });
 
-  if (!createRes.ok)
-    throw new Error(`Replicate create failed: ${await createRes.text()}`);
+  if (!createRes.ok) throw new Error(`Replicate create failed: ${await createRes.text()}`);
 
   const prediction = (await createRes.json()) as {
     id: string;

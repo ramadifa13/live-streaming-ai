@@ -26,7 +26,7 @@ async function fix() {
         sampleAudioUrl: null,
       },
     });
-    console.log("Updated avatar id=1 â€” voice=girl_cute_kids (VoxCPM2)");
+    console.log("Updated avatar id=1  voice=girl_cute_kids (VoxCPM2)");
   }
 
   await prisma.avatar.updateMany({

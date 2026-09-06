@@ -663,21 +663,37 @@ def _synthesize_voxcpm2_wav(
         import io
         import soundfile as sf
         import numpy as np
-        import resampy
-        data, sr = sf.read(io.BytesIO(wav_bytes))
+        # Resample to 16kHz mono (MuseTalk requirement)
         if sr != 16000:
-            data = resampy.resample(data, sr, 16000)
+            try:
+                import soxr
+                data = soxr.resample(data, sr, 16000)
+            except ImportError:
+                try:
+                    import librosa
+                    data = librosa.resample(data.astype(np.float32), orig_sr=sr, target_sr=16000)
+                except Exception:
+                    try:
+                        from scipy import signal
+                        num_samples = int(round(len(data) * 16000 / float(sr)))
+                        data = signal.resample(data, num_samples)
+                    except Exception:
+                        ratio = 16000.0 / float(sr)
+                        num_samples = max(1, int(round(len(data) * ratio)))
+                        x_old = np.linspace(0.0, 1.0, num=len(data), endpoint=False)
+                        x_new = np.linspace(0.0, 1.0, num=num_samples, endpoint=False)
+                        data = np.interp(x_new, x_old, data.astype(np.float64)).astype(np.float32)
             sr = 16000
         # Convert to mono if needed
         if data.ndim > 1:
             data = np.mean(data, axis=1)
         out_buf = io.BytesIO()
-        sf.write(out_buf, data, sr, format="WAV")
+        sf.write(out_buf, data.astype(np.float32), sr, format="WAV", subtype="PCM_16")
         wav_bytes = out_buf.getvalue()
     except Exception as e:
-        # If resampling fails, log but continue with original bytes
-        print(f"[WARN] Audio resampling failed: {e}")
+        print(f"[WARN] Audio processing failed: {e}")
     return wav_bytes, headers
+
 
 
 output_dir = worker.output_dir
