@@ -63,7 +63,7 @@ except ImportError:
     AI_WORKER_TARGET_FPS = 30
 
     def is_ai_worker_mode() -> bool:
-        return False
+        return True
 
     def get_speech_bridge(output_folder: str = ""):
         return None
@@ -1405,8 +1405,8 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         raise
 
     already_connected = False
-    mode = (os.environ.get("BROADCAST_MODE") or "segment").strip().lower()
-    ai_mode = mode in ("ai_worker", "ai-worker", "realtime", "visual_worker")
+    mode = (os.environ.get("BROADCAST_MODE") or "ai_worker").strip().lower()
+    ai_mode = True
 
     if ai_mode and visual_worker is not None and _visual_worker_pipeline_active():
         rtmp_state = "disconnected"

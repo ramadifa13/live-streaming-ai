@@ -646,5 +646,5 @@ def get_speech_bridge(output_folder: str = "") -> SpeechBridge:
 
 
 def is_ai_worker_mode() -> bool:
-    mode = (os.environ.get("BROADCAST_MODE") or "segment").strip().lower()
-    return mode in ("ai_worker", "ai-worker", "realtime", "visual_worker")
+    """Mode ai_worker (Continuous Frame Feed) adalah satu-satunya mode baku siaran."""
+    return True

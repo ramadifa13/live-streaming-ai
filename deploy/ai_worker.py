@@ -1,22 +1,4 @@
-"""Real-time AI visual worker — 30 FPS producer/consumer pipeline.
 
-Architecture
-------------
-Thread 1 (StateMachine + FrameFetcher):
-    Decides idle / action / talk state, advances frame index with base-pose
-    gating, pushes RawFramePacket to ``raw_queue``.
-
-Thread 2 (LipSyncInference):
-    Consumes raw frames + TTS audio chunks, runs MuseTalk UNet/VAE when speech
-    is active, applies feathered mask blending, pushes RenderedPacket to
-    ``render_queue``.
-
-Thread 3 (Broadcaster):
-    Wall-clock 30 FPS pacer. Never blocks on inference — replays the last good
-    frame (or idle fallback) when the render queue is empty.
-
-All video assets are decoded once at init into RAM. No disk I/O during stream.
-"""
 
 from __future__ import annotations
 
