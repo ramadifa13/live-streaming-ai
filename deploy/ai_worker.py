@@ -144,9 +144,7 @@ def _ambient_gesture_names() -> List[str]:
 
 def _talk_clip_pool_names() -> List[str]:
     """Clip tubuh saat bicara — default talk,talk_2,talk_3."""
-    raw = (
-        os.environ.get("AI_WORKER_TALK_CLIPS") or "talk,talk_2,talk_3"
-    ).strip()
+    raw = (os.getenv("AI_WORKER_TALK_CLIPS") or "talk,talk_2,talk_3").strip()
     if raw.lower() in ("0", "off", "false", "none", "no", ""):
         return [TALK_CLIP_DEFAULT]
     out: List[str] = []
@@ -518,12 +516,18 @@ class AssetBank:
         return out
 
     def talk_clips_ready(self) -> List[str]:
+        # Cache the ready talk clips to avoid recomputation and recursion
+        if self._ready_talk_clips is not None:
+            return self._ready_talk_clips
         ready = [n for n in self.talk_clip_pool() if self.clip_has_musetalk(n)]
         if ready:
+            self._ready_talk_clips = ready
             return ready
         fb = self.crash_fallback_name()
         if self.clip_has_musetalk(fb):
+            self._ready_talk_clips = [fb]
             return [fb]
+        self._ready_talk_clips = []
         return []
 
     def pick_talk_clip(
@@ -549,12 +553,21 @@ class AssetBank:
         return random.choice(pool)
 
     def talk_clip_name(self) -> str:
-        """Clip bicara default di pool (bukan satu-satunya — rotasi via pick_talk_clip)."""
-        ready = self.talk_clips_ready()
-        if ready:
-            if TALK_CLIP_DEFAULT in ready:
-                return TALK_CLIP_DEFAULT
-            return ready[0]
+        """Return the default talk clip without triggering recursion.
+        Prioritize the explicitly configured default (TALK_CLIP_DEFAULT) if it exists
+        and has MuseTalk materials. Otherwise, fall back to the first ready talk
+        clip or the crash fallback.
+        """
+        # Preferred default clip
+        if TALK_CLIP_DEFAULT in self.clips and self.clip_has_musetalk(TALK_CLIP_DEFAULT):
+            return TALK_CLIP_DEFAULT
+        # Use cached ready list if available
+        if self._ready_talk_clips:
+            return self._ready_talk_clips[0]
+        # Compute a safe fallback without calling talk_clips_ready (which would recurse)
+        for name in self.clips:
+            if name in TALK_CLIP_NAMES and self.clip_has_musetalk(name):
+                return name
         return self.crash_fallback_name()
 
     def idle_variant_clips(self) -> List[str]:
@@ -572,6 +585,7 @@ class AssetBank:
         self.models = models_bundle
         self.clips: Dict[str, ClipAsset] = {}
         self._idle_name = "idle"
+        self._ready_talk_clips: Optional[List[str]] = None
 
     def discover_and_load(self) -> None:
         if not os.path.isdir(self.assets_dir):
@@ -640,6 +654,7 @@ class AssetBank:
                 f"base_pose={base_pose}, end_pose={clip.end_pose}, {seam}{flag}"
             )
 
+        self._ready_talk_clips = None
         self._idle_name = self._pick_primary_idle()
         print(
             f"[AssetBank] Primary idle={self._idle_name} talk={self.talk_clip_name()}, "
