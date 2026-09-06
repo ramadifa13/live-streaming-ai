@@ -5,6 +5,9 @@
 #   bash bootstrap_pod.sh
 set -euo pipefail
 
+export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-11.8}"
+export PATH="${CUDA_HOME}/bin:${PATH:-}"
+export LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
 export TMPDIR="${TMPDIR:-/workspace/tmp}"
 export PIP_CACHE_DIR="${PIP_CACHE_DIR:-/workspace/tmp/pip_cache}"
 mkdir -p "$TMPDIR" "$PIP_CACHE_DIR" /workspace
