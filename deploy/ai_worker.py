@@ -60,15 +60,16 @@ IDLE_FALLBACK_AFTER = int(os.environ.get("AI_WORKER_IDLE_FALLBACK_AFTER", "2"))
 # Hold talk antar-utterance: kalau BE diam / reload, balik ke idle (static).
 # Default 20s — TTS+MuseTalk di GPU yang sama sering >10s refill.
 HOLD_TALK_MAX_SEC = float(os.environ.get("AI_WORKER_HOLD_TALK_SEC", "20"))
-# Pin talk clip panjang (continuous body timeline) — rotasi jarang sekali.
-TALK_STREAK_BEFORE_ROTATE = int(os.environ.get("AI_WORKER_TALK_STREAK", "999"))
-# 1 = selalu pakai AI_WORKER_TALK_CLIP (single body timeline).
-PIN_TALK_SCENE = (os.environ.get("AI_WORKER_PIN_TALK") or "1").strip().lower() in (
+# Pin talk clip panjang (continuous body timeline) — rotasi tiap 1-2 utterance agar bervariasi.
+TALK_STREAK_BEFORE_ROTATE = int(os.environ.get("AI_WORKER_TALK_STREAK", "2"))
+# 0 = rotasi alami antar talk/gesture clips (idle_2, idle_3, idle_4). 1 = kunci ke 1 clip saja.
+PIN_TALK_SCENE = (os.environ.get("AI_WORKER_PIN_TALK") or "0").strip().lower() in (
     "1",
     "true",
     "yes",
     "on",
 )
+
 # Rest-gated begin: tunggu base/end max N ms sebelum soft-cut paksa.
 REST_GATE_MAX_MS = float(os.environ.get("AI_WORKER_REST_GATE_MS", "400"))
 REST_GATE_NEAR_FRAMES = int(os.environ.get("AI_WORKER_REST_GATE_NEAR", "12"))
@@ -106,11 +107,12 @@ MOUTH_MISS_BODY_ONLY = (
 
 ALLOWED_GESTURES: frozenset = frozenset()
 
-# Body clips: idle = true rest (static); talk / talk_2 / talk_3 = sales body.
+# Body clips: idle_1 = true rest (static/breathing); idle_2 / idle_3 / idle_4 = talk gestures.
 # Mendukung namira_idle_1 .. namira_idle_4 dari assets/3d
-TRUE_IDLE_NAMES = frozenset({"idle", "idle_1", "idle_2", "idle_3", "idle_4"})
+TRUE_IDLE_NAMES = frozenset({"idle", "idle_1"})
 TALK_CLIP_NAMES = frozenset({"talk", "talk_2", "talk_3", "idle_2", "idle_3", "idle_4"})
 BODY_CLIP_NAMES = TRUE_IDLE_NAMES | TALK_CLIP_NAMES
+
 
 TALK_CLIP_DEFAULT = (
     os.environ.get("AI_WORKER_TALK_CLIP") or "talk"
@@ -145,8 +147,12 @@ def _ambient_gesture_names() -> List[str]:
 
 
 def _talk_clip_pool_names() -> List[str]:
-    """Clip tubuh saat bicara — default talk,talk_2,talk_3."""
-    return ["talk", "talk_2", "talk_3"]
+    """Clip tubuh saat bicara — default talk,talk_2,talk_3 serta idle_2,idle_3,idle_4."""
+    raw = (os.environ.get("AI_WORKER_TALK_CLIPS") or "").strip()
+    if raw:
+        return [_normalize_clip_name(n.strip()) for n in raw.split(",") if n.strip()]
+    return ["talk", "talk_2", "talk_3", "idle_2", "idle_3", "idle_4"]
+
 
 
 def _idle_variant_names() -> List[str]:
