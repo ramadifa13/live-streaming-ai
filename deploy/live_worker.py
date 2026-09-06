@@ -98,8 +98,20 @@ class AILiveWorker:
                 if os.path.realpath(link_path) == os.path.realpath(target_path):
                     continue
                 os.unlink(link_path)
+            elif os.path.isdir(link_path) and not os.path.islink(link_path):
+                # Replace existing regular directory with symlink
+                try:
+                    import shutil
+                    shutil.rmtree(link_path)
+                except Exception as e:
+                    print(f"[WARNING] Failed to remove dir {link_path}: {e}")
             elif os.path.exists(link_path):
                 continue
+                # Remove stray file if any
+                try:
+                    os.remove(link_path)
+                except Exception as e:
+                    print(f"[WARNING] Failed to remove file {link_path}: {e}")
             try:
                 os.symlink(target_path, link_path)
                 print(f"[INFO] Symlink: {link_path} -> {target_path}")

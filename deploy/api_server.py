@@ -645,9 +645,13 @@ def _synthesize_voxcpm2_wav(
     live_session_id: Optional[str] = None,
 ) -> tuple:
     """Return (wav_bytes, metrics_headers). Raises RuntimeError on failure."""
+    """Return (wav_bytes, metrics_headers). Raises RuntimeError on failure.
+    Ensures the returned WAV is 16 kHz mono for MuseTalk compatibility.
+    """
     if voxcpm2_bridge is None:
         raise RuntimeError("voxcpm2_bridge tidak tersedia di worker")
     return voxcpm2_bridge.synthesize(
+    wav_bytes, headers = voxcpm2_bridge.synthesize(
         text=text,
         voice_id=_resolve_voice_id(voice_id) if voice_id else _default_voice_id(),
         language=(language or os.environ.get("TTS_LANGUAGE") or "id").strip() or "id",
@@ -656,6 +660,26 @@ def _synthesize_voxcpm2_wav(
         request_id=request_id,
         live_session_id=live_session_id,
     )
+    # Ensure 16kHz mono WAV
+    try:
+        import io
+        import soundfile as sf
+        import numpy as np
+        import resampy
+        data, sr = sf.read(io.BytesIO(wav_bytes))
+        if sr != 16000:
+            data = resampy.resample(data, sr, 16000)
+            sr = 16000
+        # Convert to mono if needed
+        if data.ndim > 1:
+            data = np.mean(data, axis=1)
+        out_buf = io.BytesIO()
+        sf.write(out_buf, data, sr, format="WAV")
+        wav_bytes = out_buf.getvalue()
+    except Exception as e:
+        # If resampling fails, log but continue with original bytes
+        print(f"[WARN] Audio resampling failed: {e}")
+    return wav_bytes, headers
 
 
 output_dir = worker.output_dir
