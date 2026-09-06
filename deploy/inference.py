@@ -677,16 +677,7 @@ def main(args):
                 device=device,
             )
 
-            res_frame_list = []
-            for whisper_batch, latent_batch in gen:
-                audio_feature_batch = pe(whisper_batch)
-                latent_batch = latent_batch.to(dtype=weight_dtype)
-                pred_latents = unet.model(latent_batch, timesteps, encoder_hidden_states=audio_feature_batch).sample
-                recon = vae.decode_latents(pred_latents)
-                for res_frame in recon:
-                    res_frame_list.append(res_frame)
-
-            # 6. Blend + handoff: raw .ffseg (frame_feed) dan/atau MP4 (segment)
+            # 6. Setup + handoff: raw .ffseg (frame_feed) dan/atau MP4 (segment)
             raw_feed = _want_raw_feed()
             skip_mp4 = _want_skip_mp4(raw_feed)
             num_cycles = len(frame_list_cycle)
@@ -757,50 +748,57 @@ def main(args):
                     print(f"[MuseTalk-Fast] ffseg writer notice: {open_err}")
                     ffseg_writer = None
 
-            for i, res_frame in enumerate(res_frame_list):
-                cycle_idx = (delay_frame + i) % num_cycles
-                ori_frame = frame_list_cycle[cycle_idx]
-                mat = mask_materials_cycle[cycle_idx]
+            total_frames = 0
+            for whisper_batch, latent_batch in gen:
+                audio_feature_batch = pe(whisper_batch)
+                latent_batch = latent_batch.to(dtype=weight_dtype)
+                pred_latents = unet.model(latent_batch, timesteps, encoder_hidden_states=audio_feature_batch).sample
+                recon = vae.decode_latents(pred_latents)
+                for res_frame in recon:
+                    cycle_idx = (delay_frame + total_frames) % num_cycles
+                    ori_frame = frame_list_cycle[cycle_idx]
+                    mat = mask_materials_cycle[cycle_idx]
 
-                if mat is not None:
-                    mask_array, crop_box, face_box = mat
-                    try:
-                        res_frame_resized = resize_generated_to_bbox(
-                            res_frame, face_box, square_pad=vis["square_pad"]
-                        )
-                        combine_frame = get_image_blending(ori_frame, res_frame_resized, face_box, mask_array, crop_box)
-                    except Exception:
-                        combine_frame = ori_frame
-                else:
-                    bbox = coord_list_cycle[cycle_idx]
-                    x1, y1, x2, y2 = bbox
-                    if args.version == "v15":
-                        y2 = min(y2 + extra_margin, ori_frame.shape[0])
-                    try:
-                        res_frame_resized = resize_generated_to_bbox(
-                            res_frame, [x1, y1, x2, y2], square_pad=vis["square_pad"]
-                        )
-                        combine_frame = get_image(
-                            ori_frame,
-                            res_frame_resized,
-                            [x1, y1, x2, y2],
-                            upper_boundary_ratio=vis["upper_boundary_ratio"],
-                            mode=args.parsing_mode,
-                            fp=fp,
-                        )
-                    except Exception:
-                        combine_frame = ori_frame
+                    if mat is not None:
+                        mask_array, crop_box, face_box = mat
+                        try:
+                            res_frame_resized = resize_generated_to_bbox(
+                                res_frame, face_box, square_pad=vis["square_pad"]
+                            )
+                            combine_frame = get_image_blending(ori_frame, res_frame_resized, face_box, mask_array, crop_box)
+                        except Exception:
+                            combine_frame = ori_frame
+                    else:
+                        bbox = coord_list_cycle[cycle_idx]
+                        x1, y1, x2, y2 = bbox
+                        if args.version == "v15":
+                            y2 = min(y2 + extra_margin, ori_frame.shape[0])
+                        try:
+                            res_frame_resized = resize_generated_to_bbox(
+                                res_frame, [x1, y1, x2, y2], square_pad=vis["square_pad"]
+                            )
+                            combine_frame = get_image(
+                                ori_frame,
+                                res_frame_resized,
+                                [x1, y1, x2, y2],
+                                upper_boundary_ratio=vis["upper_boundary_ratio"],
+                                mode=args.parsing_mode,
+                                fp=fp,
+                            )
+                        except Exception:
+                            combine_frame = ori_frame
 
-                combine_frame = fit_bgr(combine_frame, CANVAS_W, CANVAS_H)
+                    combine_frame = fit_bgr(combine_frame, CANVAS_W, CANVAS_H)
 
-                if ffseg_writer is not None:
-                    ffseg_writer.write_frame(combine_frame)
+                    if ffseg_writer is not None:
+                        ffseg_writer.write_frame(combine_frame)
 
-                if ffmpeg_proc is not None and ffmpeg_proc.stdin is not None:
-                    try:
-                        ffmpeg_proc.stdin.write(combine_frame.tobytes())
-                    except (BrokenPipeError, IOError):
-                        pass
+                    if ffmpeg_proc is not None and ffmpeg_proc.stdin is not None:
+                        try:
+                            ffmpeg_proc.stdin.write(combine_frame.tobytes())
+                        except (BrokenPipeError, IOError):
+                            pass
+                    total_frames += 1
 
             if ffmpeg_proc is not None:
                 if ffmpeg_proc.stdin:
@@ -826,7 +824,7 @@ def main(args):
                     if skip_mp4:
                         raise
 
-            next_offset = (delay_frame + len(res_frame_list)) % max(1, num_cycles)
+            next_offset = (delay_frame + total_frames) % max(1, num_cycles)
             _save_cycle_offset(video_path, next_offset, args)
             out_label = ffseg_dir if (raw_feed and skip_mp4) else final_output_path
             print(
