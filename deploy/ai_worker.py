@@ -88,7 +88,7 @@ LIPSYNC_PREROLL_FRAMES = int(os.environ.get("MUSETALK_PREROLL_FRAMES", "10"))
 LIPSYNC_WAIT_SEC = float(os.environ.get("MUSETALK_MOUTH_WAIT_SEC", "0"))
 # SYNC_SHIFT negatif: audio dimajukan relatif terhadap mouth (kompensasi inference delay).
 # Default -2: mulut muncul ~2 frame lebih awal → terlihat lebih in-sync.
-LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "-2"))
+LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "0"))
 LIPSYNC_PREROLL_TIMEOUT_SEC = float(
     os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "4.0")
 )
