@@ -1756,6 +1756,7 @@ class LipSyncEngine:
         self._talk_clip_name = "talk"
         self._start_frame_idx = 0
         self._last_mouth_256: Optional[np.ndarray] = None
+        self._last_mouth_frame = None
         self._prev_composed: Optional[np.ndarray] = None
         self._feather_cache: dict = {}
         self._square_pad = True
@@ -1954,6 +1955,10 @@ class LipSyncEngine:
                 cursor = self._infer_cursor
             if cached is not None:
                 return cached
+                result = cached
+                if result is not None:
+                    self._last_mouth_frame = result
+                return result
             if not MOUTH_MISS_BODY_ONLY and cursor > idx and last is not None:
                 if attempt == 0:
                     print(
@@ -1962,10 +1967,18 @@ class LipSyncEngine:
                     )
                     metrics.inc("mouth_fallback_last")
                 return last
+                result = last
+                if result is not None:
+                    self._last_mouth_frame = result
+                return result
             if time.perf_counter() >= deadline:
                 if MOUTH_MISS_BODY_ONLY:
                     return None
                 return last
+                mouth = self._last_mouth_frame
+                if mouth is not None:
+                    return mouth
+                return None
             time.sleep(0.004)
             attempt += 1
 
@@ -2730,6 +2743,9 @@ class StreamBroadcaster:
                 raise BrokenPipeError("pipe write returned 0")
             offset += n
 
+    def _silence_pcm(self) -> bytes:
+        return b"\x00" * self.bytes_per_audio
+
     def write(self, frame: np.ndarray, pcm: bytes) -> bool:
         with self._lock:
             if self._closed or self._v_fh is None or self._a_fh is None:
@@ -2740,6 +2756,9 @@ class StreamBroadcaster:
                 return False
             if not self.is_alive():
                 return False
+            
+            if pcm is None:
+                pcm = self._silence_pcm()
             if frame is None or frame.size == 0:
                 return False
             h, w = frame.shape[:2]
