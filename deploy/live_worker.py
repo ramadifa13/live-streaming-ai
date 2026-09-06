@@ -106,7 +106,6 @@ class AILiveWorker:
                 except Exception as e:
                     print(f"[WARNING] Failed to remove dir {link_path}: {e}")
             elif os.path.exists(link_path):
-                continue
                 # Remove stray file if any
                 try:
                     os.remove(link_path)

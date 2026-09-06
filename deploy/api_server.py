@@ -644,13 +644,11 @@ def _synthesize_voxcpm2_wav(
     request_id: Optional[str] = None,
     live_session_id: Optional[str] = None,
 ) -> tuple:
-    """Return (wav_bytes, metrics_headers). Raises RuntimeError on failure."""
     """Return (wav_bytes, metrics_headers). Raises RuntimeError on failure.
     Ensures the returned WAV is 16 kHz mono for MuseTalk compatibility.
     """
     if voxcpm2_bridge is None:
         raise RuntimeError("voxcpm2_bridge tidak tersedia di worker")
-    return voxcpm2_bridge.synthesize(
     wav_bytes, headers = voxcpm2_bridge.synthesize(
         text=text,
         voice_id=_resolve_voice_id(voice_id) if voice_id else _default_voice_id(),
