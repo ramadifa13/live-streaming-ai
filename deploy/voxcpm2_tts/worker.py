@@ -54,11 +54,14 @@ class InvalidateRequest(BaseModel):
     voice_id: Optional[str] = None
 
 
-app = FastAPI(title="VoxCPM2 TTS", docs_url=None, redoc_url=None)
+import warnings
+from contextlib import asynccontextmanager
+
+warnings.filterwarnings("ignore", category=FutureWarning, module="torch.nn.utils.weight_norm")
 
 
-@app.on_event("startup")
-def _startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     t0 = time.perf_counter()
     print("[VoxCPM2-worker] startup — loading model…", flush=True)
     svc = get_tts_service()
@@ -71,6 +74,10 @@ def _startup() -> None:
     except Exception as exc:
         # Tetap hidup agar /health bisa melaporkan error; synth akan 503.
         print(f"[VoxCPM2-worker] warm FAILED: {exc}", flush=True)
+    yield
+
+
+app = FastAPI(title="VoxCPM2 TTS", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
 @app.get("/health")
