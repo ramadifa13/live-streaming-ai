@@ -495,6 +495,11 @@ class AssetBank:
         clip = self.clips.get(name)
         if clip is None:
             return False
+        # Detailed logging for missing MuseTalk materials
+        if not clip.latent_list_cycle:
+            print(f"[AssetBank] clip_has_musetalk FALSE: latents missing for {name}")
+        if not clip.mask_materials_cycle:
+            print(f"[AssetBank] clip_has_musetalk FALSE: masks missing for {name}")
         return bool(clip.latent_list_cycle and clip.mask_materials_cycle)
 
     def talk_clip_pool(self) -> List[str]:
