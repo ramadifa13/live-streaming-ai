@@ -33,8 +33,10 @@ MODEL_PATH = (
     or "/workspace/models/voxcpm2"
 ).strip()
 TTS_LANGUAGE = (os.environ.get("TTS_LANGUAGE") or "id").strip() or "id"
-CFG_VALUE = float(os.environ.get("VOXCPM2_CFG_VALUE") or "2.0")
-INFERENCE_TIMESTEPS = int(os.environ.get("VOXCPM2_INFERENCE_TIMESTEPS") or "10")
+CFG_VALUE = float(os.environ.get("VOXCPM2_CFG_VALUE") or "2.5")
+INFERENCE_TIMESTEPS = int(os.environ.get("VOXCPM2_INFERENCE_TIMESTEPS") or "20")
+# Speaking rate: < 1.0 = lebih lambat, > 1.0 = lebih cepat. Default 0.9 untuk ID yang natural.
+SPEAKING_RATE = float(os.environ.get("VOXCPM2_SPEAKING_RATE") or "0.9")
 # Jika reference.wav belum ada: izinkan voice-design sementara (dev/bootstrap).
 ALLOW_VOICE_DESIGN = (os.environ.get("VOXCPM2_ALLOW_VOICE_DESIGN") or "1").strip() not in (
     "0",
@@ -277,8 +279,19 @@ class VoxCPM2TtsService:
                 }
                 if ref_path is not None and not use_voice_design:
                     kwargs["reference_wav_path"] = str(ref_path)
+                # speaking_rate: VoxCPM2 mungkin tidak selalu expose parameter ini —
+                # coba inject, abaikan jika TypeError (model versi lama).
+                _sr = float(SPEAKING_RATE)
+                if abs(_sr - 1.0) > 0.01:
+                    kwargs["speaking_rate"] = _sr
 
-                wav = self._model.generate(**kwargs)
+                try:
+                    wav = self._model.generate(**kwargs)
+                except TypeError:
+                    # Model tidak kenal speaking_rate — retry tanpa parameter itu.
+                    kwargs.pop("speaking_rate", None)
+                    wav = self._model.generate(**kwargs)
+
             except Exception as exc:
                 total_ms = (time.perf_counter() - t_start) * 1000
                 print(

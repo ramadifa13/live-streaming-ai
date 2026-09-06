@@ -83,11 +83,13 @@ MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "1.0"))
 MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0"))
 MOUTH_MAX_DELTA = float(os.environ.get("MUSETALK_MAX_DELTA", "0"))
 MOUTH_FRAME_DELTA = float(os.environ.get("MUSETALK_FRAME_DELTA", "0"))
-LIPSYNC_PREROLL_FRAMES = int(os.environ.get("MUSETALK_PREROLL_FRAMES", "6"))
+LIPSYNC_PREROLL_FRAMES = int(os.environ.get("MUSETALK_PREROLL_FRAMES", "10"))
 LIPSYNC_WAIT_SEC = float(os.environ.get("MUSETALK_MOUTH_WAIT_SEC", "0"))
-LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "0"))
+# SYNC_SHIFT negatif: audio dimajukan relatif terhadap mouth (kompensasi inference delay).
+# Default -2: mulut muncul ~2 frame lebih awal → terlihat lebih in-sync.
+LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "-2"))
 LIPSYNC_PREROLL_TIMEOUT_SEC = float(
-    os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.5")
+    os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "4.0")
 )
 # 1 = jangan start audio sampai preroll mouths penuh (anti stutter awal kalimat).
 LIPSYNC_HARD_PREROLL = (os.environ.get("MUSETALK_HARD_PREROLL") or "1").strip().lower() in (
@@ -1850,10 +1852,18 @@ class LipSyncEngine:
         self._infer_thread = None
 
     def _latent_index(self, clip: ClipAsset, body_idx: int) -> int:
+        """Hitung latent index dari body pose index.
+
+        Sebelumnya: nlat // 2 (half-cycle) → latent tidak match body pose → desync.
+        Sekarang: full-cycle modulo, konsisten dengan material_at() di ClipAsset.
+        """
         nlat = max(1, len(clip.latent_list_cycle))
-        nframes = max(1, len(clip.frames) or clip.num_frames)
-        forward_n = min(nframes, nlat // 2 or nlat)
-        return int(body_idx) % max(1, forward_n)
+        # Span aktual clip (base→end) — modulo dalam span yang sama.
+        span = max(1, clip.end_pose - clip.base_pose_frame + 1)
+        forward_n = min(nlat, span)
+        offset = max(0, int(body_idx) - clip.base_pose_frame)
+        return offset % max(1, forward_n)
+
 
     def _batch_inference_loop(self) -> None:
         vae = self.models["vae"]

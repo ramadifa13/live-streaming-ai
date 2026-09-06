@@ -173,7 +173,16 @@ class UtteranceJob:
 
 
 class SpeechBridge:
-    """Antrian utterance + streaming PCM per frame."""
+    """Antrian utterance + streaming PCM per frame.
+
+    Pre-queue gate: playback tidak mulai sampai MIN_READY_UTTERANCES utterances
+    sudah siap di antrian (default 2). Ini menghilangkan idle di awal live —
+    AI langsung bicara begitu stream dibuka. Set ke 1 atau 0 untuk disable gate.
+    """
+
+    # Minimum utterances siap sebelum playback pertama dimulai.
+    # Setelah utterance pertama mulai, gate ini tidak berlaku lagi (stream sudah aktif).
+    MIN_READY_UTTERANCES: int = int(os.environ.get("SPEECH_BRIDGE_MIN_READY", "2"))
 
     def __init__(self, output_folder: str = ""):
         self.output_folder = output_folder or os.environ.get(
@@ -190,6 +199,9 @@ class SpeechBridge:
         self._silence = b"\x00" * BYTES_PER_AUDIO_FRAME
         self._audio_exhausted = False
         self._awaiting_visual_tail = False
+        # Pre-queue gate: True selama belum ada utterance pertama yang dimulai.
+        self._prequeue_gate_active: bool = self.MIN_READY_UTTERANCES > 1
+        self._ever_started: bool = False  # False sampai utterance pertama mulai
 
     def set_models(self, models_bundle) -> None:
         self._models = models_bundle
@@ -355,10 +367,16 @@ class SpeechBridge:
             raise
         
         # Sesuaikan panjang dengan PCM frames.
-        # Jangan pad dengan viseme terakhir — mulut akan tertahan terbuka di akhir audio.
-        if chunks.shape[0] > num_frames:
-            chunks = chunks[:num_frames]
-        elif chunks.shape[0] < num_frames and chunks.shape[0] > 0:
+        # Grace tail: izinkan whisper sedikit lebih panjang dari PCM (max +TAIL frames)
+        # agar suku kata terakhir tidak terpotong — lalu truncate sisanya.
+        GRACE_TAIL = int(os.environ.get("MUSETALK_WHISPER_GRACE_TAIL", "3"))
+        if chunks.shape[0] > num_frames + GRACE_TAIL:
+            # Truncate hanya jika jauh melebihi PCM — sisakan grace tail.
+            chunks = chunks[: num_frames + GRACE_TAIL]
+        elif chunks.shape[0] > num_frames:
+            # Dalam batas grace — biarkan lebih panjang, PCM akan di-pad silence.
+            pass
+        if chunks.shape[0] < num_frames and chunks.shape[0] > 0:
             pad_n = num_frames - chunks.shape[0]
             zeros = torch.zeros(
                 (pad_n,) + tuple(chunks.shape[1:]),
@@ -368,11 +386,30 @@ class SpeechBridge:
             chunks = torch.cat([chunks, zeros], dim=0)
         return chunks.cpu()
 
+
     def _start_next_if_needed(self) -> None:
-        """Idle tetap jalan sampai job siap + preroll mulut selesai (tanpa freeze frame)."""
+        """Idle tetap jalan sampai job siap + preroll mulut selesai (tanpa freeze frame).
+
+        Pre-queue gate: saat _prequeue_gate_active=True, tahan sampai
+        MIN_READY_UTTERANCES utterances siap di antrian sebelum mulai yang pertama.
+        Tujuan: stream dimulai langsung bicara tanpa idle.
+        """
         if self._current is not None:
             return
-        preroll_timeout = float(os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.5"))
+
+        # Pre-queue gate: tunggu buffer cukup sebelum utterance pertama.
+        if self._prequeue_gate_active and not self._ever_started:
+            ready_count = self.ready_pending_count()
+            min_ready = max(1, self.MIN_READY_UTTERANCES)
+            if ready_count < min_ready:
+                # Belum cukup — cek apakah perlu log (setiap 5 detik).
+                return
+            print(
+                f"[SpeechBridge] Pre-queue gate terpenuhi: {ready_count}/{min_ready} utterances siap — mulai playback."
+            )
+            self._prequeue_gate_active = False
+
+        preroll_timeout = float(os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "4.0"))
         candidate = None
         with self._lock:
             while self._pending:
@@ -451,12 +488,16 @@ class SpeechBridge:
             self._frame_cursor = 0
             self._audio_exhausted = False
             self._awaiting_visual_tail = False
+            # Gate selamanya off setelah utterance pertama mulai.
+            self._ever_started = True
+            self._prequeue_gate_active = False
         if self._on_utterance_start:
             try:
                 self._on_utterance_start(candidate)
             except Exception as err:
                 print(f"[SpeechBridge] on_start notice: {err}")
         print(f"[SpeechBridge] ▶ Playing {candidate.task_id}")
+
 
     def _finish_current(self) -> None:
         finished = self._current
@@ -493,6 +534,9 @@ class SpeechBridge:
             self._frame_cursor = 0
             self._audio_exhausted = False
             self._awaiting_visual_tail = False
+            # Reset gate untuk sesi Go Live berikutnya.
+            self._ever_started = False
+            self._prequeue_gate_active = self.MIN_READY_UTTERANCES > 1
 
     def signal_visual_complete(self) -> None:
         """Dipanggil state machine setelah clip talk mencapai end_pose."""
@@ -519,12 +563,23 @@ class SpeechBridge:
         self._start_next_if_needed()
         if self._current is None:
             return False, None
-        if self._frame_cursor >= self._current.num_frames:
-            if not self._audio_exhausted:
-                self._audio_exhausted = True
-                self._awaiting_visual_tail = True
-            return False, None
-        return True, self._frame_cursor
+        # PCM aktif.
+        if self._frame_cursor < self._current.num_frames:
+            return True, self._frame_cursor
+        # Dalam grace tail whisper — masih ada viseme untuk dirender.
+        grace_tail = int(os.environ.get("MUSETALK_WHISPER_GRACE_TAIL", "3"))
+        whisper_total = (
+            int(self._current.whisper_chunks.shape[0])
+            if self._current.whisper_chunks is not None
+            else self._current.num_frames
+        )
+        if self._frame_cursor < whisper_total and self._frame_cursor < self._current.num_frames + grace_tail:
+            return False, self._frame_cursor
+        if not self._audio_exhausted:
+            self._audio_exhausted = True
+            self._awaiting_visual_tail = True
+        return False, None
+
 
     def audio_progress(self) -> float:
         """0..1 progress audio utterance aktif (untuk early CTA gesture)."""
@@ -543,6 +598,8 @@ class SpeechBridge:
 
         Audio boleh habis sebelum video selesai — visual tail dilanjutkan
         dengan silence sampai state machine memanggil ``signal_visual_complete``.
+        Grace tail: setelah PCM habis, izinkan beberapa frame silence sambil
+        whisper index terus maju (mouth masih bergerak untuk suku kata akhir).
         """
         if not self.playback_active():
             return self._silence, False, None
@@ -552,16 +609,32 @@ class SpeechBridge:
         if self._current is None:
             return self._silence, False, None
 
-        if self._frame_cursor >= self._current.num_frames:
-            if not self._audio_exhausted:
-                self._audio_exhausted = True
-                self._awaiting_visual_tail = True
-            return self._silence, False, None
+        # PCM masih ada — kirim audio + whisper index.
+        if self._frame_cursor < self._current.num_frames:
+            pcm = self._current.pcm_frames[self._frame_cursor]
+            idx = self._frame_cursor
+            self._frame_cursor += 1
+            return pcm, True, idx
 
-        pcm = self._current.pcm_frames[self._frame_cursor]
-        idx = self._frame_cursor
-        self._frame_cursor += 1
-        return pcm, True, idx
+        # PCM habis — cek apakah masih ada grace tail whisper frames.
+        grace_tail = int(os.environ.get("MUSETALK_WHISPER_GRACE_TAIL", "3"))
+        whisper_total = (
+            int(self._current.whisper_chunks.shape[0])
+            if self._current.whisper_chunks is not None
+            else self._current.num_frames
+        )
+        if self._frame_cursor < whisper_total and self._frame_cursor < self._current.num_frames + grace_tail:
+            # Kirim silence + whisper index agar mulut tutup secara natural.
+            idx = self._frame_cursor
+            self._frame_cursor += 1
+            return self._silence, False, idx
+
+        # Benar-benar selesai.
+        if not self._audio_exhausted:
+            self._audio_exhausted = True
+            self._awaiting_visual_tail = True
+        return self._silence, False, None
+
 
     def get_llm_action(self) -> Optional[str]:
         """Peek disabled — CTA point dijadwalkan di on_start (post-speech saja)."""
