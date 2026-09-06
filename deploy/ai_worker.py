@@ -144,17 +144,7 @@ def _ambient_gesture_names() -> List[str]:
 
 def _talk_clip_pool_names() -> List[str]:
     """Clip tubuh saat bicara — default talk,talk_2,talk_3."""
-    raw = (os.getenv("AI_WORKER_TALK_CLIPS") or "talk,talk_2,talk_3").strip()
-    if raw.lower() in ("0", "off", "false", "none", "no", ""):
-        return [TALK_CLIP_DEFAULT]
-    out: List[str] = []
-    for n in raw.split(","):
-        if not n.strip():
-            continue
-        key = _normalize_clip_name(n.strip())
-        if key in TALK_CLIP_NAMES and key not in out:
-            out.append(key)
-    return out or [TALK_CLIP_DEFAULT]
+    return ["talk", "talk_2", "talk_3"]
 
 
 def _idle_variant_names() -> List[str]:

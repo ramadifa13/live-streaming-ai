@@ -2488,7 +2488,7 @@ class LiveHostOrchestrator {
     ) {
       stageIndex = 1;
       stageText =
-        "Menyiapkan wajah & gerak host AIâ€¦ Pertama kali bisa 2â€“5 menit. Tetap di halaman ini.";
+        "Menyiapkan wajah & gerak host Pertama kali bisa 2â€“5 menit. Tetap di halaman ini.";
     } else if (!queue.warmedUp && queue.queuedVideos === 0 && state.counters.submitted === 0) {
       stageIndex = 1;
       stageText = "Menyalakan mesin AI di cloudâ€¦ Mohon tunggu.";
