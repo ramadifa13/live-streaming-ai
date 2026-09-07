@@ -119,6 +119,9 @@ class StreamBroadcaster(threading.Thread):
             "-c:a", "aac", "-b:a", "128k",
             "-flvflags", "no_duration_filesize",
             "-f", "flv",
+            "-rtmp_live", "live",
+            "-stimeout", "30000000",
+            "-rw_timeout", "30000000",
         ])
 
         if self.rtmp_url.lower().startswith("rtmps://"):
@@ -222,10 +225,6 @@ class StreamBroadcaster(threading.Thread):
                 elif len(pcm) > BYTES_PER_AUDIO_FRAME:
                     pcm = pcm[:BYTES_PER_AUDIO_FRAME]
 
-                buf = np.ascontiguousarray(frame, dtype=np.uint8).tobytes()
-                if len(buf) == expected_bytes:
-                    self.v_fh.write(buf)
-                    self.a_fh.write(pcm)
                 if frame is not None and frame.size > 0:
                     h, w = frame.shape[:2]
                     if w != CANVAS_W or h != CANVAS_H:
