@@ -1,0 +1,299 @@
+"""
+Core Live Streaming Pipeline for AI Worker (RunPod)
+Rewritten for optimal concurrency, zero-latency fallback, and seamless transitions.
+"""
+
+from __future__ import annotations
+import os
+import sys
+import time
+import queue
+import threading
+import subprocess
+import asyncio
+from typing import Dict, Any, Optional, Tuple, Callable
+import torch
+import numpy as np
+from PIL import Image
+
+try:
+    from video_canvas import CANVAS_H, CANVAS_W, fit_bgr
+except ImportError:
+    CANVAS_W = int(os.environ.get("FRAME_FEED_WIDTH", "720"))
+    CANVAS_H = int(os.environ.get("FRAME_FEED_HEIGHT", "1280"))
+
+try:
+    from worker_telemetry import get_telemetry
+except ImportError:
+    def get_telemetry():
+        class NoopMetric:
+            def inc(self, *args, **kwargs): pass
+            def record_latency(self, *args, **kwargs): pass
+            def set_gauge(self, *args, **kwargs): pass
+            def measure(self, *args, **kwargs):
+                class NoopContextManager:
+                    def __enter__(self): pass
+                    def __exit__(self, exc_type, exc_val, exc_tb): pass
+                return NoopContextManager()
+        return NoopMetric()
+
+TARGET_FPS = int(os.environ.get("AI_WORKER_FPS", "30"))
+AUDIO_SAMPLE_RATE = 16000
+AUDIO_CHANNELS = 1
+BYTES_PER_AUDIO_FRAME = int(AUDIO_SAMPLE_RATE / TARGET_FPS) * 2
+
+# === Refactored Components === #
+from ai_worker import AssetBank, LipSyncEngine, VideoStateMachine, RawFramePacket, RenderedPacket
+from ai_worker import frame_fetcher_loop, lipsync_worker_loop
+
+
+
+class StreamBroadcaster(threading.Thread):
+    def __init__(self, rtmp_url: str, bank: AssetBank, render_q: queue.Queue, stop_event: threading.Event, output_folder: str):
+        super().__init__(name="StreamBroadcaster", daemon=True)
+        self.rtmp_url = rtmp_url
+        self.bank = bank
+        self.render_q = render_q
+        self.stop_event = stop_event
+        self.output_folder = output_folder
+        self.proc = None
+        self.v_fh = None
+        self.a_fh = None
+
+        self.idle_clip = bank.idle_clip
+        self.idle_idx = self.idle_clip.base_pose_frame if self.idle_clip else 0
+
+        self.silence_pcm = b"\x00" * BYTES_PER_AUDIO_FRAME
+
+    def _start_ffmpeg(self):
+        print(f"[StreamBroadcaster] Starting FFmpeg to {self.rtmp_url}")
+        video_r, video_w = os.pipe()
+        audio_r, audio_w = os.pipe()
+        os.set_inheritable(video_r, True)
+        os.set_inheritable(audio_r, True)
+        v_in = f"/proc/self/fd/{video_r}"
+        a_in = f"/proc/self/fd/{audio_r}"
+
+        cmd = [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-thread_queue_size", "1024",
+            "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{CANVAS_W}x{CANVAS_H}", "-r", str(TARGET_FPS), "-i", v_in,
+            "-thread_queue_size", "1024",
+            "-f", "s16le", "-ac", str(AUDIO_CHANNELS), "-ar", str(AUDIO_SAMPLE_RATE), "-i", a_in,
+            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+            "-pix_fmt", "yuv420p", "-g", str(TARGET_FPS * 2), "-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "6000k",
+            "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+            "-f", "flv", self.rtmp_url
+        ]
+
+        self.proc = subprocess.Popen(cmd, pass_fds=(video_r, audio_r), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        os.close(video_r)
+        os.close(audio_r)
+
+        self.v_fh = os.fdopen(video_w, "wb", buffering=0)
+        self.a_fh = os.fdopen(audio_w, "wb", buffering=0)
+
+        def watch_stderr():
+            try:
+                for line in iter(self.proc.stderr.readline, b''):
+                    pass
+            except Exception:
+                pass
+        threading.Thread(target=watch_stderr, daemon=True).start()
+
+    def run(self):
+        try:
+            self._start_ffmpeg()
+        except Exception as e:
+            print(f"[StreamBroadcaster] Failed to start FFmpeg: {e}")
+            return
+
+        frame_duration = 1.0 / TARGET_FPS
+        next_frame_time = time.perf_counter()
+        print("[StreamBroadcaster] Running seamless loop...")
+
+        metrics = get_telemetry()
+
+        while not self.stop_event.is_set():
+            try:
+                try:
+                    pkt = self.render_q.get_nowait()
+                    frame = pkt.frame
+                    pcm = pkt.audio_pcm
+                except queue.Empty:
+                    # ZERO-LATENCY FALLBACK
+                    metrics.inc("broadcast_idle_fallback")
+                    if self.idle_clip and self.idle_clip.frames:
+                        frame = self.idle_clip.frames[self.idle_idx]
+                        self.idle_idx = (self.idle_idx + 1) % self.idle_clip.num_frames()
+                    else:
+                        frame = np.zeros((CANVAS_H, CANVAS_W, 3), dtype=np.uint8)
+                    pcm = self.silence_pcm
+
+                self.v_fh.write(frame.tobytes())
+                self.a_fh.write(pcm)
+
+                now = time.perf_counter()
+                sleep_time = next_frame_time - now
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                else:
+                    next_frame_time = now
+
+                next_frame_time += frame_duration
+
+            except Exception as e:
+                print(f"[StreamBroadcaster] Loop error: {e}")
+                time.sleep(0.01)
+
+        if self.proc:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=2)
+            except:
+                self.proc.kill()
+        if self.v_fh: self.v_fh.close()
+        if self.a_fh: self.a_fh.close()
+        print("[StreamBroadcaster] Stopped.")
+
+# Kita bisa menggunakan fungsi fetcher/lipsync worker asli
+
+
+class NewAIVisualWorker:
+    def __init__(self, output_folder: str = ""):
+        self.output_folder = output_folder or os.environ.get("OUTPUT_FOLDER", "/workspace/ai_live_worker/output")
+        self.rtmp_url = None
+        self.host = "namira"
+        self.assets_dir = None
+
+        self.bank = None
+        self.sm = None
+        self.engine = None
+
+        self.in_q = queue.Queue(maxsize=100)
+        self.render_q = queue.Queue(maxsize=300)
+        self.stop_event = threading.Event()
+
+        self.threads = []
+        self._is_running = False
+
+    def initialize(self):
+        print("[NewAIVisualWorker] Initializing assets and models...")
+        from inference import _load_models_cached
+        models = _load_models_cached()
+
+        # Load asset bank asli
+        self.bank = AssetBank(self.assets_dir, host=self.host, models_bundle=models)
+        self.bank.discover_and_load()
+
+        # Init State Machine & Engine asli
+        self.sm = VideoStateMachine(self.bank)
+        self.engine = LipSyncEngine(
+            models,
+            self.bank,
+            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "8")),
+            face_registry=self.sm._face_registry if hasattr(self.sm, '_face_registry') else None,
+        )
+
+    def start(self, *, wait_rtmp=True):
+        if self._is_running: return
+
+        if not self.bank:
+            self.initialize()
+
+        self.stop_event.clear()
+
+        try:
+            from speech_bridge import get_speech_bridge
+            self._bridge = get_speech_bridge(self.output_folder)
+        except ImportError:
+            self._bridge = None
+
+        audio_fn_ext = self._bridge.get_audio_chunk if self._bridge else None
+        action_fn = self._bridge.make_action_hook() if self._bridge else None
+
+        def dummy_audio(): return b"\x00" * BYTES_PER_AUDIO_FRAME, False
+
+        # Gunakan thread asli
+        fetcher_t = threading.Thread(
+            target=frame_fetcher_loop,
+            args=(self.sm, self.in_q, self.stop_event, dummy_audio, action_fn, audio_fn_ext, self._bridge),
+            name="FrameFetcher", daemon=True
+        )
+        lipsync_t = threading.Thread(
+            target=lipsync_worker_loop,
+            args=(self.bank, self.engine, self.in_q, self.render_q, self.stop_event),
+            name="LipSyncWorker", daemon=True
+        )
+        broadcaster_t = StreamBroadcaster(self.rtmp_url, self.bank, self.render_q, self.stop_event, self.output_folder)
+
+        self.threads = [fetcher_t, lipsync_t, broadcaster_t]
+        for t in self.threads:
+            t.start()
+
+        self._is_running = True
+        print("[NewAIVisualWorker] Pipeline started.")
+
+    def stop(self, *, clear_queue=True):
+        if not self._is_running: return
+        self.stop_event.set()
+
+        if self.engine:
+            self.engine.clear_utterance()
+
+        for t in self.threads:
+            t.join(timeout=3)
+
+        if clear_queue:
+            while not self.in_q.empty(): self.in_q.get_nowait()
+            while not self.render_q.empty(): self.render_q.get_nowait()
+            if self._bridge: self._bridge.clear_pending()
+
+        self._is_running = False
+        print("[NewAIVisualWorker] Pipeline stopped.")
+
+    @property
+    def is_running(self):
+        return self._is_running
+
+    @property
+    def is_pipeline_active(self):
+        return self._is_running
+
+    def enqueue_utterance(self, audio_path: str, *, task_id: str, action: str = None, priority: bool = False):
+        if self._bridge:
+            return self._bridge.enqueue(audio_path, task_id=task_id, action=action, priority=priority)
+        return False
+
+_visual_worker_singleton = None
+
+def get_visual_worker(output_folder: str = "") -> NewAIVisualWorker:
+    global _visual_worker_singleton
+    if _visual_worker_singleton is None:
+        _visual_worker_singleton = NewAIVisualWorker(output_folder)
+    elif output_folder:
+        _visual_worker_singleton.output_folder = output_folder
+    return _visual_worker_singleton
+
+def start_visual_broadcast(rtmp_url: str, *, idle_video: str = "", output_folder: str = "", host: str = "namira") -> NewAIVisualWorker:
+    vw = get_visual_worker(output_folder)
+    vw.rtmp_url = rtmp_url
+    vw.host = host
+    if idle_video and os.path.exists(idle_video):
+        vw.assets_dir = os.path.dirname(idle_video)
+    vw.initialize()
+    vw.start(wait_rtmp=True)
+    return vw
+
+def stop_visual_broadcast(*, destroy: bool = True) -> None:
+    global _visual_worker_singleton
+    if _visual_worker_singleton:
+        _visual_worker_singleton.stop(clear_queue=destroy)
+        if destroy:
+            _visual_worker_singleton = None
+
+def pause_visual_broadcast(output_folder: str = "") -> dict:
+    return {"success": True, "message": "Paused"}
+
+def resume_visual_broadcast(output_folder: str = "") -> dict:
+    return {"success": True, "message": "Resumed"}

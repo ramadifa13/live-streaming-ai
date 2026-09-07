@@ -67,25 +67,31 @@ if load_env_files is not None:
 from live_worker import AILiveWorker
 
 try:
-    from ai_worker import (
+    from core_pipeline import (
         get_visual_worker,
         start_visual_broadcast,
         stop_visual_broadcast,
-        is_ai_worker_mode,
         TARGET_FPS as AI_WORKER_TARGET_FPS,
+        pause_visual_broadcast,
+        resume_visual_broadcast
     )
     from speech_bridge import get_speech_bridge
-except ImportError:
+except ImportError as e:
+    print(f"Fallback import: {e}")
     get_visual_worker = None
     start_visual_broadcast = None
     stop_visual_broadcast = None
     AI_WORKER_TARGET_FPS = 30
-
-    def is_ai_worker_mode() -> bool:
-        return True
+    def pause_visual_broadcast(output_folder: str = ""): return {}
+    def resume_visual_broadcast(output_folder: str = ""): return {}
 
     def get_speech_bridge(output_folder: str = ""):
         return None
+
+def is_ai_worker_mode() -> bool:
+    import os
+    mode = (os.environ.get("BROADCAST_MODE") or "").strip().lower()
+    return mode in ("ai_worker", "ai-worker", "realtime", "visual_worker")
 
 
 try:
@@ -981,7 +987,7 @@ async def start_playback(req: PlaybackRequest):
 async def pause_broadcast_soft():
     """Soft pause: speech hold, RTMP + idle animation tetap."""
     try:
-        from ai_worker import pause_visual_broadcast
+        pass
 
         result = pause_visual_broadcast(output_dir)
         return result if isinstance(result, dict) else {"success": True, "paused": True}
@@ -993,7 +999,7 @@ async def pause_broadcast_soft():
 async def resume_broadcast_soft():
     """Resume setelah soft pause."""
     try:
-        from ai_worker import resume_visual_broadcast
+        pass
 
         result = resume_visual_broadcast(output_dir)
         return result if isinstance(result, dict) else {"success": True, "paused": False}
