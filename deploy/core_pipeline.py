@@ -119,9 +119,6 @@ class StreamBroadcaster(threading.Thread):
             "-c:a", "aac", "-b:a", "128k",
             "-flvflags", "no_duration_filesize",
             "-f", "flv",
-            "-rtmp_live", "live",
-            "-stimeout", "30000000",
-            "-rw_timeout", "30000000",
         ])
 
         if self.rtmp_url.lower().startswith("rtmps://"):
