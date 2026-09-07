@@ -196,6 +196,14 @@ class NewAIVisualWorker:
         )
         models = _load_models_cached(dummy_args)
 
+        if not self.assets_dir or not os.path.exists(self.assets_dir):
+            base_worker = os.environ.get("WORKER_ROOT", "/workspace/ai_live_worker")
+            candidate = os.path.join(base_worker, "assets", "3d")
+            if os.path.isdir(candidate):
+                self.assets_dir = candidate
+            else:
+                self.assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "3d")
+
         # Load asset bank asli
         self.bank = AssetBank(self.assets_dir, host=self.host, models_bundle=models)
         self.bank.discover_and_load()
