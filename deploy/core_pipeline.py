@@ -39,19 +39,20 @@ except ImportError:
 
 TARGET_FPS = int(os.environ.get("AI_WORKER_FPS", "30"))
 AUDIO_SAMPLE_RATE = 16000
-AUDIO_CHANNELS = 1
-BYTES_PER_AUDIO_FRAME = int(AUDIO_SAMPLE_RATE / TARGET_FPS) * 2
+AUDIO_CHANNELS = 2
+BYTES_PER_AUDIO_FRAME = int(round(AUDIO_SAMPLE_RATE / float(TARGET_FPS))) * 2 * AUDIO_CHANNELS
 
 # === Refactored Components === #
 from ai_worker import AssetBank, LipSyncEngine, VideoStateMachine, RawFramePacket, RenderedPacket
 from ai_worker import frame_fetcher_loop, lipsync_worker_loop
 
 
-
 class StreamBroadcaster(threading.Thread):
+    _ffmpeg_ipv4_supported: Optional[bool] = None
+
     def __init__(self, rtmp_url: str, bank: AssetBank, render_q: queue.Queue, stop_event: threading.Event, output_folder: str):
         super().__init__(name="StreamBroadcaster", daemon=True)
-        self.rtmp_url = rtmp_url
+        self.rtmp_url = (rtmp_url or "").strip()
         self.bank = bank
         self.render_q = render_q
         self.stop_event = stop_event
@@ -59,14 +60,29 @@ class StreamBroadcaster(threading.Thread):
         self.proc = None
         self.v_fh = None
         self.a_fh = None
+        self.progress_seen = False
 
         self.idle_clip = bank.idle_clip
         self.idle_idx = self.idle_clip.base_pose_frame if self.idle_clip else 0
-
         self.silence_pcm = b"\x00" * BYTES_PER_AUDIO_FRAME
 
+    def is_alive(self) -> bool:
+        return self.proc is None or self.proc.poll() is None
+
+    @classmethod
+    def _ffmpeg_ipv4_flag_supported(cls) -> bool:
+        if cls._ffmpeg_ipv4_supported is not None:
+            return cls._ffmpeg_ipv4_supported
+        try:
+            p = subprocess.run(["ffmpeg", "-hide_banner", "-4", "-version"], capture_output=True, timeout=8)
+            err = (p.stderr or p.stdout or b"").decode("utf-8", errors="ignore").lower()
+            cls._ffmpeg_ipv4_supported = (p.returncode == 0 and "unrecognized" not in err)
+        except Exception:
+            cls._ffmpeg_ipv4_supported = False
+        return cls._ffmpeg_ipv4_supported
+
     def _start_ffmpeg(self):
-        print(f"[StreamBroadcaster] Starting FFmpeg to {self.rtmp_url}")
+        print(f"[StreamBroadcaster] Starting FFmpeg to {self.rtmp_url.split('?')[0]}?***")
         video_r, video_w = os.pipe()
         audio_r, audio_w = os.pipe()
         os.set_inheritable(video_r, True)
@@ -74,38 +90,105 @@ class StreamBroadcaster(threading.Thread):
         v_in = f"/proc/self/fd/{video_r}"
         a_in = f"/proc/self/fd/{audio_r}"
 
-        cmd = [
-            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-            "-thread_queue_size", "1024",
-            "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{CANVAS_W}x{CANVAS_H}", "-r", str(TARGET_FPS), "-i", v_in,
-            "-thread_queue_size", "1024",
-            "-f", "s16le", "-ac", str(AUDIO_CHANNELS), "-ar", str(AUDIO_SAMPLE_RATE), "-i", a_in,
-            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-            "-pix_fmt", "yuv420p", "-g", str(TARGET_FPS * 2), "-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "6000k",
-            "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-            "-f", "flv", self.rtmp_url
-        ]
+        gop = TARGET_FPS * 2
+        force_ipv4 = os.environ.get("RTMP_FORCE_IPV4", "1").strip().lower() not in ("0", "false", "no", "off")
+        use_ipv4 = force_ipv4 and self._ffmpeg_ipv4_flag_supported()
 
-        self.proc = subprocess.Popen(cmd, pass_fds=(video_r, audio_r), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        cmd = [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "info"
+        ]
+        if use_ipv4:
+            cmd.append("-4")
+
+        cmd.extend([
+            "-fflags", "+nobuffer+genpts",
+            "-thread_queue_size", "1024",
+            "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{CANVAS_W}x{CANVAS_H}", "-r", str(TARGET_FPS),
+            "-probesize", "32", "-analyzeduration", "0",
+            "-i", v_in,
+            "-thread_queue_size", "1024",
+            "-f", "s16le", "-ar", str(AUDIO_SAMPLE_RATE), "-ac", str(AUDIO_CHANNELS),
+            "-probesize", "32", "-analyzeduration", "0",
+            "-i", a_in,
+            "-map", "0:v", "-map", "1:a",
+            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+            "-pix_fmt", "yuv420p", "-profile:v", "main", "-level", "4.0",
+            "-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0",
+            "-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "6000k",
+            "-vsync", "cfr",
+            "-c:a", "aac", "-b:a", "128k",
+            "-flvflags", "no_duration_filesize",
+            "-f", "flv",
+            "-rtmp_live", "live",
+            "-stimeout", "30000000",
+            "-rw_timeout", "30000000",
+        ])
+
+        if self.rtmp_url.lower().startswith("rtmps://"):
+            cmd.extend(["-tls_verify", "0"])
+        cmd.append(self.rtmp_url)
+
+        self.proc = subprocess.Popen(
+            cmd,
+            pass_fds=(video_r, audio_r),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
         os.close(video_r)
         os.close(audio_r)
 
         self.v_fh = os.fdopen(video_w, "wb", buffering=0)
         self.a_fh = os.fdopen(audio_w, "wb", buffering=0)
 
-        def watch_stderr():
+        out_dir = self.output_folder
+        if out_dir:
             try:
-                for line in iter(self.proc.stderr.readline, b''):
-                    pass
-            except Exception:
-                pass
-        threading.Thread(target=watch_stderr, daemon=True).start()
+                from rtmp_utils import FfmpegLogWatcher, write_rtmp_status
+                def _on_progress():
+                    self.progress_seen = True
+                    write_rtmp_status(out_dir, "connected")
+
+                watcher = FfmpegLogWatcher(
+                    on_fatal=lambda hint: write_rtmp_status(out_dir, "failed", hint),
+                    on_progress=_on_progress,
+                )
+                log_path = os.path.join(out_dir, "ai_worker_rtmp.log")
+                log_fh = open(log_path, "a", encoding="utf-8")
+
+                def _drain_stderr():
+                    try:
+                        while True:
+                            chunk = self.proc.stderr.read(4096)
+                            if not chunk:
+                                break
+                            text = chunk.decode("utf-8", errors="ignore")
+                            log_fh.write(text)
+                            log_fh.flush()
+                            watcher.ingest(text)
+                    except Exception:
+                        pass
+                    finally:
+                        try:
+                            log_fh.close()
+                        except Exception:
+                            pass
+
+                threading.Thread(target=_drain_stderr, daemon=True).start()
+            except Exception as e:
+                print(f"[StreamBroadcaster] Watcher init error: {e}")
 
     def run(self):
         try:
             self._start_ffmpeg()
         except Exception as e:
             print(f"[StreamBroadcaster] Failed to start FFmpeg: {e}")
+            if self.output_folder:
+                try:
+                    from rtmp_utils import write_rtmp_status
+                    write_rtmp_status(self.output_folder, "failed", str(e)[:200])
+                except Exception:
+                    pass
             return
 
         frame_duration = 1.0 / TARGET_FPS
@@ -113,9 +196,14 @@ class StreamBroadcaster(threading.Thread):
         print("[StreamBroadcaster] Running seamless loop...")
 
         metrics = get_telemetry()
+        expected_bytes = CANVAS_W * CANVAS_H * 3
 
         while not self.stop_event.is_set():
             try:
+                if self.proc and self.proc.poll() is not None:
+                    print("[StreamBroadcaster] FFmpeg exited unexpectedly!")
+                    break
+
                 try:
                     pkt = self.render_q.get_nowait()
                     frame = pkt.frame
@@ -130,8 +218,17 @@ class StreamBroadcaster(threading.Thread):
                         frame = np.zeros((CANVAS_H, CANVAS_W, 3), dtype=np.uint8)
                     pcm = self.silence_pcm
 
-                self.v_fh.write(frame.tobytes())
-                self.a_fh.write(pcm)
+                if pcm is None:
+                    pcm = self.silence_pcm
+                elif len(pcm) < BYTES_PER_AUDIO_FRAME:
+                    pcm = pcm + b"\x00" * (BYTES_PER_AUDIO_FRAME - len(pcm))
+                elif len(pcm) > BYTES_PER_AUDIO_FRAME:
+                    pcm = pcm[:BYTES_PER_AUDIO_FRAME]
+
+                buf = np.ascontiguousarray(frame, dtype=np.uint8).tobytes()
+                if len(buf) == expected_bytes:
+                    self.v_fh.write(buf)
+                    self.a_fh.write(pcm)
 
                 now = time.perf_counter()
                 sleep_time = next_frame_time - now
@@ -142,6 +239,9 @@ class StreamBroadcaster(threading.Thread):
 
                 next_frame_time += frame_duration
 
+            except (BrokenPipeError, OSError) as e:
+                print(f"[StreamBroadcaster] Pipe closed: {e}")
+                break
             except Exception as e:
                 print(f"[StreamBroadcaster] Loop error: {e}")
                 time.sleep(0.01)
@@ -152,8 +252,18 @@ class StreamBroadcaster(threading.Thread):
                 self.proc.wait(timeout=2)
             except:
                 self.proc.kill()
-        if self.v_fh: self.v_fh.close()
-        if self.a_fh: self.a_fh.close()
+        if self.v_fh:
+            try: self.v_fh.close()
+            except Exception: pass
+        if self.a_fh:
+            try: self.a_fh.close()
+            except Exception: pass
+        if self.output_folder:
+            try:
+                from rtmp_utils import write_rtmp_status
+                write_rtmp_status(self.output_folder, "disconnected")
+            except Exception:
+                pass
         print("[StreamBroadcaster] Stopped.")
 
 # Kita bisa menggunakan fungsi fetcher/lipsync worker asli
@@ -248,10 +358,27 @@ class NewAIVisualWorker:
             name="LipSyncWorker", daemon=True
         )
         broadcaster_t = StreamBroadcaster(self.rtmp_url, self.bank, self.render_q, self.stop_event, self.output_folder)
+        self.broadcaster = broadcaster_t
 
         self.threads = [fetcher_t, lipsync_t, broadcaster_t]
         for t in self.threads:
             t.start()
+
+        if wait_rtmp:
+            timeout_sec = float(os.environ.get("RTMP_CONNECT_TIMEOUT_SEC", "15.0"))
+            deadline = time.monotonic() + timeout_sec
+            print(f"[NewAIVisualWorker] Menunggu handshake RTMP ({timeout_sec:.1f}s)...")
+            while time.monotonic() < deadline:
+                if not broadcaster_t.is_alive():
+                    raise RuntimeError("FFmpeg RTMP berhenti saat handshake — periksa stream key / server URL.")
+                if broadcaster_t.progress_seen:
+                    print("[NewAIVisualWorker] RTMP terhubung & frame pertama terkirim!")
+                    break
+                time.sleep(0.15)
+            else:
+                if not broadcaster_t.is_alive():
+                    raise RuntimeError("FFmpeg RTMP gagal terhubung.")
+                print("[NewAIVisualWorker] Warning: RTMP wait timeout, melanjutkan streaming di background...")
 
         self._is_running = True
         print("[NewAIVisualWorker] Pipeline started.")

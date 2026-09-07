@@ -1285,7 +1285,6 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
 
 
     try:
-        from broadcaster import prepare_overlay_files
         try:
             from overlay_generator import prepare_overlay_files
         except ImportError:
