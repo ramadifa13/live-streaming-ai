@@ -32,10 +32,7 @@ export default function RealtimeLivePortraitView({
 
   const resolvedFillerSrc = "/avatars/namira_idle.mp4";
 
-  const resolvedImageSrc =
-    mode === "video_ads"
-      ? "/avatars/namira.png"
-      : avatarImage || "/avatars/namira.png";
+  const resolvedImageSrc = mode === "video_ads" ? "/avatars/namira.png" : avatarImage || "/avatars/namira.png";
 
   useEffect(() => {
     const video = videoRef.current;
@@ -57,9 +54,7 @@ export default function RealtimeLivePortraitView({
   const isGpuLive = mode === "live" && isLiveActive && !!videoUrl;
 
   return (
-    <div
-      className={`relative w-full h-full overflow-hidden bg-[#07050f] select-none ${className}`}
-    >
+    <div className={`relative w-full h-full overflow-hidden bg-[#07050f] select-none ${className}`}>
       {/* Dynamic Background */}
       {backgroundImage && (
         <div
@@ -88,18 +83,14 @@ export default function RealtimeLivePortraitView({
       {isGpuLive && (
         <div className="absolute top-3 right-3 z-30 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-400/40 backdrop-blur-md shadow-[0_0_20px_rgba(16,185,129,0.3)]">
           <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
-          <span className="text-[9px] font-black text-emerald-300 uppercase tracking-widest">
-            GPU Live
-          </span>
+          <span className="text-[9px] font-black text-emerald-300 uppercase tracking-widest">GPU Live</span>
         </div>
       )}
 
       {isLiveActive && (
         <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/20 border border-red-400/50 backdrop-blur-md shadow-[0_0_20px_rgba(239,68,68,0.4)]">
           <span className="h-2 w-2 rounded-full bg-red-500 animate-ping shadow-[0_0_8px_rgba(239,68,68,0.9)]" />
-          <span className="text-[9px] font-black text-red-300 uppercase tracking-widest">
-            Live
-          </span>
+          <span className="text-[9px] font-black text-red-300 uppercase tracking-widest">Live</span>
         </div>
       )}
 
