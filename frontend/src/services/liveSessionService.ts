@@ -60,6 +60,7 @@ export interface StartSessionParams {
   liveVideoId?: string;
   product?: unknown;
   products?: unknown[];
+  backgroundImage?: string;
 }
 
 export interface BroadcastParams {
@@ -68,6 +69,7 @@ export interface BroadcastParams {
   sessionId?: string;
   avatarImage: string;
   avatarVideo?: string;
+  backgroundImage?: string;
   productName: string;
   productPrice: string;
   productImageUrl?: string;

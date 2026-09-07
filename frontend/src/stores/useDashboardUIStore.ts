@@ -17,6 +17,7 @@ interface DashboardUIState {
   showSettingsModal: boolean;
   showEndLiveConfirm: boolean;
   showSummaryModal: boolean;
+  showChooseBackgroundModal: boolean;
 
   setCurrentStep: (step: number) => void;
   setAppMode: (mode: "LIVE_STUDIO" | "VIDEO_GENERATOR") => void;
@@ -31,6 +32,7 @@ interface DashboardUIState {
   setShowSettingsModal: (show: boolean) => void;
   setShowEndLiveConfirm: (show: boolean) => void;
   setShowSummaryModal: (show: boolean) => void;
+  setShowChooseBackgroundModal: (show: boolean) => void;
 }
 
 export const useDashboardUIStore = create<DashboardUIState>((set, get) => ({
@@ -48,6 +50,7 @@ export const useDashboardUIStore = create<DashboardUIState>((set, get) => ({
   showSettingsModal: false,
   showEndLiveConfirm: false,
   showSummaryModal: false,
+  showChooseBackgroundModal: false,
 
   setCurrentStep: (step) => set({ currentStep: step }),
   setAppMode: (mode) => set({ appMode: mode }),
@@ -105,4 +108,5 @@ export const useDashboardUIStore = create<DashboardUIState>((set, get) => ({
   setShowSettingsModal: (show) => set({ showSettingsModal: show }),
   setShowEndLiveConfirm: (show) => set({ showEndLiveConfirm: show }),
   setShowSummaryModal: (show) => set({ showSummaryModal: show }),
+  setShowChooseBackgroundModal: (show) => set({ showChooseBackgroundModal: show }),
 }));

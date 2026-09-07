@@ -172,6 +172,7 @@ export async function startRunPodBroadcast(
     productPrice?: string;
     productImageUrl?: string;
     bannerImageUrl?: string;
+    backgroundImage?: string;
     platform?: string;
     stockCount?: number;
     ctaLabel?: string;
@@ -197,6 +198,8 @@ export async function startRunPodBroadcast(
         product_image_url: params.productImageUrl,
         banner_image_url: params.bannerImageUrl,
         bannerImageUrl: params.bannerImageUrl,
+        background_image: params.backgroundImage,
+        backgroundImage: params.backgroundImage,
         platform: params.platform,
         stock_count: params.stockCount,
         cta_label: params.ctaLabel,

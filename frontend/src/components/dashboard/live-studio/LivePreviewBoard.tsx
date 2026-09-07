@@ -105,6 +105,7 @@ export const LivePreviewBoard: React.FC = () => {
               videoUrl={currentLiveVideoUrl || undefined}
               onVideoEnded={() => setCurrentLiveVideoUrl(null)}
               isLiveActive={isLiveActive}
+              backgroundImage={useAiHostStore.getState().selectedBackground}
               className="w-full h-full object-cover"
             />
 

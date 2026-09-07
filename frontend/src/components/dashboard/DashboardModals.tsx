@@ -10,6 +10,7 @@ import { SessionSummaryModal } from "@/components/dashboard/live-studio/modals/S
 import { SettingsModal } from "@/components/dashboard/live-studio/modals/SettingsModal";
 import { TutorialModal } from "@/components/dashboard/live-studio/modals/TutorialModal";
 import { ConnectingOverlay } from "@/components/dashboard/live-studio/modals/ConnectingOverlay";
+import { ChooseBackgroundModal } from "@/components/dashboard/ai-host/ChooseBackgroundModal";
 
 export const DashboardModals: React.FC = () => {
   return (
@@ -23,6 +24,7 @@ export const DashboardModals: React.FC = () => {
       <SettingsModal />
       <TutorialModal />
       <ConnectingOverlay />
+      <ChooseBackgroundModal />
     </>
   );
 };

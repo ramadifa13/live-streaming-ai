@@ -39,6 +39,7 @@ export const LiveControlBar: React.FC = () => {
   const selectedTone = useAiHostStore((state) => state.selectedTone);
   const selectedVoice = useAiHostStore((state) => state.selectedVoice);
   const selectedLang = useAiHostStore((state) => state.selectedLang);
+  const selectedBackground = useAiHostStore((state) => state.selectedBackground);
 
   const products = useProductStore((state) => state.products);
   const activeFeaturedProduct = useProductStore((state) => state.activeFeaturedProduct);
@@ -187,6 +188,7 @@ export const LiveControlBar: React.FC = () => {
           voice: selectedVoice || selectedAvatar.voice || "girl_cute_kids",
           voiceId: selectedVoice || selectedAvatar.voice || "girl_cute_kids",
           lang: selectedLang,
+          backgroundImage: selectedBackground || undefined,
           accessToken: connectedAccount?.accessToken,
           liveChatId: connectedAccount?.liveChatId,
           liveVideoId: connectedAccount?.liveVideoId,
@@ -261,6 +263,7 @@ export const LiveControlBar: React.FC = () => {
             sessionId,
             avatarImage: selectedAvatar.image,
             avatarVideo: avatarIdleVideoPath(selectedAvatar.id),
+            backgroundImage: selectedBackground || undefined,
             productName: activeFeaturedProduct.name,
             productPrice: String(activeFeaturedProduct.price).replace(/\D/g, ""),
             productImageUrl: liveOverlayMedia(activeFeaturedProduct.image),

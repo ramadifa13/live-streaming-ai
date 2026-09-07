@@ -23,6 +23,9 @@ interface AiHostState {
   liveSalesScriptData: LiveSalesScript | null;
   isLoadingLiveScript: boolean;
 
+  selectedBackground: string;
+  customBackgrounds: string[];
+
   videoDuration: "15s" | "30s" | "60s";
   videoScript: VideoScriptData;
   isGeneratingScript: boolean;
@@ -35,6 +38,8 @@ interface AiHostState {
   setSelectedVoice: (voice: string) => void;
   setSelectedLang: (lang: TtsLangCode) => void;
   setSpeechSpeed: (speed: number) => void;
+  setSelectedBackground: (bg: string) => void;
+  addCustomBackground: (bg: string) => void;
   setCurrentLiveVideoUrl: (url: string | null) => void;
   setVideoDuration: (dur: "15s" | "30s" | "60s") => void;
   setVideoScript: (script: VideoScriptData | Partial<VideoScriptData>) => void;
@@ -76,6 +81,9 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
   liveSalesScriptData: null,
   isLoadingLiveScript: false,
 
+  selectedBackground: "/banner_studio_live_streaming.jpg",
+  customBackgrounds: [],
+
   videoDuration: "30s",
   videoScript: {
     hook: "Kaitkan perhatian penonton di sini!",
@@ -99,6 +107,12 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
   setSelectedVoice: (voice) => set({ selectedVoice: voice }),
   setSelectedLang: (lang) => set({ selectedLang: lang }),
   setSpeechSpeed: (speed) => set({ speechSpeed: speed }),
+  setSelectedBackground: (bg) => set({ selectedBackground: bg }),
+  addCustomBackground: (bg) =>
+    set((state) => ({
+      customBackgrounds: [bg, ...state.customBackgrounds.filter((item) => item !== bg)],
+      selectedBackground: bg,
+    })),
   setCurrentLiveVideoUrl: (url) => set({ currentLiveVideoUrl: url }),
   setVideoDuration: (dur) => set({ videoDuration: dur }),
   setVideoScript: (script) =>

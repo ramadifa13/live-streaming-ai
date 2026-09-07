@@ -1,12 +1,14 @@
 "use client";
 
 import React from "react";
+import { Image as ImageIcon } from "lucide-react";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { AvatarCarousel } from "./AvatarCarousel";
 import { VoiceToneSettings } from "./VoiceToneSettings";
 
 export const AiHostPanel: React.FC = () => {
   const currentStep = useDashboardUIStore((state) => state.currentStep);
+  const setShowChooseBackgroundModal = useDashboardUIStore((state) => state.setShowChooseBackgroundModal);
 
   return (
     <div
@@ -17,14 +19,25 @@ export const AiHostPanel: React.FC = () => {
       }`}
     >
       <div className="shrink-0 space-y-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-md border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-blue-300">
-            Step 2
-          </span>
-          <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-emerald-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            Host siap live
-          </span>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="rounded-md border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-blue-300">
+              Step 2
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Host siap live
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowChooseBackgroundModal(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/15 px-2.5 py-1 text-[11px] font-bold text-blue-300 shadow-sm transition hover:bg-blue-500/25 hover:border-blue-400 active:scale-95 cursor-pointer"
+          >
+            <ImageIcon className="h-3.5 w-3.5 text-blue-400" />
+            <span>Choose Background</span>
+          </button>
         </div>
         <h3 className="text-base font-bold tracking-tight text-white">
           Pilih AI Host &amp; Suara

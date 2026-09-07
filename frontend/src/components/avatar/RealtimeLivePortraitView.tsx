@@ -13,6 +13,7 @@ interface RealtimeLivePortraitViewProps {
   soundOn?: boolean;
   isLiveActive?: boolean;
   className?: string;
+  backgroundImage?: string;
 }
 
 export default function RealtimeLivePortraitView({
@@ -25,6 +26,7 @@ export default function RealtimeLivePortraitView({
   soundOn = false,
   isLiveActive = false,
   className = "",
+  backgroundImage,
 }: RealtimeLivePortraitViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -58,6 +60,14 @@ export default function RealtimeLivePortraitView({
     <div
       className={`relative w-full h-full overflow-hidden bg-[#07050f] select-none ${className}`}
     >
+      {/* Dynamic Background */}
+      {backgroundImage && (
+        <div
+          className="absolute inset-0 bg-cover bg-center pointer-events-none"
+          style={{ backgroundImage: `url('${backgroundImage}')` }}
+        />
+      )}
+
       <video
         ref={videoRef}
         src={videoUrl || resolvedFillerSrc}
@@ -67,7 +77,9 @@ export default function RealtimeLivePortraitView({
         muted={videoUrl ? !soundOn : true}
         poster={resolvedImageSrc}
         onEnded={onVideoEnded}
-        className="w-full h-full object-cover transition-opacity duration-300"
+        className={`w-full h-full object-cover transition-opacity duration-300 relative z-10 ${
+          backgroundImage ? "mix-blend-normal" : ""
+        }`}
       />
 
       <div className="absolute inset-0 bg-gradient-to-t from-[#07050f]/70 via-transparent to-black/30 pointer-events-none" />
