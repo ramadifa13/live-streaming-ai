@@ -50,9 +50,7 @@ export const FEMALE_HOST_VOICES: HostVoiceOption[] = [
 
 export const DEFAULT_VOICE_ID = FEMALE_HOST_VOICES[0].id;
 
-export function voicesForAvatarGender(
-  gender?: string | null,
-): HostVoiceOption[] {
+export function voicesForAvatarGender(gender?: string | null): HostVoiceOption[] {
   const g = (gender || "female").toLowerCase();
   if (g === "male") {
     // Belum ada katalog pria — kosong agar UI tidak menampilkan suara perempuan.
@@ -62,10 +60,7 @@ export function voicesForAvatarGender(
 }
 
 /** Sample pre-live (statis) — tidak hit pod. */
-export function localVoicePreviewUrl(
-  voiceId: string,
-  lang: TtsLangCode = "id",
-): string {
+export function localVoicePreviewUrl(voiceId: string, lang: TtsLangCode = "id"): string {
   const id = (voiceId || DEFAULT_VOICE_ID).trim() || DEFAULT_VOICE_ID;
   const code = lang === "en" ? "en" : "id";
   return `/voices/${id}/preview_${code}.wav`;
@@ -86,7 +81,7 @@ export const avatars: Avatar[] = [
     gender: "female",
     voice: DEFAULT_VOICE_ID,
     image: "/avatars/namira.png",
-    modelUrl3d: "/models/TufrillaVRM.vrm",
+    modelUrl3d: "",
     specialty: "Hard-Selling TikTok Live",
   },
 ];

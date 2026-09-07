@@ -179,8 +179,22 @@ class NewAIVisualWorker:
 
     def initialize(self):
         print("[NewAIVisualWorker] Initializing assets and models...")
+        from argparse import Namespace
         from inference import _load_models_cached
-        models = _load_models_cached()
+        models_root = os.environ.get("MODELS_DIR", "./models")
+        dummy_args = Namespace(
+            gpu_id=0,
+            use_float16=True,
+            version="v15",
+            left_cheek_width=90,
+            right_cheek_width=90,
+            unet_model_path=os.path.join(models_root, "musetalkV15", "unet.pth"),
+            unet_config=os.path.join(models_root, "musetalkV15", "musetalk.json"),
+            whisper_dir=os.path.join(models_root, "whisper"),
+            vae_type="sd-vae-ft-mse",
+            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "8")),
+        )
+        models = _load_models_cached(dummy_args)
 
         # Load asset bank asli
         self.bank = AssetBank(self.assets_dir, host=self.host, models_bundle=models)

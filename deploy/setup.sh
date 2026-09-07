@@ -378,18 +378,32 @@ import threading as _threading
 _lock = _threading.Lock()
 _models_cache = {}
 
-def _load_models_cached(args):
+def _load_models_cached(args=None):
     global _models_cache
+    if args is None:
+        from argparse import Namespace
+        args = Namespace(
+            gpu_id=0,
+            use_float16=True,
+            version="v15",
+            left_cheek_width=90,
+            right_cheek_width=90,
+            unet_model_path="./models/musetalkV15/unet.pth",
+            unet_config="./models/musetalkV15/musetalk.json",
+            whisper_dir="./models/whisper",
+            vae_type="sd-vae-ft-mse",
+            batch_size=8,
+        )
     cache_key = (
-        args.gpu_id,
-        args.use_float16,
-        args.version,
-        args.left_cheek_width,
-        args.right_cheek_width,
-        args.unet_model_path,
-        args.unet_config,
-        args.whisper_dir,
-        args.vae_type,
+        getattr(args, "gpu_id", 0),
+        getattr(args, "use_float16", True),
+        getattr(args, "version", "v15"),
+        getattr(args, "left_cheek_width", 90),
+        getattr(args, "right_cheek_width", 90),
+        getattr(args, "unet_model_path", "./models/musetalkV15/unet.pth"),
+        getattr(args, "unet_config", "./models/musetalkV15/musetalk.json"),
+        getattr(args, "whisper_dir", "./models/whisper"),
+        getattr(args, "vae_type", "sd-vae-ft-mse"),
     )
     if cache_key not in _models_cache:
         with _lock:

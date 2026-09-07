@@ -308,8 +308,21 @@ def _nn_device(module) -> str:
     return "n/a"
 
 
-def _load_models_cached(args):
+def _load_models_cached(args=None):
     global _models_cache
+    if args is None:
+        args = argparse.Namespace(
+            gpu_id=0,
+            use_float16=True,
+            version="v15",
+            left_cheek_width=90,
+            right_cheek_width=90,
+            unet_model_path="./models/musetalkV15/unet.pth",
+            unet_config="./models/musetalkV15/musetalk.json",
+            whisper_dir="./models/whisper",
+            vae_type="sd-vae-ft-mse",
+            batch_size=8,
+        )
     gpu_id = getattr(args, "gpu_id", 0)
     use_float16 = resolve_use_float16(getattr(args, "use_float16", True), gpu_id)
     cache_key = (
