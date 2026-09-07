@@ -225,10 +225,14 @@ class StreamBroadcaster(threading.Thread):
                 elif len(pcm) > BYTES_PER_AUDIO_FRAME:
                     pcm = pcm[:BYTES_PER_AUDIO_FRAME]
 
-                buf = np.ascontiguousarray(frame, dtype=np.uint8).tobytes()
-                if len(buf) == expected_bytes:
-                    self.v_fh.write(buf)
-                    self.a_fh.write(pcm)
+                if frame is not None and frame.size > 0:
+                    h, w = frame.shape[:2]
+                    if w != CANVAS_W or h != CANVAS_H:
+                        frame = fit_bgr(frame, CANVAS_W, CANVAS_H)
+                    buf = np.ascontiguousarray(frame, dtype=np.uint8).tobytes()
+                    if len(buf) == expected_bytes:
+                        self.v_fh.write(buf)
+                        self.a_fh.write(pcm)
 
                 now = time.perf_counter()
                 sleep_time = next_frame_time - now
