@@ -240,7 +240,8 @@ class StreamBroadcaster(threading.Thread):
                 sleep_time = next_frame_time - now
                 if sleep_time > 0:
                     time.sleep(sleep_time)
-                else:
+                elif sleep_time < -frame_duration * 2:
+                    # Overrun recovery — reset pacer deadline agar tidak burst frame
                     next_frame_time = now
 
                 next_frame_time += frame_duration
