@@ -139,6 +139,17 @@ class StreamBroadcaster(threading.Thread):
         self.v_fh = os.fdopen(video_w, "wb", buffering=0)
         self.a_fh = os.fdopen(audio_w, "wb", buffering=0)
 
+        # Feed initial frames segera agar handshake RTMP langsung jalan tanpa deadlock probe
+        try:
+            init_frame = self.idle_clip.frames[self.idle_idx] if (self.idle_clip and self.idle_clip.frames) else np.zeros((CANVAS_H, CANVAS_W, 3), dtype=np.uint8)
+            init_buf = np.ascontiguousarray(fit_bgr(init_frame, CANVAS_W, CANVAS_H), dtype=np.uint8).tobytes()
+            init_pcm = self.silence_pcm
+            for _ in range(5):
+                self.v_fh.write(init_buf)
+                self.a_fh.write(init_pcm)
+        except Exception as e:
+            print(f"[StreamBroadcaster] Primer notice: {e}")
+
         out_dir = self.output_folder
         if out_dir:
             try:
