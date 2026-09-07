@@ -1,12 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import prisma from "../lib/prisma.js";
-import {
-  stopBroadcast,
-  pauseBroadcast,
-  resumeBroadcast,
-  getStreamStatus,
-} from "../services/rtmp-streamer.js";
+import { stopBroadcast, pauseBroadcast, resumeBroadcast, getStreamStatus } from "../services/rtmp-streamer.js";
 import {
   getRunPodBroadcastStatus,
   startRunPodBroadcast,
@@ -20,7 +15,11 @@ import {
 import { livePlatformConnector } from "../services/live-platform-connector.js";
 import { setLiveSessionActive, stopPod } from "../services/runpod-manager.js";
 import { liveSessionManager } from "../services/live-session-manager.js";
-import { liveHostOrchestrator, durationHoursToPlan, normalizeClientProduct } from "../services/live-host-orchestrator.js";
+import {
+  liveHostOrchestrator,
+  durationHoursToPlan,
+  normalizeClientProduct,
+} from "../services/live-host-orchestrator.js";
 import { assertRtmpCredentials } from "../utils/rtmp.js";
 
 const productSnapshotSchema = z.object({
@@ -81,10 +80,7 @@ const broadcastSchema = z.object({
     .string()
     .min(5, "RTMP URL tidak boleh kosong")
     .transform((value) => value.trim())
-    .refine(
-      (value) => /^rtmps?:\/\/.+/i.test(value),
-      "RTMP URL harus diawali rtmp:// atau rtmps://",
-    ),
+    .refine((value) => /^rtmps?:\/\/.+/i.test(value), "RTMP URL harus diawali rtmp:// atau rtmps://"),
   streamKey: z
     .string()
     .min(1, "Stream key tidak boleh kosong")
@@ -115,9 +111,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       },
     });
 
-    const managedSession = session?.id
-      ? liveSessionManager.getSession(session.id)
-      : null;
+    const managedSession = session?.id ? liveSessionManager.getSession(session.id) : null;
     const effectiveStatus = managedSession?.state || session?.status || "ready";
 
     return {
@@ -140,9 +134,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     const avatarId = parsed.data.avatarId.trim();
     const avatarName = parsed.data.avatarName?.trim();
     const slugName =
-      avatarId && avatarId !== "1"
-        ? avatarId.charAt(0).toUpperCase() + avatarId.slice(1).toLowerCase()
-        : "";
+      avatarId && avatarId !== "1" ? avatarId.charAt(0).toUpperCase() + avatarId.slice(1).toLowerCase() : "";
 
     const avatarById = await prisma.avatar.findUnique({
       where: { id: avatarId },
@@ -164,8 +156,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     if (!avatar) {
       reply.code(404);
       return {
-        error:
-          "Avatar tidak ditemukan. Jalankan seed DB atau kirim avatarName (mis. Namira).",
+        error: "Avatar tidak ditemukan. Jalankan seed DB atau kirim avatarName (mis. Namira).",
       };
     }
     try {
@@ -184,8 +175,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         durationHours: parsed.data.durationHours,
         autoReply: parsed.data.autoReply ?? true,
         autoPin: parsed.data.autoPin ?? true,
-        autoPromotion:
-          parsed.data.autoPromotion ?? parsed.data.autoPromo ?? true,
+        autoPromotion: parsed.data.autoPromotion ?? parsed.data.autoPromo ?? true,
         autoModeration: parsed.data.autoModeration ?? true,
         accessToken: parsed.data.accessToken,
         liveChatId: parsed.data.liveChatId,
@@ -312,9 +302,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         error: err instanceof Error ? err.message : "RTMP URL / Stream Key tidak valid.",
       };
     }
-    const managedSession = parsed.data.sessionId
-      ? liveSessionManager.getSession(parsed.data.sessionId)
-      : null;
+    const managedSession = parsed.data.sessionId ? liveSessionManager.getSession(parsed.data.sessionId) : null;
     const liveSession = parsed.data.sessionId
       ? await prisma.liveSession.findUnique({
           where: { id: parsed.data.sessionId },
@@ -336,16 +324,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         reply.code(409);
         return {
           success: false,
-          error:
-            "GPU RunPod masih booting. Tunggu hingga siap (polling pipeline-status).",
+          error: "GPU RunPod masih booting. Tunggu hingga siap (polling pipeline-status).",
           podBooting: true,
           stageText: boot.stageText,
         };
       }
     }
 
-    const podId =
-      managedSession?.podId ?? process.env.RUNPOD_POD_ID?.trim() ?? null;
+    const podId = managedSession?.podId ?? process.env.RUNPOD_POD_ID?.trim() ?? null;
     if (managedSession && !podId) {
       reply.code(409);
       return {
@@ -363,10 +349,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         reply.code(502);
         return {
           success: false,
-          error:
-            err instanceof Error
-              ? err.message
-              : "AI Worker RunPod belum merespons",
+          error: err instanceof Error ? err.message : "AI Worker RunPod belum merespons",
         };
       }
     }
@@ -414,21 +397,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       platform,
       stockCount,
       ctaLabel,
-      hostName:
-        parsed.data.avatarName?.trim() ||
-        managedSession?.avatarName ||
-        "namira",
+      hostName: parsed.data.avatarName?.trim() || managedSession?.avatarName || "namira",
       waitForReady: false,
     });
 
     if (!result.success) {
       reply.code(502);
-      if (parsed.data.sessionId)
-        liveHostOrchestrator.stop(parsed.data.sessionId);
-      if (parsed.data.sessionId)
-        await liveSessionManager
-          .stopSession(parsed.data.sessionId)
-          .catch(() => {});
+      if (parsed.data.sessionId) liveHostOrchestrator.stop(parsed.data.sessionId);
+      if (parsed.data.sessionId) await liveSessionManager.stopSession(parsed.data.sessionId).catch(() => {});
       if (sessionId) {
         await prisma.liveSession
           .updateMany({
@@ -496,23 +472,15 @@ export async function liveSessionRoutes(server: FastifyInstance) {
 
     try {
       // Pastikan RTMP + minimal 2 ucapan playable siap (bukan lifetime counter).
-      const pipelineStatus =
-        await liveHostOrchestrator.getPipelineStatus(sessionId);
-      const realtime = /ai_worker|ai-worker|realtime|visual_worker/i.test(
-        String(pipelineStatus.broadcastMode || ""),
-      );
+      const pipelineStatus = await liveHostOrchestrator.getPipelineStatus(sessionId);
+      const realtime = /ai_worker|ai-worker|realtime|visual_worker/i.test(String(pipelineStatus.broadcastMode || ""));
       const minUtt = Number(pipelineStatus.goLiveMinUtterances || 2);
       const playable = realtime
-        ? Math.max(
-            Number(pipelineStatus.readyUtteranceCount || 0),
-            Number(pipelineStatus.utteranceQueueCount || 0),
-          )
+        ? Math.max(Number(pipelineStatus.readyUtteranceCount || 0), Number(pipelineStatus.utteranceQueueCount || 0))
         : Number(pipelineStatus.videosQueued || 0);
       if (!pipelineStatus.ready || playable < minUtt) {
         reply.code(409);
-        const bufferLabel = realtime
-          ? `ucapan siap ${playable}/${minUtt}`
-          : `video ${playable}/${minUtt}`;
+        const bufferLabel = realtime ? `ucapan siap ${playable}/${minUtt}` : `video ${playable}/${minUtt}`;
         return {
           success: false,
           error: `Belum siap untuk Go Live: pastikan RTMP terhubung dan ${bufferLabel} (RTMP: ${pipelineStatus.isRtmpConnected ? "Terhubung" : "Belum Terhubung"}, buffer: ${pipelineStatus.bufferSeconds ?? 0}s).`,
@@ -522,9 +490,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       // markBroadcastLive handles worker playback + startLivePipeline + DB update
       await liveSessionManager.markBroadcastLive(sessionId);
 
-      console.log(
-        `[GoLiveConfirm] ✅ Session ${sessionId}: AI Host aktif! Live streaming dimulai.`,
-      );
+      console.log(`[GoLiveConfirm] ✅ Session ${sessionId}: AI Host aktif! Live streaming dimulai.`);
       return {
         success: true,
         message: realtime
@@ -595,10 +561,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       };
     }
 
-    if (
-      status.stageText === "Session tidak ditemukan." &&
-      liveSessionManager.getSession(sessionId)
-    ) {
+    if (status.stageText === "Session tidak ditemukan." && liveSessionManager.getSession(sessionId)) {
       return {
         ready: false,
         generationCount: 0,
@@ -744,38 +707,28 @@ export async function liveSessionRoutes(server: FastifyInstance) {
 
     if (isLive && sessionId) {
       const commentId = `test-${Date.now()}`;
-      await livePlatformConnector.ingestEvent(
-        sessionId,
-        managed?.platform || "manual",
-        "comment",
-        {
-          id: commentId,
-          text: comment,
-          message: comment,
-          from: { username: sender },
-          sender,
-        },
-      );
+      await livePlatformConnector.ingestEvent(sessionId, managed?.platform || "manual", "comment", {
+        id: commentId,
+        text: comment,
+        message: comment,
+        from: { username: sender },
+        sender,
+      });
       return {
         success: true,
         mode: "live",
         data: {
           speech: null,
-          note: "Komentar diantrikan ke AI Host live (VoxCPM2 + lipsync).",
+          note: "Komentar diantrikan ke AI Host live (Pocket TTS backend + lipsync).",
           commentId,
         },
       };
     }
 
-    // Prelive / studio testing — LLM; FE synth via VoxCPM2.
+    // Prelive / studio testing — LLM; FE synth via backend Pocket TTS.
     const { generateLunaResponse } = await import("../services/groq-brain.js");
     const { resolveHostId } = await import("../services/tts.js");
-    const luna = await generateLunaResponse(
-      comment,
-      managed?.product || null,
-      avatarName,
-      tone,
-    );
+    const luna = await generateLunaResponse(comment, managed?.product || null, avatarName, tone);
     const host = resolveHostId(voice, avatarName);
     return {
       success: true,
@@ -818,11 +771,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
           data: { productId: parsed.data.productId },
         });
         const snapshot = normalizeClientProduct(parsed.data.product);
-        liveHostOrchestrator.switchProduct(
-          latestSession.id,
-          parsed.data.productId,
-          snapshot || undefined,
-        );
+        liveHostOrchestrator.switchProduct(latestSession.id, parsed.data.productId, snapshot || undefined);
 
         const managedSession = liveSessionManager.getSession(latestSession.id);
         if (snapshot && managedSession) {
@@ -866,12 +815,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
     const webhookSchema = z.object({
       platform: z.string(),
-      eventType: z.enum([
-        "comment",
-        "order_paid",
-        "cart_click",
-        "viewer_update",
-      ]),
+      eventType: z.enum(["comment", "order_paid", "cart_click", "viewer_update"]),
       data: z.record(z.string(), z.unknown()),
     });
 
@@ -882,12 +826,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     const { platform, eventType, data } = parsed.data;
-    await livePlatformConnector.ingestEvent(
-      sessionId,
-      platform,
-      eventType,
-      data,
-    );
+    await livePlatformConnector.ingestEvent(sessionId, platform, eventType, data);
     const metrics = livePlatformConnector.getMetricsSnapshot(sessionId || "");
 
     return {
@@ -918,13 +857,9 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         });
 
     const sessionId = session?.id || "";
-    const managedSession = sessionId
-      ? liveSessionManager.getSession(sessionId)
-      : null;
+    const managedSession = sessionId ? liveSessionManager.getSession(sessionId) : null;
     const streamStatus = getStreamStatus();
-    const workerBroadcast = await getRunPodBroadcastStatus(
-      managedSession?.podId,
-    ).catch(() => null);
+    const workerBroadcast = await getRunPodBroadcastStatus(managedSession?.podId).catch(() => null);
     const metrics = livePlatformConnector.getMetricsSnapshot(sessionId);
 
     const sessionStatus = managedSession?.state || session?.status || "idle";
@@ -932,21 +867,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     return {
       success: true,
       data: {
-        isStreaming:
-          workerBroadcast?.status === "streaming" ||
-          streamStatus.status === "streaming",
-        handshakeVerified:
-          workerBroadcast?.status === "streaming" ||
-          streamStatus.handshakeVerified,
+        isStreaming: workerBroadcast?.status === "streaming" || streamStatus.status === "streaming",
+        handshakeVerified: workerBroadcast?.status === "streaming" || streamStatus.handshakeVerified,
         sessionStatus,
         sessionId: sessionId || null,
         platform: session?.platform || "TikTok LIVE",
         product: managedSession?.product ?? null,
         avatar: session?.avatar || null,
-        startedAt:
-          session?.createdAt ||
-          streamStatus.startedAt ||
-          new Date().toISOString(),
+        startedAt: session?.createdAt || streamStatus.startedAt || new Date().toISOString(),
         metrics,
         serverTimestamp: Date.now(),
       },

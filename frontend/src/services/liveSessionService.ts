@@ -50,7 +50,7 @@ export interface StartSessionParams {
   autoModeration: boolean;
   avatarName: string;
   tone: string;
-  /** VoxCPM2 voice_id (female catalog) */
+  /** Backend Pocket TTS voice profile id */
   voice?: string;
   voiceId?: string;
   lang?: string;

@@ -259,7 +259,7 @@ class AILiveWorker:
 
         clean_name = host_name.lower().replace(".png", "").replace(".jpg", "").replace(".mp4", "").strip()
 
-        body_tokens = ("talk_2", "talk_3", "talk", "idle")
+        body_tokens = ("talk_1", "talk_2", "talk_3", "idle")
         is_specific_clip = any(
             clean_name == token or clean_name.endswith("_" + token)
             for token in body_tokens
@@ -269,7 +269,7 @@ class AILiveWorker:
         else:
             exact_names = [
                 f"{clean_name}_idle.mp4",
-                f"{clean_name}_talk.mp4",
+                f"{clean_name}_talk_1.mp4",
             ]
         for d in candidate_dirs:
             if not os.path.exists(d):
@@ -303,7 +303,7 @@ class AILiveWorker:
                 continue
             for fallback in (
                 "namira_idle.mp4",
-                "namira_talk.mp4",
+                "namira_talk_1.mp4",
                 "namira_talk_2.mp4",
                 "namira_talk_3.mp4",
             ):
@@ -328,15 +328,17 @@ class AILiveWorker:
         return None
 
     def _resolve_action_clip(self, host_type, host_name, action_tag):
-        """Pilih clip — idle / talk / talk_2 / talk_3."""
+        """Pilih clip — idle / talk_1 / talk_2 / talk_3."""
         host = (host_name or "namira").lower().strip()
-        action = (action_tag or "talk").lower().strip().replace("-", "_")
+        action = (action_tag or "talk_1").lower().strip().replace("-", "_")
         if action in ("speak", "speaking"):
-            action = "talk"
+            action = "talk_1"
+        if action == "talk":
+            action = "talk_1"
         if action in ("rest", "neutral"):
             action = "idle"
-        if action not in ("idle", "talk", "talk_2", "talk_3"):
-            action = "talk"
+        if action not in ("idle", "talk_1", "talk_2", "talk_3"):
+            action = "talk_1"
         candidates = [
             f"{host}_{action}",
             action,
@@ -370,26 +372,28 @@ class AILiveWorker:
         pipeline_start = time.time()
         import re
 
-        action_tag = (action or "talk").strip().lower().replace("-", "_")
+        action_tag = (action or "talk_1").strip().lower().replace("-", "_")
         match = re.search(
-            r"\[(talk_2|talk_3|talk|idle|TALK_2|TALK_3|TALK|IDLE)\]",
+            r"\[(talk_1|talk_2|talk_3|talk|idle|TALK_1|TALK_2|TALK_3|TALK|IDLE)\]",
             text_answer or "",
             re.I,
         )
         if match:
             action_tag = match.group(1).lower().replace("-", "_")
             text_answer = re.sub(
-                r"\[(talk_2|talk_3|talk|idle|TALK_2|TALK_3|TALK|IDLE)\]",
+                r"\[(talk_1|talk_2|talk_3|talk|idle|TALK_1|TALK_2|TALK_3|TALK|IDLE)\]",
                 "",
                 text_answer,
                 flags=re.I,
             ).strip()
         if action_tag in ("speak", "speaking"):
-            action_tag = "talk"
+            action_tag = "talk_1"
         if action_tag in ("rest", "neutral"):
             action_tag = "idle"
-        if action_tag not in ("idle", "talk", "talk_2", "talk_3"):
-            action_tag = "talk"
+        if action_tag == "talk":
+            action_tag = "talk_1"
+        if action_tag not in ("idle", "talk_1", "talk_2", "talk_3"):
+            action_tag = "talk_1"
 
         print(
             f"\n[MEMPROSES] {task_id} | Host: {host_name} ({host_type.upper()}) | Action: {action_tag}"

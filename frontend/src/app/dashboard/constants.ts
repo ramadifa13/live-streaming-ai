@@ -20,51 +20,8 @@ export interface HostVoiceOption {
   style: string;
 }
 
-/** Suara VoxCPM2 untuk host perempuan (pre-live = sample lokal). */
-export const FEMALE_HOST_VOICES: HostVoiceOption[] = [
-  {
-    id: "girl_cute_kids",
-    label: "girl - cute kids",
-    gender: "female",
-    style: "Cute Kids",
-  },
-  {
-    id: "girl_warm_youthful",
-    label: "girl - warm & youthful",
-    gender: "female",
-    style: "Warm & Youthful",
-  },
-  {
-    id: "girl_warm_friendly",
-    label: "girl - warm & friendly",
-    gender: "female",
-    style: "Warm & Friendly",
-  },
-  {
-    id: "girl_calm_professional",
-    label: "girl - calm & professional",
-    gender: "female",
-    style: "Calm & Professional",
-  },
-];
-
-export const DEFAULT_VOICE_ID = FEMALE_HOST_VOICES[0].id;
-
-export function voicesForAvatarGender(gender?: string | null): HostVoiceOption[] {
-  const g = (gender || "female").toLowerCase();
-  if (g === "male") {
-    // Belum ada katalog pria ΓÇö kosong agar UI tidak menampilkan suara perempuan.
-    return [];
-  }
-  return FEMALE_HOST_VOICES;
-}
-
-/** Sample pre-live (statis) ΓÇö tidak hit pod. */
-export function localVoicePreviewUrl(voiceId: string, lang: TtsLangCode = "id"): string {
-  const id = (voiceId || DEFAULT_VOICE_ID).trim() || DEFAULT_VOICE_ID;
-  const code = lang === "en" ? "en" : "id";
-  return `/voices/${id}/preview_${code}.wav`;
-}
+/** Default profile id; the voice catalog itself comes from the backend. */
+export const DEFAULT_VOICE_ID = "girl_cute_kids";
 
 export function avatarIdleVideoPath(avatarId: string): string {
   const id = (avatarId || "namira").toLowerCase();
@@ -81,6 +38,7 @@ export const avatars: Avatar[] = [
     gender: "female",
     voice: DEFAULT_VOICE_ID,
     image: "/avatars/namira.png",
+    imageProfile: "/avatars/namira_profile.png",
     modelUrl3d: "",
     specialty: "Hard-Selling TikTok Live",
   },
@@ -106,21 +64,21 @@ export const DEFAULT_BACKGROUNDS: DefaultBackground[] = [
     id: "cozy-room",
     name: "Cozy Room Studio",
     category: "Room",
-    url: "https://images.unsplash.com/photo-1513694203232-719a280e022f?w=720&h=1280&fit=crop&q=80",
-    preview: "https://images.unsplash.com/photo-1513694203232-719a280e022f?w=200&h=355&fit=crop&q=80",
+    url: "/after_livio.jpg",
+    preview: "/after_livio.jpg",
   },
   {
     id: "clean-minimalist",
     name: "Minimalist Soft White",
     category: "Minimalist",
-    url: "https://images.unsplash.com/photo-1497366216548-37526070297c?w=720&h=1280&fit=crop&q=80",
-    preview: "https://images.unsplash.com/photo-1497366216548-37526070297c?w=200&h=355&fit=crop&q=80",
+    url: "/before_livio.jpg",
+    preview: "/before_livio.jpg",
   },
   {
     id: "retail-shop",
     name: "Boutique Retail",
     category: "Store",
-    url: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=720&h=1280&fit=crop&q=80",
-    preview: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=200&h=355&fit=crop&q=80",
+    url: "/banner_atas_tengah.png",
+    preview: "/banner_atas_tengah.png",
   },
 ];

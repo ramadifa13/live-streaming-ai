@@ -1,18 +1,17 @@
 /**
- * TTS service — VoxCPM2 only (AI Worker GPU).
- * Business layer: sanitize short sentences → call worker /tts/synthesize.
- * No Piper / Supertonic / Google fallback.
+ * TTS service — Pocket TTS Indonesian, owned by the backend.
+ * The AI worker receives rendered audio only and never stores voice profiles.
  */
 
-import { spawn } from "child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
+import { createInterface } from "readline";
 import { tmpdir } from "os";
 import path from "path";
 import { randomBytes } from "crypto";
 import fs from "fs";
-import { getWorkerUrl } from "./runpod-manager.js";
 
 export interface HostVoice {
-  /** voice_id for VoxCPM2 */
+  /** Pocket TTS reference profile id */
   id: string;
   name: string;
   gender: "female" | "male";
@@ -20,7 +19,7 @@ export interface HostVoice {
   style: string;
 }
 
-/** Female host voices — pre-live filter + live VoxCPM2 voice_id. */
+/** Female host voices backed by reference WAV files in backend/voices. */
 export const HOST_VOICES: HostVoice[] = [
   {
     id: "girl_cute_kids",
@@ -53,6 +52,102 @@ export const HOST_VOICES: HostVoice[] = [
 ];
 
 export const DEFAULT_VOICE_ID = "girl_cute_kids";
+
+const POCKET_TTS_CONFIG =
+  process.env.POCKET_TTS_CONFIG ||
+  "hf://anak10thn/pocket-tts-indonesian/indonesian_6l.yaml@635cde7a28301861b120f57ec4dda8525073017c";
+
+type PocketRequest = { id: string; text: string; voice_id: string };
+type PocketResponse = { id: string; audio?: string; error?: string };
+
+let pocketProcess: ChildProcessWithoutNullStreams | null = null;
+let pocketReady: Promise<void> | null = null;
+let pocketQueue = Promise.resolve();
+
+function pocketPythonScript(): string {
+  return path.resolve(process.cwd(), "pocket_tts", "worker.py");
+}
+
+function pocketPythonCommand(): string {
+  if (process.env.POCKET_TTS_PYTHON) return process.env.POCKET_TTS_PYTHON;
+  const envPython =
+    process.platform === "win32"
+      ? path.resolve(process.cwd(), "pocket_tts", "env", "Scripts", "python.exe")
+      : path.resolve(process.cwd(), "pocket_tts", "env", "bin", "python");
+  return fs.existsSync(envPython) ? envPython : "python";
+}
+
+function startPocketTts(): Promise<void> {
+  if (pocketReady) return pocketReady;
+  pocketReady = new Promise((resolve, reject) => {
+    const python = pocketPythonCommand();
+    const child = spawn(python, [pocketPythonScript()], {
+      cwd: path.resolve(process.cwd(), "pocket_tts"),
+      env: {
+        ...process.env,
+        POCKET_TTS_CONFIG,
+        POCKET_TTS_VOICE_DIR: process.env.POCKET_TTS_VOICE_DIR || path.resolve(process.cwd(), "voices"),
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    pocketProcess = child;
+    const stdout = createInterface({ input: child.stdout });
+    const onReady = (line: string) => {
+      try {
+        if (JSON.parse(line).ready) {
+          stdout.off("line", onReady);
+          resolve();
+        }
+      } catch {
+        // Model logs are ignored until the JSON ready marker arrives.
+      }
+    };
+    stdout.on("line", onReady);
+    child.stderr.on("data", (chunk) => console.warn(`[PocketTTS] ${chunk.toString().trim()}`));
+    child.once("error", (error) => {
+      pocketReady = null;
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      pocketProcess = null;
+      pocketReady = null;
+      if (code !== 0) reject(new Error(`Pocket TTS runner berhenti (${code})`));
+    });
+  });
+  return pocketReady;
+}
+
+function synthesizeWithPocketTts(text: string, voiceId: string): Promise<Buffer> {
+  const request = async (): Promise<Buffer> => {
+    await startPocketTts();
+    if (!pocketProcess) throw new Error("Pocket TTS runner tidak tersedia");
+    return new Promise((resolve, reject) => {
+      const id = randomBytes(8).toString("hex");
+      const stdout = createInterface({ input: pocketProcess!.stdout });
+      const onLine = (line: string) => {
+        let response: PocketResponse;
+        try {
+          response = JSON.parse(line) as PocketResponse;
+        } catch {
+          return;
+        }
+        if (response.id !== id) return;
+        stdout.close();
+        if (response.error) reject(new Error(response.error));
+        else if (!response.audio) reject(new Error("Pocket TTS tidak mengembalikan audio"));
+        else resolve(Buffer.from(response.audio, "base64"));
+      };
+      stdout.on("line", onLine);
+      pocketProcess!.stdin.write(`${JSON.stringify({ id, text, voice_id: voiceId } satisfies PocketRequest)}\n`);
+    });
+  };
+  const result = pocketQueue.then(request, request);
+  pocketQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
 
 export interface SynthesizeRequest {
   text: string;
@@ -102,7 +197,7 @@ export interface SynthesizeResponse {
 
 /**
  * Normalize text for live TTS — jangan ubah data produk mentah.
- * Pipeline: Raw Product → Script → sanitizeForLiveTTS → VoxCPM2
+ * Pipeline: Raw Product → Script → sanitizeForLiveTTS → Pocket TTS
  */
 export function sanitizeForLiveTTS(text: string): string {
   if (!text) return "";
@@ -122,10 +217,7 @@ export function sanitizeForLiveTTS(text: string): string {
     .replace(/</g, "")
     .replace(/>/g, "")
     .replace(/['"]/g, "")
-    .replace(
-      /\b(yuk|nah|khusus hari ini|mumpung lagi promo|jangan sampai kehabisan)\b/gi,
-      ", $1",
-    )
+    .replace(/\b(yuk|nah|khusus hari ini|mumpung lagi promo|jangan sampai kehabisan)\b/gi, ", $1")
     .replace(/[!]{2,}/g, "!")
     .replace(/[?]{2,}/g, "?")
     .replace(/[.]{4,}/g, "...")
@@ -137,14 +229,8 @@ export function sanitizeForLiveTTS(text: string): string {
 /** Rp / Rp. / $ + format ID (25.000) atau US (25,000) → bacaan natural. */
 export function normalizeCurrencyForTts(text: string): string {
   return text
-    .replace(
-      /\bRp\.?\s*([\d.,]+)\b/gi,
-      (_m, raw: string) => `${idNumberToSpoken(parseIdAmount(raw))} rupiah`,
-    )
-    .replace(
-      /\$\s*([\d.,]+)\b/g,
-      (_m, raw: string) => `${idNumberToSpoken(parseIdAmount(raw))} dollar`,
-    )
+    .replace(/\bRp\.?\s*([\d.,]+)\b/gi, (_m, raw: string) => `${idNumberToSpoken(parseIdAmount(raw))} rupiah`)
+    .replace(/\$\s*([\d.,]+)\b/g, (_m, raw: string) => `${idNumberToSpoken(parseIdAmount(raw))} dollar`)
     .replace(/\b(\d+)k\b/gi, (_m, n: string) => `${idNumberToSpoken(Number(n) * 1000)}`);
 }
 
@@ -196,8 +282,7 @@ export function idNumberToSpoken(n: number): string {
   if (rounded < 100) {
     const tens = Math.floor(rounded / 10);
     const ones = rounded % 10;
-    const tensWord =
-      tens === 1 ? "sepuluh" : tens === 2 ? "dua puluh" : `${ID_ONES[tens]} puluh`;
+    const tensWord = tens === 1 ? "sepuluh" : tens === 2 ? "dua puluh" : `${ID_ONES[tens]} puluh`;
     return ones ? `${tensWord} ${ID_ONES[ones]}` : tens === 1 ? "sepuluh" : tensWord;
   }
   if (rounded < 200) {
@@ -213,8 +298,7 @@ export function idNumberToSpoken(n: number): string {
   if (rounded < 1_000_000) {
     const thousands = Math.floor(rounded / 1000);
     const rest = rounded % 1000;
-    const head =
-      thousands === 1 ? "seribu" : `${idNumberToSpoken(thousands)} ribu`;
+    const head = thousands === 1 ? "seribu" : `${idNumberToSpoken(thousands)} ribu`;
     return rest ? `${head} ${idNumberToSpoken(rest)}` : head;
   }
   if (rounded < 1_000_000_000) {
@@ -266,11 +350,7 @@ function resolveFfmpegBinary(): string {
 const FFMPEG_BIN = resolveFfmpegBinary();
 
 async function ensureWav16kMono(input: Buffer): Promise<Buffer> {
-  if (
-    input.length >= 44 &&
-    input.toString("ascii", 0, 4) === "RIFF" &&
-    input.toString("ascii", 8, 12) === "WAVE"
-  ) {
+  if (input.length >= 44 && input.toString("ascii", 0, 4) === "RIFF" && input.toString("ascii", 8, 12) === "WAVE") {
     const rate = input.readUInt32LE(24);
     const channels = input.readUInt16LE(22);
     if (rate === 16000 && channels === 1) return input;
@@ -328,13 +408,9 @@ async function ensureWav16kMono(input: Buffer): Promise<Buffer> {
   });
 }
 
-/** Resolve ke voice_id VoxCPM2. Legacy host slug → suara perempuan default. */
-export function resolveVoiceId(
-  voiceOrHost?: string,
-  avatarName?: string,
-): string {
-  const defaultVoice =
-    (process.env.VOICE_ID || DEFAULT_VOICE_ID).trim() || DEFAULT_VOICE_ID;
+/** Resolve legacy host slugs to a Pocket TTS voice profile. */
+export function resolveVoiceId(voiceOrHost?: string, avatarName?: string): string {
+  const defaultVoice = (process.env.VOICE_ID || DEFAULT_VOICE_ID).trim() || DEFAULT_VOICE_ID;
   const raw = String(voiceOrHost || avatarName || defaultVoice)
     .trim()
     .toLowerCase()
@@ -365,10 +441,7 @@ export function resolveVoiceId(
 }
 
 /** @deprecated Gunakan resolveVoiceId */
-export function resolveHostId(
-  voiceOrHost?: string,
-  avatarName?: string,
-): string {
+export function resolveHostId(voiceOrHost?: string, avatarName?: string): string {
   return resolveVoiceId(voiceOrHost, avatarName);
 }
 
@@ -376,14 +449,7 @@ export function getHostSampleUrl(_hostId: string): string {
   return "";
 }
 
-function headerNum(headers: Headers, name: string): number | undefined {
-  const v = headers.get(name);
-  if (v == null || v === "") return undefined;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
-}
-
-async function synthesizeWithVoxCPM2(
+async function synthesizeWithPocket(
   text: string,
   voiceId: string,
   opts: {
@@ -399,104 +465,26 @@ async function synthesizeWithVoxCPM2(
   const cleanText = sanitizeForLiveTTS(text);
   if (!cleanText) throw new Error("Teks kosong setelah sanitasi");
 
-  const workerUrl = getWorkerUrl(opts.podId);
-  if (!workerUrl) {
-    throw new Error(
-      "VoxCPM2 membutuhkan AI Worker GPU (RUNPOD_WORKER_URL / podId). Tidak ada fallback TTS.",
-    );
-  }
-
-  const style =
-    (opts.style || opts.tone || "").trim() || undefined;
   const t0 = Date.now();
-  const res = await fetch(`${workerUrl.replace(/\/$/, "")}/tts/synthesize`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text: cleanText,
-      voice_id: voiceId,
-      language: (opts.lang || process.env.TTS_LANGUAGE || "id").trim() || "id",
-      style,
-      emotion: opts.emotion,
-      request_id: opts.requestId,
-      live_session_id: opts.sessionId,
-    }),
-  });
+  const audio = await synthesizeWithPocketTts(cleanText, voiceId);
+  if (audio.length < 44) throw new Error("Pocket TTS WAV kosong/pendek");
+  const buffer = await ensureWav16kMono(audio);
+  const metrics = { requestId: opts.requestId, latencyMs: Date.now() - t0 };
 
-  if (!res.ok) {
-    let detail = `HTTP ${res.status}`;
-    try {
-      const j = (await res.json()) as { detail?: string; error?: string };
-      detail = j.detail || j.error || detail;
-    } catch {
-      detail = (await res.text().catch(() => detail)).slice(0, 400);
-    }
-    throw new Error(`VoxCPM2 gagal: ${detail}`);
-  }
-
-  const ab = Buffer.from(await res.arrayBuffer());
-  if (ab.length < 44) throw new Error("VoxCPM2 WAV kosong/pendek");
-  const buffer = await ensureWav16kMono(ab);
-
-  const metrics = {
-    requestId: res.headers.get("x-tts-request-id") || undefined,
-    queueMs: headerNum(res.headers, "x-tts-queue-ms"),
-    inferenceMs: headerNum(res.headers, "x-tts-inference-ms"),
-    latencyMs: headerNum(res.headers, "x-tts-latency-ms") ?? Date.now() - t0,
-    audioDuration: headerNum(res.headers, "x-tts-audio-duration"),
-    rtf: headerNum(res.headers, "x-tts-rtf"),
-    gpuMemoryMb: headerNum(res.headers, "x-tts-gpu-memory-mb"),
-  };
-
-  console.log(
-    `[TTS] voxcpm2 ok voice_id=${voiceId} latency_ms=${metrics.latencyMs} ` +
-      `audio_dur=${metrics.audioDuration} rtf=${metrics.rtf} gpu_mb=${metrics.gpuMemoryMb}`,
-  );
+  console.log(`[TTS] pocket-tts ok voice_id=${voiceId} latency_ms=${metrics.latencyMs}`);
 
   return { buffer, metrics };
 }
 
-export async function synthesizeSpeech(
-  req: SynthesizeRequest,
-): Promise<SynthesizeResponse> {
-  const {
-    text,
-    avatarName = "Namira",
-    speed = 1.0,
-    tone,
-    emotion,
-    style,
-    lang,
-  } = req;
-  const voiceId = resolveVoiceId(
-    req.voiceId || req.host || req.voice,
-    avatarName || req.avatarName,
-  );
+export async function synthesizeSpeech(req: SynthesizeRequest): Promise<SynthesizeResponse> {
+  const { text, avatarName = "Namira", speed = 1.0, tone, emotion, style, lang } = req;
+  const voiceId = resolveVoiceId(req.voiceId || req.host || req.voice, avatarName || req.avatarName);
 
   const wordCount = text.trim().split(/\s+/).length;
-  const estimatedSeconds = Math.max(
-    1.5,
-    Math.round((wordCount / ((140 * speed) / 60)) * 10) / 10,
-  );
-
-  const liveOk = Boolean(req.podId) || req.allowOfflineSynth === true;
-  if (!liveOk) {
-    return {
-      success: false,
-      voice: voiceId,
-      host: voiceId,
-      avatar: avatarName,
-      text,
-      durationEstimateSeconds: estimatedSeconds,
-      audioFormat: "audio/wav",
-      engine: "voxcpm2",
-      message:
-        "Pra-live: panggil /api/tts/synthesize dengan allowOfflineSynth + worker GPU, atau Go Live.",
-    };
-  }
+  const estimatedSeconds = Math.max(1.5, Math.round((wordCount / ((140 * speed) / 60)) * 10) / 10);
 
   try {
-    const { buffer, metrics } = await synthesizeWithVoxCPM2(text, voiceId, {
+    const { buffer, metrics } = await synthesizeWithPocket(text, voiceId, {
       lang,
       style: style || tone,
       emotion,
@@ -514,14 +502,14 @@ export async function synthesizeSpeech(
       text,
       durationEstimateSeconds: metrics?.audioDuration ?? estimatedSeconds,
       audioFormat: "audio/wav",
-      engine: "voxcpm2",
-      message: "TTS synthesis success (VoxCPM2)",
+      engine: "pocket-tts-indonesian",
+      message: "TTS synthesis success (Pocket TTS Indonesian)",
       audioBuffer: buffer,
       metrics,
     };
   } catch (err) {
     const msg = (err as Error).message || String(err);
-    console.error(`[TTS] VoxCPM2 failed (no fallback): ${msg}`);
+    console.error(`[TTS] Pocket TTS failed: ${msg}`);
     return {
       success: false,
       voice: voiceId,
@@ -530,14 +518,19 @@ export async function synthesizeSpeech(
       text,
       durationEstimateSeconds: estimatedSeconds,
       audioFormat: "audio/wav",
-      engine: "voxcpm2",
+      engine: "pocket-tts-indonesian",
       message: msg,
     };
   }
 }
 
 export async function warmUpTTS(): Promise<void> {
-  console.log(
-    `[TTS] Engine=VoxCPM2 voice_id=${process.env.VOICE_ID || DEFAULT_VOICE_ID} — inference di AI Worker GPU`,
-  );
+  await startPocketTts();
+  console.log(`[TTS] Engine=Pocket TTS Indonesian voice_id=${DEFAULT_VOICE_ID}`);
+}
+
+export function stopTTS(): void {
+  if (pocketProcess && !pocketProcess.killed) pocketProcess.kill();
+  pocketProcess = null;
+  pocketReady = null;
 }

@@ -47,4 +47,5 @@ deploy/assets_original/
 # But allow .env.example files
 !.env.example
 backend/.env.example
+backend/pocket_tts
 frontend/.env.example

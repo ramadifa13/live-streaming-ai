@@ -6,13 +6,21 @@ export interface SynthesizeTTSOptions {
   avatarName: string;
   speed?: number;
   tone?: string;
-  /** VoxCPM2 voice_id (female host catalog) */
+  /** Backend Pocket TTS voice profile id */
   voiceId?: string;
   /** ISO lang: id | en */
   lang?: string;
   sessionId?: string;
-  /** Studio preview — butuh AI Worker GPU (VoxCPM2). */
+  /** Studio preview through the backend Pocket TTS runner. */
   allowOfflineSynth?: boolean;
+}
+
+export interface BackendVoiceOption {
+  id: string;
+  name: string;
+  gender: "female" | "male";
+  locale: string;
+  style: string;
 }
 
 export interface VideoScriptData {
@@ -40,7 +48,14 @@ function resolveVoiceId(voiceOrName?: string): string {
 }
 
 export const aiService = {
-  /** VoxCPM2 TTS — live (session) atau studio preview (`allowOfflineSynth` + worker GPU). */
+  async getTtsVoices(): Promise<BackendVoiceOption[]> {
+    const res = await fetch("/api/tts/voices", { cache: "no-store" });
+    if (!res.ok) throw new Error(`Gagal memuat katalog voice (${res.status})`);
+    const body = (await res.json()) as { data?: BackendVoiceOption[] };
+    return body.data || [];
+  },
+
+  /** Pocket TTS Indonesian — preview dan live melalui backend yang sama. */
   async synthesizeTTS(options: SynthesizeTTSOptions): Promise<Blob> {
     const voiceId = resolveVoiceId(
       options.voiceId || options.voice || options.avatarName,
@@ -66,7 +81,7 @@ export const aiService = {
       const errJson = await res.json().catch(() => null);
       const errorMsg =
         errJson?.error ||
-        `HTTP ${res.status}: Gagal sintesis VoxCPM2 TTS.`;
+        `HTTP ${res.status}: Gagal sintesis Pocket TTS.`;
       throw new Error(errorMsg);
     }
 
@@ -234,5 +249,12 @@ export const aiService = {
     const res = await fetch(`/api/avatar/video-status/${jobId}`);
     const json = await res.json();
     return json.data ?? {};
+  },
+
+  async listTTSVoices(): Promise<BackendVoice[]> {
+    const res = await fetch("/api/tts/voices");
+    if (!res.ok) throw new Error(`HTTP ${res.status}: Gagal memuat katalog voice.`);
+    const json = await res.json();
+    return Array.isArray(json?.data) ? json.data : [];
   },
 };

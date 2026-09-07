@@ -23,29 +23,19 @@ export async function chatStreamRoutes(server: FastifyInstance) {
       return { success: false, error: parsed.error.flatten() };
     }
 
-    const { comment, activeProduct, avatarName, tone, voice, mode } =
-      parsed.data;
+    const { comment, activeProduct, avatarName, tone, voice, mode } = parsed.data;
 
     try {
-      const lunaResponse = await generateLunaResponse(
-        comment,
-        activeProduct,
-        avatarName,
-        tone,
-      );
+      const lunaResponse = await generateLunaResponse(comment, activeProduct, avatarName, tone);
       const visemeData = generateVisemesFromText(lunaResponse.speech);
       let linkedProduct = null;
-      if (
-        lunaResponse.target_product_id &&
-        activeProduct &&
-        activeProduct.id === lunaResponse.target_product_id
-      ) {
+      if (lunaResponse.target_product_id && activeProduct && activeProduct.id === lunaResponse.target_product_id) {
         linkedProduct = activeProduct;
       }
 
       const host = resolveHostId(voice, avatarName);
 
-      // Pra-live / studio chat: FE putar via VoxCPM2 (/api/tts/synthesize).
+      // Pra-live / studio chat: FE putar via backend Pocket TTS.
       return {
         success: true,
         data: {

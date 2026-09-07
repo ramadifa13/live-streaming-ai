@@ -1,17 +1,8 @@
+/* eslint-disable react-hooks/refs */
 "use client";
 
 import React, { useState, useRef } from "react";
-import {
-  X,
-  Upload,
-  ChevronDown,
-  ChevronUp,
-  Crop,
-  Check,
-  Sparkles,
-  RotateCcw,
-  Image as ImageIcon,
-} from "lucide-react";
+import { X, Upload, Crop, Check, Sparkles, RotateCcw, Image as ImageIcon, Layers } from "lucide-react";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { DEFAULT_BACKGROUNDS } from "@/app/dashboard/constants";
@@ -26,17 +17,17 @@ export const ChooseBackgroundModal: React.FC = () => {
   const setSelectedBackground = useAiHostStore((state) => state.setSelectedBackground);
   const addCustomBackground = useAiHostStore((state) => state.addCustomBackground);
 
-  // Accordion state
-  const [isDefaultCollapsed, setIsDefaultCollapsed] = useState(false);
+  // Tab state untuk memisahkan "Default" dan "Custom / Upload" agar tidak panjang ke bawah
+  const [activeTab, setActiveTab] = useState<"default" | "custom">("default");
 
   // Image Cropper states
   const [rawUploadSrc, setRawUploadSrc] = useState<string | null>(null);
+  const [imageLoaded, setImageLoaded] = useState(false);
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number }>({
     width: 0,
     height: 0,
   });
 
-  // Cropper box coordinates relative to original image size (target aspect ratio 9:16)
   const TARGET_ASPECT = 9 / 16;
   const [cropBox, setCropBox] = useState<{ x: number; y: number; width: number; height: number }>({
     x: 0,
@@ -58,6 +49,7 @@ export const ChooseBackgroundModal: React.FC = () => {
 
   const handleClose = () => {
     setRawUploadSrc(null);
+    setImageLoaded(false);
     setShow(false);
   };
 
@@ -78,7 +70,6 @@ export const ChooseBackgroundModal: React.FC = () => {
         img.onload = () => {
           setNaturalSize({ width: img.width, height: img.height });
 
-          // Inisialisasi kotak crop 9:16 terbesar yang muat di dalam gambar
           let cropW = img.width;
           let cropH = cropW / TARGET_ASPECT;
 
@@ -97,6 +88,7 @@ export const ChooseBackgroundModal: React.FC = () => {
             height: Math.round(cropH),
           });
 
+          setImageLoaded(false);
           setRawUploadSrc(src);
         };
         img.src = src;
@@ -159,21 +151,13 @@ export const ChooseBackgroundModal: React.FC = () => {
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
 
-      ctx.drawImage(
-        img,
-        cropBox.x,
-        cropBox.y,
-        cropBox.width,
-        cropBox.height,
-        0,
-        0,
-        outW,
-        outH,
-      );
+      ctx.drawImage(img, cropBox.x, cropBox.y, cropBox.width, cropBox.height, 0, 0, outW, outH);
 
       const croppedDataUrl = canvas.toDataURL("image/jpeg", 0.88);
       addCustomBackground(croppedDataUrl);
+      setSelectedBackground(croppedDataUrl);
       setRawUploadSrc(null);
+      setImageLoaded(false);
       showToast("Background custom (9:16) berhasil dipotong & dipilih!", "success");
     };
     img.src = rawUploadSrc;
@@ -181,60 +165,74 @@ export const ChooseBackgroundModal: React.FC = () => {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 sm:p-4 backdrop-blur-md animate-fadeIn"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-fadeIn select-none"
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
     >
-      <div className="relative w-full max-w-2xl rounded-2xl border border-[#22314e] bg-[#0c1221] shadow-2xl max-h-[90vh] flex flex-col overflow-hidden">
+      {/* Modal Utama Dibuat Lebar (max-w-4xl) & Fix Tinggi Tanpa Scroll */}
+      <div className="relative w-full max-w-4xl rounded-2xl border border-slate-800 bg-[#0c1221] shadow-2xl flex flex-col overflow-hidden">
         {/* Header Modal */}
-        <div className="flex items-center justify-between px-5 sm:px-6 pt-5 pb-3.5 border-b border-[#1e293b] shrink-0 bg-[#0c1221]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 shrink-0 bg-[#0c1221]/90 backdrop-blur">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+            <div className="h-10 w-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 shrink-0 shadow-inner">
               <ImageIcon className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
-                Pilih Background Siaran Live
+              <h3 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
+                Pengaturan Background Siaran Live
+                <span className="text-[10px] font-normal px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                  Rasio 9:16 Portrait
+                </span>
               </h3>
-              <p className="text-[11px] text-slate-400">
-                Pilih studio bawaan atau upload background custom portrait (rasio wajib 9:16).
-              </p>
+              <p className="text-xs text-slate-400">Pilih studio bawaan atau unggah background kustom Anda sendiri.</p>
             </div>
           </div>
           <button
             type="button"
             onClick={handleClose}
-            className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-white/10 transition active:scale-95 shrink-0 cursor-pointer"
+            className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-white/10 transition active:scale-95 cursor-pointer"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Content Body */}
-        <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4 space-y-4 custom-modal-scrollbar">
-          {/* SECTION 1: Background Bawaan (Collapse / Accordion) */}
-          <div className="rounded-xl border border-[#22314e] bg-[#0f172a]/80 overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setIsDefaultCollapsed(!isDefaultCollapsed)}
-              className="w-full flex items-center justify-between p-3 text-left hover:bg-white/5 transition cursor-pointer"
-            >
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-blue-400" />
-                <span className="text-xs font-bold text-white">Background Bawaan Siaran</span>
-                <span className="text-[10px] text-slate-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">
-                  {DEFAULT_BACKGROUNDS.length} Pilihan
-                </span>
-              </div>
-              {isDefaultCollapsed ? (
-                <ChevronDown className="w-4 h-4 text-slate-400" />
-              ) : (
-                <ChevronUp className="w-4 h-4 text-slate-400" />
-              )}
-            </button>
+        {/* Navigation Tabs (Menggantikan Tumpukan Vertikal ke Bawah) */}
+        <div className="flex items-center px-6 pt-3 border-b border-slate-800/60 bg-[#080d1a] gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("default");
+              setRawUploadSrc(null);
+            }}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-t-xl border-t border-x transition cursor-pointer ${
+              activeTab === "default"
+                ? "bg-[#0c1221] border-slate-700 text-blue-400 shadow-sm"
+                : "border-transparent text-slate-400 hover:text-white"
+            }`}
+          >
+            <Sparkles className="w-4 h-4" />
+            Background Bawaan ({DEFAULT_BACKGROUNDS.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("custom")}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-t-xl border-t border-x transition cursor-pointer ${
+              activeTab === "custom"
+                ? "bg-[#0c1221] border-slate-700 text-indigo-400 shadow-sm"
+                : "border-transparent text-slate-400 hover:text-white"
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            Custom & Upload ({customBackgrounds.length})
+          </button>
+        </div>
 
-            {!isDefaultCollapsed && (
-              <div className="p-3 pt-0 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+        {/* Content Body (Grid Dua Kolom / Split View agar muat tanpa Scroll) */}
+        <div className="p-6 grid grid-cols-1 md:grid-cols-12 gap-6 bg-[#0c1221] items-center">
+          {/* TAB 1: BACKGROUND BAWAAN */}
+          {activeTab === "default" && (
+            <>
+              <div className="md:col-span-8 grid grid-cols-4 gap-3">
                 {DEFAULT_BACKGROUNDS.map((bg) => {
                   const isSelected = selectedBackground === bg.url;
                   return (
@@ -245,10 +243,10 @@ export const ChooseBackgroundModal: React.FC = () => {
                         setSelectedBackground(bg.url);
                         showToast(`Background dipilih: ${bg.name}`, "success");
                       }}
-                      className={`group relative aspect-[9/16] rounded-xl overflow-hidden border text-left transition cursor-pointer ${
+                      className={`group relative aspect-[9/16] rounded-xl overflow-hidden border text-left transition cursor-pointer shadow-md ${
                         isSelected
-                          ? "border-blue-400 ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/20"
-                          : "border-[#2a3754] hover:border-slate-400"
+                          ? "border-blue-400 ring-2 ring-blue-500/50 scale-[1.02]"
+                          : "border-slate-800 hover:border-slate-500 opacity-80 hover:opacity-100"
                       }`}
                     >
                       <img
@@ -258,13 +256,11 @@ export const ChooseBackgroundModal: React.FC = () => {
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
                       <div className="absolute inset-x-0 bottom-0 p-2">
-                        <p className="text-[10px] font-bold text-white leading-tight truncate">
-                          {bg.name}
-                        </p>
-                        <p className="text-[8px] text-slate-300">{bg.category}</p>
+                        <p className="text-[11px] font-bold text-white leading-tight truncate">{bg.name}</p>
+                        <p className="text-[9px] text-slate-300">{bg.category}</p>
                       </div>
                       {isSelected && (
-                        <div className="absolute top-1.5 right-1.5 h-5 w-5 rounded-full bg-blue-500 text-white flex items-center justify-center shadow">
+                        <div className="absolute top-2 right-2 h-5 w-5 rounded-full bg-blue-500 text-white flex items-center justify-center shadow-lg">
                           <Check className="w-3 h-3" />
                         </div>
                       )}
@@ -272,178 +268,205 @@ export const ChooseBackgroundModal: React.FC = () => {
                   );
                 })}
               </div>
-            )}
-          </div>
 
-          {/* SECTION 2: Custom Background & Crop Editor */}
-          <div className="rounded-xl border border-[#22314e] bg-[#0f172a]/80 p-3 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Crop className="w-4 h-4 text-indigo-400" />
-                <span className="text-xs font-bold text-white">Custom Background (Wajib Rasio 9:16)</span>
-              </div>
-              <span className="text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/25 px-2 py-0.5 rounded font-medium">
-                Sesuaikan area 9:16 sebelum simpan
-              </span>
-            </div>
-
-            {/* Jika BELUM ada gambar yang sedang di-crop */}
-            {!rawUploadSrc ? (
-              <div className="space-y-3">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
-
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full flex flex-col items-center justify-center p-5 border-2 border-dashed border-[#2a3b5c] hover:border-blue-400/70 bg-[#080d1a] rounded-xl transition cursor-pointer group"
-                >
-                  <div className="h-10 w-10 rounded-full bg-blue-500/10 group-hover:bg-blue-500/20 text-blue-400 flex items-center justify-center mb-2 transition">
-                    <Upload className="w-5 h-5" />
-                  </div>
-                  <p className="text-xs font-bold text-white group-hover:text-blue-300 transition">
-                    Klik untuk Upload Background Custom
-                  </p>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    Format gambar bebas (JPG/PNG). Gambar wajib dipotong ke rasio 9:16 sebelum disimpan.
-                  </p>
-                </button>
-
-                {/* Riwayat Custom Background yang sudah disimpan */}
-                {customBackgrounds.length > 0 && (
-                  <div className="space-y-1.5 pt-1">
-                    <p className="text-[10px] font-semibold text-slate-400">
-                      Background Custom Tersimpan:
-                    </p>
-                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                      {customBackgrounds.map((bgUrl, i) => {
-                        const isSelected = selectedBackground === bgUrl;
-                        return (
-                          <button
-                            key={i}
-                            type="button"
-                            onClick={() => {
-                              setSelectedBackground(bgUrl);
-                              showToast("Background custom dipilih!", "success");
-                            }}
-                            className={`group relative aspect-[9/16] rounded-lg overflow-hidden border transition cursor-pointer ${
-                              isSelected
-                                ? "border-indigo-400 ring-2 ring-indigo-500/40"
-                                : "border-[#2a3754] hover:border-slate-400"
-                            }`}
-                          >
-                            <img src={bgUrl} alt={`Custom ${i}`} className="w-full h-full object-cover" />
-                            {isSelected && (
-                              <div className="absolute top-1 right-1 h-4 w-4 rounded-full bg-indigo-500 text-white flex items-center justify-center shadow">
-                                <Check className="w-2.5 h-2.5" />
-                              </div>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              /* Cropper Mode */
-              <div className="space-y-3 animate-fadeIn">
-                <div className="flex items-center justify-between bg-blue-950/40 border border-blue-500/20 px-3 py-2 rounded-lg text-[11px] text-blue-200">
-                  <span>
-                    Geser kotak vertikal untuk memilih area siaran terbaik (Rasio 9:16).
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setRawUploadSrc(null)}
-                    className="text-slate-400 hover:text-white flex items-center gap-1 text-[10px] cursor-pointer"
-                  >
-                    <RotateCcw className="w-3 h-3" /> Ganti Gambar
-                  </button>
-                </div>
-
-                {/* Canvas Cropper Box */}
-                <div
-                  ref={containerRef}
-                  className="relative w-full h-[290px] bg-black/80 rounded-xl overflow-hidden border border-[#2a3754] flex items-center justify-center select-none"
-                >
+              {/* Live Preview Panel (Kanan) */}
+              <div className="md:col-span-4 bg-[#080d1a] border border-slate-800/80 rounded-2xl p-5 flex flex-col items-center justify-center text-center">
+                <p className="text-[11px] uppercase font-bold tracking-wider text-slate-400 mb-3">
+                  Status Pilihan Aktif
+                </p>
+                <div className="relative w-32 aspect-[9/16] rounded-xl overflow-hidden border-2 border-blue-500/40 shadow-xl mb-4 bg-black">
                   <img
-                    ref={imagePreviewRef}
-                    src={rawUploadSrc}
-                    alt="To Crop"
-                    className="max-h-full max-w-full object-contain pointer-events-none"
-                    draggable={false}
+                    src={
+                      selectedBackground.startsWith("data:")
+                        ? selectedBackground
+                        : DEFAULT_BACKGROUNDS.find((b) => b.url === selectedBackground)?.preview || selectedBackground
+                    }
+                    alt="Active Preview"
+                    className="w-full h-full object-cover"
                   />
-
-                  {imagePreviewRef.current && naturalSize.width > 0 && (
-                    <div
-                      onMouseDown={handleMouseDown}
-                      className="absolute border-2 border-indigo-400 bg-indigo-500/20 shadow-[0_0_0_9999px_rgba(0,0,0,0.65)] cursor-move transition-shadow"
-                      style={{
-                        left: `${
-                          imagePreviewRef.current.offsetLeft +
-                          (cropBox.x / naturalSize.width) * imagePreviewRef.current.clientWidth
-                        }px`,
-                        top: `${
-                          imagePreviewRef.current.offsetTop +
-                          (cropBox.y / naturalSize.height) * imagePreviewRef.current.clientHeight
-                        }px`,
-                        width: `${
-                          (cropBox.width / naturalSize.width) * imagePreviewRef.current.clientWidth
-                        }px`,
-                        height: `${
-                          (cropBox.height / naturalSize.height) * imagePreviewRef.current.clientHeight
-                        }px`,
-                      }}
-                    >
-                      <div className="absolute top-1 left-1.5 bg-black/75 backdrop-blur-xs text-[9px] text-indigo-300 font-bold px-1.5 py-0.5 rounded border border-indigo-500/30">
-                        9:16 Live Canvas
-                      </div>
-                      <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none border border-white/20 divide-x divide-y divide-white/15" />
-                    </div>
-                  )}
                 </div>
-
-                {/* Tombol Aksi Crop */}
-                <div className="flex items-center justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setRawUploadSrc(null)}
-                    className="px-3.5 py-1.5 rounded-xl border border-slate-700 bg-slate-800 text-xs text-slate-300 hover:bg-slate-700 transition cursor-pointer"
-                  >
-                    Batal
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleApplyCropAndSave}
-                    className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-xs font-bold text-white shadow-lg shadow-blue-500/25 hover:brightness-110 active:scale-95 transition flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Check className="w-3.5 h-3.5" /> Simpan &amp; Pilih Background
-                  </button>
-                </div>
+                <p className="text-xs font-semibold text-white truncate max-w-full px-2">
+                  {selectedBackground.startsWith("data:")
+                    ? "Custom Background Aktif"
+                    : DEFAULT_BACKGROUNDS.find((b) => b.url === selectedBackground)?.name || "Pilihan Siaran"}
+                </p>
+                <p className="text-[10px] text-slate-400 mt-1">Siap digunakan untuk live streaming interaktif Anda.</p>
               </div>
-            )}
-          </div>
+            </>
+          )}
+
+          {/* TAB 2: CUSTOM BACKGROUND & CROPPER */}
+          {activeTab === "custom" && (
+            <div className="md:col-span-12">
+              {!rawUploadSrc ? (
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+                  {/* Upload Box */}
+                  <div className="md:col-span-5">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={handleFileSelect}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full h-56 flex flex-col items-center justify-center p-6 border-2 border-dashed border-slate-700 hover:border-indigo-400 bg-[#080d1a] rounded-2xl transition cursor-pointer group shadow-inner"
+                    >
+                      <div className="h-12 w-12 rounded-2xl bg-indigo-500/10 group-hover:bg-indigo-500/20 text-indigo-400 flex items-center justify-center mb-3 transition shadow">
+                        <Upload className="w-6 h-6" />
+                      </div>
+                      <p className="text-sm font-bold text-white group-hover:text-indigo-300 transition">
+                        Upload Background Baru
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1 text-center px-4">
+                        Format JPG/PNG. Otomatis dipandu pemotongan rasio 9:16.
+                      </p>
+                    </button>
+                  </div>
+
+                  {/* List Riwayat Custom */}
+                  <div className="md:col-span-7 bg-[#080d1a] border border-slate-800 rounded-2xl p-4 flex flex-col justify-between h-56">
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-bold text-slate-300">
+                          Riwayat Custom Tersimpan ({customBackgrounds.length})
+                        </span>
+                        <span className="text-[10px] text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
+                          Koleksi Anda
+                        </span>
+                      </div>
+                      {customBackgrounds.length === 0 ? (
+                        <div className="h-32 flex flex-col items-center justify-center text-slate-500 text-xs text-center">
+                          <Layers className="w-8 h-8 mb-2 opacity-30" />
+                          Belum ada background kustom yang diunggah.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-5 gap-2 overflow-y-auto max-h-36 pr-1 custom-modal-scrollbar">
+                          {customBackgrounds.map((bgUrl, i) => {
+                            const isSelected = selectedBackground === bgUrl;
+                            return (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedBackground(bgUrl);
+                                  showToast("Background custom dipilih!", "success");
+                                }}
+                                className={`group relative aspect-[9/16] rounded-lg overflow-hidden border transition cursor-pointer ${
+                                  isSelected
+                                    ? "border-indigo-400 ring-2 ring-indigo-500/50 scale-105"
+                                    : "border-slate-800 hover:border-slate-500"
+                                }`}
+                              >
+                                <img src={bgUrl} alt={`Custom ${i}`} className="w-full h-full object-cover" />
+                                {isSelected && (
+                                  <div className="absolute top-1 right-1 h-4 w-4 rounded-full bg-indigo-500 text-white flex items-center justify-center shadow">
+                                    <Check className="w-2.5 h-2.5" />
+                                  </div>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* Cropper Studio Mode */
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center bg-[#080d1a] border border-slate-800 p-4 rounded-2xl">
+                  <div className="md:col-span-8 flex flex-col items-center">
+                    <div
+                      ref={containerRef}
+                      className="relative w-full h-[280px] bg-black/90 rounded-xl overflow-hidden border border-slate-700 flex items-center justify-center"
+                    >
+                      <img
+                        ref={imagePreviewRef}
+                        src={rawUploadSrc}
+                        alt="To Crop"
+                        onLoad={() => setImageLoaded(true)}
+                        className="max-h-full max-w-full object-contain pointer-events-none"
+                        draggable={false}
+                      />
+
+                      {imageLoaded && imagePreviewRef.current && naturalSize.width > 0 && (
+                        <div
+                          onMouseDown={handleMouseDown}
+                          className="absolute border-2 border-indigo-400 bg-indigo-500/20 shadow-[0_0_0_9999px_rgba(0,0,0,0.7)] cursor-move transition-shadow"
+                          style={{
+                            left: `${
+                              imagePreviewRef.current.offsetLeft +
+                              (cropBox.x / naturalSize.width) * imagePreviewRef.current.clientWidth
+                            }px`,
+                            top: `${
+                              imagePreviewRef.current.offsetTop +
+                              (cropBox.y / naturalSize.height) * imagePreviewRef.current.clientHeight
+                            }px`,
+                            width: `${(cropBox.width / naturalSize.width) * imagePreviewRef.current.clientWidth}px`,
+                            height: `${(cropBox.height / naturalSize.height) * imagePreviewRef.current.clientHeight}px`,
+                          }}
+                        >
+                          <div className="absolute top-1 left-1.5 bg-black/80 text-[9px] text-indigo-300 font-bold px-1.5 py-0.5 rounded border border-indigo-500/30">
+                            Area 9:16 Live Canvas
+                          </div>
+                          <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none border border-white/20 divide-x divide-y divide-white/15" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-4 flex flex-col justify-between h-full space-y-4">
+                    <div>
+                      <h4 className="text-xs font-bold text-white flex items-center gap-1.5 mb-1">
+                        <Crop className="w-4 h-4 text-indigo-400" /> Penyesuaian Area Gambar
+                      </h4>
+                      <p className="text-[11px] text-slate-400">
+                        Geser kotak vertikal di sebelah kiri untuk menentukan komposisi optimal siaran Anda.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col gap-2 pt-2 border-t border-slate-800">
+                      <button
+                        type="button"
+                        onClick={handleApplyCropAndSave}
+                        className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-xs font-bold text-white shadow-lg shadow-indigo-500/25 hover:brightness-110 active:scale-95 transition flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <Check className="w-4 h-4" /> Simpan &amp; Terapkan 9:16
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRawUploadSrc(null);
+                          setImageLoaded(false);
+                        }}
+                        className="w-full py-2 rounded-xl border border-slate-700 bg-slate-800/80 text-xs text-slate-300 hover:bg-slate-700 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" /> Ganti File Gambar Lain
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between px-5 sm:px-6 py-3 border-t border-[#1e293b] bg-[#0c1221] shrink-0">
-          <div className="text-[11px] text-slate-400 truncate max-w-[320px]">
-            Dipilih:{" "}
-            <span className="text-white font-medium">
+        {/* Footer Modal */}
+        <div className="flex items-center justify-between px-6 py-3.5 border-t border-slate-800 bg-[#0c1221] shrink-0">
+          <div className="text-xs text-slate-400 truncate flex items-center gap-2">
+            <span>Status Pilihan:</span>
+            <span className="text-white font-semibold bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
               {selectedBackground.startsWith("data:")
                 ? "Custom Background (9:16)"
-                : selectedBackground.split("/").pop()}
+                : DEFAULT_BACKGROUNDS.find((b) => b.url === selectedBackground)?.name || "Default Studio"}
             </span>
           </div>
           <button
             type="button"
             onClick={handleClose}
-            className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white transition active:scale-95 shadow-md shadow-blue-600/30 cursor-pointer"
+            className="px-6 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white transition active:scale-95 shadow-md shadow-blue-600/30 cursor-pointer"
           >
             Selesai
           </button>

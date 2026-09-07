@@ -177,7 +177,7 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
 
     updateJob(jobId, {
       progress: 20,
-      stage: "Synthesizing TTS audio (VoxCPM2) & starting job...",
+      stage: "Synthesizing TTS audio (Pocket TTS) & starting job...",
     });
 
     let audioBase64: string | undefined;

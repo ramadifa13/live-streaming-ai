@@ -1,0 +1,12 @@
+{
+  "base_pose_frame": 9,
+  "end_pose_frame": 182,
+  "seamless_score": 0.97999,
+  "naive_first_last_ssim": 0.947567,
+  "mse": 27.54,
+  "start_motion": 0.187632,
+  "end_motion": 0.095533,
+  "num_frames": 240,
+  "threshold": 0.92,
+  "seamless": true
+}

@@ -28,12 +28,9 @@ if ! "$PY" -c "import fastapi, uvicorn" 2>/dev/null; then
     || "$PY" -m pip install --no-cache-dir "fastapi>=0.104" "uvicorn>=0.24" "pydantic>=2"
 fi
 pkill -f 'api_server.py' 2>/dev/null || true
-pkill -f 'voxcpm2_tts/worker.py' 2>/dev/null || true
 sleep 2
 nohup "$PY" -u api_server.py >> api_server.log 2>&1 &
 echo "STARTED pid=$! py=$PY"
 sleep 10
 curl -sf --max-time 8 http://127.0.0.1:8000/health || echo FAIL_HEALTH
-echo
-curl -sf --max-time 8 http://127.0.0.1:8000/tts/health || echo FAIL_TTS_WARMING
 echo

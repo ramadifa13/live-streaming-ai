@@ -99,6 +99,7 @@ class StreamBroadcaster(threading.Thread):
         self._bg_bgr: Optional[np.ndarray] = None
         self._ov_rgb: Optional[np.ndarray] = None
         self._ov_alpha: Optional[np.ndarray] = None
+        self._foreground_masks: dict[tuple[str, int], np.ndarray] = {}
         self._init_bg_overlay()
 
     def _init_bg_overlay(self):
@@ -153,6 +154,53 @@ class StreamBroadcaster(threading.Thread):
         base = frame.astype(np.float32)
         out = base * (1.0 - self._ov_alpha) + self._ov_rgb * self._ov_alpha
         return out.astype(np.uint8)
+
+    def _source_foreground_mask(self, clip_name: str, frame_idx: int, frame: np.ndarray) -> np.ndarray:
+        key = (clip_name or "idle", int(frame_idx))
+        cached = self._foreground_masks.get(key)
+        if cached is not None:
+            return cached
+
+        small_width = 360
+        small_height = 640
+        source = cv2.resize(frame, (small_width, small_height), interpolation=cv2.INTER_AREA)
+        mask = np.full((small_height, small_width), cv2.GC_PR_BGD, dtype=np.uint8)
+        mask[8:-8, 35:-35] = cv2.GC_PR_FGD
+        mask[70:small_height - 12, 100:260] = cv2.GC_FGD
+        bgd = np.zeros((1, 65), np.float64)
+        fgd = np.zeros((1, 65), np.float64)
+        cv2.grabCut(source, mask, None, bgd, fgd, 2, cv2.GC_INIT_WITH_MASK)
+        foreground = np.where(
+            (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0
+        ).astype(np.uint8)
+        foreground = cv2.morphologyEx(foreground, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        foreground = cv2.GaussianBlur(foreground, (7, 7), 0)
+        self._foreground_masks[key] = foreground
+        if len(self._foreground_masks) > 240:
+            self._foreground_masks.pop(next(iter(self._foreground_masks)))
+        return foreground
+
+    def _replace_video_background(
+        self, frame: np.ndarray, clip_name: str = "", frame_idx: int = 0
+    ) -> np.ndarray:
+        """Replace video background with a cached GrabCut foreground matte."""
+        if self._bg_bgr is None or frame is None or frame.size == 0:
+            return frame
+        if self._bg_bgr.shape[:2] != frame.shape[:2]:
+            self._bg_bgr = fit_bgr(self._bg_bgr, frame.shape[1], frame.shape[0])
+        source = frame
+        if self.bank is not None and clip_name:
+            clip = self.bank.get_clip(clip_name)
+            if clip is not None and clip.frames:
+                source = clip.frames[max(0, min(int(frame_idx), len(clip.frames) - 1))]
+        alpha = cv2.resize(
+            self._source_foreground_mask(clip_name, frame_idx, source),
+            (frame.shape[1], frame.shape[0]),
+            interpolation=cv2.INTER_LINEAR,
+        ).astype(np.float32)[:, :, None] / 255.0
+        foreground = frame.astype(np.float32)
+        background = self._bg_bgr.astype(np.float32)
+        return np.clip(foreground * alpha + background * (1.0 - alpha), 0, 255).astype(np.uint8)
 
     @staticmethod
     def _write_all(fh, data: bytes) -> None:
@@ -264,7 +312,9 @@ class StreamBroadcaster(threading.Thread):
         # Feed initial frames segera agar handshake RTMP langsung jalan tanpa deadlock probe
         try:
             init_frame = self.fallback_player.next_frame()
-            init_buf = np.ascontiguousarray(fit_bgr(init_frame, CANVAS_W, CANVAS_H), dtype=np.uint8).tobytes()
+            init_frame = fit_bgr(init_frame, CANVAS_W, CANVAS_H)
+            init_frame = self._replace_video_background(init_frame, self.bank.idle_clip.name, self.bank.idle_clip.base_pose_frame)
+            init_buf = np.ascontiguousarray(init_frame, dtype=np.uint8).tobytes()
             init_pcm = self.silence_pcm
             for _ in range(5):
                 self._write_all(self.v_fh, init_buf)
@@ -340,6 +390,8 @@ class StreamBroadcaster(threading.Thread):
                     pkt = self.render_q.get_nowait()
                     frame = pkt.frame
                     pcm = pkt.audio_pcm
+                    clip_name = getattr(pkt, "clip_name", "") or "idle"
+                    frame_idx = int(getattr(pkt, "frame_idx", 0) or 0)
                     if getattr(pkt, "clip_name", None) and getattr(pkt, "frame_idx", None) is not None:
                         self.fallback_player.sync(pkt.clip_name, pkt.frame_idx)
                 except queue.Empty:
@@ -347,6 +399,8 @@ class StreamBroadcaster(threading.Thread):
                     metrics.inc("broadcast_idle_fallback")
                     frame = self.fallback_player.next_frame()
                     pcm = self.silence_pcm
+                    clip_name = getattr(self.fallback_player._clip, "name", "idle")
+                    frame_idx = int(getattr(self.fallback_player, "_idx", 0) or 0)
 
                 if pcm is None:
                     pcm = self.silence_pcm
@@ -359,6 +413,8 @@ class StreamBroadcaster(threading.Thread):
                     h, w = frame.shape[:2]
                     if w != CANVAS_W or h != CANVAS_H:
                         frame = fit_bgr(frame, CANVAS_W, CANVAS_H)
+
+                    frame = self._replace_video_background(frame, clip_name, frame_idx)
 
                     # Terapkan overlay dinamis jika ada
                     frame = self._apply_overlay(frame)

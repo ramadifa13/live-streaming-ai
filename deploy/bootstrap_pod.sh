@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bootstrap full AI worker on a fresh RunPod (MuseTalk + VoxCPM2).
+# Bootstrap the AI worker on a fresh RunPod (MuseTalk only).
 # Usage (container start / web terminal):
 #   export HF_TOKEN=hf_xxx
 #   bash bootstrap_pod.sh
@@ -43,33 +43,9 @@ cd "$REPO_DIR/deploy"
 echo "[*] MuseTalk setup (idempotent jika .setup_complete ada)"
 GIT_PULL=0 bash setup.sh
 
-echo "[*] VoxCPM2 dedicated venv"
-VOICE_ID="${VOICE_ID:-girl_cute_kids}" bash voxcpm2_tts/setup.sh
-
-echo "[*] Worker .env + assets + restart API (VoxCPM2 bridge on :8091)"
-mkdir -p "$WORKER_DIR" /workspace/voices /workspace/models/voxcpm2
-for vid in girl_cute_kids girl_warm_youthful girl_warm_friendly girl_calm_professional; do
-  mkdir -p "/workspace/voices/$vid"
-  if [ -f "$REPO_DIR/deploy/voices/$vid/reference.wav" ]; then
-    cp -n "$REPO_DIR/deploy/voices/$vid/reference.wav" \
-      "/workspace/voices/$vid/reference.wav" || true
-  fi
-done
+echo "[*] Worker .env + restart API (TTS is owned by backend)"
+mkdir -p "$WORKER_DIR"
 cp -n .env.example "$WORKER_DIR/.env"
-# Pastikan VoxCPM2 + MuseTalk flags ada di .env worker
-grep -q '^TTS_ENABLED=' "$WORKER_DIR/.env" || cat >> "$WORKER_DIR/.env" <<'EOF'
-
-TTS_ENABLED=true
-VOICE_ID=girl_cute_kids
-TTS_LANGUAGE=id
-VOXCPM2_MODEL_PATH=/workspace/models/voxcpm2
-VOICE_ROOT=/workspace/voices
-VOXCPM2_VENV=/workspace/voxcpm2_env
-VOXCPM2_BIND_HOST=127.0.0.1
-VOXCPM2_BIND_PORT=8091
-VOXCPM2_ALLOW_VOICE_DESIGN=1
-VOXCPM2_READY_TIMEOUT=600
-EOF
 
 FORCE_ASSETS=1 bash sync.sh --restart
 
@@ -82,6 +58,4 @@ for i in $(seq 1 60); do
   fi
   sleep 5
 done
-curl -sf http://127.0.0.1:8000/tts/health && echo || echo "[WARN] /tts/health belum ready (VoxCPM2 masih warm-up)"
-
-echo "[DONE] MuseTalk + VoxCPM2 worker bootstrap selesai."
+echo "[DONE] MuseTalk worker bootstrap selesai; audio TTS berasal dari backend."

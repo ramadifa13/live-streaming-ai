@@ -76,7 +76,6 @@ if [ -f "$SYNC_SCRIPT" ]; then
 	source "$SYNC_SCRIPT"
 	bootstrap_worker_env
 	purge_legacy_tts
-	sync_girl_voices 2>/dev/null || true
 fi
 
 # Load worker .env (BROADCAST_MODE / MuseTalk flags)
@@ -146,9 +145,8 @@ stop_supervisor() {
 
 cleanup_worker_stack() {
 	stop_supervisor
-	echo "[INFO] Membersihkan proses worker (api_server, voxcpm2, broadcaster, ffmpeg RTMP) ..."
+	echo "[INFO] Membersihkan proses worker (api_server, broadcaster, ffmpeg RTMP) ..."
 	pkill -9 -f "[a]pi_server.py" 2>/dev/null || true
-	pkill -9 -f "[v]oxcpm2_tts/worker.py" 2>/dev/null || true
 	pkill -9 -f "[b]roadcaster.py" 2>/dev/null || true
 	pkill -9 -f "[f]rame_feed.py" 2>/dev/null || true
 	pkill -9 -f "ffmpeg.*rtmp" 2>/dev/null || true

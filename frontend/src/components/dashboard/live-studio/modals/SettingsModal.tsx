@@ -46,7 +46,7 @@ export const SettingsModal: React.FC = () => {
           <div className="flex items-center justify-between p-2 rounded bg-[#111827] border border-[#232c42]">
             <span>Voice TTS Engine</span>
             <span className="text-cyan-400 font-bold">
-              VoxCPM2 (AI Worker GPU)
+              Pocket TTS Indonesian (Backend)
             </span>
           </div>
         </div>

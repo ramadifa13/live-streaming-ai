@@ -1,6 +1,6 @@
 # Deployment Guide
 
-Live host AI: **frontend** (Next.js) + **backend** (Node, LLM/orkestrasi) + **AI worker** (RunPod **L40S** / 4090: **VoxCPM2 TTS** + MuseTalk + RTMP).
+Live host AI: **frontend** (Next.js) + **backend** (Node, LLM, Pocket-TTS/voice cloning) + **AI worker** (RunPod **L40S** / 4090: MuseTalk + RTMP).
 
 ```
 Browser  →  Frontend :3000  →  Backend :4000
@@ -17,29 +17,29 @@ Browser  →  Frontend :3000  →  Backend :4000
 
 Katalog `voice_id` (host perempuan):
 
-| voice_id | Label |
-|---|---|
-| `girl_cute_kids` | girl - cute kids |
-| `girl_warm_youthful` | girl - warm & youthful |
-| `girl_warm_friendly` | girl - warm & friendly |
+| voice_id                 | Label                      |
+| ------------------------ | -------------------------- |
+| `girl_cute_kids`         | girl - cute kids           |
+| `girl_warm_youthful`     | girl - warm & youthful     |
+| `girl_warm_friendly`     | girl - warm & friendly     |
 | `girl_calm_professional` | girl - calm & professional |
 
 ---
 
 ## 1. Arsitektur & peran
 
-| Komponen | Mesin | Tugas |
-|---|---|---|
-| Frontend | VPS / laptop | UI, Go Live, **preview suara lokal** |
-| Backend | VPS / laptop | LLM/script bank, orkestrasi live, panggil worker saat live |
-| AI worker | RunPod GPU + volume `/workspace` | VoxCPM2 + MuseTalk + idle clips + RTMP |
+| Komponen  | Mesin                            | Tugas                                                      |
+| --------- | -------------------------------- | ---------------------------------------------------------- |
+| Frontend  | VPS / laptop                     | UI, Go Live, **preview suara lokal**                       |
+| Backend   | VPS / laptop                     | LLM/script bank, orkestrasi live, panggil worker saat live |
+| AI worker | RunPod GPU + volume `/workspace` | VoxCPM2 + MuseTalk + idle clips + RTMP                     |
 
 ### Pod STATIS vs ON-DEMAND (backend `.env`)
 
-| Mode | `RUNPOD_POD_ID` | `RUNPOD_WORKER_URL` | `RUNPOD_API_KEY` + `NETWORK_VOLUME_ID` | Perilaku |
-|---|---|---|---|---|
-| **STATIS** | terisi | terisi (proxy pod) | opsional | Pakai pod tetap; health/resume; end-live biasanya pause (jika `KEEP_POD_WARM=1`) |
-| **ON-DEMAND** | **kosong** | **kosong** | **wajib** | Mulai Siaran = create pod; Akhiri = terminate |
+| Mode          | `RUNPOD_POD_ID` | `RUNPOD_WORKER_URL` | `RUNPOD_API_KEY` + `NETWORK_VOLUME_ID` | Perilaku                                                                         |
+| ------------- | --------------- | ------------------- | -------------------------------------- | -------------------------------------------------------------------------------- |
+| **STATIS**    | terisi          | terisi (proxy pod)  | opsional                               | Pakai pod tetap; health/resume; end-live biasanya pause (jika `KEEP_POD_WARM=1`) |
+| **ON-DEMAND** | **kosong**      | **kosong**          | **wajib**                              | Mulai Siaran = create pod; Akhiri = terminate                                    |
 
 Frontend `AVATAR_WORKER_URL` pada mode statis **samakan** dengan `RUNPOD_WORKER_URL`. Pada on-demand, pre-live tidak bergantung worker.
 
@@ -388,7 +388,7 @@ curl -s https://livio.id/api/health
 
 - `PORT=8000`, `BROADCAST_MODE=ai_worker`, `WORKER_REQUIRE_AUDIO=1`.
 - `VOICE_ID=girl_cute_kids`, `VOICE_ROOT=/workspace/voices`, `VOXCPM2_VENV=/workspace/voxcpm2_env`.
-- L40S: `MUSETALK_BATCH_SIZE=16`, `AI_WORKER_HOLD_TALK_SEC=90`, `MUSETALK_PREROLL_TIMEOUT_SEC=2.5`, `MUSETALK_HARD_PREROLL=1`, `AI_WORKER_TALK_CLIP=talk`, `AI_WORKER_PIN_TALK=1`, `AI_WORKER_TALK_STREAK=999`, `AI_WORKER_OVERLAP_FRAMES=12`. Assets: `namira_idle.mp4` + `namira_talk.mp4` (+ `talk_2`/`talk_3`). Validate: `python scripts/validate_idle_assets.py --assets-dir assets/3d --write-meta`.
+- L40S: `MUSETALK_BATCH_SIZE=16`, `AI_WORKER_HOLD_TALK_SEC=90`, `MUSETALK_PREROLL_TIMEOUT_SEC=2.5`, `MUSETALK_HARD_PREROLL=1`, `AI_WORKER_TALK_CLIP=talk_1`, `AI_WORKER_PIN_TALK=1`, `AI_WORKER_TALK_STREAK=999`, `AI_WORKER_OVERLAP_FRAMES=12`. Assets: `namira_idle.mp4` + `namira_talk_1.mp4` (+ `talk_2`/`talk_3`). Validate: `python scripts/validate_idle_assets.py --assets-dir assets/3d --write-meta`.
 - Jangan install Piper/Supertonic.
 
 **Frontend**:
@@ -401,13 +401,13 @@ curl -s https://livio.id/api/health
 
 Worker **bukan** merender MP4 lalu concatenate — tubuh loop di RAM + lipsync MuseTalk @30fps. Agar terasa realtime:
 
-| Setting / perilaku | Tujuan |
-|---|---|
-| Soft cut + soft loop wrap | Hindari hard pose jump mid-speech |
-| Complete utterance setelah audio (+ grace singkat), **bukan** tunggu `end_pose` | Hilangkan mute talking-body & delay kalimat berikutnya |
-| Hold talk 90s | Jangan jatuh ke idle saat TTS lambat |
-| Talk pool `talk,talk_2,talk_3` | Bedakan rest (`idle`) vs talk |
-| Script bank **tidak** harus match durasi clip | Clip loop mengikuti audio; yang penting buffer audio nyata |
+| Setting / perilaku                                                              | Tujuan                                                     |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Soft cut + soft loop wrap                                                       | Hindari hard pose jump mid-speech                          |
+| Complete utterance setelah audio (+ grace singkat), **bukan** tunggu `end_pose` | Hilangkan mute talking-body & delay kalimat berikutnya     |
+| Hold talk 90s                                                                   | Jangan jatuh ke idle saat TTS lambat                       |
+| Talk pool `talk,talk_2,talk_3`                                                  | Bedakan rest (`idle`) vs talk                              |
+| Script bank **tidak** harus match durasi clip                                   | Clip loop mengikuti audio; yang penting buffer audio nyata |
 
 ---
 

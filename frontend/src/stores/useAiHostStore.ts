@@ -3,7 +3,6 @@ import { Avatar, LiveSalesScript, Product } from "@/app/dashboard/types";
 import {
   avatars,
   DEFAULT_VOICE_ID,
-  localVoicePreviewUrl,
   type TtsLangCode,
 } from "@/app/dashboard/constants";
 import { aiService, VideoScriptData } from "@/services/aiService";
@@ -53,7 +52,7 @@ interface AiHostState {
       tone?: string;
       avatar?: string;
       speed?: number;
-      /** Pre-live: putar sample lokal, jangan hit pod. */
+      /** Kept for call-site compatibility; previews now use backend TTS. */
       localPreviewOnly?: boolean;
     },
   ) => Promise<void>;
@@ -149,14 +148,26 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
     const lang = langRaw === "en" ? "en" : "id";
 
     try {
-      // Pre-live FE: selalu sample lokal — tidak hit pod.
-      const url = localVoicePreviewUrl(voiceId, lang);
+      const blob = await aiService.synthesizeTTS({
+        text: text === "__local_preview__"
+          ? "Halo, ini adalah preview suara host Anda."
+          : text,
+        voice: voiceId,
+        voiceId,
+        avatarName: opts?.avatar || state.selectedAvatar.name,
+        speed: opts?.speed || state.speechSpeed,
+        tone: opts?.tone || state.selectedTone,
+        lang,
+        allowOfflineSynth: true,
+      });
+      const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       activeAudio = audio;
       set({ isPlayingAudio: true, isSynthesizingAudio: false });
 
       audio.onended = () => {
         set({ isPlayingAudio: false, isAvatarSpeaking: false });
+        URL.revokeObjectURL(url);
         activeAudio = null;
       };
 
@@ -166,17 +177,16 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
           isAvatarSpeaking: false,
           isSynthesizingAudio: false,
         });
+        URL.revokeObjectURL(url);
         activeAudio = null;
       };
 
       await audio.play().catch(() => {
-        throw new Error(
-          `Sample lokal tidak ditemukan: ${url}. Generate dulu preview VoxCPM2.`,
-        );
+        throw new Error("Browser menolak pemutaran audio preview.");
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      console.warn("[speakText] local preview notice:", errorMessage);
+      console.warn("[speakText] backend preview notice:", errorMessage);
       set({
         isPlayingAudio: false,
         isAvatarSpeaking: false,

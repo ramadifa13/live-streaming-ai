@@ -16,6 +16,7 @@ export const LivePreviewBoard: React.FC = () => {
   const currentStep = useDashboardUIStore((state) => state.currentStep);
 
   const selectedAvatar = useAiHostStore((state) => state.selectedAvatar);
+  const selectedBackground = useAiHostStore((state) => state.selectedBackground);
   const isAvatarSpeaking = useAiHostStore((state) => state.isAvatarSpeaking);
   const currentLiveVideoUrl = useAiHostStore((state) => state.currentLiveVideoUrl);
   const setCurrentLiveVideoUrl = useAiHostStore((state) => state.setCurrentLiveVideoUrl);
@@ -63,7 +64,6 @@ export const LivePreviewBoard: React.FC = () => {
           : "border-[#232c42] bg-[#0c1221]"
       }`}
     >
-      
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#232c42]/80 pb-3">
         <div className="flex items-center gap-2">
           <span className="rounded-md bg-blue-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-blue-400 border border-blue-500/20">
@@ -87,14 +87,11 @@ export const LivePreviewBoard: React.FC = () => {
         Pratinjau interaktif avatar AI, simulasi live chat, dan estimasi performa siaran langsung Anda.
       </p>
 
-      
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-stretch min-h-[360px]">
-        
         <div className="md:col-span-4">
           <LiveChatPanel />
         </div>
 
-        
         <div className="md:col-span-4 flex justify-center">
           <div className="relative aspect-[9/16] w-full max-w-[235px] h-full min-h-[350px] overflow-hidden rounded-2xl border-2 border-[#232c42] bg-[#0c0919] shadow-2xl">
             <RealtimeLivePortraitView
@@ -105,30 +102,27 @@ export const LivePreviewBoard: React.FC = () => {
               videoUrl={currentLiveVideoUrl || undefined}
               onVideoEnded={() => setCurrentLiveVideoUrl(null)}
               isLiveActive={isLiveActive}
-              backgroundImage={useAiHostStore.getState().selectedBackground}
+              backgroundImage={selectedBackground}
               className="w-full h-full object-cover"
             />
 
-            
-{activeFeaturedProduct?.bannerImage && (
-               <div className="absolute top-1 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[75%] flex justify-center animate-in fade-in slide-in-from-top-2 duration-300">
-                 <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/40 bg-black/60 backdrop-blur-md p-0.5 w-full relative h-20">
-                   <Image
-                     src={activeFeaturedProduct.bannerImage}
-                     alt="Banner Promosi"
-                     fill
-                     unoptimized
-                     className="object-cover rounded-xl shadow-sm"
-                   />
-                 </div>
-               </div>
-             )}
+            {activeFeaturedProduct?.bannerImage && (
+              <div className="absolute top-1 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[75%] flex justify-center animate-in fade-in slide-in-from-top-2 duration-300">
+                <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/40 bg-black/60 backdrop-blur-md p-0.5 w-full relative h-20">
+                  <Image
+                    src={activeFeaturedProduct.bannerImage}
+                    alt="Banner Promosi"
+                    fill
+                    unoptimized
+                    className="object-cover rounded-xl shadow-sm"
+                  />
+                </div>
+              </div>
+            )}
 
-            
             {activeFeaturedProduct?.name && activeFeaturedProduct.name !== "Memuat Produk..." && (
               <div className="absolute bottom-[5%] left-1/2 -translate-x-1/2 z-20 pointer-events-none w-[92%] max-w-[218px] flex justify-center animate-in fade-in slide-in-from-bottom-2 duration-300">
                 <div className="w-full rounded-2xl bg-white/98 p-2.5 shadow-[0_10px_30px_rgba(0,0,0,0.35)] border border-slate-100/90 flex items-center gap-2.5 text-slate-900 backdrop-blur-md ring-1 ring-black/5">
-                  
                   <div className="relative h-11 w-11 shrink-0 rounded-xl overflow-hidden bg-slate-100 border border-slate-200/80 shadow-xs">
                     <Image
                       src={
@@ -145,7 +139,6 @@ export const LivePreviewBoard: React.FC = () => {
                     />
                   </div>
 
-                  
                   <div className="flex-1 min-w-0">
                     <p className="text-[10px] font-bold text-slate-900 truncate leading-tight">
                       {activeFeaturedProduct.name}
@@ -169,7 +162,6 @@ export const LivePreviewBoard: React.FC = () => {
           </div>
         </div>
 
-        
         <div className="md:col-span-4 flex flex-col justify-between rounded-xl border border-[#232c42] bg-[#111827]/80 p-3.5">
           <div>
             <p className="text-xs font-bold text-white mb-2.5 flex items-center justify-between border-b border-[#232c42] pb-2">
@@ -195,9 +187,7 @@ export const LivePreviewBoard: React.FC = () => {
                   <PlatformIcon platformName={selectedPlatform} size="sm" />
                   <span>Platform</span>
                 </span>
-                <span className="font-semibold text-blue-400 flex items-center gap-1.5">
-                  {selectedPlatform}
-                </span>
+                <span className="font-semibold text-blue-400 flex items-center gap-1.5">{selectedPlatform}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-400 flex items-center gap-1.5">
@@ -209,7 +199,6 @@ export const LivePreviewBoard: React.FC = () => {
             </div>
           </div>
 
-          
           <div className="mt-3 pt-2.5 border-t border-[#232c42] space-y-1.5 text-[11px]">
             <div className="flex items-center justify-between text-slate-400">
               <span className="flex items-center gap-1.5">
@@ -246,5 +235,3 @@ export const LivePreviewBoard: React.FC = () => {
     </div>
   );
 };
-
-

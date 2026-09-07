@@ -42,6 +42,13 @@ await liveSessionRoutes(server);
 await providersRoutes(server);
 await aiBrainRoutes(server);
 await ttsRoutes(server);
+
+process.once("SIGINT", () => {
+  import("./services/tts.js").then(({ stopTTS }) => stopTTS());
+});
+process.once("SIGTERM", () => {
+  import("./services/tts.js").then(({ stopTTS }) => stopTTS());
+});
 await avatarVideoRoutes(server);
 await chatStreamRoutes(server);
 await oauthRoutes(server);
@@ -93,10 +100,14 @@ try {
   }
   await server.listen({ port, host });
   console.log(`Backend ready at http://${host}:${port}`);
-  console.log(`[TTS] Engine=VoxCPM2 voice_id=${process.env.VOICE_ID || "girl_cute_kids"} (AI Worker GPU)`);
+  console.log(`[TTS] Engine=Pocket TTS Indonesian voice_id=${process.env.VOICE_ID || "girl_cute_kids"} (backend)`);
 
   import("./services/runpod-manager.js").then((m) => m.startIdleMonitor());
-  import("./services/tts.js").then((m) => m.warmUpTTS());
+  import("./services/tts.js")
+    .then((m) => m.warmUpTTS())
+    .catch((ttsErr) => {
+      console.error("[TTS] Pocket TTS warmup gagal; backend tetap berjalan:", ttsErr);
+    });
 } catch (error) {
   server.log.error(error);
   process.exit(1);

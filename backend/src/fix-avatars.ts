@@ -14,7 +14,7 @@ async function fix() {
         voice: "girl_cute_kids",
         sampleAudioUrl: null,
         isActive: true,
-        description: "Host 3D dinamis - Namira (VoxCPM2 girl_cute_kids)",
+        description: "Host 3D dinamis - Namira (Pocket TTS girl_cute_kids)",
       },
     });
     console.log("Created avatar id=1 (Namira)");
@@ -26,7 +26,7 @@ async function fix() {
         sampleAudioUrl: null,
       },
     });
-    console.log("Updated avatar id=1  voice=girl_cute_kids (VoxCPM2)");
+    console.log("Updated avatar id=1  voice=girl_cute_kids (Pocket TTS)");
   }
 
   await prisma.avatar.updateMany({

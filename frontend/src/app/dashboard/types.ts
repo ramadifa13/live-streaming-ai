@@ -90,11 +90,12 @@ export interface Avatar {
   language: string;
   /** female | male — visual host only */
   gender: "female" | "male";
-  /** VoxCPM2 voice_id (female catalog) */
+  /** Backend Pocket TTS voice profile id */
   voice: string;
   voiceId?: string;
   sampleAudioUrl?: string;
   image: string;
+  imageProfile: string;
   modelUrl3d?: string;
   specialty?: string;
 }

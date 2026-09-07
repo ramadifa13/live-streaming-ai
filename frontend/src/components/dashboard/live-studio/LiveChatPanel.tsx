@@ -154,7 +154,7 @@ export const LiveChatPanel: React.FC = () => {
             <span className="text-[10px] text-slate-600 mt-0.5">
               {isLive
                 ? "Ketik untuk inject komentar ke AI Host live"
-                : "Prelive: uji respons LLM + VoxCPM2 TTS"}
+                : "Prelive: uji respons LLM + Pocket TTS"}
             </span>
           </div>
         ) : (

@@ -98,12 +98,36 @@ def check_fps_lock() -> None:
     print("[INVARIANT] FPS env OK")
 
 
+def check_audio_sample_rate_contract() -> None:
+    expected = {
+        ROOT / "speech_bridge.py": "SAMPLE_RATE",
+        ROOT / "ai_worker.py": "SAMPLE_RATE",
+        ROOT / "core_pipeline.py": "AUDIO_SAMPLE_RATE",
+    }
+    for path, name in expected.items():
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        values = [
+            node.value.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == name
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, int)
+        ]
+        if values != [16000]:
+            _fail(f"{path.name} harus memakai {name}=16000, ditemukan {values}")
+    print("[INVARIANT] audio sample-rate contract OK")
+
+
 def main() -> None:
     check_rtmp_utils()
     check_lipsync_not_forced_on_any_clip()
     check_seamless_contract()
     check_validate_assets_script()
     check_fps_lock()
+    check_audio_sample_rate_contract()
     print("[INVARIANT] semua cek lolos")
 
 

@@ -1,11 +1,12 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import fs from "fs/promises";
+import path from "path";
 import {
   HOST_VOICES,
   resolveVoiceId,
   synthesizeSpeech,
 } from "../services/tts.js";
-import { liveSessionManager } from "../services/live-session-manager.js";
 
 const synthesizeSchema = z.object({
   text: z.string().min(1),
@@ -25,16 +26,7 @@ const synthesizeSchema = z.object({
   allowOfflineSynth: z.boolean().optional(),
 });
 
-function resolveLivePodId(sessionId?: string): string | null {
-  if (sessionId) {
-    const s = liveSessionManager.getSession(sessionId);
-    if (s?.podId && (s.state === "live" || s.state === "pending")) {
-      return s.podId;
-    }
-  }
-  const staticId = (process.env.RUNPOD_POD_ID || "").trim();
-  return staticId || null;
-}
+const voiceRoot = path.resolve(process.cwd(), "voices");
 
 export async function ttsRoutes(server: FastifyInstance) {
   // GET /api/tts/voices — voice_id profiles
@@ -47,7 +39,7 @@ export async function ttsRoutes(server: FastifyInstance) {
         gender: h.gender,
         locale: h.locale,
         style: h.style,
-        engine: "voxcpm2",
+        engine: "pocket-tts-indonesian",
         voiceId: h.id,
         avatarMatch: h.name,
       })),
@@ -58,20 +50,59 @@ export async function ttsRoutes(server: FastifyInstance) {
     "/api/tts/sample/:host",
     async (request) => {
       const voiceId = resolveVoiceId(request.params.host);
+      const referencePath = path.join(voiceRoot, voiceId, "reference.wav");
       return {
         success: true,
         data: {
           host: voiceId,
           voiceId,
-          sampleAudioUrl: `/voices/${voiceId}/preview_id.wav`,
-          sampleAudioUrlEn: `/voices/${voiceId}/preview_en.wav`,
-          note: "Pre-live memakai sample lokal. Live memakai VoxCPM2 di AI Worker.",
+          sampleAudioUrl: `/api/tts/voices/${voiceId}/reference`,
+          sampleAudioUrlEn: `/api/tts/voices/${voiceId}/reference`,
+          note: "Preview dan live memakai Pocket TTS di backend.",
+          referenceAvailable: await fs.stat(referencePath).then(() => true).catch(() => false),
         },
       };
     },
   );
 
-  // POST /api/tts/synthesize — VoxCPM2 via AI Worker
+  server.get<{ Params: { voiceId: string } }>(
+    "/api/tts/voices/:voiceId/reference",
+    async (request, reply) => {
+      const voiceId = resolveVoiceId(request.params.voiceId);
+      if (!HOST_VOICES.some((voice) => voice.id === voiceId)) {
+        reply.code(404);
+        return { error: "Voice tidak ditemukan" };
+      }
+      const audio = await fs.readFile(path.join(voiceRoot, voiceId, "reference.wav"));
+      return reply.type("audio/wav").send(audio);
+    },
+  );
+
+  server.post<{ Params: { voiceId: string } }>(
+    "/api/tts/voices/:voiceId/reference",
+    async (request, reply) => {
+      const voiceId = resolveVoiceId(request.params.voiceId);
+      if (!HOST_VOICES.some((voice) => voice.id === voiceId)) {
+        reply.code(404);
+        return { error: "Voice tidak ditemukan" };
+      }
+      const upload = await request.file();
+      if (!upload) {
+        reply.code(400);
+        return { error: "Kirim file reference WAV pada multipart field 'file'" };
+      }
+      const buffer = await upload.toBuffer();
+      if (!buffer.length) {
+        reply.code(400);
+        return { error: "File reference kosong" };
+      }
+      await fs.mkdir(path.join(voiceRoot, voiceId), { recursive: true });
+      await fs.writeFile(path.join(voiceRoot, voiceId, "reference.wav"), buffer);
+      return { success: true, voiceId, engine: "pocket-tts-indonesian" };
+    },
+  );
+
+  // POST /api/tts/synthesize — Pocket TTS in the backend
   server.post("/api/tts/synthesize", async (request, reply) => {
     const parsed = synthesizeSchema.safeParse(request.body);
 
@@ -85,27 +116,13 @@ export async function ttsRoutes(server: FastifyInstance) {
       parsed.data.avatarName,
     );
 
-    const sessionPod = resolveLivePodId(parsed.data.sessionId);
-    const allowOffline = parsed.data.allowOfflineSynth === true;
-    if (!sessionPod && !allowOffline) {
-      reply.code(403);
-      return {
-        success: false,
-        error:
-          "TTS VoxCPM2 butuh sesi live atau allowOfflineSynth (dengan AI Worker GPU).",
-        voiceId,
-        engine: "voxcpm2",
-      };
-    }
-
     const result = await synthesizeSpeech({
       ...parsed.data,
       voiceId,
       host: voiceId,
       voice: voiceId,
       style: parsed.data.style || parsed.data.tone,
-      podId: sessionPod,
-      allowOfflineSynth: allowOffline || Boolean(sessionPod),
+      allowOfflineSynth: true,
     });
 
     if (result.success && result.audioBuffer && result.audioBuffer.length > 0) {
@@ -115,7 +132,7 @@ export async function ttsRoutes(server: FastifyInstance) {
         result.durationEstimateSeconds.toString(),
       );
       reply.header("X-TTS-Voice-Id", voiceId);
-      reply.header("X-TTS-Engine", "voxcpm2");
+      reply.header("X-TTS-Engine", "pocket-tts-indonesian");
       if (result.metrics?.latencyMs != null) {
         reply.header("X-TTS-Latency-Ms", String(result.metrics.latencyMs));
       }
@@ -128,11 +145,11 @@ export async function ttsRoutes(server: FastifyInstance) {
       return reply.send(result.audioBuffer);
     }
 
-    reply.code(result.message.includes("Pra-live") ? 403 : 502);
+    reply.code(502);
     return {
       success: false,
       error: result.message || "TTS synthesis failed",
-      engine: "voxcpm2",
+      engine: "pocket-tts-indonesian",
       voiceId,
     };
   });

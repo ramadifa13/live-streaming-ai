@@ -81,7 +81,7 @@ pull_repo() {
 	echo "[pull] HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo '?') branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
 }
 
-# Hapus TTS engine lama (Piper/Supertonic) — VoxCPM2 adalah satu-satunya TTS.
+# Hapus engine TTS lama dari worker; sintesis berjalan di backend.
 purge_legacy_tts() {
 	echo "[TTS] Membersihkan sisa Piper/Supertonic di pod…"
 	pkill -f "[p]iper_tts/server.py|uvicorn.*8090|[s]upertonic" 2>/dev/null || true
@@ -113,28 +113,7 @@ purge_legacy_tts() {
 	}
 	_strip_legacy_tts_env "${WORKER_DIR:-}/.env"
 	_strip_legacy_tts_env "${DEPLOY_DIR:-}/.env"
-	echo "[TTS] Sisa Piper/Supertonic dihapus. TTS aktif = VoxCPM2."
-}
-
-sync_girl_voices() {
-	local src_root=""
-	if [ -d "$DEPLOY_DIR/voices" ]; then
-		src_root="$DEPLOY_DIR/voices"
-	elif [ -d "$WORKER_DIR/voices" ]; then
-		src_root="$WORKER_DIR/voices"
-	else
-		return 0
-	fi
-	mkdir -p /workspace/voices "$WORKER_DIR/voices"
-	local vid
-	for vid in girl_cute_kids girl_warm_youthful girl_warm_friendly girl_calm_professional; do
-		mkdir -p "/workspace/voices/$vid" "$WORKER_DIR/voices/$vid"
-		if [ -f "$src_root/$vid/reference.wav" ]; then
-			cp -n "$src_root/$vid/reference.wav" "/workspace/voices/$vid/reference.wav" 2>/dev/null || true
-			cp -n "$src_root/$vid/reference.wav" "$WORKER_DIR/voices/$vid/reference.wav" 2>/dev/null || true
-		fi
-	done
-	rm -rf /workspace/voices/default_host "$WORKER_DIR/voices/default_host" 2>/dev/null || true
+	echo "[TTS] Sisa Piper/Supertonic dihapus. Worker hanya menerima audio backend."
 }
 
 bootstrap_worker_env() {
@@ -312,12 +291,7 @@ sync_worker_files() {
 	echo "[SYNC] Menyalin skrip Python & shell ke $WORKER_DIR ..."
 	cp -f "$DEPLOY_DIR"/*.py "$WORKER_DIR/" 2>/dev/null || true
 
-	# VoxCPM2 TTS package + voice assets
-	if [ -d "$DEPLOY_DIR/voxcpm2_tts" ]; then
-		echo "[SYNC] Menyalin voxcpm2_tts/ ..."
-		mkdir -p "$WORKER_DIR/voxcpm2_tts"
-		cp -rf "$DEPLOY_DIR/voxcpm2_tts/." "$WORKER_DIR/voxcpm2_tts/"
-	fi
+	# TTS dan voice references dimiliki backend; worker hanya menerima WAV.
 	# Helper scripts (ops) — tetap flat di worker agar path lama tetap jalan
 	_tts_check=""
 	if [ -f "$DEPLOY_DIR/scripts/check_tts_integration.sh" ]; then
@@ -336,13 +310,7 @@ sync_worker_files() {
 		cp -f "$DEPLOY_DIR/scripts/_start_worker.sh" "$WORKER_DIR/_start_worker.sh"
 		chmod +x "$WORKER_DIR/_start_worker.sh" 2>/dev/null || true
 	fi
-	if [ -d "$DEPLOY_DIR/voices" ]; then
-		echo "[SYNC] Menyalin voices/ ..."
-		mkdir -p "$WORKER_DIR/voices" /workspace/voices
-		cp -rf "$DEPLOY_DIR/voices/." "$WORKER_DIR/voices/"
-		cp -rn "$DEPLOY_DIR/voices/." /workspace/voices/ 2>/dev/null || true
-	fi
-	sync_girl_voices
+	# Voice references are owned by the backend and never copied to this worker.
 
 	if [ "${START_SH_RUNNING:-0}" = "1" ]; then
 		for shf in "$DEPLOY_DIR"/*.sh; do
@@ -397,7 +365,6 @@ sync_worker_files() {
 	fix_shell_eol "$DEPLOY_DIR/scripts"
 	chmod +x "$WORKER_DIR"/*.sh "$DEPLOY_DIR"/*.sh 2>/dev/null || true
 	chmod +x "$DEPLOY_DIR/scripts"/*.sh 2>/dev/null || true
-	chmod +x "$WORKER_DIR/voxcpm2_tts"/*.sh "$DEPLOY_DIR/voxcpm2_tts"/*.sh 2>/dev/null || true
 
 	echo "[SYNC] Selesai."
 }

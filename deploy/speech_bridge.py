@@ -44,7 +44,8 @@ TARGET_FPS = int(
         else os.environ.get("FRAME_FEED_FPS", "30"),
     )
 )
-SAMPLE_RATE = 44100
+# Keep the bridge contract identical to core_pipeline and MuseTalk input.
+SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
 BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2
 

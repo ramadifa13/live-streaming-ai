@@ -70,10 +70,8 @@ def prefer_idle_clip(idle_path: str) -> str:
     for name in (
         f"{host}_idle.mp4",
         "namira_idle.mp4",
-        f"{host}_idle_1.mp4",
-        "namira_idle_1.mp4",
-        f"{host}_talk.mp4",
-        "namira_talk.mp4",
+        f"{host}_talk_1.mp4",
+        "namira_talk_1.mp4",
     ):
         candidate = os.path.join(directory, name)
         if os.path.exists(candidate):
@@ -84,14 +82,14 @@ def prefer_idle_clip(idle_path: str) -> str:
 
 
 def prefer_talk_clip(idle_path: str) -> str:
-    """Talk body — namira_talk.mp4."""
+    """Talk body — namira_talk_1.mp4."""
     if not idle_path:
         return idle_path
     directory = os.path.dirname(idle_path) or "."
     host = _host_from_idle_path(idle_path)
     for name in (
-        f"{host}_talk.mp4",
-        "namira_talk.mp4",
+        f"{host}_talk_1.mp4",
+        "namira_talk_1.mp4",
         f"{host}_talk_2.mp4",
         "namira_talk_2.mp4",
         f"{host}_talk_3.mp4",

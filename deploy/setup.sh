@@ -511,36 +511,8 @@ if [ -f "$WORKER_DIR/requirements-worker.txt" ]; then
 fi
 
 # ------------------------------------------------------------
-# 10. VoxCPM2 TTS — venv TERPISAH (torch 2.5+/CUDA12 vs MuseTalk cu118)
+# 10. TTS is installed and owned by the backend; the worker only runs MuseTalk.
 # ------------------------------------------------------------
-echo ""
-echo "[INFO] Installing VoxCPM2 TTS (dedicated venv)…"
-if [ -f "$SCRIPT_DIR/voxcpm2_tts/setup.sh" ]; then
-    # Juga sync package ke worker dir
-    mkdir -p "$WORKER_DIR/voxcpm2_tts" "$WORKER_DIR/voices"
-    cp -rf "$SCRIPT_DIR/voxcpm2_tts/." "$WORKER_DIR/voxcpm2_tts/"
-    if [ -d "$SCRIPT_DIR/voices" ]; then
-        cp -rf "$SCRIPT_DIR/voices/." "$WORKER_DIR/voices/"
-    fi
-    bash "$WORKER_DIR/voxcpm2_tts/setup.sh" || {
-        echo "[WARN] VoxCPM2 setup gagal — API tetap jalan; /tts akan 503 sampai diperbaiki."
-    }
-else
-    echo "[WARN] voxcpm2_tts/setup.sh tidak ditemukan di $SCRIPT_DIR"
-fi
-
-# Sync katalog suara perempuan ke network volume
-for vid in girl_cute_kids girl_warm_youthful girl_warm_friendly girl_calm_professional; do
-    mkdir -p "/workspace/voices/$vid"
-    if [ -f "$WORKER_DIR/voices/$vid/reference.wav" ]; then
-        cp -n "$WORKER_DIR/voices/$vid/reference.wav" "/workspace/voices/$vid/reference.wav" || true
-    elif [ -f "$SCRIPT_DIR/voices/$vid/reference.wav" ]; then
-        cp -n "$SCRIPT_DIR/voices/$vid/reference.wav" "/workspace/voices/$vid/reference.wav" || true
-    fi
-done
-rm -rf /workspace/voices/default_host 2>/dev/null || true
-
-
 # ------------------------------------------------------------
 # 11. DOWNLOAD MODELS & VERIFICATION
 # ------------------------------------------------------------

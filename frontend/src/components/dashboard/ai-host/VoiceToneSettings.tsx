@@ -1,14 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Play, Pause, Loader2, Languages, AudioLines } from "lucide-react";
-import {
-  DEFAULT_VOICE_ID,
-  TTS_LANGS,
-  localVoicePreviewUrl,
-  voicesForAvatarGender,
-  type TtsLangCode,
-} from "@/app/dashboard/constants";
+import { DEFAULT_VOICE_ID, TTS_LANGS, type HostVoiceOption, type TtsLangCode } from "@/app/dashboard/constants";
+import { aiService } from "@/services/aiService";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 
@@ -24,27 +19,44 @@ export const VoiceToneSettings: React.FC = () => {
   const speakText = useAiHostStore((state) => state.speakText);
   const showToast = useDashboardUIStore((state) => state.showToast);
 
-  const voiceOptions = voicesForAvatarGender(selectedAvatar.gender);
-  const voiceId =
-    selectedVoice || selectedAvatar.voice || DEFAULT_VOICE_ID;
-  const activeVoice =
-    voiceOptions.find((v) => v.id === voiceId) || voiceOptions[0];
+  const [voiceOptions, setVoiceOptions] = useState<HostVoiceOption[]>([]);
+  const voiceId = selectedVoice || selectedAvatar.voice || DEFAULT_VOICE_ID;
+
+  useEffect(() => {
+    let active = true;
+    void aiService
+      .getTtsVoices()
+      .then((voices) => {
+        if (!active) return;
+        setVoiceOptions(
+          voices
+            .filter((voice) => voice.gender === selectedAvatar.gender)
+            .map((voice) => ({
+              id: voice.id,
+              label: voice.name,
+              gender: voice.gender,
+              style: voice.style,
+            })),
+        );
+      })
+      .catch(() => setVoiceOptions([]));
+    return () => {
+      active = false;
+    };
+  }, [selectedAvatar.gender]);
+  const activeVoice = voiceOptions.find((v) => v.id === voiceId) || voiceOptions[0];
 
   const isBusy = isSynthesizingAudio || isPlayingAudio || isAvatarSpeaking;
-  const statusLabel = isSynthesizingAudio
-    ? "Memuat…"
-    : isPlayingAudio || isAvatarSpeaking
-      ? "Memutar"
-      : "Siap";
+  const statusLabel = isSynthesizingAudio ? "Memuat…" : isPlayingAudio || isAvatarSpeaking ? "Memutar" : "Siap";
 
   const handlePlayAudioPreview = async () => {
     if (!activeVoice) {
       showToast("Tidak ada suara untuk host ini.");
       return;
     }
-    showToast(`Preview lokal · ${activeVoice.label}`);
+    showToast(`Preview backend · ${activeVoice.label}`);
     try {
-      // Pre-live: sample statis saja — tidak hit pod / VoxCPM2.
+      // Preview uses the backend Pocket TTS endpoint.
       await speakText("__local_preview__", {
         voice: activeVoice.id,
         avatar: selectedAvatar.name,
@@ -64,9 +76,7 @@ export const VoiceToneSettings: React.FC = () => {
           <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-blue-500/25 bg-blue-500/10 text-blue-300">
             <AudioLines className="h-3 w-3" />
           </span>
-          <p className="truncate text-[11px] font-bold text-white">
-            Suara · {selectedAvatar.name}
-          </p>
+          <p className="truncate text-[11px] font-bold text-white">Suara · {selectedAvatar.name}</p>
         </div>
         <span
           className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-semibold tracking-wide ${
@@ -155,16 +165,14 @@ export const VoiceToneSettings: React.FC = () => {
 
         <div className="rounded-lg border border-white/5 bg-[#080e1a]/80 px-2 py-1.5">
           <p className="text-[9px] text-slate-500 leading-snug">
-            Preview memakai file lokal (
-            {localVoicePreviewUrl(activeVoice?.id || DEFAULT_VOICE_ID, selectedLang)}
-            ). VoxCPM2 hanya saat live.
+            Preview memakai Pocket TTS backend dengan voice cloning dari reference audio.
           </p>
         </div>
 
         {(isSynthesizingAudio || isPlayingAudio || isAvatarSpeaking) && (
           <p className="truncate text-[9px] text-slate-500">
             {isSynthesizingAudio
-              ? "Memuat sample…"
+              ? "Membuat preview…"
               : `Preview ${activeVoice?.label || voiceId} · ${selectedLang.toUpperCase()}`}
           </p>
         )}

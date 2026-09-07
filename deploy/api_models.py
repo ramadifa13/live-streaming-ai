@@ -64,6 +64,8 @@ class BroadcastRequest(BaseModel):
     productImageUrl: Optional[str] = None
     banner_image_url: Optional[str] = None
     bannerImageUrl: Optional[str] = None
+    background_image: Optional[str] = None
+    backgroundImage: Optional[str] = None
     platform: Optional[str] = None
     stock_count: Optional[Any] = None
     cta_label: Optional[str] = None

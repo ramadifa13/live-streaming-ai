@@ -1,6 +1,6 @@
 # AI Worker (`deploy/`)
 
-Kode GPU worker: **VoxCPM2 TTS** + **MuseTalk** + RTMP. Di pod, file di sini di-sync ke `/workspace/ai_live_worker`.
+Kode GPU worker: **MuseTalk** + RTMP. Audio Pocket-TTS dibuat backend dan dikirim ke worker sebagai WAV.
 
 ## Layout
 
@@ -35,12 +35,12 @@ Ringkas: [docs/SETUP_POD.md](docs/SETUP_POD.md) · Lengkap: [docs/DEPLOYMENT_GUI
 
 ## `scripts/`
 
-| Script | Fungsi |
-|--------|--------|
-| `run_bootstrap.sh` | Alternatif bootstrap penuh |
-| `check_tts_integration.sh` | Preflight VoxCPM2 setelah sync |
-| `apply_l40s_opts.sh` | Patch env L40S + restart |
-| `_start_worker.sh` | Alias restart via `sync.sh --restart` |
-| `validate_idle_assets.py` | Cek continuity clip idle/talk |
+| Script                     | Fungsi                                |
+| -------------------------- | ------------------------------------- |
+| `run_bootstrap.sh`         | Alternatif bootstrap penuh            |
+| `check_tts_integration.sh` | Preflight VoxCPM2 setelah sync        |
+| `apply_l40s_opts.sh`       | Patch env L40S + restart              |
+| `_start_worker.sh`         | Alias restart via `sync.sh --restart` |
+| `validate_idle_assets.py`  | Cek continuity clip idle/talk         |
 
 Contoh: `bash deploy/scripts/check_tts_integration.sh`

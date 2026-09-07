@@ -11,7 +11,6 @@ seen = set()
 updates = {
     "MUSETALK_BATCH_SIZE": "16",
     "MUSETALK_USE_FLOAT16": "1",
-    "VOXCPM2_INFERENCE_TIMESTEPS": "8",
 }
 for line in text.splitlines():
     if not line.strip() or line.lstrip().startswith("#") or "=" not in line:
@@ -34,8 +33,6 @@ for k, v in updates.items():
     print(f"  {k}={v}")
 PY
 
-cp -f /workspace/live-streaming-ai/deploy/voxcpm2_tts/tts_service.py \
-  /workspace/ai_live_worker/voxcpm2_tts/tts_service.py
 cp -f /workspace/live-streaming-ai/deploy/gpu_compat.py \
   /workspace/ai_live_worker/gpu_compat.py
 

@@ -41,7 +41,7 @@ TARGET_FPS = int(
         else os.environ.get("FRAME_FEED_FPS", "30"),
     )
 )
-SAMPLE_RATE = 44100
+SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
 BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2
 CROSSFADE_FRAMES = int(os.environ.get("AI_WORKER_CROSSFADE", "10"))
@@ -57,12 +57,12 @@ AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "6"))
 
 IDLE_BREATH_CHANCE = float(os.environ.get("AI_WORKER_IDLE_BREATH_CHANCE", "0.18"))
 IDLE_FALLBACK_AFTER = int(os.environ.get("AI_WORKER_IDLE_FALLBACK_AFTER", "2"))
-# Hold talk antar-utterance: kalau tidak ada suara baru, segera balik ke idle_1.
+# Hold talk antar-utterance: kalau tidak ada suara baru, segera balik ke idle.
 HOLD_TALK_MAX_SEC = float(os.environ.get("AI_WORKER_HOLD_TALK_SEC", "1.0"))
 # Pin talk clip panjang (continuous body timeline) — rotasi tiap 1-2 utterance agar bervariasi.
 TALK_STREAK_BEFORE_ROTATE = int(os.environ.get("AI_WORKER_TALK_STREAK", "2"))
 
-# 0 = rotasi alami antar talk/gesture clips (idle_2, idle_3, idle_4). 1 = kunci ke 1 clip saja.
+# 0 = rotasi alami antar talk clips (talk_1, talk_2, talk_3). 1 = kunci ke 1 clip saja.
 PIN_TALK_SCENE = (os.environ.get("AI_WORKER_PIN_TALK") or "0").strip().lower() in (
     "1",
     "true",
@@ -107,18 +107,17 @@ MOUTH_MISS_BODY_ONLY = (
 
 ALLOWED_GESTURES: frozenset = frozenset()
 
-# Body clips: idle_1 = true rest (static/breathing); idle_2 / idle_3 / idle_4 = talk gestures.
-# Mendukung namira_idle_1 .. namira_idle_4 dari assets/3d
-TRUE_IDLE_NAMES = frozenset({"idle", "idle_1"})
-TALK_CLIP_NAMES = frozenset({"talk", "talk_2", "talk_3", "idle_2", "idle_3", "idle_4"})
+# Body clips mengikuti nama file langsung dari sample.
+TRUE_IDLE_NAMES = frozenset({"idle"})
+TALK_CLIP_NAMES = frozenset({"talk_1", "talk_2", "talk_3"})
 BODY_CLIP_NAMES = TRUE_IDLE_NAMES | TALK_CLIP_NAMES
 
 
 TALK_CLIP_DEFAULT = (
-    os.environ.get("AI_WORKER_TALK_CLIP") or "talk"
-).strip().lower().replace("-", "_") or "talk"
+    os.environ.get("AI_WORKER_TALK_CLIP") or "talk_1"
+).strip().lower().replace("-", "_") or "talk_1"
 if TALK_CLIP_DEFAULT not in TALK_CLIP_NAMES:
-    TALK_CLIP_DEFAULT = "talk"
+    TALK_CLIP_DEFAULT = "talk_1"
 
 CRASH_FALLBACK_CLIP = (
     os.environ.get("AI_WORKER_CRASH_CLIP") or "idle"
@@ -147,11 +146,11 @@ def _ambient_gesture_names() -> List[str]:
 
 
 def _talk_clip_pool_names() -> List[str]:
-    """Clip tubuh saat bicara — default talk,talk_2,talk_3 serta idle_2,idle_3,idle_4."""
+    """Clip tubuh saat bicara — default talk_1,talk_2,talk_3."""
     raw = (os.environ.get("AI_WORKER_TALK_CLIPS") or "").strip()
     if raw:
         return [_normalize_clip_name(n.strip()) for n in raw.split(",") if n.strip()]
-    return ["talk", "talk_2", "talk_3", "idle_2", "idle_3", "idle_4"]
+    return ["talk_1", "talk_2", "talk_3"]
 
 
 
@@ -669,7 +668,7 @@ class AssetBank:
 
     def _pick_primary_idle(self) -> str:
         """Diam = idle (static)."""
-        for key in (CRASH_FALLBACK_CLIP, "idle", "idle_1"):
+        for key in (CRASH_FALLBACK_CLIP, "idle"):
             if key in self.clips:
                 return key
         for k in sorted(self.clips):
@@ -685,7 +684,7 @@ class AssetBank:
         """Decode ke RAM: idle + semua talk*."""
         raw = (
             os.environ.get("AI_WORKER_EAGER_CLIPS")
-            or "idle,talk,talk_2,talk_3"
+            or "idle,talk_1,talk_2,talk_3"
         ).strip()
         if raw.lower() in ("all", "*"):
             return list(self.clips.keys()) if self.clips else ["idle"]
@@ -875,7 +874,7 @@ class AssetBank:
         return frames
 
     def resolve_action(self, tag: Optional[str]) -> str:
-        """Resolve body hint: talk|idle|talk_2|talk_3. Tag lain → idle."""
+        """Resolve body hint: talk_1|idle|talk_2|talk_3. Tag lain → idle."""
         if not tag:
             return self._idle_name
         raw = _normalize_clip_name(tag)
@@ -1753,7 +1752,7 @@ class LipSyncEngine:
         self._infer_cursor = 0
         self._infer_stop = threading.Event()
         self._infer_thread: Optional[threading.Thread] = None
-        self._talk_clip_name = "talk"
+        self._talk_clip_name = "talk_1"
         self._start_frame_idx = 0
         self._last_mouth_256: Optional[np.ndarray] = None
         self._last_mouth_frame = None
@@ -3176,12 +3175,12 @@ class AIVisualWorker:
                 job, start_frame_idx=start_idx, body_clip=body
             )
         if self._sm:
-            # Body hint talk|idle|talk_N — resolve ke clip.
+            # Body hint talk_1|idle|talk_N — resolve ke clip.
             action = (getattr(job, "action", None) or "").strip().lower().replace(
                 "-", "_"
             )
             if action in BODY_CLIP_NAMES or action in (
-                "talk",
+                "talk_1",
                 "speak",
                 "speaking",
                 "idle",
@@ -3302,7 +3301,7 @@ class AIVisualWorker:
         ready = self._bank.talk_clips_ready()
         if not ready:
             raise RuntimeError(
-                "Tidak ada clip bicara dengan MuseTalk (talk/talk_2/talk_3)"
+                "Tidak ada clip bicara dengan MuseTalk (talk_1/talk_2/talk_3)"
             )
         for talk_clip_name in ready:
             talk_clip = self._bank.clips.get(talk_clip_name)

@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 IDLE_CLIP_BASENAMES = {
     "namira_idle.mp4",
-    "namira_talk.mp4",
+    "namira_talk_1.mp4",
     "namira_talk_2.mp4",
     "namira_talk_3.mp4",
 }

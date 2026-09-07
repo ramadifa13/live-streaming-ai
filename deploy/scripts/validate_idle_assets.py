@@ -73,15 +73,36 @@ def _decode_frames(path: str, max_frames: int = 0) -> List[np.ndarray]:
     return frames
 
 
+def _motion_scores(frames: List[np.ndarray]) -> np.ndarray:
+    """Return mean grayscale motion between each adjacent frame pair."""
+    small = []
+    for frame in frames:
+        gray = _to_gray(frame)
+        small_width = 160
+        small_height = max(1, round(gray.shape[0] * small_width / gray.shape[1]))
+        small.append(cv2.resize(gray, (small_width, small_height), interpolation=cv2.INTER_AREA).astype(np.float32))
+    if len(small) < 2:
+        return np.zeros(1, dtype=np.float32)
+    return np.asarray([np.mean(np.abs(b - a)) for a, b in zip(small, small[1:])], dtype=np.float32)
+
+
 def _best_pose_pair(
     frames: List[np.ndarray], window: int = 8
-) -> Tuple[int, int, float, float]:
-    """Pick base near start and end near finish with best SSIM."""
+) -> Tuple[int, int, float, float, float, float]:
+    """Pick the most stable start/end frames, then maximize their SSIM."""
     n = len(frames)
-    w = max(1, min(window, n // 2 or 1))
+    if n < 2:
+        return (0, 0, 1.0, 0.0, 0.0, 0.0)
+    motion = _motion_scores(frames)
+    edge = min(max(window * 4, n // 4), max(1, n // 2 - 1))
+    start_pool = list(range(0, edge + 1))
+    finish_pool = list(range(max(1, n - edge), n))
+    start_pool.sort(key=lambda index: motion[min(index, n - 2)])
+    finish_pool.sort(key=lambda index: motion[max(0, index - 1)])
+    candidate_count = max(1, min(window, len(start_pool), len(finish_pool)))
     best = (0, n - 1, -1.0, float("inf"))
-    for bi in range(0, w):
-        for ei in range(max(0, n - w), n):
+    for bi in start_pool[:candidate_count]:
+        for ei in finish_pool[:candidate_count]:
             if ei <= bi:
                 continue
             ga = _to_gray(frames[bi])
@@ -90,7 +111,15 @@ def _best_pose_pair(
             err = _mse(ga, gb)
             if score > best[2]:
                 best = (bi, ei, score, err)
-    return best
+    base, end, score, err = best
+    return (
+        base,
+        end,
+        score,
+        err,
+        float(motion[min(base, n - 2)]),
+        float(motion[max(0, end - 1)]),
+    )
 
 
 def _clip_stem(path: Path, host: str) -> str:
@@ -114,16 +143,13 @@ def validate_dir(
         print(f"[validate] FAIL: assets dir missing: {assets_dir}", file=sys.stderr)
         return 2
 
-    want = set(clips) if clips else {"idle", "talk", "talk_2", "talk_3"}
+    want = set(clips) if clips else {"idle", "talk_1", "talk_2", "talk_3"}
     mp4s = sorted(assets_dir.glob("*.mp4"))
     targets = []
     for p in mp4s:
         if p.name.startswith("temp_"):
             continue
         stem = _clip_stem(p, host)
-            if stem in want or not clips:
-                if stem in want or stem.startswith("idle") or stem.startswith("talk"):
-                    targets.append((stem, p))
         if stem in want or not clips:
             if stem in want or stem.startswith("idle") or stem.startswith("talk"):
                 targets.append((stem, p))
@@ -148,7 +174,7 @@ def validate_dir(
             print(f"[validate] FAIL {name}: {err}", file=sys.stderr)
             failures += 1
             continue
-        base, end, ssim, mse = _best_pose_pair(frames, window=window)
+        base, end, ssim, mse, start_motion, end_motion = _best_pose_pair(frames, window=window)
         # Also report naive first/last
         g0 = _to_gray(frames[0])
         gN = _to_gray(frames[-1])
@@ -160,6 +186,7 @@ def validate_dir(
         print(
             f"[validate] {status} {name}: frames={len(frames)} "
             f"best_base={base} best_end={end} ssim={ssim:.4f} mse={mse:.1f} "
+            f"motion_start={start_motion:.2f} motion_end={end_motion:.2f} "
             f"naive_0_vs_N={naive_ssim:.4f}"
         )
         if write_meta:
@@ -169,6 +196,8 @@ def validate_dir(
                 "seamless_score": round(float(ssim), 6),
                 "naive_first_last_ssim": round(float(naive_ssim), 6),
                 "mse": round(float(mse), 3),
+                "start_motion": round(start_motion, 6),
+                "end_motion": round(end_motion, 6),
                 "num_frames": len(frames),
                 "threshold": threshold,
                 "seamless": bool(ok),
@@ -208,7 +237,7 @@ def main() -> None:
     ap.add_argument("--write-meta", action="store_true")
     ap.add_argument(
         "--clips",
-        default="idle,talk,talk_2,talk_3",
+        default="idle,talk_1,talk_2,talk_3",
         help="Comma-separated clip stems to check",
     )
     ap.add_argument(
