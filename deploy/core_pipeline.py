@@ -44,31 +44,96 @@ BYTES_PER_AUDIO_FRAME = int(round(AUDIO_SAMPLE_RATE / float(TARGET_FPS))) * 2 * 
 
 # === Refactored Components === #
 from ai_worker import AssetBank, LipSyncEngine, VideoStateMachine, RawFramePacket, RenderedPacket
-from ai_worker import frame_fetcher_loop, lipsync_worker_loop
+from ai_worker import frame_fetcher_loop, lipsync_worker_loop, _IdleFallbackPlayer
+import cv2
+
+try:
+    from rtmp_utils import (
+        preflight_rtmp_publish,
+        validate_publish_url,
+        summarize_ffmpeg_stderr,
+        write_rtmp_status,
+        FfmpegLogWatcher,
+    )
+except ImportError:
+    preflight_rtmp_publish = None
+    validate_publish_url = None
+    summarize_ffmpeg_stderr = None
+    write_rtmp_status = None
+    FfmpegLogWatcher = None
 
 
 class StreamBroadcaster(threading.Thread):
     _ffmpeg_ipv4_supported: Optional[bool] = None
 
-    def __init__(self, rtmp_url: str, bank: AssetBank, render_q: queue.Queue, stop_event: threading.Event, output_folder: str):
+    def __init__(
+        self,
+        rtmp_url: str,
+        bank: AssetBank,
+        render_q: queue.Queue,
+        stop_event: threading.Event,
+        output_folder: str,
+        background_path: str = "",
+        overlay_path: str = "",
+    ):
         super().__init__(name="StreamBroadcaster", daemon=True)
         self.rtmp_url = (rtmp_url or "").strip()
         self.bank = bank
         self.render_q = render_q
         self.stop_event = stop_event
         self.output_folder = output_folder
+        self.background_path = background_path
+        self.overlay_path = overlay_path
+
         self.proc = None
         self.v_fh = None
         self.a_fh = None
         self.progress_seen = False
-
-        self.idle_clip = bank.idle_clip
-        self.idle_idx = self.idle_clip.base_pose_frame if self.idle_clip else 0
-        self.silence_pcm = b"\x00" * BYTES_PER_AUDIO_FRAME
         self.last_error = ""
 
+        # Smooth fallback player (mencegah patah jumping saat transisi rest pose)
+        self.fallback_player = _IdleFallbackPlayer(bank)
+        self.silence_pcm = b"\x00" * BYTES_PER_AUDIO_FRAME
+
+        # Background & Overlay buffers
+        self._bg_bgr: Optional[np.ndarray] = None
+        self._ov_rgb: Optional[np.ndarray] = None
+        self._ov_alpha: Optional[np.ndarray] = None
+        self._init_bg_overlay()
+
+    def _init_bg_overlay(self):
+        if self.background_path and os.path.exists(self.background_path):
+            try:
+                bg = cv2.imread(self.background_path)
+                if bg is not None:
+                    self._bg_bgr = fit_bgr(bg, CANVAS_W, CANVAS_H)
+            except Exception as e:
+                print(f"[StreamBroadcaster] Failed to load background: {e}")
+
+        ov_candidate = self.overlay_path
+        if not ov_candidate and self.output_folder:
+            for cand in (
+                os.path.join(self.output_folder, "overlay_live.png"),
+                os.path.join(self.output_folder, "tmp_assets", "live_overlay.png"),
+            ):
+                if os.path.exists(cand):
+                    ov_candidate = cand
+                    break
+
+        if ov_candidate and os.path.exists(ov_candidate):
+            try:
+                ov = cv2.imread(ov_candidate, cv2.IMREAD_UNCHANGED)
+                if ov is not None:
+                    if ov.shape[0] != CANVAS_H or ov.shape[1] != CANVAS_W:
+                        ov = cv2.resize(ov, (CANVAS_W, CANVAS_H))
+                    if ov.shape[2] == 4:
+                        self._ov_alpha = ov[:, :, 3:4].astype(np.float32) / 255.0
+                        self._ov_rgb = ov[:, :, :3].astype(np.float32)
+            except Exception as e:
+                print(f"[StreamBroadcaster] Failed to load overlay: {e}")
+
     def is_alive(self) -> bool:
-        return self.proc is None or self.proc.poll() is None
+        return self.proc is not None and self.proc.poll() is None
 
     @classmethod
     def _ffmpeg_ipv4_flag_supported(cls) -> bool:
@@ -82,19 +147,26 @@ class StreamBroadcaster(threading.Thread):
             cls._ffmpeg_ipv4_supported = False
         return cls._ffmpeg_ipv4_supported
 
-    def _start_ffmpeg(self):
-        print(f"[StreamBroadcaster] Starting FFmpeg to {self.rtmp_url.split('?')[0]}?***")
-        video_r, video_w = os.pipe()
-        audio_r, audio_w = os.pipe()
-        os.set_inheritable(video_r, True)
-        os.set_inheritable(audio_r, True)
-        v_in = f"/proc/self/fd/{video_r}"
-        a_in = f"/proc/self/fd/{audio_r}"
+    def _apply_overlay(self, frame: np.ndarray) -> np.ndarray:
+        if self._ov_alpha is None or self._ov_rgb is None:
+            return frame
+        base = frame.astype(np.float32)
+        out = base * (1.0 - self._ov_alpha) + self._ov_rgb * self._ov_alpha
+        return out.astype(np.uint8)
 
+    @staticmethod
+    def _write_all(fh, data: bytes) -> None:
+        """Tulis seluruh buffer ke blocking pipe (mencegah partial pipe write drop)."""
+        view = memoryview(data)
+        offset = 0
+        while offset < len(view):
+            n = fh.write(view[offset:])
+            if n is None or n <= 0:
+                raise BrokenPipeError("Pipe write returned 0 (broken connection)")
+            offset += n
+
+    def _build_cmd(self, v_in: str, a_in: str, *, use_ipv4: bool) -> list:
         gop = TARGET_FPS * 2
-        force_ipv4 = os.environ.get("RTMP_FORCE_IPV4", "1").strip().lower() not in ("0", "false", "no", "off")
-        use_ipv4 = force_ipv4 and self._ffmpeg_ipv4_flag_supported()
-
         cmd = [
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "info"
         ]
@@ -114,58 +186,109 @@ class StreamBroadcaster(threading.Thread):
             "-map", "0:v", "-map", "1:a",
             "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
             "-pix_fmt", "yuv420p", "-profile:v", "baseline", "-level", "3.1",
-            "-g", str(TARGET_FPS), "-keyint_min", str(TARGET_FPS), "-sc_threshold", "0",
+            "-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0",
             "-b:v", "2500k", "-maxrate", "2500k", "-bufsize", "2500k",
             "-vsync", "cfr",
             "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
             "-flvflags", "no_duration_filesize",
             "-f", "flv",
+            "-rtmp_live", "live",
+            "-stimeout", "30000000",
+            "-rw_timeout", "30000000",
         ])
 
         if self.rtmp_url.lower().startswith("rtmps://"):
             cmd.extend(["-tls_verify", "0"])
         cmd.append(self.rtmp_url)
+        return cmd
 
-        self.proc = subprocess.Popen(
-            cmd,
-            pass_fds=(video_r, audio_r),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
+    def _start_ffmpeg(self):
+        # Preflight Check untuk mencegah silent failure / DNS hang
+        if validate_publish_url:
+            self.rtmp_url = validate_publish_url(self.rtmp_url)
+        if preflight_rtmp_publish:
+            print(f"[StreamBroadcaster] Preflight checking RTMP host...")
+            preflight_rtmp_publish(self.rtmp_url)
+
+        print(f"[StreamBroadcaster] Starting FFmpeg to {self.rtmp_url.split('?')[0]}?***")
+        video_r, video_w = os.pipe()
+        audio_r, audio_w = os.pipe()
+        os.set_inheritable(video_r, True)
+        os.set_inheritable(audio_r, True)
+        os.set_inheritable(video_w, False)
+        os.set_inheritable(audio_w, False)
+
+        v_in = f"/proc/self/fd/{video_r}"
+        a_in = f"/proc/self/fd/{audio_r}"
+
+        force_ipv4 = os.environ.get("RTMP_FORCE_IPV4", "1").strip().lower() not in ("0", "false", "no", "off")
+        ipv4_ok = force_ipv4 and self._ffmpeg_ipv4_flag_supported()
+        attempts = [ipv4_ok, False] if ipv4_ok else [False]
+
+        proc = None
+        for idx, use_v4 in enumerate(attempts):
+            cmd = self._build_cmd(v_in, a_in, use_ipv4=use_v4)
+            if idx > 0:
+                print("[StreamBroadcaster] Retrying FFmpeg without -4 IPv4 flag...")
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    pass_fds=(video_r, audio_r),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                )
+                time.sleep(0.35)
+                if proc.poll() is None:
+                    self.proc = proc
+                    break
+            except Exception as e:
+                self.last_error = str(e)
+                continue
+
+        if self.proc is None or self.proc.poll() is not None:
+            os.close(video_r)
+            os.close(audio_r)
+            try: os.close(video_w); os.close(audio_w)
+            except Exception: pass
+            hint = self.last_error or "FFmpeg RTMP gagal start (proses keluar saat inisialisasi)"
+            if write_rtmp_status and self.output_folder:
+                write_rtmp_status(self.output_folder, "failed", hint)
+            raise RuntimeError(hint)
+
         os.close(video_r)
         os.close(audio_r)
-
         self.v_fh = os.fdopen(video_w, "wb", buffering=0)
         self.a_fh = os.fdopen(audio_w, "wb", buffering=0)
 
         # Feed initial frames segera agar handshake RTMP langsung jalan tanpa deadlock probe
         try:
-            init_frame = self.idle_clip.frames[self.idle_idx] if (self.idle_clip and self.idle_clip.frames) else np.zeros((CANVAS_H, CANVAS_W, 3), dtype=np.uint8)
+            init_frame = self.fallback_player.next_frame()
             init_buf = np.ascontiguousarray(fit_bgr(init_frame, CANVAS_W, CANVAS_H), dtype=np.uint8).tobytes()
             init_pcm = self.silence_pcm
             for _ in range(5):
-                self.v_fh.write(init_buf)
-                self.a_fh.write(init_pcm)
+                self._write_all(self.v_fh, init_buf)
+                self._write_all(self.a_fh, init_pcm)
         except Exception as e:
             print(f"[StreamBroadcaster] Primer notice: {e}")
 
         out_dir = self.output_folder
         if out_dir:
             try:
-                from rtmp_utils import FfmpegLogWatcher, write_rtmp_status
                 def _on_progress():
                     self.progress_seen = True
-                    write_rtmp_status(out_dir, "connected")
+                    if write_rtmp_status:
+                        write_rtmp_status(out_dir, "connected")
 
                 def _on_fatal(hint: str):
                     self.last_error = hint
-                    write_rtmp_status(out_dir, "failed", hint)
+                    if write_rtmp_status:
+                        write_rtmp_status(out_dir, "failed", hint)
 
                 watcher = FfmpegLogWatcher(
                     on_fatal=_on_fatal,
                     on_progress=_on_progress,
-                )
+                ) if FfmpegLogWatcher else None
                 log_path = os.path.join(out_dir, "ai_worker_rtmp.log")
                 log_fh = open(log_path, "a", encoding="utf-8")
 
@@ -178,14 +301,13 @@ class StreamBroadcaster(threading.Thread):
                             text = chunk.decode("utf-8", errors="ignore")
                             log_fh.write(text)
                             log_fh.flush()
-                            watcher.ingest(text)
+                            if watcher:
+                                watcher.ingest(text)
                     except Exception:
                         pass
                     finally:
-                        try:
-                            log_fh.close()
-                        except Exception:
-                            pass
+                        try: log_fh.close()
+                        except Exception: pass
 
                 threading.Thread(target=_drain_stderr, daemon=True).start()
             except Exception as e:
@@ -196,12 +318,9 @@ class StreamBroadcaster(threading.Thread):
             self._start_ffmpeg()
         except Exception as e:
             print(f"[StreamBroadcaster] Failed to start FFmpeg: {e}")
-            if self.output_folder:
-                try:
-                    from rtmp_utils import write_rtmp_status
-                    write_rtmp_status(self.output_folder, "failed", str(e)[:200])
-                except Exception:
-                    pass
+            if self.output_folder and write_rtmp_status:
+                try: write_rtmp_status(self.output_folder, "failed", str(e)[:200])
+                except Exception: pass
             return
 
         frame_duration = 1.0 / TARGET_FPS
@@ -221,14 +340,12 @@ class StreamBroadcaster(threading.Thread):
                     pkt = self.render_q.get_nowait()
                     frame = pkt.frame
                     pcm = pkt.audio_pcm
+                    if getattr(pkt, "clip_name", None) and getattr(pkt, "frame_idx", None) is not None:
+                        self.fallback_player.sync(pkt.clip_name, pkt.frame_idx)
                 except queue.Empty:
-                    # ZERO-LATENCY FALLBACK
+                    # ZERO-LATENCY FALLBACK (Mencegah patah/loncat dengan ping-pong continuous player)
                     metrics.inc("broadcast_idle_fallback")
-                    if self.idle_clip and self.idle_clip.frames:
-                        frame = self.idle_clip.frames[self.idle_idx]
-                        self.idle_idx = (self.idle_idx + 1) % self.idle_clip.num_frames()
-                    else:
-                        frame = np.zeros((CANVAS_H, CANVAS_W, 3), dtype=np.uint8)
+                    frame = self.fallback_player.next_frame()
                     pcm = self.silence_pcm
 
                 if pcm is None:
@@ -242,10 +359,14 @@ class StreamBroadcaster(threading.Thread):
                     h, w = frame.shape[:2]
                     if w != CANVAS_W or h != CANVAS_H:
                         frame = fit_bgr(frame, CANVAS_W, CANVAS_H)
+
+                    # Terapkan overlay dinamis jika ada
+                    frame = self._apply_overlay(frame)
+
                     buf = np.ascontiguousarray(frame, dtype=np.uint8).tobytes()
                     if len(buf) == expected_bytes:
-                        self.v_fh.write(buf)
-                        self.a_fh.write(pcm)
+                        self._write_all(self.v_fh, buf)
+                        self._write_all(self.a_fh, pcm)
 
                 now = time.perf_counter()
                 sleep_time = next_frame_time - now
@@ -265,22 +386,17 @@ class StreamBroadcaster(threading.Thread):
 
         if self.proc:
             self.proc.terminate()
-            try:
-                self.proc.wait(timeout=2)
-            except:
-                self.proc.kill()
+            try: self.proc.wait(timeout=2)
+            except: self.proc.kill()
         if self.v_fh:
             try: self.v_fh.close()
             except Exception: pass
         if self.a_fh:
             try: self.a_fh.close()
             except Exception: pass
-        if self.output_folder:
-            try:
-                from rtmp_utils import write_rtmp_status
-                write_rtmp_status(self.output_folder, "disconnected")
-            except Exception:
-                pass
+        if self.output_folder and write_rtmp_status:
+            try: write_rtmp_status(self.output_folder, "disconnected")
+            except Exception: pass
         print("[StreamBroadcaster] Stopped.")
 
 # Kita bisa menggunakan fungsi fetcher/lipsync worker asli
@@ -292,6 +408,8 @@ class NewAIVisualWorker:
         self.rtmp_url = None
         self.host = "namira"
         self.assets_dir = None
+        self.background_path = os.environ.get("CUSTOM_BACKGROUND_PATH", "")
+        self.overlay_path = os.environ.get("CUSTOM_OVERLAY_PATH", "")
 
         self.bank = None
         self.sm = None
@@ -425,7 +543,15 @@ class NewAIVisualWorker:
             args=(self.bank, self.engine, self.in_q, self.render_q, self.stop_event),
             name="LipSyncWorker", daemon=True
         )
-        broadcaster_t = StreamBroadcaster(self.rtmp_url, self.bank, self.render_q, self.stop_event, self.output_folder)
+        broadcaster_t = StreamBroadcaster(
+            self.rtmp_url,
+            self.bank,
+            self.render_q,
+            self.stop_event,
+            self.output_folder,
+            background_path=self.background_path,
+            overlay_path=self.overlay_path,
+        )
         self.broadcaster = broadcaster_t
 
         self.threads = [fetcher_t, lipsync_t, broadcaster_t]
@@ -494,10 +620,22 @@ def get_visual_worker(output_folder: str = "") -> NewAIVisualWorker:
         _visual_worker_singleton.output_folder = output_folder
     return _visual_worker_singleton
 
-def start_visual_broadcast(rtmp_url: str, *, idle_video: str = "", output_folder: str = "", host: str = "namira") -> NewAIVisualWorker:
+def start_visual_broadcast(
+    rtmp_url: str,
+    *,
+    idle_video: str = "",
+    output_folder: str = "",
+    host: str = "namira",
+    background_path: str = "",
+    overlay_path: str = "",
+) -> NewAIVisualWorker:
     vw = get_visual_worker(output_folder)
     vw.rtmp_url = rtmp_url
     vw.host = host
+    if background_path:
+        vw.background_path = background_path
+    if overlay_path:
+        vw.overlay_path = overlay_path
     if idle_video and os.path.exists(idle_video):
         vw.assets_dir = os.path.dirname(idle_video)
     vw.initialize()
