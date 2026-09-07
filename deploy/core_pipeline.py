@@ -65,6 +65,7 @@ class StreamBroadcaster(threading.Thread):
         self.idle_clip = bank.idle_clip
         self.idle_idx = self.idle_clip.base_pose_frame if self.idle_clip else 0
         self.silence_pcm = b"\x00" * BYTES_PER_AUDIO_FRAME
+        self.last_error = ""
 
     def is_alive(self) -> bool:
         return self.proc is None or self.proc.poll() is None
@@ -119,9 +120,6 @@ class StreamBroadcaster(threading.Thread):
             "-c:a", "aac", "-b:a", "128k",
             "-flvflags", "no_duration_filesize",
             "-f", "flv",
-            "-rtmp_live", "live",
-            "-stimeout", "30000000",
-            "-rw_timeout", "30000000",
         ])
 
         if self.rtmp_url.lower().startswith("rtmps://"):
@@ -149,8 +147,12 @@ class StreamBroadcaster(threading.Thread):
                     self.progress_seen = True
                     write_rtmp_status(out_dir, "connected")
 
+                def _on_fatal(hint: str):
+                    self.last_error = hint
+                    write_rtmp_status(out_dir, "failed", hint)
+
                 watcher = FfmpegLogWatcher(
-                    on_fatal=lambda hint: write_rtmp_status(out_dir, "failed", hint),
+                    on_fatal=_on_fatal,
                     on_progress=_on_progress,
                 )
                 log_path = os.path.join(out_dir, "ai_worker_rtmp.log")
@@ -374,14 +376,16 @@ class NewAIVisualWorker:
             print(f"[NewAIVisualWorker] Menunggu handshake RTMP ({timeout_sec:.1f}s)...")
             while time.monotonic() < deadline:
                 if not broadcaster_t.is_alive():
-                    raise RuntimeError("FFmpeg RTMP berhenti saat handshake — periksa stream key / server URL.")
+                    err_msg = broadcaster_t.last_error or "FFmpeg RTMP berhenti saat handshake — periksa stream key / server URL."
+                    raise RuntimeError(f"FFmpeg RTMP gagal: {err_msg}")
                 if broadcaster_t.progress_seen:
                     print("[NewAIVisualWorker] RTMP terhubung & frame pertama terkirim!")
                     break
                 time.sleep(0.15)
             else:
                 if not broadcaster_t.is_alive():
-                    raise RuntimeError("FFmpeg RTMP gagal terhubung.")
+                    err_msg = broadcaster_t.last_error or "FFmpeg RTMP gagal terhubung."
+                    raise RuntimeError(f"FFmpeg RTMP gagal: {err_msg}")
                 print("[NewAIVisualWorker] Warning: RTMP wait timeout, melanjutkan streaming di background...")
 
         self._is_running = True
