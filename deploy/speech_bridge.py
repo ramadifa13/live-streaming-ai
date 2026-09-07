@@ -181,8 +181,8 @@ class SpeechBridge:
     """
 
     # Minimum utterances siap sebelum playback pertama dimulai.
-    # Setelah utterance pertama mulai, gate ini tidak berlaku lagi (stream sudah aktif).
-    MIN_READY_UTTERANCES: int = int(os.environ.get("SPEECH_BRIDGE_MIN_READY", "2"))
+    # Set ke 1 agar AI langsung bicara pada kalimat pertama tanpa menunggu antrian kedua.
+    MIN_READY_UTTERANCES: int = int(os.environ.get("SPEECH_BRIDGE_MIN_READY", "1"))
 
     def __init__(self, output_folder: str = ""):
         self.output_folder = output_folder or os.environ.get(

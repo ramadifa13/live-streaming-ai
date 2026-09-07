@@ -112,17 +112,14 @@ class StreamBroadcaster(threading.Thread):
             "-probesize", "32", "-analyzeduration", "0",
             "-i", a_in,
             "-map", "0:v", "-map", "1:a",
-            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-            "-pix_fmt", "yuv420p", "-profile:v", "main", "-level", "4.0",
-            "-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0",
-            "-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "6000k",
+            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+            "-pix_fmt", "yuv420p", "-profile:v", "baseline", "-level", "3.1",
+            "-g", str(TARGET_FPS), "-keyint_min", str(TARGET_FPS), "-sc_threshold", "0",
+            "-b:v", "2500k", "-maxrate", "2500k", "-bufsize", "2500k",
             "-vsync", "cfr",
-            "-c:a", "aac", "-b:a", "128k",
+            "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
             "-flvflags", "no_duration_filesize",
             "-f", "flv",
-            "-rtmp_live", "live",
-            "-stimeout", "30000000",
-            "-rw_timeout", "30000000",
         ])
 
         if self.rtmp_url.lower().startswith("rtmps://"):
@@ -155,7 +152,6 @@ class StreamBroadcaster(threading.Thread):
                     write_rtmp_status(out_dir, "failed", hint)
 
                 watcher = FfmpegLogWatcher(
-                    on_fatal=lambda hint: write_rtmp_status(out_dir, "failed", hint),
                     on_fatal=_on_fatal,
                     on_progress=_on_progress,
                 )
@@ -351,6 +347,57 @@ class NewAIVisualWorker:
         except ImportError:
             self._bridge = None
 
+        if self._bridge is not None and self.engine is not None:
+            self._bridge.set_models(self.engine.models)
+
+            def _on_utterance_ready(job):
+                start_idx = 0
+                body = None
+                if self.sm:
+                    start_idx = self.sm.pin_talk_body()
+                    body = self.sm._talk_target or self.sm.current_name
+                if self.engine:
+                    self.engine.set_utterance(job, start_frame_idx=start_idx, body_clip=body)
+
+                def _mark_ready():
+                    ok = False
+                    try:
+                        if self.engine:
+                            deadline = time.monotonic() + 15.0
+                            while not self.stop_event.is_set():
+                                ok = self.engine.wait_preroll(8, timeout=2.0)
+                                if ok or time.monotonic() >= deadline:
+                                    break
+                                time.sleep(0.04)
+                    except Exception as err:
+                        print(f"[NewAIVisualWorker] Preroll notice: {err}")
+                    finally:
+                        ready = getattr(job, "lipsync_ready", None)
+                        if ready is not None:
+                            ready.set()
+
+                threading.Thread(target=_mark_ready, name=f"Preroll-{getattr(job, 'task_id', '')[:16]}", daemon=True).start()
+
+            def _on_utterance_start(job):
+                if self.engine and getattr(self.engine, "_utterance_id", None) != getattr(job, "task_id", None):
+                    start_idx = self.sm.pin_talk_body() if self.sm else 0
+                    body = (self.sm._talk_target or self.sm.current_name) if self.sm else None
+                    self.engine.set_utterance(job, start_frame_idx=start_idx, body_clip=body)
+                if self.sm:
+                    self.sm.begin_utterance()
+                    if getattr(job, "action", None):
+                        self.sm.set_utterance_gesture(job.action)
+
+            def _on_utterance_end(_job):
+                if self.engine:
+                    self.engine.clear_utterance()
+
+            self._bridge.set_callbacks(
+                on_start=_on_utterance_start,
+                on_end=_on_utterance_end,
+                on_ready=_on_utterance_ready,
+            )
+
         audio_fn_ext = self._bridge.get_audio_chunk if self._bridge else None
         action_fn = self._bridge.make_action_hook() if self._bridge else None
 
@@ -380,7 +427,6 @@ class NewAIVisualWorker:
             print(f"[NewAIVisualWorker] Menunggu handshake RTMP ({timeout_sec:.1f}s)...")
             while time.monotonic() < deadline:
                 if not broadcaster_t.is_alive():
-                    raise RuntimeError("FFmpeg RTMP berhenti saat handshake — periksa stream key / server URL.")
                     err_msg = broadcaster_t.last_error or "FFmpeg RTMP berhenti saat handshake — periksa stream key / server URL."
                     raise RuntimeError(f"FFmpeg RTMP gagal: {err_msg}")
                 if broadcaster_t.progress_seen:
@@ -389,7 +435,6 @@ class NewAIVisualWorker:
                 time.sleep(0.15)
             else:
                 if not broadcaster_t.is_alive():
-                    raise RuntimeError("FFmpeg RTMP gagal terhubung.")
                     err_msg = broadcaster_t.last_error or "FFmpeg RTMP gagal terhubung."
                     raise RuntimeError(f"FFmpeg RTMP gagal: {err_msg}")
                 print("[NewAIVisualWorker] Warning: RTMP wait timeout, melanjutkan streaming di background...")
