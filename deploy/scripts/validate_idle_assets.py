@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Validate idle/talk clip rest-pose continuity and emit *_meta.json sidecars.
 
-Usage:
-  python validate_idle_assets.py [--assets-dir PATH] [--write-meta] [--threshold 0.92]
-
-Checks SSIM (and MSE) between candidate base/end frames near clip ends.
-Fails with exit code 1 if any clip scores below --threshold when --strict.
-"""
 from __future__ import annotations
 
 import argparse
@@ -204,7 +197,6 @@ def validate_dir(
             }
             out = assets_dir / f"{name}_meta.json"
             out.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-            # Also write host-prefixed if source file uses host prefix
             if path.stem.lower().startswith(f"{host}_"):
                 host_out = assets_dir / f"{host}_{name}_meta.json"
                 if host_out.resolve() != out.resolve():
@@ -255,7 +247,6 @@ def main() -> None:
         write_meta=args.write_meta,
         clips=clips,
     )
-    # Non-strict write-meta runs still report but exit 0 unless decode failed hard
     if args.write_meta and not args.strict and code == 1:
         sys.exit(0)
     sys.exit(code)

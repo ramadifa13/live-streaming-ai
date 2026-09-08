@@ -34,24 +34,14 @@ let activeStreamInfo: {
   error: null,
 };
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-/**
- * Escape a string for use inside FFmpeg drawtext `text=` value.
- * FFmpeg drawtext uses : and ' as special chars; we also strip newlines.
- */
 function escapeDrawtext(str: string): string {
   return str.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/:/g, "\\:").replace(/\n/g, " ").trim();
 }
 
-/**
- * Resolve a platform label, badge colour, and CTA button colour
- * to values we can embed in FFmpeg drawbox/drawtext.
- */
 function getPlatformStyle(platform: string): {
-  badge: string; // text shown in badge
-  badgeColor: string; // hex colour for badge box (0xRRGGBB)
-  ctaColor: string; // hex colour for CTA button box
+  badge: string;
+  badgeColor: string;
+  ctaColor: string;
 } {
   switch (platform) {
     case "TikTok LIVE":
@@ -203,8 +193,6 @@ export async function startInstagramBroadcast(
 
   const isVideo = /\.(mp4|mov|webm|mkv)$/i.test(mediaToUse);
 
-  // Resolve product image — supports remote URLs by downloading to temp file
-  // Resolve product image and banner image — supports remote URLs and base64
   let productImagePath: string | undefined;
   if (productImageUrl) {
     if (!productImageUrl.startsWith("http://") && !productImageUrl.startsWith("https://") && !productImageUrl.startsWith("data:image/")) {
@@ -235,33 +223,26 @@ export async function startInstagramBroadcast(
     }
   }
 
-  // ── Font path ─────────────────────────────────────────────────────────────
-  // FFmpeg on Windows needs escaped colon in drive letter
   const fontFile = process.platform === "win32" ? "C\\\\:/Windows/Fonts/arial.ttf" : "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
 
   const fontFileBold = process.platform === "win32" ? "C\\\\:/Windows/Fonts/arialbd.ttf" : "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 
-  // ── Text values & Auto Strikethrough Price ────────────────────────────────
   const safeName = escapeDrawtext((productName || "").substring(0, 24));
   const rawPrice = typeof productPrice === "string" ? parseInt(productPrice.replace(/[^0-9]/g, ""), 10) || 0 : Number(productPrice) || 0;
   const priceText = rawPrice ? `Rp${rawPrice.toLocaleString("id-ID")}` : "";
   const safePriceText = escapeDrawtext(priceText);
 
-  // Auto Strikethrough Price: ~35% higher rounded to nearest thousand
   const autoOriginalPrice = rawPrice > 0 ? Math.ceil((rawPrice * 1.35) / 5000) * 5000 : 0;
   const strikeText = autoOriginalPrice > 0 ? `Rp${autoOriginalPrice.toLocaleString("id-ID")}` : "";
   const safeStrikeText = escapeDrawtext(strikeText);
 
-  // ── Canvas dimensions (9:16 portrait) ───────────────────────────────────
   const W = 720;
   const H = 1280;
 
-  // Banner — synced with LivePreviewBoard (w-[75%], h-20, top-1) scaled to 720×1280
   const BANNER_W = 540;
   const BANNER_H = 245;
   const BANNER_Y = 12;
 
-  // Ultra-Modern Floating Pill Card (Universal Safe Area 220px di atas komentar)
   const cardW = 630;
   const cardH = 136;
   const cardX = Math.round((W - cardW) / 2);
@@ -271,7 +252,6 @@ export async function startInstagramBroadcast(
   const thumbY = cardY + 16;
   const textX = thumbX + thumbSize + 18;
 
-  // ── Build filter_complex ─────────────────────────────────────────────────
   const videoScaleFilter = `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}[v0]`;
 
   let padIdx = 0;
@@ -280,7 +260,6 @@ export async function startInstagramBroadcast(
   let nextInputIdx = 1;
   const inputsBeforeAudio = ["-re", ...(isVideo ? ["-stream_loop", "-1"] : ["-loop", "1"]), "-i", mediaToUse];
 
-  // 1. Top Center Banner Overlay — matches Step 4 preview proportions
   if (bannerImagePath) {
     inputsBeforeAudio.push("-loop", "1", "-i", bannerImagePath);
     const bannerInputPad = nextInputIdx++;
@@ -293,7 +272,6 @@ export async function startInstagramBroadcast(
     padIdx += 2;
   }
 
-  // 2. Bottom Ultra-Modern Floating White Card (Shadow + Body + Top Highlight + Border)
   filterStages.push(
     `[v${padIdx}]drawbox=x=${cardX + 4}:y=${cardY + 6}:w=${cardW}:h=${cardH}:color=0x000000@0.32:t=fill[v${padIdx + 1}]`,
     `[v${padIdx + 1}]drawbox=x=${cardX}:y=${cardY}:w=${cardW}:h=${cardH}:color=0xFFFFFF@0.98:t=fill[v${padIdx + 2}]`,
@@ -302,7 +280,6 @@ export async function startInstagramBroadcast(
   );
   padIdx += 4;
 
-  // 3. Product Thumbnail
   if (productImagePath) {
     inputsBeforeAudio.push("-loop", "1", "-i", productImagePath);
     const thumbInputPad = nextInputIdx++;
@@ -314,7 +291,6 @@ export async function startInstagramBroadcast(
     padIdx += 2;
   }
 
-  // 4. Product Name & Price
   if (safeName) {
     filterStages.push(
       `[v${padIdx}]drawtext=text='${safeName}':fontfile=${fontFileBold}:fontcolor=0x0F172A:fontsize=22:x=${textX}:y=${cardY + 34}[v${padIdx + 1}]`,
@@ -329,7 +305,6 @@ export async function startInstagramBroadcast(
     padIdx += 1;
   }
 
-  // 5. Strikethrough Original Price
   if (safeStrikeText) {
     filterStages.push(
       `[v${padIdx}]drawtext=text='${safeStrikeText}':fontfile=${fontFile}:fontcolor=0x94A3B8:fontsize=18:x=${textX + 200}:y=${cardY + 84}[v${padIdx + 1}]`,
@@ -338,15 +313,13 @@ export async function startInstagramBroadcast(
     padIdx += 2;
   }
 
-  // ── Assemble filter_complex string ───────────────────────────────────────
   const filterChain = filterStages.join(";");
   const finalPad = `[v${padIdx}]`;
 
-  // ── Build FFmpeg args ─────────────────────────────────────────────────────
   const anullsrcInputIdx = nextInputIdx;
   const ffmpegArgs = [
     ...inputsBeforeAudio,
-    // Silent audio source
+
     "-f",
     "lavfi",
     "-i",
@@ -357,35 +330,33 @@ export async function startInstagramBroadcast(
     "-map",
     finalPad,
     "-map",
-    `${anullsrcInputIdx}:a`, // audio from anullsrc
+    `${anullsrcInputIdx}:a`,
 
-    // Video encoding — dioptimasi untuk live streaming real-time
     "-c:v",
     "libx264",
     "-preset",
-    "ultrafast", // Encoding lebih cepat → latency lebih rendah untuk live
+    "ultrafast",
     "-tune",
-    "zerolatency", // Meminimalkan latency buffer → cocok untuk RTMP live
+    "zerolatency",
     "-vsync",
-    "cfr", // Constant frame rate → gerakan avatar konsisten 30fps
+    "cfr",
     "-b:v",
     "2500k",
     "-maxrate",
     "3000k",
     "-bufsize",
-    "5000k", // 2× bitrate (standard) → buffer lebih kecil = latency lebih rendah & stabil
+    "5000k",
     "-pix_fmt",
     "yuv420p",
     "-g",
-    "30", // Keyframe setiap 1 detik @30fps → recovery cepat jika ada packet loss
+    "30",
     "-sc_threshold",
-    "0", // Disable scene change detection → keyframe interval konsisten
+    "0",
     "-r",
     "30",
     "-x264-params",
-    "nal-hrd=cbr:force-cfr=1", // CBR ketat untuk koneksi RTMP yang stabil
+    "nal-hrd=cbr:force-cfr=1",
 
-    // Audio encoding
     "-c:a",
     "aac",
     "-b:a",
@@ -393,7 +364,6 @@ export async function startInstagramBroadcast(
     "-ar",
     "44100",
 
-    // Output
     "-f",
     "flv",
     fullTargetUrl,
@@ -407,17 +377,13 @@ export async function startInstagramBroadcast(
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    // FFmpeg can spawn successfully while the input or RTMP endpoint fails.
-    // Progress plus a live process is the practical confirmation available from
-    // the RTMP publisher without a platform-specific ingest API.
-
     activeStreamProcess.stdout?.on("data", (data) => {
       console.log(`[FFmpeg stdout]: ${data}`);
     });
 
     activeStreamProcess.stderr?.on("data", (data) => {
       const msg = data.toString();
-      // Log all FFmpeg output for debugging
+
       if (msg.includes("error") || msg.includes("Error") || msg.includes("failed")) {
         console.error(`[FFmpeg ERROR]: ${msg.trim()}`);
       }

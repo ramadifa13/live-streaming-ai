@@ -1,21 +1,5 @@
-﻿/**
- * videoAvatarService.ts
- *
- * AI Avatar Video Generation Service.
- * Supports multiple providers via AVATAR_PROVIDER env var:
- *   - mock     : Returns a real hosted MP4 URL after a simulated delay (no API key needed)
- *   - replicate: Replicate API    (EchoMimic / SadTalker)
- *   - liveportrait: RunPod GPU Worker (LivePortrait/MuseTalk)
- */
-
-import crypto from "crypto";
-import {
-  acquireGpuForJob,
-  getWorkerUrl,
-  isLiveSessionActive,
-  releaseGpuForJob,
-  updateGpuActivity,
-} from "./runpod-manager.js";
+﻿import crypto from "crypto";
+import { acquireGpuForJob, getWorkerUrl, isLiveSessionActive, releaseGpuForJob, updateGpuActivity } from "./runpod-manager.js";
 import { synthesizeSpeech } from "./tts.js";
 
 export type VideoJobStatus = "queued" | "processing" | "done" | "error";
@@ -23,16 +7,15 @@ export type VideoJobStatus = "queued" | "processing" | "done" | "error";
 export interface VideoJob {
   jobId: string;
   status: VideoJobStatus;
-  progress: number; // 0100
-  stage: string; // Human-readable current stage label
+  progress: number;
+  stage: string;
   videoUrl?: string;
-  proxyVideoUrl?: string; // Backend-proxied URL to avoid CORS
+  proxyVideoUrl?: string;
   error?: string;
   createdAt: number;
-  providerJobId?: string; // External provider's job ID for polling
+  providerJobId?: string;
 }
 
-// In-memory job store (sufficient for demo; replace with Redis/DB for production)
 const jobStore = new Map<string, VideoJob>();
 
 export interface GenerateVideoParams {
@@ -44,10 +27,6 @@ export interface GenerateVideoParams {
   avatarName: string;
   tone?: string;
 }
-
-// ---------------------------------------------------------------------------
-// PUBLIC API
-// ---------------------------------------------------------------------------
 
 export async function generateAvatarVideo(params: GenerateVideoParams): Promise<VideoJob> {
   const jobId = crypto.randomUUID();
@@ -63,7 +42,6 @@ export async function generateAvatarVideo(params: GenerateVideoParams): Promise<
 
   jobStore.set(jobId, job);
 
-  // Start async generation (do NOT await  return immediately)
   runGeneration(jobId, params, provider).catch((err) => {
     const j = jobStore.get(jobId);
     if (j) {
@@ -81,7 +59,6 @@ export function getVideoJob(jobId: string): VideoJob | undefined {
   return jobStore.get(jobId);
 }
 
-/** Fetch video bytes from provider URL and store as a data URI for CORS-free frontend playback */
 export async function fetchVideoAsDataUri(videoUrl: string): Promise<string | null> {
   try {
     const res = await fetch(videoUrl);
@@ -95,15 +72,9 @@ export async function fetchVideoAsDataUri(videoUrl: string): Promise<string | nu
   }
 }
 
-// ---------------------------------------------------------------------------
-// INTERNAL: run generation for a given provider
-// ---------------------------------------------------------------------------
-
 async function runGeneration(jobId: string, params: GenerateVideoParams, provider: string): Promise<void> {
   switch (provider) {
     case "liveportrait":
-      // Never boot the paid RunPod GPU pod for pre-live previews/video-ads
-      // only an actual live session is allowed to use the real GPU worker.
       if (!isLiveSessionActive()) {
         console.log("[VideoGen] No active live session  using mock renderer instead of RunPod GPU.");
         return runMock(jobId, params);
@@ -115,10 +86,6 @@ async function runGeneration(jobId: string, params: GenerateVideoParams, provide
       return runMock(jobId, params);
   }
 }
-
-// ---------------------------------------------------------------------------
-// LIVEPORTRAIT / GPU WORKER PROVIDER (Runs locally on RunPod GPU port 8000)
-// ---------------------------------------------------------------------------
 
 async function runLivePortrait(jobId: string, params: GenerateVideoParams): Promise<void> {
   updateJob(jobId, {
@@ -148,24 +115,17 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
   });
 
   try {
-    // Extract avatar name from image path (e.g. "avatars/host_3d_dinamis_namira.png" -> "Namira")
     const avatarName = params.avatarName || "Namira";
     const cleanAvatarName = avatarName.replace(/\.(png|jpg|jpeg|mp4|webm|webp)$/i, "");
 
-    // Convert http://localhost:3000/avatars/x.jpg -> just the path part
-    // so the worker can resolve it from its local filesystem
     let avatarImagePath = params.avatarImageUrl || "";
     try {
       if (params.avatarImageUrl) {
         const parsed = new URL(params.avatarImageUrl);
-        avatarImagePath = parsed.pathname; // e.g. "/avatars/host_3d_dinamis_namira.png"
+        avatarImagePath = parsed.pathname;
       }
-    } catch {
-      // Not a full URL  use as-is
-    }
+    } catch {}
 
-    // Extract avatar name from the image path to ensure we get the actual filename
-    // e.g. "/avatars/host_3d_dinamis_namira.png" -> "host_3d_dinamis_namira"
     let finalAvatarFileName = cleanAvatarName;
     if (avatarImagePath) {
       const parts = avatarImagePath.split("/");
@@ -216,7 +176,7 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(30_000), // Quick timeout for the initial request
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) {
@@ -234,18 +194,17 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
       throw new Error("Worker did not return a job_id");
     }
 
-    updateGpuActivity(); // Reset idle timer
+    updateGpuActivity();
 
     updateJob(jobId, {
       progress: 30,
       stage: "SadTalker generating lip-sync video (polling)...",
     });
 
-    // Poll for status
     let finalData: any = null;
     let pollCount = 0;
     while (true) {
-      await sleep(3000); // 3 seconds interval
+      await sleep(3000);
       pollCount++;
 
       try {
@@ -253,7 +212,7 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
           signal: AbortSignal.timeout(10_000),
         });
 
-        if (!statusRes.ok) continue; // retry on transient error
+        if (!statusRes.ok) continue;
 
         const statusData = await statusRes.json();
         if (statusData.status === "error") {
@@ -265,10 +224,9 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
           break;
         }
 
-        // Still processing
         const pct = Math.min(30 + pollCount * 2, 95);
         updateJob(jobId, { progress: pct });
-        updateGpuActivity(); // Keep GPU awake while polling
+        updateGpuActivity();
       } catch (err: any) {
         if (err.name !== "AbortError") {
           console.warn(`[Poll Warn] Worker poll failed: ${err.message}`);
@@ -276,7 +234,6 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
       }
 
       if (pollCount > 100) {
-        // 5 minutes max
         throw new Error("Worker processing timeout (5 minutes)");
       }
     }
@@ -286,7 +243,6 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
       throw new Error("Worker did not return a video_url");
     }
 
-    // Build absolute URL: if relative path (/live_videos/xxx.mp4), prepend worker base
     const finalVideoUrl = rawUrl.startsWith("http") ? rawUrl : `${workerUrl}${rawUrl}`;
 
     const engineLabel = finalData.engine || (finalData.lip_sync_active ? "SadTalker Neural Lip-Sync" : "FFmpeg Motion");
@@ -311,10 +267,6 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
     throw e;
   }
 }
-
-// ---------------------------------------------------------------------------
-// MOCK PROVIDER  realistic simulation, no API key needed
-// ---------------------------------------------------------------------------
 
 async function runMock(jobId: string, params: GenerateVideoParams): Promise<void> {
   const stages = [
@@ -369,10 +321,6 @@ async function runMock(jobId: string, params: GenerateVideoParams): Promise<void
     videoUrl,
   });
 }
-
-// ---------------------------------------------------------------------------
-// REPLICATE PROVIDER (EchoMimic)
-// ---------------------------------------------------------------------------
 
 async function runReplicate(jobId: string, params: GenerateVideoParams): Promise<void> {
   const token = process.env.REPLICATE_API_TOKEN;
@@ -448,10 +396,6 @@ async function runReplicate(jobId: string, params: GenerateVideoParams): Promise
 
   throw new Error("Replicate timeout");
 }
-
-// ---------------------------------------------------------------------------
-// HELPERS
-// ---------------------------------------------------------------------------
 
 function updateJob(jobId: string, patch: Partial<VideoJob>): void {
   const job = jobStore.get(jobId);

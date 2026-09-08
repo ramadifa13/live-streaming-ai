@@ -18,7 +18,6 @@ async function seedDatabase() {
     });
     console.log("Seeded default avatar Namira");
   } else {
-    // Map legacy voice slugs â†’ girl_cute_kids; hapus sample MP3 statis
     await prisma.avatar.updateMany({
       where: {
         OR: [

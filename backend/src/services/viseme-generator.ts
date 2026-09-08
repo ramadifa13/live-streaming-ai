@@ -1,8 +1,3 @@
-/**
- * Viseme Generator Service
- * Converts Indonesian spoken text into VRM/Three.js-compatible mouth blendshape viseme sequences (aa, ih, ou, ee, oh).
- */
-
 export interface VisemeFrame {
   timeMs: number;
   viseme: "aa" | "ih" | "ou" | "ee" | "oh" | "sil";
@@ -14,9 +9,6 @@ export interface VisemeResult {
   visemes: VisemeFrame[];
 }
 
-/**
- * Phoneme mapping table for Indonesian vowels and consonants
- */
 function charToViseme(char: string): "aa" | "ih" | "ou" | "ee" | "oh" | "sil" {
   switch (char.toLowerCase()) {
     case "a":
@@ -32,7 +24,7 @@ function charToViseme(char: string): "aa" | "ih" | "ou" | "ee" | "oh" | "sil" {
     case "m":
     case "b":
     case "p":
-      return "sil"; // Closed lips for bilabials
+      return "sil";
     case "f":
     case "v":
       return "ee";
@@ -41,17 +33,10 @@ function charToViseme(char: string): "aa" | "ih" | "ou" | "ee" | "oh" | "sil" {
   }
 }
 
-/**
- * Generates timed viseme frames for VRM / Three.js Morph Targets from Indonesian speech text.
- */
-export function generateVisemesFromText(
-  text: string,
-  estimatedDurationMs?: number
-): VisemeResult {
+export function generateVisemesFromText(text: string, estimatedDurationMs?: number): VisemeResult {
   const cleanText = text.replace(/[^a-zA-Z0-9\s]/g, " ").trim();
   const words = cleanText.split(/\s+/).filter(Boolean);
 
-  // Estimate duration if not provided (avg ~140ms per syllable)
   const totalChars = cleanText.replace(/\s+/g, "").length;
   const durationMs = estimatedDurationMs || Math.max(1200, totalChars * 75);
 
@@ -79,7 +64,7 @@ export function generateVisemesFromText(
           weight: 0.85 + Math.random() * 0.15,
         });
         currentTime += timePerChar;
-        // Natural transition back
+
         visemes.push({
           timeMs: Math.round(currentTime + timePerChar * 0.3),
           viseme,
@@ -90,7 +75,6 @@ export function generateVisemesFromText(
       }
     }
 
-    // Brief inter-word pause
     visemes.push({
       timeMs: Math.round(currentTime),
       viseme: "sil",
@@ -99,7 +83,6 @@ export function generateVisemesFromText(
     currentTime += timePerWord * 0.15;
   }
 
-  // End with closed mouth
   visemes.push({
     timeMs: Math.round(durationMs),
     viseme: "sil",

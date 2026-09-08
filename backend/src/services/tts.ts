@@ -1,8 +1,3 @@
-/**
- * TTS service — Pocket TTS Indonesian, owned by the backend.
- * The AI worker receives rendered audio only and never stores voice profiles.
- */
-
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { createInterface } from "readline";
 import { tmpdir } from "os";
@@ -11,7 +6,6 @@ import { randomBytes } from "crypto";
 import fs from "fs";
 
 export interface HostVoice {
-  /** Pocket TTS reference profile id */
   id: string;
   name: string;
   gender: "female" | "male";
@@ -19,7 +13,6 @@ export interface HostVoice {
   style: string;
 }
 
-/** Female host voices backed by reference WAV files in backend/voices. */
 export const HOST_VOICES: HostVoice[] = [
   {
     id: "girl_cute_kids",
@@ -54,8 +47,7 @@ export const HOST_VOICES: HostVoice[] = [
 export const DEFAULT_VOICE_ID = "girl_cute_kids";
 
 const POCKET_TTS_CONFIG =
-  process.env.POCKET_TTS_CONFIG ||
-  "hf://anak10thn/pocket-tts-indonesian/indonesian_6l.yaml@635cde7a28301861b120f57ec4dda8525073017c";
+  process.env.POCKET_TTS_CONFIG || "hf://anak10thn/pocket-tts-indonesian/indonesian_6l.yaml@635cde7a28301861b120f57ec4dda8525073017c";
 
 type PocketRequest = { id: string; text: string; voice_id: string };
 type PocketResponse = { id: string; audio?: string; error?: string };
@@ -98,9 +90,7 @@ function startPocketTts(): Promise<void> {
           stdout.off("line", onReady);
           resolve();
         }
-      } catch {
-        // Model logs are ignored until the JSON ready marker arrives.
-      }
+      } catch {}
     };
     stdout.on("line", onReady);
     child.stderr.on("data", (chunk) => console.warn(`[PocketTTS] ${chunk.toString().trim()}`));
@@ -151,7 +141,7 @@ function synthesizeWithPocketTts(text: string, voiceId: string): Promise<Buffer>
 
 export interface SynthesizeRequest {
   text: string;
-  /** voice_id (preferred) or legacy host slug */
+
   voiceId?: string;
   host?: string;
   voice?: string;
@@ -165,10 +155,7 @@ export interface SynthesizeRequest {
   podId?: string | null;
   sessionId?: string;
   requestId?: string;
-  /**
-   * true = boleh synth tanpa sesi live (studio preview) jika worker URL ada.
-   * false = API publik default live-only.
-   */
+
   allowOfflineSynth?: boolean;
 }
 
@@ -195,10 +182,6 @@ export interface SynthesizeResponse {
   };
 }
 
-/**
- * Normalize text for live TTS — jangan ubah data produk mentah.
- * Pipeline: Raw Product → Script → sanitizeForLiveTTS → Pocket TTS
- */
 export function sanitizeForLiveTTS(text: string): string {
   if (!text) return "";
   let out = text
@@ -226,7 +209,6 @@ export function sanitizeForLiveTTS(text: string): string {
     .trim();
 }
 
-/** Rp / Rp. / $ + format ID (25.000) atau US (25,000) → bacaan natural. */
 export function normalizeCurrencyForTts(text: string): string {
   return text
     .replace(/\bRp\.?\s*([\d.,]+)\b/gi, (_m, raw: string) => `${idNumberToSpoken(parseIdAmount(raw))} rupiah`)
@@ -272,7 +254,6 @@ const ID_ONES = [
   "sembilan belas",
 ];
 
-/** Konversi angka ke bacaan ID untuk TTS (hingga ratusan juta). */
 export function idNumberToSpoken(n: number): string {
   if (!Number.isFinite(n)) return "";
   const rounded = Math.round(n);
@@ -381,15 +362,11 @@ async function ensureWav16kMono(input: Buffer): Promise<Buffer> {
     proc.on("close", (code) => {
       try {
         fs.unlinkSync(inFile);
-      } catch {
-        /* ignore */
-      }
+      } catch {}
       if (code !== 0) {
         try {
           fs.unlinkSync(outFile);
-        } catch {
-          /* ignore */
-        }
+        } catch {}
         reject(new Error(`FFmpeg error (${code}): ${Buffer.concat(errors).toString()}`));
         return;
       }
@@ -419,7 +396,6 @@ export function wavDurationSeconds(input: Buffer): number | undefined {
   return dataBytes / bytesPerSecond;
 }
 
-/** Resolve legacy host slugs to a Pocket TTS voice profile. */
 export function resolveVoiceId(voiceOrHost?: string, avatarName?: string): string {
   const defaultVoice = (process.env.VOICE_ID || DEFAULT_VOICE_ID).trim() || DEFAULT_VOICE_ID;
   const raw = String(voiceOrHost || avatarName || defaultVoice)
@@ -437,21 +413,14 @@ export function resolveVoiceId(voiceOrHost?: string, avatarName?: string): strin
     return defaultVoice;
   }
   if (HOST_VOICES.some((h) => h.id === base)) return base;
-  // Alias lama
-  if (
-    base === "default_host" ||
-    base === "namira" ||
-    base.includes("namira") ||
-    base.includes("siti") ||
-    base.includes("default")
-  ) {
+
+  if (base === "default_host" || base === "namira" || base.includes("namira") || base.includes("siti") || base.includes("default")) {
     return defaultVoice;
   }
   if (HOST_VOICES.some((h) => h.id === base)) return base;
   return defaultVoice;
 }
 
-/** @deprecated Gunakan resolveVoiceId */
 export function resolveHostId(voiceOrHost?: string, avatarName?: string): string {
   return resolveVoiceId(voiceOrHost, avatarName);
 }

@@ -16,7 +16,7 @@ dotenv.config();
 
 const server = Fastify({
   logger: true,
-  bodyLimit: 25 * 1024 * 1024, // 25MB body limit for image uploads and bulk CSV
+  bodyLimit: 25 * 1024 * 1024,
 });
 
 await server.register(cors, {
@@ -27,7 +27,7 @@ await server.register(cors, {
 
 await server.register(multipart, {
   limits: {
-    fileSize: 25 * 1024 * 1024, // 25 MB  matches bodyLimit
+    fileSize: 25 * 1024 * 1024,
   },
 });
 

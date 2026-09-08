@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Full bootstrap on fresh/warm pod: git clone|pull → setup → sync --restart
 set -euo pipefail
 export PATH=/usr/local/cuda-11.8/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export CUDA_HOME=/usr/local/cuda-11.8
@@ -20,9 +19,7 @@ if [[ -z "${HF_TOKEN:-}" ]]; then
   exit 1
 fi
 
-# Pastikan repo git ada (clone / restore .git)
 if [[ -f "$REPO_DIR/deploy/sync.sh" ]]; then
-  # shellcheck source=sync.sh
   source "$REPO_DIR/deploy/sync.sh"
   pull_repo || true
 else

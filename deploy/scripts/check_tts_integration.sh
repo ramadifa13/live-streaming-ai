@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Preflight for the backend-owned TTS contract.
 set -euo pipefail
 
 API="${API:-http://127.0.0.1:8000}"

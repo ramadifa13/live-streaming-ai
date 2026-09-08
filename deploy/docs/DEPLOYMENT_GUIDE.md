@@ -13,7 +13,7 @@ apt-get install -y git curl ffmpeg ca-certificates
 cd /workspace
 git clone https://github.com/ramadifa13/live-streaming-ai.git live-streaming-ai
 cd /workspace/live-streaming-ai/deploy
-export HF_TOKEN="hf_xxx"
+export HF_TOKEN="<your_code>"
 bash setup.sh
 cp -n .env.example /workspace/ai_live_worker/.env
 nano /workspace/ai_live_worker/.env

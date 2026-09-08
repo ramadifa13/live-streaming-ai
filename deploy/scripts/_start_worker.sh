@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# Start/restart AI worker — selalu lewat sync.sh (venv + git pull).
-# Usage di pod:
-#   bash /workspace/ai_live_worker/_start_worker.sh
-#   bash /workspace/live-streaming-ai/deploy/scripts/_start_worker.sh
+
 set -euo pipefail
 
 export PATH=/usr/local/cuda-11.8/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -14,7 +11,6 @@ if [[ -f "$DEPLOY/sync.sh" ]]; then
   exec bash "$DEPLOY/sync.sh" --restart
 fi
 
-# Fallback jika repo belum ada — start lokal dengan venv
 cd /workspace/ai_live_worker
 PY="/workspace/ai_live_worker/env/bin/python"
 if [[ ! -x "$PY" ]]; then

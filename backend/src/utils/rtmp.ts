@@ -1,5 +1,3 @@
-/** Normalisasi URL RTMP + stream key (selaras dengan frontend/src/utils/rtmp.ts). */
-
 export function normalizeRtmpInput(rtmpUrl: string, streamKey: string) {
   let url = (rtmpUrl || "").trim();
   let key = (streamKey || "").replace(/[\r\n\s]/g, "");

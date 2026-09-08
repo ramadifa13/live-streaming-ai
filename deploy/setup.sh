@@ -10,7 +10,6 @@ PIP_BIN="$VENV_DIR/bin/pip"
 
 export TMPDIR="/workspace/tmp"
 export PIP_CACHE_DIR="/workspace/tmp/pip_cache"
-echo "[*] Membersihkan cache temporary lama..."
 rm -rf /workspace/tmp/* /workspace/tmp/.* /root/.cache/pip /root/.cache/huggingface 2>/dev/null || true
 mkdir -p "$TMPDIR" "$PIP_CACHE_DIR" "$WORKER_DIR"
 
@@ -18,13 +17,10 @@ export TORCH_CUDA_TAG=cu118
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-11.8}"
 export PATH="${CUDA_HOME}/bin:${PATH:-}"
 export LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
-export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:7b}"
 export PIP_NO_CACHE_DIR=1
 
-# Opsional: git pull dulu (GIT_PULL=1) supaya setup pakai kode terbaru.
 REPO_DIR="${REPO_DIR:-/workspace/live-streaming-ai}"
 if [ "${GIT_PULL:-0}" = "1" ] && [ -f "$SCRIPT_DIR/sync.sh" ]; then
-    # shellcheck source=sync.sh
     source "$SCRIPT_DIR/sync.sh"
     pull_repo || echo "[WARN] git pull gagal — lanjut setup dari tree lokal"
 fi
@@ -35,7 +31,6 @@ if [ -f "$WORKER_DIR/.setup_complete" ] && [ -d "$WORKER_DIR/env" ] && [ -d "$WO
     echo "       Update kode + restart API:"
     echo "         bash $SCRIPT_DIR/sync.sh --restart"
     echo "       Setup ulang paksa: FORCE_SETUP=1 bash $SCRIPT_DIR/setup.sh"
-    # Pastikan fastapi masih ada di venv (sering hilang kalau salah pakai python sistem).
     if [ -x "$PYTHON_BIN" ] && ! "$PYTHON_BIN" -c "import fastapi, uvicorn" 2>/dev/null; then
         echo "[DEPS] fastapi hilang di venv — install cepat requirements-worker.txt ..."
         "$PYTHON_BIN" -m pip install --no-cache-dir -r "$SCRIPT_DIR/requirements-worker.txt" \
@@ -92,32 +87,6 @@ fi
 
 echo "[OK] Python 3.10"
 
-echo ""
-echo "[1/10] Menyiapkan Ollama (${OLLAMA_MODEL})..."
-
-# Ollama di RunPod bersifat opsional. LLM diproses terpusat di backend lokal,
-# sehingga instalasi binary Ollama di RunPod dilewati secara default untuk
-# menghemat waktu setup & disk.
-if [ "${ENABLE_RUNPOD_OLLAMA:-0}" = "1" ]; then
-    if ! command -v curl >/dev/null 2>&1; then
-        echo "curl belum ada. Installing..."
-        apt-get update -qq
-        apt-get install -y -qq curl
-    fi
-
-    if ! command -v ollama >/dev/null 2>&1; then
-        echo "Ollama belum ada. Installing..."
-        curl -fsSL https://ollama.com/install.sh | sh
-    else
-        echo "Ollama sudah terinstall: $(ollama --version)"
-    fi
-
-    echo "[OK] Ollama tersedia."
-else
-    echo "[SKIP] Ollama dijalankan di backend lokal (ENABLE_RUNPOD_OLLAMA != 1)."
-    echo "[OK] Melewati instalasi Ollama di RunPod."
-fi
-
 NVCC_VERSION="$(nvcc --version | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' | tail -1)"
 
 if [ "$NVCC_VERSION" != "11.8" ]; then
@@ -129,7 +98,7 @@ fi
 echo "[OK] CUDA toolkit 11.8"
 
 echo ""
-echo "[2/10] Mengecek Hugging Face token..."
+echo "[1/9] Mengecek Hugging Face token..."
 
 if [ -z "${HF_TOKEN:-}" ]; then
     echo ""
@@ -145,19 +114,14 @@ fi
 
 echo "[OK] HF_TOKEN tersedia."
 
-# ------------------------------------------------------------
-# 3. DISK & VIRTUAL ENVIRONMENT
-# ------------------------------------------------------------
-
 echo ""
-echo "[3/10] Mengecek disk & menginisialisasi Virtual Environment..."
+echo "[2/9] Mengecek disk & menginisialisasi Virtual Environment..."
 
 ROOT_AVAIL_GB="$(df -Pk / | awk 'NR==2 {print int($4/1024/1024)}')"
 WORKSPACE_AVAIL_GB="$(df -Pk /workspace 2>/dev/null | awk 'NR==2 {print int($4/1024/1024)}' || echo '0')"
 
 echo "Root free: ${ROOT_AVAIL_GB} GB | Workspace free: ${WORKSPACE_AVAIL_GB} GB"
 
-# Prioritaskan cek ruang di /workspace jika terpasang Network Volume
 if [ "$WORKSPACE_AVAIL_GB" -gt 0 ]; then
     if [ "$WORKSPACE_AVAIL_GB" -lt 5 ]; then
         echo "[ERROR] Workspace disk (/workspace) kurang dari 5 GB."
@@ -172,7 +136,6 @@ mkdir -p \
     "$WORKER_DIR/temp" \
     "$WORKER_DIR/output"
 
-# Inisialisasi Virtual Environment mandiri di /workspace
 if [ ! -f "$PYTHON_BIN" ] || [ ! -f "$PIP_BIN" ]; then
     echo "Membuat Python Virtual Environment baru di $VENV_DIR..."
     rm -rf "$VENV_DIR"
@@ -182,33 +145,22 @@ fi
 export PATH="$VENV_DIR/bin:$PATH"
 source "$VENV_DIR/bin/activate"
 
-# Update tools di dalam venv
 "$PYTHON_BIN" -m ensurepip --upgrade 2>/dev/null || true
-# openmim still imports pkg_resources; setuptools 82+ dropped it.
 "$PYTHON_BIN" -m pip install --no-cache-dir --upgrade pip "setuptools<81" wheel
 
 echo "[OK] Virtual Environment siap: $($PYTHON_BIN --version) at $VENV_DIR"
 
-# ------------------------------------------------------------
-# 4. STOP OLD API
-# ------------------------------------------------------------
-
 echo ""
-echo "[4/10] Menghentikan API lama jika ada..."
+echo "[3/9] Menghentikan API lama jika ada..."
 
 pkill -f "api_server.py" 2>/dev/null || true
 sleep 2
 
 echo "[OK] API lama dihentikan."
 
-# ------------------------------------------------------------
-# 5. INSTALL EXACT PYTORCH STACK & RUNTIME DEPENDENCIES
-# ------------------------------------------------------------
-
 echo ""
-echo "[5/10] Menginstall PyTorch 2.1 + CUDA 11.8 ke Virtual Environment..."
+echo "[4/9] Menginstall PyTorch 2.1 + CUDA 11.8 ke Virtual Environment..."
 
-# Install dependensi dasar PyTorch & Torchvision secara lengkap
 "$PIP_BIN" install \
     --no-cache-dir \
     "typing_extensions>=4.8.0" \
@@ -269,17 +221,12 @@ if not torch.cuda.is_available():
 
 gpu = torch.cuda.get_device_name(0)
 print("GPU         :", gpu)
-
 print("")
 print("PYTORCH STACK OK")
 PY
 
-# ------------------------------------------------------------
-# 6. INSTALL WORKER FILES
-# ------------------------------------------------------------
-
 echo ""
-echo "[6/10] Menyiapkan file worker..."
+echo "[5/9] Menyiapkan file worker..."
 
 cp "$SCRIPT_DIR"/*.py "$WORKER_DIR"/ 2>/dev/null || true
 cp "$SCRIPT_DIR"/*.sh "$WORKER_DIR"/ 2>/dev/null || true
@@ -288,20 +235,15 @@ if [ -d "$SCRIPT_DIR/assets" ]; then
     cp -r "$SCRIPT_DIR/assets"/* "$WORKER_DIR/assets"/ 2>/dev/null || true
 fi
 
-
-
 if [ -f "$SCRIPT_DIR/requirements-worker.txt" ]; then
     cp "$SCRIPT_DIR/requirements-worker.txt" "$WORKER_DIR/"
 fi
 
 cd "$WORKER_DIR"
 
-# ------------------------------------------------------------
-# 7. CORE PYTHON DEPENDENCIES & FFMPEG
-# ------------------------------------------------------------
-
 echo ""
-echo "[7/10] Installing dependency utama worker..."
+echo "[6/9] Installing dependency utama worker..."
+
 echo "NOTE: Jangan install MuseTalk/requirements.txt upstream (numpy/torch/transformers bentrok)."
 
 "$PIP_BIN" install \
@@ -313,15 +255,11 @@ echo "NOTE: Jangan install MuseTalk/requirements.txt upstream (numpy/torch/trans
     "diffusers==0.27.2" \
     "accelerate==0.28.0"
 
-# requirements worker
 if [ -f "$WORKER_DIR/requirements-worker.txt" ]; then
     echo "Installing requirements-worker.txt..."
-    "$PIP_BIN" install \
-        --no-cache-dir \
-        -r "$WORKER_DIR/requirements-worker.txt"
+    "$PIP_BIN" install --no-cache-dir -r "$WORKER_DIR/requirements-worker.txt"
 fi
 
-# Ensure critical torch and numpy are untouched
 "$PIP_BIN" install \
     --no-cache-dir \
     --no-deps \
@@ -342,13 +280,9 @@ fi
 
 ffmpeg -version | head -1
 
-# ------------------------------------------------------------
-# 8. CLONE MUSETALK + INJECT _load_models_cached
-# ------------------------------------------------------------
-
 echo ""
 echo "============================================================"
-echo " [8/10] Menyiapkan MuseTalk"
+echo " [7/9] Menyiapkan MuseTalk"
 echo "============================================================"
 
 cd "$WORKER_DIR"
@@ -362,7 +296,6 @@ fi
 cd "$WORKER_DIR/MuseTalk/scripts"
 
 if ! grep -q "_load_models_cached" inference.py 2>/dev/null; then
-
     cp inference.py inference.py.original
 
     "$PYTHON_BIN" << 'PYINJECT'
@@ -370,9 +303,6 @@ with open("inference.py.original", "r") as f:
     content = f.read()
 
 inject_code = '''
-# ============================================================
-# INJECTED: _load_models_cached (for live_worker.py warmup)
-# ============================================================
 import threading as _threading
 
 _lock = _threading.Lock()
@@ -443,7 +373,6 @@ def _load_models_cached(args=None):
                     "timesteps": timesteps,
                 }
     return _models_cache[cache_key]
-
 '''
 
 new_content = content.rstrip() + "\n\n" + inject_code
@@ -453,32 +382,19 @@ with open("inference.py", "w") as f:
 
 print("[OK] _load_models_cached berhasil diinject di akhir file.")
 PYINJECT
-
 else
     echo "[SKIP] _load_models_cached sudah ada."
 fi
 
-# ------------------------------------------------------------
-# 9. OPENMMLAB / MMCV / MMPOSE
-# ------------------------------------------------------------
-
 echo ""
 echo "============================================================"
-echo " [9/10] Installing OpenMMLab Stack (MMCV, MMDetection, MMPose)"
+echo " [8/9] Installing OpenMMLab Stack (MMCV, MMDetection, MMPose)"
 echo "============================================================"
 
 cd "$WORKER_DIR"
 
-"$PIP_BIN" install \
-    --no-cache-dir \
-    "mmengine==0.10.7"
-
-"$PIP_BIN" install \
-    --no-cache-dir \
-    -U openmim \
-    "setuptools<81"
-
-# Kunci numpy 1.26.4 agar OpenMIM tidak memakai NumPy 2.x
+"$PIP_BIN" install --no-cache-dir "mmengine==0.10.7"
+"$PIP_BIN" install --no-cache-dir -U openmim "setuptools<81"
 "$PIP_BIN" install --no-cache-dir "numpy==1.26.4"
 
 echo "Installing mmcv==2.1.0..."
@@ -491,7 +407,6 @@ echo "Installing chumpy & mmpose..."
 "$PIP_BIN" install --no-cache-dir --no-build-isolation "chumpy" || true
 "$PYTHON_BIN" -m mim install "mmpose>=1.1.0" --no-build-isolation || "$PIP_BIN" install --no-cache-dir "mmpose>=1.1.0" --no-build-isolation
 
-# Pastikan torch/numpy tidak ter-upgrade oleh requirements / mim
 "$PIP_BIN" install \
     --no-cache-dir \
     --no-deps \
@@ -501,7 +416,6 @@ echo "Installing chumpy & mmpose..."
     "torchaudio==2.1.0+cu118" \
     --index-url https://download.pytorch.org/whl/cu118
 
-# Pin ulang stack worker setelah mim (hindari drift dari MuseTalk upstream reqs)
 if [ -f "$WORKER_DIR/requirements-worker.txt" ]; then
     echo "Re-pin requirements-worker.txt setelah OpenMMLab..."
     "$PIP_BIN" install --no-cache-dir -r "$WORKER_DIR/requirements-worker.txt"
@@ -510,16 +424,9 @@ if [ -f "$WORKER_DIR/requirements-worker.txt" ]; then
         --index-url https://download.pytorch.org/whl/cu118
 fi
 
-# ------------------------------------------------------------
-# 10. TTS is installed and owned by the backend; the worker only runs MuseTalk.
-# ------------------------------------------------------------
-# ------------------------------------------------------------
-# 11. DOWNLOAD MODELS & VERIFICATION
-# ------------------------------------------------------------
-
 echo ""
 echo "============================================================"
-echo " [10/10] Downloading MuseTalk AI Weights & Final Verification"
+echo " [9/9] Downloading MuseTalk AI Weights & Final Verification"
 echo "============================================================"
 
 cd "$WORKER_DIR/MuseTalk"
@@ -531,7 +438,6 @@ mkdir -p \
     models/dwpose \
     models/face-parse-bisent
 
-# MuseTalk
 if [ ! -f models/musetalkV15/musetalk.json ]; then
     echo "Downloading MuseTalk v1.5..."
     "$PYTHON_BIN" - <<'PY'
@@ -549,7 +455,6 @@ else
     echo "MuseTalk model sudah ada."
 fi
 
-# DWPose
 if [ ! -f models/dwpose/dw-ll_ucoco_384.pth ]; then
     echo "Downloading DWPose..."
     "$PYTHON_BIN" - <<'PY'
@@ -566,7 +471,6 @@ else
     echo "DWPose sudah ada."
 fi
 
-# Whisper
 if [ ! -f models/whisper/config.json ]; then
     echo "Downloading Whisper Tiny..."
     "$PYTHON_BIN" - <<'PY'
@@ -583,7 +487,6 @@ else
     echo "Whisper sudah ada."
 fi
 
-# VAE
 if [ ! -f models/sd-vae-ft-mse/config.json ]; then
     echo "Downloading SD VAE..."
     "$PYTHON_BIN" - <<'PY'
@@ -600,7 +503,6 @@ else
     echo "SD VAE sudah ada."
 fi
 
-# Face Parse
 if [ ! -f models/face-parse-bisent/79999_iter.pth ]; then
     echo "Downloading face-parse-bisent..."
     "$PYTHON_BIN" - <<'PY'
@@ -617,18 +519,15 @@ else
     echo "Face parse model sudah ada."
 fi
 
-# Bersihkan total semua cache temporary
 rm -rf /workspace/tmp/* /workspace/tmp/.* /root/.cache/pip /root/.cache/huggingface 2>/dev/null || true
 mkdir -p "$TMPDIR" "$PIP_CACHE_DIR" "$WORKER_DIR"
 
-# Symlinks
 echo ""
 echo "Menyiapkan symlink..."
 cd "$WORKER_DIR"
 ln -sfn "$WORKER_DIR/MuseTalk/musetalk" "$WORKER_DIR/musetalk"
 ln -sfn "$WORKER_DIR/MuseTalk/models" "$WORKER_DIR/models"
 
-# Final Verification
 echo ""
 echo "============================================================"
 echo " FINAL VERIFICATION TEST"
@@ -636,11 +535,9 @@ echo "============================================================"
 
 "$PYTHON_BIN" - <<'PY'
 import os
-import re
 import sys
 
 base = "/workspace/ai_live_worker"
-
 required = [
     "musetalk/utils/dwpose/rtmpose-l_8xb32-270e_coco-ubody-wholebody-384x288.py",
     "models/dwpose/dw-ll_ucoco_384.pth",
@@ -652,7 +549,6 @@ required = [
 ]
 
 missing = []
-
 for rel in required:
     path = os.path.join(base, rel)
     if not os.path.exists(path):
@@ -700,27 +596,22 @@ if not torch.cuda.is_available():
 
 print("GPU          :", torch.cuda.get_device_name(0))
 
-# Test CUDA tensor
 x = torch.randn(2, 3, device="cuda")
 print("CUDA tensor  :", x.device)
 print("CUDA test    : OK")
 
-# MMCV
 import mmcv
 print("MMCV         :", mmcv.__version__)
 
-# MMEngine
 import mmengine
 print("MMEngine     :", mmengine.__version__)
 
-# MMPose
 try:
     import mmpose
     print("MMPose       :", mmpose.__version__)
 except Exception as e:
     print("[WARNING] MMPose import:", e)
 
-# Test _load_models_cached import
 sys.path.insert(0, "/workspace/ai_live_worker/MuseTalk")
 from scripts.inference import _load_models_cached
 print("_load_models_cached: OK")
