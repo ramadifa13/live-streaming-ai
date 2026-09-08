@@ -749,21 +749,25 @@ class FrameFeedBroadcaster:
                 print(f"[FRAME-FEED] ffseg buka gagal: {err}")
                 return False
 
-            idx = 0
-            for frame, chunk in frame_iter:
-                if self._shutting_down:
-                    break
-                if frame.shape[1] != self.width or frame.shape[0] != self.height:
-                    frame = fit_bgr(frame, self.width, self.height)
-                if fade_frames and idx < fade_frames:
-                    gain = (idx + 1) / float(fade_frames)
-                    samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) * gain
-                    chunk = np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
-                if not self._write_av(frame, chunk):
-                    return False
-                ok_any = True
-                idx += 1
-                _pace()
+            try:
+                idx = 0
+                for frame, chunk in frame_iter:
+                    if self._shutting_down:
+                        break
+                    if frame.shape[1] != self.width or frame.shape[0] != self.height:
+                        frame = fit_bgr(frame, self.width, self.height)
+                    if fade_frames and idx < fade_frames:
+                        gain = (idx + 1) / float(fade_frames)
+                        samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) * gain
+                        chunk = np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
+                    if not self._write_av(frame, chunk):
+                        return False
+                    ok_any = True
+                    idx += 1
+                    _pace()
+            except Exception as err:
+                print(f"[FRAME-FEED] ffseg playback ditolak: {err}")
+                return False
             if ok_any:
                 self._lock_idle_anchor(idx)
             self._av_deadline = next_deadline
@@ -777,6 +781,17 @@ class FrameFeedBroadcaster:
         if not cap.isOpened():
             print(f"[FRAME-FEED] Gagal buka clip: {video_path}")
             return False
+
+        declared_frames = int(round(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0))
+        audio_frames = int(round(len(pcm) / max(1, self.bytes_per_audio_frame)))
+        if declared_frames > 0 and audio_frames > 0:
+            if abs(declared_frames - audio_frames) > 1:
+                print(
+                    f"[FRAME-FEED] Tolak clip tidak sinkron: "
+                    f"video={declared_frames} audio={audio_frames} frames"
+                )
+                cap.release()
+                return False
 
         audio_pos = 0
         while not self._shutting_down:
@@ -879,6 +894,7 @@ class FrameFeedBroadcaster:
                     # Zero-gap: jika antrian sudah ada, langsung putar tanpa idle.
                     continue
                 else:
+                    self._cleanup(path, idle_abs)
                     time.sleep(0.1)
 
             except Exception as loop_err:

@@ -3203,10 +3203,12 @@ class AIVisualWorker:
                     ok = True
             except Exception as err:
                 print(f"[AIVisualWorker] Preroll notice: {err}")
-                ok = not LIPSYNC_HARD_PREROLL
+                # Audio must keep flowing even when MuseTalk preroll fails.
+                # The state machine will render body-only frames until recovery.
+                ok = True
             finally:
                 ready = getattr(job, "lipsync_ready", None)
-                if ready is not None and (ok or not LIPSYNC_HARD_PREROLL):
+                if ready is not None:
                     ready.set()
 
         threading.Thread(

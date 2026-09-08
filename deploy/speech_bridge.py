@@ -15,6 +15,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Deque, List, Optional, Tuple
 
 import numpy as np
@@ -182,6 +183,7 @@ class UtteranceJob:
     primed_at: float = 0.0
     error: str = ""
     created_at: float = field(default_factory=time.time)
+    started_at: float = 0.0
 
 
 class SpeechBridge:
@@ -194,7 +196,9 @@ class SpeechBridge:
 
     # Minimum utterances siap sebelum playback pertama dimulai.
     # Set ke 1 agar AI langsung bicara pada kalimat pertama tanpa menunggu antrian kedua.
-    MIN_READY_UTTERANCES: int = int(os.environ.get("SPEECH_BRIDGE_MIN_READY", "1"))
+    MIN_READY_UTTERANCES: int = int(os.environ.get("SPEECH_BRIDGE_MIN_READY", "3"))
+    MAX_PENDING_UTTERANCES: int = int(os.environ.get("SPEECH_BRIDGE_MAX_PENDING", "12"))
+    PREP_WORKERS: int = max(1, int(os.environ.get("SPEECH_BRIDGE_PREP_WORKERS", "2")))
 
     def __init__(self, output_folder: str = ""):
         self.output_folder = output_folder or os.environ.get(
@@ -212,6 +216,11 @@ class SpeechBridge:
         self._silence_frame_index = 0
         self._audio_exhausted = False
         self._awaiting_visual_tail = False
+        self._active_deadline = 0.0
+        self._prep_executor = ThreadPoolExecutor(
+            max_workers=self.PREP_WORKERS,
+            thread_name_prefix="SpeechPrep",
+        )
         # Pre-queue gate: True selama belum ada utterance pertama yang dimulai.
         self._prequeue_gate_active: bool = self.MIN_READY_UTTERANCES > 1
         self._ever_started: bool = False  # False sampai utterance pertama mulai
@@ -229,12 +238,10 @@ class SpeechBridge:
             ]
         for job in stale:
             job.ready.clear()
-            threading.Thread(
-                target=self._prepare_job,
-                args=(job,),
-                name=f"RePrep-{job.task_id[:20]}",
-                daemon=True,
-            ).start()
+            self._submit_prep(job)
+
+    def _submit_prep(self, job: UtteranceJob) -> None:
+        self._prep_executor.submit(self._prepare_job, job)
 
     def set_callbacks(
         self,
@@ -268,17 +275,14 @@ class SpeechBridge:
             priority=priority,
         )
         with self._lock:
+            if len(self._pending) >= max(1, self.MAX_PENDING_UTTERANCES):
+                raise RuntimeError("SpeechBridge queue penuh; retry setelah playback maju")
             self._pending.append(job)
             ordered = sorted(self._pending, key=lambda j: _sequence_key(j.task_id))
             self._pending.clear()
             self._pending.extend(ordered)
 
-        threading.Thread(
-            target=self._prepare_job,
-            args=(job,),
-            name=f"Prep-{task_id[:24]}",
-            daemon=True,
-        ).start()
+        self._submit_prep(job)
         print(f"[SpeechBridge] Enqueued {task_id} action={action or 'talk'}")
         return job
 
@@ -440,12 +444,7 @@ class SpeechBridge:
                             "re-prep, tidak diputar dulu"
                         )
                         nxt.ready.clear()
-                        threading.Thread(
-                            target=self._prepare_job,
-                            args=(nxt,),
-                            name=f"RePrep-{nxt.task_id[:20]}",
-                            daemon=True,
-                        ).start()
+                        self._submit_prep(nxt)
                     self._pending.appendleft(nxt)
                     return
                 candidate = nxt
@@ -473,10 +472,10 @@ class SpeechBridge:
             preroll_timeout = float(
                 os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.5")
             )
-            # Hard preroll: jangan mulai dengan mouths parsial — tunggu sampai ready.
+            # Hard preroll avoids a partial mouth, but never blocks audio forever.
             if hard_preroll:
-                # Unbounded wait until lipsync_ready (worker sets after full preroll
-                # or preroll deadline force). Re-queue and retry next tick.
+                # The worker has an absolute deadline; the bridge keeps retrying
+                # while that deadline is in progress and preserves idle rendering.
                 with self._lock:
                     self._pending.appendleft(candidate)
                 if int(waited) > 0 and int(waited) % 5 == 0:
@@ -501,6 +500,10 @@ class SpeechBridge:
             self._frame_cursor = 0
             self._audio_exhausted = False
             self._awaiting_visual_tail = False
+            candidate.started_at = time.monotonic()
+            duration = max(1.0, candidate.num_frames / float(TARGET_FPS))
+            tail = max(1.0, float(os.environ.get("MUSETALK_WHISPER_GRACE_TAIL", "3")) / TARGET_FPS)
+            self._active_deadline = candidate.started_at + duration + tail + 30.0
             # Gate selamanya off setelah utterance pertama mulai.
             self._ever_started = True
             self._prequeue_gate_active = False
@@ -518,6 +521,7 @@ class SpeechBridge:
         self._frame_cursor = 0
         self._audio_exhausted = False
         self._awaiting_visual_tail = False
+        self._active_deadline = 0.0
         if finished and self._on_utterance_end:
             try:
                 self._on_utterance_end(finished)
@@ -547,6 +551,7 @@ class SpeechBridge:
             self._frame_cursor = 0
             self._audio_exhausted = False
             self._awaiting_visual_tail = False
+            self._active_deadline = 0.0
             # Reset gate untuk sesi Go Live berikutnya.
             self._ever_started = False
             self._prequeue_gate_active = self.MIN_READY_UTTERANCES > 1
@@ -614,6 +619,10 @@ class SpeechBridge:
         Grace tail: setelah PCM habis, izinkan beberapa frame silence sambil
         whisper index terus maju (mouth masih bergerak untuk suku kata akhir).
         """
+        if self._current is not None and self._active_deadline > 0 and time.monotonic() > self._active_deadline:
+            print("[SpeechBridge] Active utterance deadline reached; advancing queue")
+            self._finish_current()
+
         if not self.playback_active():
             size = _samples_for_frame(self._silence_frame_index) * 2 * 2
             self._silence_frame_index += 1

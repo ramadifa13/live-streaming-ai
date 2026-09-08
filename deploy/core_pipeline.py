@@ -81,6 +81,7 @@ class StreamBroadcaster(threading.Thread):
         output_folder: str,
         background_path: str = "",
         overlay_path: str = "",
+        bridge=None,
     ):
         super().__init__(name="StreamBroadcaster", daemon=True)
         self.rtmp_url = (rtmp_url or "").strip()
@@ -90,6 +91,7 @@ class StreamBroadcaster(threading.Thread):
         self.output_folder = output_folder
         self.background_path = background_path
         self.overlay_path = overlay_path
+        self.bridge = bridge
 
         self.proc = None
         self.v_fh = None
@@ -408,12 +410,28 @@ class StreamBroadcaster(threading.Thread):
                     if getattr(pkt, "clip_name", None) and getattr(pkt, "frame_idx", None) is not None:
                         self.fallback_player.sync(pkt.clip_name, pkt.frame_idx)
                 except queue.Empty:
+                    if self.bridge is not None and self.bridge.is_utterance_active():
+                        try:
+                            pkt = self.render_q.get(timeout=0.75)
+                            frame = pkt.frame
+                            pcm = pkt.audio_pcm
+                            clip_name = getattr(pkt, "clip_name", "") or "idle"
+                            frame_idx = int(getattr(pkt, "frame_idx", 0) or 0)
+                            self.fallback_player.sync(clip_name, frame_idx)
+                        except queue.Empty:
+                            self.last_error = "Render packet speech timeout; audio/video pair hilang"
+                            failed = True
+                            self.stop_event.set()
+                            if self.output_folder and write_rtmp_status:
+                                write_rtmp_status(self.output_folder, "failed", self.last_error)
+                            break
+                    else:
                     # ZERO-LATENCY FALLBACK (Mencegah patah/loncat dengan ping-pong continuous player)
-                    metrics.inc("broadcast_idle_fallback")
-                    frame = self.fallback_player.next_frame()
-                    pcm = _silence_bytes_for_frame(self._audio_frame_index)
-                    clip_name = getattr(self.fallback_player._clip, "name", "idle")
-                    frame_idx = int(getattr(self.fallback_player, "_idx", 0) or 0)
+                        metrics.inc("broadcast_idle_fallback")
+                        frame = self.fallback_player.next_frame()
+                        pcm = _silence_bytes_for_frame(self._audio_frame_index)
+                        clip_name = getattr(self.fallback_player._clip, "name", "idle")
+                        frame_idx = int(getattr(self.fallback_player, "_idx", 0) or 0)
 
                 if pcm is None:
                     pcm = _silence_bytes_for_frame(self._audio_frame_index)
@@ -622,6 +640,7 @@ class NewAIVisualWorker:
             self.output_folder,
             background_path=self.background_path,
             overlay_path=self.overlay_path,
+            bridge=self._bridge,
         )
         self.broadcaster = broadcaster_t
 

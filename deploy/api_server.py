@@ -22,6 +22,9 @@ from api_models import (
     PlaybackRequest,
     UpdateProductRequest,
 )
+
+# TTS synthesis is owned by the backend; keep the optional legacy bridge explicit.
+voxcpm2_bridge = None
 from broadcast_supervisor import (
     IDLE_CLIP_BASENAMES,
     MAX_JOBS_STORE,
@@ -114,6 +117,36 @@ broadcaster_log_handle = None
 broadcaster_restarts = 0
 broadcaster_next_restart_at = 0.0
 _broadcast_boot_state = "idle"
+_broadcast_boot_task: Optional[asyncio.Task] = None
+_broadcast_boot_error = ""
+_broadcast_started_at = 0.0
+
+
+def _visual_worker_ready() -> bool:
+    """Return true only after the visual pipeline has started its run loop."""
+    if visual_worker is None:
+        return False
+    try:
+        return bool(
+            getattr(visual_worker, "is_pipeline_active", False)
+            or getattr(visual_worker, "is_running", False)
+        )
+    except Exception:
+        return False
+
+
+def _normalize_body_action(action: Optional[str]) -> Optional[str]:
+    """Keep API actions within the body clips understood by the state machine."""
+    value = (action or "").strip().lower().replace("-", "_")
+    aliases = {
+        "talk": "talk_1",
+        "speak": "talk_1",
+        "speaking": "talk_1",
+        "rest": "idle",
+        "neutral": "idle",
+    }
+    value = aliases.get(value, value)
+    return value if value in {"idle", "talk_1", "talk_2", "talk_3"} else None
 
 
 def _visual_worker_pipeline_active() -> bool:
@@ -153,16 +186,41 @@ def _terminate_broadcaster(timeout: float = 8.0) -> None:
 
 
 async def periodic_cleanup_and_watchdog():
+    global broadcaster_process, broadcaster_restarts, broadcaster_next_restart_at
     while True:
         try:
             await asyncio.sleep(5)
             prune_old_jobs()
             if broadcaster_process is not None and broadcaster_process.poll() is not None:
+                exited = broadcaster_process
+                broadcaster_process = None
                 print(
-                    f"[WATCHDOG] Broadcaster exited with code {broadcaster_process.returncode}",
+                    f"[WATCHDOG] Broadcaster exited with code {exited.returncode}",
                     flush=True,
                 )
-                if write_rtmp_status is not None:
+                env = current_broadcast_env
+                now = time.monotonic()
+                if (
+                    env is not None
+                    and broadcaster_restarts < MAX_BROADCASTER_RESTARTS
+                    and now >= broadcaster_next_restart_at
+                ):
+                    try:
+                        broadcaster_process = _spawn_broadcaster(env)
+                        broadcaster_restarts += 1
+                        broadcaster_next_restart_at = now + min(
+                            60.0, 2.0 ** min(broadcaster_restarts, 5)
+                        )
+                        if write_rtmp_status is not None:
+                            write_rtmp_status(output_dir, "connecting", "Broadcaster restarting")
+                        print(
+                            f"[WATCHDOG] Broadcaster restart {broadcaster_restarts}/"
+                            f"{MAX_BROADCASTER_RESTARTS}",
+                            flush=True,
+                        )
+                    except Exception as restart_err:
+                        print(f"[WATCHDOG] Broadcaster restart failed: {restart_err}")
+                elif write_rtmp_status is not None:
                     write_rtmp_status(output_dir, "failed", "Broadcaster berhenti tidak terduga")
             if visual_worker is not None and not _visual_worker_pipeline_active():
                 print("[WATCHDOG] Visual worker tidak aktif", flush=True)
@@ -315,6 +373,16 @@ async def health():
         "rtmp_error": rtmp_error,
         "stream_ready": stream_ready,
         "tts": tts_info,
+    }
+
+
+@app.get("/tts/health")
+async def tts_health():
+    return {
+        "status": "ok",
+        "engine": "backend-pocket-tts",
+        "worker_synthesis": voxcpm2_bridge is not None,
+        "message": "Worker menerima WAV dari backend",
     }
 
 

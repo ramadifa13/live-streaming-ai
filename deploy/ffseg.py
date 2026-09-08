@@ -160,6 +160,18 @@ class FfsegWriter:
         with open(os.path.join(self.partial, AUDIO_NAME), "wb") as af:
             af.write(audio_pcm or b"")
 
+        audio_duration = 0.0
+        if audio_pcm:
+            audio_duration = len(audio_pcm) / float(self.sample_rate * self.channels * 2)
+        video_duration = self.frame_count / self.fps
+        tolerance = max(1.0 / self.fps, 0.05)
+        if audio_duration and abs(audio_duration - video_duration) > tolerance:
+            shutil.rmtree(self.partial, ignore_errors=True)
+            raise RuntimeError(
+                "ffseg durasi audio/video mismatch: "
+                f"audio={audio_duration:.3f}s video={video_duration:.3f}s"
+            )
+
         meta = {
             "width": self.width,
             "height": self.height,
@@ -169,6 +181,8 @@ class FfsegWriter:
             "channels": self.channels,
             "bytes_per_frame": self.bytes_per_frame,
             "audio_bytes": int(len(audio_pcm or b"")),
+            "audio_duration_seconds": round(audio_duration, 6),
+            "video_duration_seconds": round(video_duration, 6),
         }
         with open(os.path.join(self.partial, META_NAME), "w", encoding="utf-8") as fh:
             json.dump(meta, fh)
@@ -212,6 +226,20 @@ def iter_ffseg_frames(
     if os.path.exists(audio_path):
         with open(audio_path, "rb") as af:
             audio = af.read()
+
+    expected_video_bytes = frames * bpf
+    actual_video_bytes = os.path.getsize(video_path) if os.path.exists(video_path) else 0
+    if actual_video_bytes < expected_video_bytes:
+        raise RuntimeError(
+            f"ffseg video terpotong: {actual_video_bytes}/{expected_video_bytes} bytes"
+        )
+    expected_audio_bytes = frames * audio_bpf
+    if frames > 0 and not audio:
+        raise RuntimeError("ffseg audio hilang untuk video yang memiliki frame")
+    if audio and abs(len(audio) - expected_audio_bytes) > audio_bpf:
+        raise RuntimeError(
+            f"ffseg audio/video tidak sinkron: audio={len(audio)} expected={expected_audio_bytes}"
+        )
 
     def _gen():
         with open(video_path, "rb") as vf:

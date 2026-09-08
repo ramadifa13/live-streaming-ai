@@ -764,6 +764,7 @@ def main(args):
                     ffseg_writer = None
 
             total_frames = 0
+            ffmpeg_broken_pipe = False
             for whisper_batch, latent_batch in gen:
                 audio_feature_batch = pe(whisper_batch)
                 latent_batch = latent_batch.to(dtype=weight_dtype)
@@ -811,8 +812,9 @@ def main(args):
                     if ffmpeg_proc is not None and ffmpeg_proc.stdin is not None:
                         try:
                             ffmpeg_proc.stdin.write(combine_frame.tobytes())
-                        except (BrokenPipeError, IOError):
-                            pass
+                        except (BrokenPipeError, IOError) as pipe_err:
+                            ffmpeg_broken_pipe = True
+                            print(f"[MuseTalk-Fast] FFmpeg pipe closed: {pipe_err}")
                     total_frames += 1
 
             if ffmpeg_proc is not None:
@@ -822,6 +824,11 @@ def main(args):
                     except Exception:
                         pass
                 ffmpeg_proc.wait()
+                if ffmpeg_broken_pipe or ffmpeg_proc.returncode != 0:
+                    raise RuntimeError(
+                        "FFmpeg output gagal: "
+                        f"returncode={ffmpeg_proc.returncode} broken_pipe={ffmpeg_broken_pipe}"
+                    )
 
             if ffseg_writer is not None:
                 pcm = b""
