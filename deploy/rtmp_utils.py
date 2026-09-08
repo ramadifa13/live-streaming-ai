@@ -153,6 +153,7 @@ def summarize_ffmpeg_stderr(stderr_tail: str, fallback: str = USER_HINT_FFMPEG) 
             return ln[:240]
     return fallback
 
+
 def _clean(value: str) -> str:
     return (value or "").strip().replace("\r", "").replace("\n", "").replace(" ", "")
 
@@ -219,7 +220,11 @@ def classify_ffmpeg_line(line: str) -> Optional[str]:
         return USER_HINT_PUBLISHING
     if "connection refused" in low or "failed to connect" in low or "timed out" in low:
         return USER_HINT_REFUSED
-    if "conversion failed" in low or "input/output error" in low or "writing trailer" in low:
+    if (
+        "conversion failed" in low
+        or "input/output error" in low
+        or "writing trailer" in low
+    ):
         # I/O error bisa DNS atau stream key — utamakan DNS jika ada jejak resolusi.
         if is_dns_failure_line(line):
             return USER_HINT_DNS
