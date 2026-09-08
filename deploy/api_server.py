@@ -719,19 +719,19 @@ async def get_queue_status():
     rtmp_error = ""
     rtmp_hint = ""
     rtmp_state = "disconnected"
+    if read_rtmp_status is not None:
+        rtmp_state, rtmp_error = read_rtmp_status(output_dir)
+        rtmp_connected = rtmp_state == "connected"
+    else:
+        status_file = os.path.join(output_dir, "rtmp_status.txt")
+        if os.path.exists(status_file):
+            try:
+                with open(status_file, "r") as f:
+                    rtmp_state = f.read().strip()
+                    rtmp_connected = rtmp_state == "connected"
+            except Exception:
+                pass
     if is_broadcasting:
-        if read_rtmp_status is not None:
-            rtmp_state, rtmp_error = read_rtmp_status(output_dir)
-            rtmp_connected = rtmp_state == "connected"
-        else:
-            status_file = os.path.join(output_dir, "rtmp_status.txt")
-            if os.path.exists(status_file):
-                try:
-                    with open(status_file, "r") as f:
-                        rtmp_state = f.read().strip()
-                        rtmp_connected = rtmp_state == "connected"
-                except Exception:
-                    pass
         rtmp_hint = ""
         if (
             not rtmp_connected
