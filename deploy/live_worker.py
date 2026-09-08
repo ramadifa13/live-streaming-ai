@@ -498,6 +498,23 @@ class AILiveWorker:
 
     @staticmethod
     def _probe_media_duration(path: str) -> float:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        return max(0.0, float(result.stdout.strip()))
         if not path or not os.path.exists(path) or os.path.getsize(path) == 0:
             return 0.0
         try:
@@ -530,6 +547,7 @@ class AILiveWorker:
             return video_path
         video_duration = self._probe_media_duration(video_path)
         audio_duration = self._probe_media_duration(audio_path)
+        if video_duration + 0.05 >= audio_duration:
         if audio_duration <= 0.0 or video_duration + 0.05 >= audio_duration:
             return video_path
 
