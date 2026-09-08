@@ -50,6 +50,13 @@ SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
 BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2
 
 
+def _samples_for_frame(frame_index: int) -> int:
+    """Distribute 16 kHz samples across 30 FPS without cumulative clock drift."""
+    start = int(frame_index * SAMPLE_RATE / TARGET_FPS)
+    end = int((frame_index + 1) * SAMPLE_RATE / TARGET_FPS)
+    return max(1, end - start)
+
+
 def _sequence_key(task_id: str):
     match = re.match(r"^(prio_)?task_(\d{10,})_", task_id or "")
     if match:
@@ -145,14 +152,18 @@ def _split_pcm_frames(pcm: bytes, bytes_per_frame: int = BYTES_PER_AUDIO_FRAME) 
     if not pcm:
         return []
     frames = []
+    bytes_per_sample = 2 * 2
     pos = 0
+    frame_index = 0
     total = len(pcm)
     while pos < total:
-        chunk = pcm[pos : pos + bytes_per_frame]
-        if len(chunk) < bytes_per_frame:
-            chunk = chunk + b"\x00" * (bytes_per_frame - len(chunk))
+        frame_size = _samples_for_frame(frame_index) * bytes_per_sample
+        chunk = pcm[pos : pos + frame_size]
+        if len(chunk) < frame_size:
+            chunk = chunk + b"\x00" * (frame_size - len(chunk))
         frames.append(chunk)
-        pos += bytes_per_frame
+        pos += frame_size
+        frame_index += 1
     return frames
 
 
@@ -198,6 +209,7 @@ class SpeechBridge:
         self._on_utterance_end: Optional[Callable[[UtteranceJob], None]] = None
         self._on_utterance_ready: Optional[Callable[[UtteranceJob], None]] = None
         self._silence = b"\x00" * BYTES_PER_AUDIO_FRAME
+        self._silence_frame_index = 0
         self._audio_exhausted = False
         self._awaiting_visual_tail = False
         # Pre-queue gate: True selama belum ada utterance pertama yang dimulai.
@@ -603,12 +615,16 @@ class SpeechBridge:
         whisper index terus maju (mouth masih bergerak untuk suku kata akhir).
         """
         if not self.playback_active():
-            return self._silence, False, None
+            size = _samples_for_frame(self._silence_frame_index) * 2 * 2
+            self._silence_frame_index += 1
+            return b"\x00" * size, False, None
 
         self._start_next_if_needed()
 
         if self._current is None:
-            return self._silence, False, None
+            size = _samples_for_frame(self._silence_frame_index) * 2 * 2
+            self._silence_frame_index += 1
+            return b"\x00" * size, False, None
 
         # PCM masih ada — kirim audio + whisper index.
         if self._frame_cursor < self._current.num_frames:
@@ -628,13 +644,15 @@ class SpeechBridge:
             # Kirim silence + whisper index agar mulut tutup secara natural.
             idx = self._frame_cursor
             self._frame_cursor += 1
-            return self._silence, False, idx
+            return b"\x00" * (_samples_for_frame(idx) * 2 * 2), False, idx
 
         # Benar-benar selesai.
         if not self._audio_exhausted:
             self._audio_exhausted = True
             self._awaiting_visual_tail = True
-        return self._silence, False, None
+        size = _samples_for_frame(self._silence_frame_index) * 2 * 2
+        self._silence_frame_index += 1
+        return b"\x00" * size, False, None
 
 
     def get_llm_action(self) -> Optional[str]:

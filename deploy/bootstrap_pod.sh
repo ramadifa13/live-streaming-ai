@@ -50,12 +50,21 @@ cp -n .env.example "$WORKER_DIR/.env"
 FORCE_ASSETS=1 bash sync.sh --restart
 
 echo "[*] Health checks"
+health_ok=0
 for i in $(seq 1 60); do
   if curl -sf http://127.0.0.1:8000/health >/tmp/worker_health.json; then
     echo "[OK] /health"
     cat /tmp/worker_health.json
+    health_ok=1
     break
   fi
   sleep 5
 done
+if [ "$health_ok" -ne 1 ]; then
+  echo "[ERROR] Worker health check gagal setelah 300 detik" >&2
+  if [ -f "$WORKER_DIR/api_server.log" ]; then
+    tail -n 80 "$WORKER_DIR/api_server.log" >&2 || true
+  fi
+  exit 1
+fi
 echo "[DONE] MuseTalk worker bootstrap selesai; audio TTS berasal dari backend."

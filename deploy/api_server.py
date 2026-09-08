@@ -157,6 +157,15 @@ async def periodic_cleanup_and_watchdog():
         try:
             await asyncio.sleep(5)
             prune_old_jobs()
+            if broadcaster_process is not None and broadcaster_process.poll() is not None:
+                print(
+                    f"[WATCHDOG] Broadcaster exited with code {broadcaster_process.returncode}",
+                    flush=True,
+                )
+                if write_rtmp_status is not None:
+                    write_rtmp_status(output_dir, "failed", "Broadcaster berhenti tidak terduga")
+            if visual_worker is not None and not _visual_worker_pipeline_active():
+                print("[WATCHDOG] Visual worker tidak aktif", flush=True)
         except asyncio.CancelledError:
             break
         except Exception as exc:
@@ -283,16 +292,28 @@ app.mount("/output", StaticFiles(directory=output_dir), name="output")
 @app.get("/health")
 async def health():
     tts_info = {"engine": "backend-pocket-tts", "ready": True}
+    rtmp_state = "unknown"
+    rtmp_error = ""
+    if read_rtmp_status is not None:
+        rtmp_state, rtmp_error = read_rtmp_status(output_dir)
+    visual_running = _visual_worker_pipeline_active() or (
+        visual_worker is not None and visual_worker.is_running
+    )
+    broadcaster_running = broadcaster_process is not None and broadcaster_process.poll() is None
+    stream_ready = (visual_running or broadcaster_running) and rtmp_state in ("connected", "connecting")
     return {
-        "status": "ok",
+        "status": "ok" if stream_ready or not (visual_running or broadcaster_running) else "degraded",
         "message": "AI Live Worker API is running",
         "warmed_up": getattr(worker, "_warmed_up", False),
         "batch_size": worker.batch_size,
         "active_jobs": len(jobs),
         "broadcast_mode": os.environ.get("BROADCAST_MODE", "segment"),
-        "visual_worker_running": _visual_worker_pipeline_active()
-        or (visual_worker is not None and visual_worker.is_running),
+        "visual_worker_running": visual_running,
         "visual_worker_pipeline_active": _visual_worker_pipeline_active(),
+        "broadcaster_running": broadcaster_running,
+        "rtmp_state": rtmp_state,
+        "rtmp_error": rtmp_error,
+        "stream_ready": stream_ready,
         "tts": tts_info,
     }
 
@@ -954,7 +975,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
 
     already_connected = False
     mode = (os.environ.get("BROADCAST_MODE") or "ai_worker").strip().lower()
-    ai_mode = True
+    ai_mode = mode in ("ai_worker", "ai-worker", "realtime", "visual_worker")
 
     if ai_mode and visual_worker is not None and _visual_worker_pipeline_active():
         rtmp_state = "disconnected"

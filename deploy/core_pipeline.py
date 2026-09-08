@@ -42,6 +42,12 @@ AUDIO_SAMPLE_RATE = 16000
 AUDIO_CHANNELS = 2
 BYTES_PER_AUDIO_FRAME = int(round(AUDIO_SAMPLE_RATE / float(TARGET_FPS))) * 2 * AUDIO_CHANNELS
 
+
+def _silence_bytes_for_frame(frame_index: int) -> bytes:
+    start = int(frame_index * AUDIO_SAMPLE_RATE / TARGET_FPS)
+    end = int((frame_index + 1) * AUDIO_SAMPLE_RATE / TARGET_FPS)
+    return b"\x00" * (max(1, end - start) * 2 * AUDIO_CHANNELS)
+
 # === Refactored Components === #
 from ai_worker import AssetBank, LipSyncEngine, VideoStateMachine, RawFramePacket, RenderedPacket
 from ai_worker import frame_fetcher_loop, lipsync_worker_loop, _IdleFallbackPlayer
@@ -94,6 +100,7 @@ class StreamBroadcaster(threading.Thread):
         # Smooth fallback player (mencegah patah jumping saat transisi rest pose)
         self.fallback_player = _IdleFallbackPlayer(bank)
         self.silence_pcm = b"\x00" * BYTES_PER_AUDIO_FRAME
+        self._audio_frame_index = 0
 
         # Background & Overlay buffers
         self._bg_bgr: Optional[np.ndarray] = None
@@ -379,11 +386,17 @@ class StreamBroadcaster(threading.Thread):
 
         metrics = get_telemetry()
         expected_bytes = CANVAS_W * CANVAS_H * 3
+        failed = False
 
         while not self.stop_event.is_set():
             try:
                 if self.proc and self.proc.poll() is not None:
-                    print("[StreamBroadcaster] FFmpeg exited unexpectedly!")
+                    self.last_error = "FFmpeg RTMP berhenti saat siaran berjalan"
+                    failed = True
+                    print(f"[StreamBroadcaster] {self.last_error}")
+                    if self.output_folder and write_rtmp_status:
+                        write_rtmp_status(self.output_folder, "failed", self.last_error)
+                    self.stop_event.set()
                     break
 
                 try:
@@ -398,16 +411,13 @@ class StreamBroadcaster(threading.Thread):
                     # ZERO-LATENCY FALLBACK (Mencegah patah/loncat dengan ping-pong continuous player)
                     metrics.inc("broadcast_idle_fallback")
                     frame = self.fallback_player.next_frame()
-                    pcm = self.silence_pcm
+                    pcm = _silence_bytes_for_frame(self._audio_frame_index)
                     clip_name = getattr(self.fallback_player._clip, "name", "idle")
                     frame_idx = int(getattr(self.fallback_player, "_idx", 0) or 0)
 
                 if pcm is None:
-                    pcm = self.silence_pcm
-                elif len(pcm) < BYTES_PER_AUDIO_FRAME:
-                    pcm = pcm + b"\x00" * (BYTES_PER_AUDIO_FRAME - len(pcm))
-                elif len(pcm) > BYTES_PER_AUDIO_FRAME:
-                    pcm = pcm[:BYTES_PER_AUDIO_FRAME]
+                    pcm = _silence_bytes_for_frame(self._audio_frame_index)
+                self._audio_frame_index += 1
 
                 if frame is not None and frame.size > 0:
                     h, w = frame.shape[:2]
@@ -434,7 +444,12 @@ class StreamBroadcaster(threading.Thread):
                 next_frame_time += frame_duration
 
             except (BrokenPipeError, OSError) as e:
-                print(f"[StreamBroadcaster] Pipe closed: {e}")
+                self.last_error = f"Pipe siaran tertutup: {e}"
+                failed = True
+                print(f"[StreamBroadcaster] {self.last_error}")
+                if self.output_folder and write_rtmp_status:
+                    write_rtmp_status(self.output_folder, "failed", self.last_error)
+                self.stop_event.set()
                 break
             except Exception as e:
                 print(f"[StreamBroadcaster] Loop error: {e}")
@@ -450,7 +465,7 @@ class StreamBroadcaster(threading.Thread):
         if self.a_fh:
             try: self.a_fh.close()
             except Exception: pass
-        if self.output_folder and write_rtmp_status:
+        if self.output_folder and write_rtmp_status and not failed:
             try: write_rtmp_status(self.output_folder, "disconnected")
             except Exception: pass
         print("[StreamBroadcaster] Stopped.")

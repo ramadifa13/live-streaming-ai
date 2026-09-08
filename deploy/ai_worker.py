@@ -2175,7 +2175,13 @@ def lipsync_worker_loop(
                     try:
                         render_q.put(out, timeout=0.35)
                     except queue.Full:
-                        metrics.inc("render_queue_dropped")
+                        metrics.inc("render_queue_backpressure")
+                        while not stop_event.is_set():
+                            try:
+                                render_q.put(out, timeout=0.1)
+                                break
+                            except queue.Full:
+                                continue
                 else:
                     metrics.inc("render_queue_dropped")
                     try:
@@ -2193,16 +2199,19 @@ def lipsync_worker_loop(
             import traceback
             print(f"[LipSync] ERROR frame {pkt.seq}: {err}")
             traceback.print_exc()
-            render_q.put(
-                RenderedPacket(
-                    seq=pkt.seq,
-                    frame=pkt.frame,
-                    audio_pcm=pkt.audio_pcm,
-                    clip_name=pkt.clip_name,
-                    frame_idx=pkt.frame_idx,
-                ),
-                block=False,
+            fallback = RenderedPacket(
+                seq=pkt.seq,
+                frame=pkt.frame,
+                audio_pcm=pkt.audio_pcm,
+                clip_name=pkt.clip_name,
+                frame_idx=pkt.frame_idx,
             )
+            while not stop_event.is_set():
+                try:
+                    render_q.put(fallback, timeout=0.1)
+                    break
+                except queue.Full:
+                    metrics.inc("render_queue_backpressure")
         finally:
             raw_q.task_done()
 
@@ -2226,14 +2235,33 @@ def _put_raw_frame(
         except queue.Full:
             if time.perf_counter() >= deadline:
                 if must_keep:
-                    # Buang frame idle tertua jika ada, tapi jangan buang packet bicara.
-                    try:
-                        raw_q.get_nowait()
-                        metrics.inc("raw_queue_dropped_idle")
-                        raw_q.put(pkt, block=False)
-                        return
-                    except Exception:
-                        pass
+                    # Evict hanya packet idle; packet speech tetap dipertahankan.
+                    retained = []
+                    evicted = False
+                    while True:
+                        try:
+                            queued = raw_q.get_nowait()
+                        except queue.Empty:
+                            break
+                        queued_speech = bool(
+                            getattr(queued, "is_speech", False)
+                            or getattr(queued, "needs_lipsync", False)
+                        )
+                        if not evicted and not queued_speech:
+                            raw_q.task_done()
+                            evicted = True
+                            metrics.inc("raw_queue_dropped_idle")
+                        else:
+                            retained.append(queued)
+                            raw_q.task_done()
+                    for queued in retained:
+                        raw_q.put_nowait(queued)
+                    if evicted:
+                        try:
+                            raw_q.put_nowait(pkt)
+                            return
+                        except queue.Full:
+                            pass
                     # Tetap coba block lebih lama daripada drop speech.
                     try:
                         raw_q.put(pkt, timeout=0.2)
