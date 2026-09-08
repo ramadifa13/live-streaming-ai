@@ -82,7 +82,7 @@ except ImportError as e:
 def is_ai_worker_mode() -> bool:
     import os
 
-    mode = (os.environ.get("BROADCAST_MODE") or "").strip().lower()
+    mode = (os.environ.get("BROADCAST_MODE") or "ai_worker").strip().lower()
     return mode in ("ai_worker", "ai-worker", "realtime", "visual_worker")
 
 
@@ -391,7 +391,7 @@ async def health():
         "warmed_up": getattr(worker, "_warmed_up", False),
         "batch_size": worker.batch_size,
         "active_jobs": len(jobs),
-        "broadcast_mode": os.environ.get("BROADCAST_MODE", "segment"),
+        "broadcast_mode": os.environ.get("BROADCAST_MODE", "ai_worker"),
         "visual_worker_running": visual_running,
         "visual_worker_pipeline_active": _visual_worker_pipeline_active(),
         "broadcaster_running": broadcaster_running,
@@ -442,7 +442,7 @@ async def worker_metrics():
         visual_worker is not None and visual_worker.is_running
     )
     snap["visual_worker_pipeline_active"] = _visual_worker_pipeline_active()
-    snap["broadcast_mode"] = os.environ.get("BROADCAST_MODE", "segment")
+    snap["broadcast_mode"] = os.environ.get("BROADCAST_MODE", "ai_worker")
     if is_ai_worker_mode():
         bridge = get_speech_bridge(output_dir)
         if bridge is not None:
@@ -686,7 +686,7 @@ async def get_queue_status():
     buffer_seconds = round(playable_seconds + in_flight_seconds, 2)
     queued_videos_count = len(video_files)
 
-    broadcast_mode = os.environ.get("BROADCAST_MODE", "segment")
+    broadcast_mode = os.environ.get("BROADCAST_MODE", "ai_worker")
     if is_ai_worker_mode():
         fps = float(
             os.environ.get("AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "30"))

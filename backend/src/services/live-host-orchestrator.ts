@@ -841,8 +841,7 @@ class LiveHostOrchestrator {
     if (!rtmpUrl?.trim() || !streamKey?.trim() || !podId) return;
 
     const queue = state.lastQueue;
-    if (!isAiWorkerBroadcastMode(queue.broadcastMode)) return;
-    if (queue.visualWorkerRunning) return;
+    if (queue.visualWorkerRunning || queue.broadcasting) return;
     if (queue.broadcastBootState === "starting" || queue.visualWorkerInitializing) {
       return;
     }
@@ -907,7 +906,7 @@ class LiveHostOrchestrator {
           await sleep(2000);
           continue;
         }
-        if (isAiWorkerBroadcastMode(queue.broadcastMode) && !queue.visualWorkerRunning) {
+        if (!queue.visualWorkerRunning && !queue.broadcasting) {
           await this.ensureVisualBroadcast(sessionId);
           await sleep(2000);
           continue;

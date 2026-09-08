@@ -84,8 +84,8 @@ fi
 
 # Zero-config: hapus file .env lama jika ada
 rm -f "$WORKER_DIR/.env" 2>/dev/null || true
-WORKER_PORT="${PORT:-8000}"
-echo "[INFO] BROADCAST_MODE=${BROADCAST_MODE:-segment}"
+export BROADCAST_MODE="${BROADCAST_MODE:-ai_worker}"
+echo "[INFO] BROADCAST_MODE=${BROADCAST_MODE}"
 echo "[INFO] PORT=${WORKER_PORT}"
 
 # DNS pod RunPod kadang gagal resolve fbcdn.net → RTMP Instagram tidak pernah connect.
