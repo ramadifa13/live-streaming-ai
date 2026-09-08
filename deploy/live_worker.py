@@ -498,29 +498,39 @@ class AILiveWorker:
 
     @staticmethod
     def _probe_media_duration(path: str) -> float:
-        result = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
-                path,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=True,
-        )
-        return max(0.0, float(result.stdout.strip()))
+        if not path or not os.path.exists(path) or os.path.getsize(path) == 0:
+            return 0.0
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=True,
+            )
+            val = (result.stdout or "").strip()
+            return max(0.0, float(val)) if val else 0.0
+        except Exception:
+            return 0.0
 
     def _ensure_video_covers_audio(self, video_path: str, audio_path: str) -> str:
         """Extend short MuseTalk output so its video clock never ends before audio."""
+        if not video_path or not os.path.exists(video_path):
+            return video_path
+        if not audio_path or not os.path.exists(audio_path):
+            return video_path
         video_duration = self._probe_media_duration(video_path)
         audio_duration = self._probe_media_duration(audio_path)
-        if video_duration + 0.05 >= audio_duration:
+        if audio_duration <= 0.0 or video_duration + 0.05 >= audio_duration:
             return video_path
 
         padded_path = f"{video_path}.audio_padded.mp4"
