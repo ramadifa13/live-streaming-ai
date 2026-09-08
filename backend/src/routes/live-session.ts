@@ -356,6 +356,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         maxDurationMs: (managedSession.durationHours ?? 2) * 3600 * 1000,
         product: managedSession.product,
         catalog: managedSession.catalog,
+        backgroundImage: liveOverlayMedia(parsed.data.backgroundImage),
       });
     }
 

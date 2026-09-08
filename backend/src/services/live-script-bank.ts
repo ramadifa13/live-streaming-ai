@@ -272,15 +272,34 @@ export function stripLeadingGreeting(speech: string): string {
   return stripped.charAt(0).toUpperCase() + stripped.slice(1);
 }
 
+const DURATION_FILLERS = [
+  " supaya kamu bisa menilai dengan tenang",
+  " sesuaikan dengan kebutuhan dan budget kamu",
+  " detail lengkapnya bisa dicek di etalase",
+];
+
 export function fitScriptBankSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
   const normalized = text.replace(/\s+/g, " ").trim();
-  const words = normalized.split(" ").filter(Boolean);
-  if (words.length <= maxWords) return normalized;
+  const targetMinWords = Math.min(SCRIPT_BANK_MIN_WORDS, maxWords);
+  let words = normalized.split(" ").filter(Boolean);
+  if (words.length < targetMinWords) {
+    let fillerIndex = 0;
+    while (words.length < targetMinWords) {
+      words = `${words.join(" ")}${DURATION_FILLERS[fillerIndex % DURATION_FILLERS.length]}`.split(" ").filter(Boolean);
+      fillerIndex++;
+    }
+  }
+  if (words.length <= maxWords)
+    return `${words
+      .join(" ")
+      .replace(/[,;:!?-]+$/g, "")
+      .replace(/[.!?]+$/g, "")}.`;
 
   const clipped = words.slice(0, maxWords).join(" ");
   const sentenceEnd = Math.max(clipped.lastIndexOf("."), clipped.lastIndexOf("!"), clipped.lastIndexOf("?"));
   if (sentenceEnd >= Math.floor(clipped.length * 0.55)) {
-    return clipped.slice(0, sentenceEnd + 1).trim();
+    const sentence = clipped.slice(0, sentenceEnd + 1).trim();
+    if (sentence.split(/\s+/).filter(Boolean).length >= targetMinWords) return sentence;
   }
   return clipped.replace(/[,;:!?-]+$/g, "").trim() + ".";
 }
@@ -289,7 +308,8 @@ function clampSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
   return fitScriptBankSpeech(text, Math.min(maxWords, SCRIPT_BANK_MAX_WORDS));
 }
 
-export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 21);
+export const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 20);
+export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 22);
 
 function splitFacts(text: string): string[] {
   if (!text?.trim()) return [];

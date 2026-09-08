@@ -143,25 +143,32 @@ class StreamBroadcaster(threading.Thread):
             except Exception as e:
                 print(f"[StreamBroadcaster] Failed to load background: {e}")
 
-        ov_candidate = self.overlay_path
-        if not ov_candidate and self.output_folder:
-            for cand in (
+        self._ov_candidate = self.overlay_path
+        self._last_ov_check = 0.0
+        self._reload_overlay()
+
+    def _reload_overlay(self):
+        cand = self._ov_candidate
+        if not cand and self.output_folder:
+            for c in (
                 os.path.join(self.output_folder, "overlay_live.png"),
                 os.path.join(self.output_folder, "tmp_assets", "live_overlay.png"),
             ):
-                if os.path.exists(cand):
-                    ov_candidate = cand
+                if os.path.exists(c):
+                    cand = c
                     break
-
-        if ov_candidate and os.path.exists(ov_candidate):
+        if cand and os.path.exists(cand):
             try:
-                ov = cv2.imread(ov_candidate, cv2.IMREAD_UNCHANGED)
+                ov = cv2.imread(cand, cv2.IMREAD_UNCHANGED)
                 if ov is not None:
                     if ov.shape[0] != CANVAS_H or ov.shape[1] != CANVAS_W:
                         ov = cv2.resize(ov, (CANVAS_W, CANVAS_H))
                     if ov.shape[2] == 4:
                         self._ov_alpha = ov[:, :, 3:4].astype(np.float32) / 255.0
                         self._ov_rgb = ov[:, :, :3].astype(np.float32)
+                        print(
+                            f"[StreamBroadcaster] ✅ Overlay berhasil dimuat dari: {cand}"
+                        )
             except Exception as e:
                 print(f"[StreamBroadcaster] Failed to load overlay: {e}")
 
@@ -199,33 +206,35 @@ class StreamBroadcaster(threading.Thread):
         if cached is not None:
             return cached
 
-        small_width = 360
-        small_height = 640
-        source = cv2.resize(
-            frame, (small_width, small_height), interpolation=cv2.INTER_AREA
-        )
-        mask = np.full((small_height, small_width), cv2.GC_PR_BGD, dtype=np.uint8)
-        mask[8:-8, 35:-35] = cv2.GC_PR_FGD
-        mask[70 : small_height - 12, 100:260] = cv2.GC_FGD
-        bgd = np.zeros((1, 65), np.float64)
-        fgd = np.zeros((1, 65), np.float64)
-        cv2.grabCut(source, mask, None, bgd, fgd, 2, cv2.GC_INIT_WITH_MASK)
-        foreground = np.where(
-            (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0
-        ).astype(np.uint8)
-        foreground = cv2.morphologyEx(
-            foreground, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8)
-        )
-        foreground = cv2.GaussianBlur(foreground, (7, 7), 0)
-        self._foreground_masks[key] = foreground
-        if len(self._foreground_masks) > 240:
+        # Studio keying yang stabil tanpa jitter iteratif GrabCut:
+        # Deteksi latar putih/terang studio Namira dengan threshold halus (anti-flicker).
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # Area putih/background studio: Saturation rendah (< 35) dan Value tinggi (> 210)
+        is_bg = (hsv[:, :, 1] < 40) & (gray > 215)
+        raw_mask = np.where(is_bg, 0, 255).astype(np.uint8)
+
+        # Haluskan tepian dengan morphology & gaussian blur agar transisi mulus
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        raw_mask = cv2.morphologyEx(raw_mask, cv2.MORPH_CLOSE, kernel)
+        smooth_mask = cv2.GaussianBlur(raw_mask, (15, 15), 0)
+
+        # Temporal smoothing (EMA) dengan frame sebelumnya jika ada agar batas rambut tidak bergetar
+        prev_key = (clip_name or "idle", max(0, int(frame_idx) - 1))
+        prev_mask = self._foreground_masks.get(prev_key)
+        if prev_mask is not None and prev_mask.shape == smooth_mask.shape:
+            smooth_mask = cv2.addWeighted(prev_mask, 0.45, smooth_mask, 0.55, 0)
+
+        self._foreground_masks[key] = smooth_mask
+        if len(self._foreground_masks) > 300:
             self._foreground_masks.pop(next(iter(self._foreground_masks)))
-        return foreground
+        return smooth_mask
 
     def _replace_video_background(
         self, frame: np.ndarray, clip_name: str = "", frame_idx: int = 0
     ) -> np.ndarray:
-        """Replace video background with a cached GrabCut foreground matte."""
+        """Replace video background without flicker using smooth studio matte."""
         if self._bg_bgr is None or frame is None or frame.size == 0:
             return frame
         if self._bg_bgr.shape[:2] != frame.shape[:2]:
@@ -235,12 +244,11 @@ class StreamBroadcaster(threading.Thread):
             clip = self.bank.get_clip(clip_name)
             if clip is not None and clip.frames:
                 source = clip.frames[max(0, min(int(frame_idx), len(clip.frames) - 1))]
+
         alpha = (
-            cv2.resize(
-                self._source_foreground_mask(clip_name, frame_idx, source),
-                (frame.shape[1], frame.shape[0]),
-                interpolation=cv2.INTER_LINEAR,
-            ).astype(np.float32)[:, :, None]
+            self._source_foreground_mask(clip_name, frame_idx, source).astype(
+                np.float32
+            )[:, :, None]
             / 255.0
         )
         foreground = frame.astype(np.float32)
@@ -556,23 +564,24 @@ class StreamBroadcaster(threading.Thread):
                 except queue.Empty:
                     if self.bridge is not None and self.bridge.is_utterance_active():
                         try:
-                            pkt = self.render_q.get(timeout=0.75)
+                            # Toleransi batch latency GPU (hingga 3 detik) agar ucapan tidak terpotong di tengah jalan
+                            pkt = self.render_q.get(timeout=3.0)
                             frame = pkt.frame
                             pcm = pkt.audio_pcm
                             clip_name = getattr(pkt, "clip_name", "") or "idle"
                             frame_idx = int(getattr(pkt, "frame_idx", 0) or 0)
                             self.fallback_player.sync(clip_name, frame_idx)
                         except queue.Empty:
-                            self.last_error = (
-                                "Render packet speech timeout; audio/video pair hilang"
+                            # Jangan gagalkan siaran, fallback sementara ke idle frame agar stream tetap hidup
+                            metrics.inc("broadcast_speech_timeout_idle")
+                            frame = self.fallback_player.next_frame()
+                            pcm = _silence_bytes_for_frame(self._audio_frame_index)
+                            clip_name = getattr(
+                                self.fallback_player._clip, "name", "idle"
                             )
-                            failed = True
-                            self.stop_event.set()
-                            if self.output_folder and write_rtmp_status:
-                                write_rtmp_status(
-                                    self.output_folder, "failed", self.last_error
-                                )
-                            break
+                            frame_idx = int(
+                                getattr(self.fallback_player, "_idx", 0) or 0
+                            )
                     else:
                         # ZERO-LATENCY FALLBACK (Mencegah patah/loncat dengan ping-pong continuous player)
                         metrics.inc("broadcast_idle_fallback")
@@ -591,6 +600,11 @@ class StreamBroadcaster(threading.Thread):
                         frame = fit_bgr(frame, CANVAS_W, CANVAS_H)
 
                     frame = self._replace_video_background(frame, clip_name, frame_idx)
+
+                    # Cek berkala apakah overlay baru selesai dirender di latar belakang (hot-reload)
+                    if self._ov_alpha is None or now - self._last_ov_check > 2.0:
+                        self._last_ov_check = now
+                        self._reload_overlay()
 
                     # Terapkan overlay dinamis jika ada
                     frame = self._apply_overlay(frame)

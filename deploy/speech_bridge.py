@@ -29,13 +29,16 @@ except ImportError:
 try:
     from worker_telemetry import get_telemetry
 except ImportError:
+
     class _NoopTelemetry:
         def measure(self, _name: str):
             from contextlib import nullcontext
+
             return nullcontext()
 
     def get_telemetry():  # type: ignore
         return _NoopTelemetry()
+
 
 TARGET_FPS = int(
     os.environ.get(
@@ -71,10 +74,18 @@ def _normalize_to_16k_wav(src_path: str) -> str:
     fd, dst = tempfile.mkstemp(suffix="_16k.wav", prefix="utter_")
     os.close(fd)
     cmd = [
-        "ffmpeg", "-y", "-v", "error",
-        "-i", src_path,
-        "-ac", "1", "-ar", "16000",
-        "-c:a", "pcm_s16le",
+        "ffmpeg",
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        src_path,
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "pcm_s16le",
         dst,
     ]
     try:
@@ -137,10 +148,20 @@ def _extract_pcm_stereo(audio_path: str, sample_rate: int = SAMPLE_RATE) -> byte
     if audio_to_pcm_s16le is not None:
         return audio_to_pcm_s16le(audio_path, sample_rate=sample_rate, channels=2)
     cmd = [
-        "ffmpeg", "-y", "-v", "error",
-        "-i", audio_path,
-        "-f", "s16le", "-acodec", "pcm_s16le",
-        "-ac", "2", "-ar", str(sample_rate),
+        "ffmpeg",
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        audio_path,
+        "-f",
+        "s16le",
+        "-acodec",
+        "pcm_s16le",
+        "-ac",
+        "2",
+        "-ar",
+        str(sample_rate),
         "pipe:1",
     ]
     proc = subprocess.run(cmd, capture_output=True, timeout=120)
@@ -149,7 +170,9 @@ def _extract_pcm_stereo(audio_path: str, sample_rate: int = SAMPLE_RATE) -> byte
     return b""
 
 
-def _split_pcm_frames(pcm: bytes, bytes_per_frame: int = BYTES_PER_AUDIO_FRAME) -> List[bytes]:
+def _split_pcm_frames(
+    pcm: bytes, bytes_per_frame: int = BYTES_PER_AUDIO_FRAME
+) -> List[bytes]:
     if not pcm:
         return []
     frames = []
@@ -165,6 +188,12 @@ def _split_pcm_frames(pcm: bytes, bytes_per_frame: int = BYTES_PER_AUDIO_FRAME) 
         frames.append(chunk)
         pos += frame_size
         frame_index += 1
+    if frames:
+        for _ in range(6):
+            tail_size = _samples_for_frame(frame_index) * bytes_per_sample
+            frames.append(b"\x00" * tail_size)
+            frame_index += 1
+
     return frames
 
 
@@ -276,7 +305,9 @@ class SpeechBridge:
         )
         with self._lock:
             if len(self._pending) >= max(1, self.MAX_PENDING_UTTERANCES):
-                raise RuntimeError("SpeechBridge queue penuh; retry setelah playback maju")
+                raise RuntimeError(
+                    "SpeechBridge queue penuh; retry setelah playback maju"
+                )
             self._pending.append(job)
             ordered = sorted(self._pending, key=lambda j: _sequence_key(j.task_id))
             self._pending.clear()
@@ -304,7 +335,9 @@ class SpeechBridge:
             if self._models and job.num_frames > 0:
                 wav_16k = _normalize_to_16k_wav(job.audio_path)
                 with metrics.measure("utterance_whisper_ms"):
-                    job.whisper_chunks = self._compute_whisper_chunks(wav_16k, job.num_frames)
+                    job.whisper_chunks = self._compute_whisper_chunks(
+                        wav_16k, job.num_frames
+                    )
                 if job.whisper_chunks is None:
                     job.error = "whisper_chunks kosong"
             elif job.num_frames > 0 and not self._models:
@@ -336,7 +369,9 @@ class SpeechBridge:
                 except Exception:
                     pass
 
-    def _compute_whisper_chunks(self, wav_16k_path: str, num_frames: int) -> torch.Tensor:
+    def _compute_whisper_chunks(
+        self, wav_16k_path: str, num_frames: int
+    ) -> torch.Tensor:
         ap = self._models["audio_processor"]
         whisper = self._models["whisper"]
         device = self._models["device"]
@@ -379,10 +414,11 @@ class SpeechBridge:
             print(f"[SpeechBridge] Whisper chunks: shape={tuple(chunks.shape)}")
         except Exception as e:
             import traceback
+
             print(f"[SpeechBridge] ERROR computing whisper chunks: {e}")
             traceback.print_exc()
             raise
-        
+
         # Sesuaikan panjang dengan PCM frames.
         # Grace tail: izinkan whisper sedikit lebih panjang dari PCM (max +TAIL frames)
         # agar suku kata terakhir tidak terpotong — lalu truncate sisanya.
@@ -402,7 +438,6 @@ class SpeechBridge:
             )
             chunks = torch.cat([chunks, zeros], dim=0)
         return chunks.cpu()
-
 
     def _start_next_if_needed(self) -> None:
         """Idle tetap jalan sampai job siap + preroll mulut selesai (tanpa freeze frame).
@@ -502,7 +537,10 @@ class SpeechBridge:
             self._awaiting_visual_tail = False
             candidate.started_at = time.monotonic()
             duration = max(1.0, candidate.num_frames / float(TARGET_FPS))
-            tail = max(1.0, float(os.environ.get("MUSETALK_WHISPER_GRACE_TAIL", "3")) / TARGET_FPS)
+            tail = max(
+                1.0,
+                float(os.environ.get("MUSETALK_WHISPER_GRACE_TAIL", "3")) / TARGET_FPS,
+            )
             self._active_deadline = candidate.started_at + duration + tail + 30.0
             # Gate selamanya off setelah utterance pertama mulai.
             self._ever_started = True
@@ -513,7 +551,6 @@ class SpeechBridge:
             except Exception as err:
                 print(f"[SpeechBridge] on_start notice: {err}")
         print(f"[SpeechBridge] ▶ Playing {candidate.task_id}")
-
 
     def _finish_current(self) -> None:
         finished = self._current
@@ -591,13 +628,15 @@ class SpeechBridge:
             if self._current.whisper_chunks is not None
             else self._current.num_frames
         )
-        if self._frame_cursor < whisper_total and self._frame_cursor < self._current.num_frames + grace_tail:
+        if (
+            self._frame_cursor < whisper_total
+            and self._frame_cursor < self._current.num_frames + grace_tail
+        ):
             return False, self._frame_cursor
         if not self._audio_exhausted:
             self._audio_exhausted = True
             self._awaiting_visual_tail = True
         return False, None
-
 
     def audio_progress(self) -> float:
         """0..1 progress audio utterance aktif (untuk early CTA gesture)."""
@@ -619,7 +658,11 @@ class SpeechBridge:
         Grace tail: setelah PCM habis, izinkan beberapa frame silence sambil
         whisper index terus maju (mouth masih bergerak untuk suku kata akhir).
         """
-        if self._current is not None and self._active_deadline > 0 and time.monotonic() > self._active_deadline:
+        if (
+            self._current is not None
+            and self._active_deadline > 0
+            and time.monotonic() > self._active_deadline
+        ):
             print("[SpeechBridge] Active utterance deadline reached; advancing queue")
             self._finish_current()
 
@@ -649,7 +692,10 @@ class SpeechBridge:
             if self._current.whisper_chunks is not None
             else self._current.num_frames
         )
-        if self._frame_cursor < whisper_total and self._frame_cursor < self._current.num_frames + grace_tail:
+        if (
+            self._frame_cursor < whisper_total
+            and self._frame_cursor < self._current.num_frames + grace_tail
+        ):
             # Kirim silence + whisper index agar mulut tutup secara natural.
             idx = self._frame_cursor
             self._frame_cursor += 1
@@ -662,7 +708,6 @@ class SpeechBridge:
         size = _samples_for_frame(self._silence_frame_index) * 2 * 2
         self._silence_frame_index += 1
         return b"\x00" * size, False, None
-
 
     def get_llm_action(self) -> Optional[str]:
         """Peek disabled — CTA point dijadwalkan di on_start (post-speech saja)."""
@@ -715,11 +760,7 @@ class SpeechBridge:
                 remain = max(0, int(self._current.num_frames) - int(self._frame_cursor))
                 total_frames += remain
             for job in self._pending:
-                if (
-                    job.error
-                    or job.num_frames <= 0
-                    or job.whisper_chunks is None
-                ):
+                if job.error or job.num_frames <= 0 or job.whisper_chunks is None:
                     continue
                 if not job.ready.is_set():
                     continue

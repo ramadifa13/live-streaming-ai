@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import os
@@ -79,9 +77,7 @@ BROADCAST_MAX_LAG = int(os.environ.get("AI_WORKER_BROADCAST_MAX_LAG", "8"))
 BROADCAST_RENDER_WAIT_SEC = float(
     os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.10")
 )
-BROADCAST_SPEECH_WAIT_SEC = float(
-    os.environ.get("AI_WORKER_SPEECH_WAIT_SEC", "10.0")
-)
+BROADCAST_SPEECH_WAIT_SEC = float(os.environ.get("AI_WORKER_SPEECH_WAIT_SEC", "10.0"))
 BROADCAST_SPEECH_GAP_WAIT_SEC = float(
     os.environ.get("AI_WORKER_SPEECH_GAP_WAIT_SEC", "0.25")
 )
@@ -102,7 +98,9 @@ LIPSYNC_PREROLL_TIMEOUT_SEC = float(
     os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "4.0")
 )
 # 1 = jangan start audio sampai preroll mouths penuh (anti stutter awal kalimat).
-LIPSYNC_HARD_PREROLL = (os.environ.get("MUSETALK_HARD_PREROLL") or "1").strip().lower() in (
+LIPSYNC_HARD_PREROLL = (
+    os.environ.get("MUSETALK_HARD_PREROLL") or "1"
+).strip().lower() in (
     "1",
     "true",
     "yes",
@@ -146,11 +144,7 @@ def _ambient_gesture_names() -> List[str]:
     raw = (os.environ.get("AI_WORKER_AMBIENT_GESTURES") or "off").strip()
     if raw.lower() in ("0", "off", "false", "none", "no", ""):
         return []
-    names = [
-        _normalize_clip_name(n.strip())
-        for n in raw.split(",")
-        if n.strip()
-    ]
+    names = [_normalize_clip_name(n.strip()) for n in raw.split(",") if n.strip()]
     return [n for n in names if n in BODY_CLIP_NAMES]
 
 
@@ -160,7 +154,6 @@ def _talk_clip_pool_names() -> List[str]:
     if raw:
         return [_normalize_clip_name(n.strip()) for n in raw.split(",") if n.strip()]
     return ["talk_1", "talk_2", "talk_3"]
-
 
 
 def _idle_variant_names() -> List[str]:
@@ -570,7 +563,9 @@ class AssetBank:
         clip or the crash fallback.
         """
         # Preferred default clip
-        if TALK_CLIP_DEFAULT in self.clips and self.clip_has_musetalk(TALK_CLIP_DEFAULT):
+        if TALK_CLIP_DEFAULT in self.clips and self.clip_has_musetalk(
+            TALK_CLIP_DEFAULT
+        ):
             return TALK_CLIP_DEFAULT
         # Use cached ready list if available
         if self._ready_talk_clips:
@@ -692,8 +687,7 @@ class AssetBank:
     def _eager_clip_names(self) -> List[str]:
         """Decode ke RAM: idle + semua talk*."""
         raw = (
-            os.environ.get("AI_WORKER_EAGER_CLIPS")
-            or "idle,talk_1,talk_2,talk_3"
+            os.environ.get("AI_WORKER_EAGER_CLIPS") or "idle,talk_1,talk_2,talk_3"
         ).strip()
         if raw.lower() in ("all", "*"):
             return list(self.clips.keys()) if self.clips else ["idle"]
@@ -765,7 +759,9 @@ class AssetBank:
         vis = musetalk_visual_params()
         vae = self.models["vae"]
         fp = self.models["fp"]
-        print(f"[AssetBank] Preparing MuseTalk materials for {clip.name} ({clip.num_frames} frames)...")
+        print(
+            f"[AssetBank] Preparing MuseTalk materials for {clip.name} ({clip.num_frames} frames)..."
+        )
         mats = _get_avatar_materials(
             video_path=clip.path,
             bbox_shift=vis["bbox_shift"],
@@ -778,26 +774,30 @@ class AssetBank:
             upper_boundary_ratio=vis["upper_boundary_ratio"],
             square_pad=vis["square_pad"],
         )
-        
+
         # Validate materials
         if not mats.get("input_latent_list_cycle"):
             raise RuntimeError(f"No latents generated for {clip.name}")
         if not mats.get("mask_materials_cycle"):
             raise RuntimeError(f"No mask materials generated for {clip.name}")
-        
+
         clip.frame_list_cycle = mats["frame_list_cycle"]
         clip.coord_list_cycle = mats["coord_list_cycle"]
         clip.latent_list_cycle = mats["input_latent_list_cycle"]
         clip.mask_materials_cycle = mats["mask_materials_cycle"]
-        
+
         # Check for None values in critical arrays
         none_latents = sum(1 for l in clip.latent_list_cycle if l is None)
         none_masks = sum(1 for m in clip.mask_materials_cycle if m is None)
         if none_latents > 0:
-            print(f"[AssetBank] WARNING: {none_latents}/{len(clip.latent_list_cycle)} latents are None for {clip.name}")
+            print(
+                f"[AssetBank] WARNING: {none_latents}/{len(clip.latent_list_cycle)} latents are None for {clip.name}"
+            )
         if none_masks > 0:
-            print(f"[AssetBank] WARNING: {none_masks}/{len(clip.mask_materials_cycle)} masks are None for {clip.name}")
-        
+            print(
+                f"[AssetBank] WARNING: {none_masks}/{len(clip.mask_materials_cycle)} masks are None for {clip.name}"
+            )
+
         print(
             f"[AssetBank] ✅ MuseTalk materials ready: {clip.name} "
             f"(latents={len(clip.latent_list_cycle)}, masks={len(clip.mask_materials_cycle)}, "
@@ -819,10 +819,16 @@ class AssetBank:
                 self._warm_one_clip(clip)
             except Exception as err:
                 import traceback
+
                 print(f"[AssetBank] ERROR: MuseTalk warmup failed for {name}: {err}")
                 traceback.print_exc()
                 # Don't silently continue - re-raise to fail fast
                 raise
+        self._ready_talk_clips = None
+        print(
+            f"[AssetBank] ✅ Post-warmup talk pool ready: {self.talk_clips_ready()}, "
+            f"default talk={self.talk_clip_name()}"
+        )
 
     def _clip_name_from_file(self, fname: str) -> str:
         stem = os.path.splitext(fname)[0].lower()
@@ -831,9 +837,7 @@ class AssetBank:
             stem = stem[len(host_prefix) :]
         return _normalize_clip_name(stem or "clip")
 
-    def _load_pose_meta(
-        self, name: str, num_frames: int
-    ) -> Tuple[int, int, float]:
+    def _load_pose_meta(self, name: str, num_frames: int) -> Tuple[int, int, float]:
         """Load base/end pose + seamless_score from sidecar JSON.
 
         Returns (base, end, seamless_score). seamless_score < 0 if unknown.
@@ -964,9 +968,7 @@ class VideoStateMachine:
     def _choose_next_idle_variant(self, exclude: Optional[str] = None) -> Optional[str]:
         """Pilih idle berikutnya — tidak boleh sama dengan clip sekarang."""
         cur = exclude or self.current_name
-        variants = [
-            c for c in self._idle_variants if c in self.bank.clips and c != cur
-        ]
+        variants = [c for c in self._idle_variants if c in self.bank.clips and c != cur]
         if variants:
             return random.choice(variants)
         return None
@@ -1121,9 +1123,7 @@ class VideoStateMachine:
             # Sudah di talk clip (hold antar-utterance): lanjut dari frame sekarang.
             if self.current_name == target and self.state == PlayState.TALK:
                 return int(self.frame_idx)
-            print(
-                f"[StateMachine] Pin talk → {target} (playthrough, no freeze)"
-            )
+            print(f"[StateMachine] Pin talk → {target} (playthrough, no freeze)")
             return int(talk_clip.base_pose_frame)
 
     def begin_utterance(self) -> None:
@@ -1166,7 +1166,10 @@ class VideoStateMachine:
                     self.frame_idx == cur.base_pose_frame
                     or self.frame_idx >= cur.end_pose
                 )
-                if self.frame_idx < cur.base_pose_frame or self.frame_idx > cur.end_pose:
+                if (
+                    self.frame_idx < cur.base_pose_frame
+                    or self.frame_idx > cur.end_pose
+                ):
                     self.frame_idx = max(
                         cur.base_pose_frame,
                         min(self.frame_idx, cur.end_pose),
@@ -1289,9 +1292,7 @@ class VideoStateMachine:
             self._pending_begin_utterance = False
             self._begin_wait_since = None
             # Keep _talk_target saat hold supaya pin/lipsync tidak loncat clip.
-            if not (
-                self.bank.clip_has_musetalk(self.current_name)
-            ):
+            if not (self.bank.clip_has_musetalk(self.current_name)):
                 self._talk_target = None
             else:
                 self._talk_target = self.current_name
@@ -1300,21 +1301,27 @@ class VideoStateMachine:
             self._drain_action_queue()
             # Jika ada utterance berikutnya siap, pertahankan gesture talk.
             # Jika tidak ada suara lagi (diam), segera transisi kembali ke idle_1.
-            if self.bank.clip_has_musetalk(self.current_name) and another_utterance_ready:
+            if (
+                self.bank.clip_has_musetalk(self.current_name)
+                and another_utterance_ready
+            ):
                 self.pending_action = None
                 self.state = PlayState.TALK
                 self._talk_pinned = True
                 self._hold_pose_for_infer = False
                 self._hold_talk_since = time.perf_counter()
-                print("[StateMachine] Utterance selesai → lanjut talk (utterance berikutnya siap)")
+                print(
+                    "[StateMachine] Utterance selesai → lanjut talk (utterance berikutnya siap)"
+                )
             else:
                 self._talk_pinned = False
                 self._hold_talk_since = None
                 self._talk_target = None
                 self.state = PlayState.IDLE
                 self.pending_action = self.bank._idle_name
-                print(f"[StateMachine] Utterance selesai → kembali ke idle ({self.bank._idle_name})")
-
+                print(
+                    f"[StateMachine] Utterance selesai → kembali ke idle ({self.bank._idle_name})"
+                )
 
     def release_stale_hold_talk(
         self, *, queue_has_ready: bool, max_sec: float = HOLD_TALK_MAX_SEC
@@ -1460,7 +1467,9 @@ class VideoStateMachine:
                 from_idx == to_clip.base_pose_frame or from_idx >= to_clip.end_pose
             )
         )
-        want_soft = soft and from_clip is not None and (from_name != to_name or jump_same)
+        want_soft = (
+            soft and from_clip is not None and (from_name != to_name or jump_same)
+        )
         if want_soft:
             n = self._dynamic_overlap_n(from_clip, from_idx, to_clip)
             try:
@@ -1670,9 +1679,8 @@ class VideoStateMachine:
                 t = (self._overlap.step + 1) / float(n)
                 alpha = _ease_in_out(t)
                 frame = blend_weighted(from_f, to_f, alpha)
-                if (
+                if self._overlap.target_cycle_indices and self._overlap.step < len(
                     self._overlap.target_cycle_indices
-                    and self._overlap.step < len(self._overlap.target_cycle_indices)
                 ):
                     cycle_idx = int(
                         self._overlap.target_cycle_indices[self._overlap.step]
@@ -1865,7 +1873,6 @@ class LipSyncEngine:
         offset = max(0, int(body_idx) - clip.base_pose_frame)
         return offset % max(1, forward_n)
 
-
     def _batch_inference_loop(self) -> None:
         vae = self.models["vae"]
         unet = self.models["unet"]
@@ -1876,7 +1883,9 @@ class LipSyncEngine:
             print(f"[LipSync] ERROR: No latents for {clip.name} — lip-sync disabled")
             return
 
-        print(f"[LipSync] Starting batch inference for {clip.name}, {len(clip.latent_list_cycle)} latents")
+        print(
+            f"[LipSync] Starting batch inference for {clip.name}, {len(clip.latent_list_cycle)} latents"
+        )
         batch_count = 0
         while not self._infer_stop.is_set():
             with self._lock:
@@ -1919,6 +1928,7 @@ class LipSyncEngine:
                     recon = vae.decode_latents(pred)
             except Exception as err:
                 import traceback
+
                 print(f"[LipSync] ERROR batch infer cursor={cursor}-{end}: {err}")
                 traceback.print_exc()
                 with self._lock:
@@ -1936,9 +1946,13 @@ class LipSyncEngine:
                 self._infer_cursor = end
             batch_count += 1
             if batch_count % 10 == 0:
-                print(f"[LipSync] Processed {self._infer_cursor}/{chunks.shape[0]} frames")
+                print(
+                    f"[LipSync] Processed {self._infer_cursor}/{chunks.shape[0]} frames"
+                )
 
-        print(f"[LipSync] Batch inference complete: {batch_count} batches, {self._infer_cursor} frames")
+        print(
+            f"[LipSync] Batch inference complete: {batch_count} batches, {self._infer_cursor} frames"
+        )
 
     def _wait_mouth(
         self, idx: int, timeout: float = LIPSYNC_WAIT_SEC
@@ -2075,6 +2089,7 @@ class LipSyncEngine:
             return blended
         except Exception as err:
             import traceback
+
             print(f"[LipSync] ERROR composing mouth: {err}")
             traceback.print_exc()
             return body
@@ -2182,9 +2197,12 @@ def lipsync_worker_loop(
                     metrics.inc("render_queue_dropped")
             frame_count += 1
             if frame_count % 300 == 0:
-                print(f"[LipSync] Processed {frame_count} frames, queue depth: {render_q.qsize()}")
+                print(
+                    f"[LipSync] Processed {frame_count} frames, queue depth: {render_q.qsize()}"
+                )
         except Exception as err:
             import traceback
+
             print(f"[LipSync] ERROR frame {pkt.seq}: {err}")
             traceback.print_exc()
             fallback = RenderedPacket(
@@ -2746,7 +2764,7 @@ class StreamBroadcaster:
                 return False
             if not self.is_alive():
                 return False
-            
+
             if pcm is None:
                 pcm = self._silence_pcm()
             if frame is None or frame.size == 0:
@@ -2977,9 +2995,7 @@ def broadcaster_loop(
                     stop_event.set()
                     break
                 try:
-                    fresh: RenderedPacket = render_q.get(
-                        timeout=min(0.25, remaining)
-                    )
+                    fresh: RenderedPacket = render_q.get(timeout=min(0.25, remaining))
                     if fresh.seq < next_seq:
                         metrics.inc("broadcast_stale_packet_dropped")
                     else:
@@ -3144,9 +3160,7 @@ class AIVisualWorker:
             start_idx = self._sm.pin_talk_body()
             body = self._sm._talk_target or self._sm.current_name
         if self._engine:
-            self._engine.set_utterance(
-                job, start_frame_idx=start_idx, body_clip=body
-            )
+            self._engine.set_utterance(job, start_frame_idx=start_idx, body_clip=body)
 
         def _mark_ready() -> None:
             ok = False
@@ -3154,7 +3168,9 @@ class AIVisualWorker:
                 if self._engine:
                     # Hard preroll: retry until mouths penuh (jangan play parsial).
                     attempts = 0
-                    deadline = time.monotonic() + max(8.0, LIPSYNC_PREROLL_TIMEOUT_SEC * 8.0)
+                    deadline = time.monotonic() + max(
+                        8.0, LIPSYNC_PREROLL_TIMEOUT_SEC * 8.0
+                    )
                     while not self._stop.is_set():
                         ok = self._engine.wait_preroll(
                             LIPSYNC_PREROLL_FRAMES,
@@ -3200,13 +3216,11 @@ class AIVisualWorker:
             body = (
                 (self._sm._talk_target or self._sm.current_name) if self._sm else None
             )
-            self._engine.set_utterance(
-                job, start_frame_idx=start_idx, body_clip=body
-            )
+            self._engine.set_utterance(job, start_frame_idx=start_idx, body_clip=body)
         if self._sm:
             # Body hint talk_1|idle|talk_N — resolve ke clip.
-            action = (getattr(job, "action", None) or "").strip().lower().replace(
-                "-", "_"
+            action = (
+                (getattr(job, "action", None) or "").strip().lower().replace("-", "_")
             )
             if action in BODY_CLIP_NAMES or action in (
                 "talk_1",
@@ -3252,22 +3266,30 @@ class AIVisualWorker:
         use_fp16 = resolve_use_float16(True, 0)
         vis = musetalk_visual_params()
         models_root = os.path.join(musetalk_dir, "models")
-        
+
         # Verify model files exist before loading
         required_files = [
             (os.path.join(models_root, "musetalkV15", "unet.pth"), "UNet weights"),
             (os.path.join(models_root, "musetalkV15", "musetalk.json"), "UNet config"),
             (os.path.join(models_root, "whisper", "config.json"), "Whisper config"),
             (os.path.join(models_root, "sd-vae-ft-mse", "config.json"), "VAE config"),
-            (os.path.join(models_root, "face-parse-bisent", "79999_iter.pth"), "Face parsing model"),
-            (os.path.join(models_root, "dwpose", "dw-ll_ucoco_384.pth"), "DWPose model"),
+            (
+                os.path.join(models_root, "face-parse-bisent", "79999_iter.pth"),
+                "Face parsing model",
+            ),
+            (
+                os.path.join(models_root, "dwpose", "dw-ll_ucoco_384.pth"),
+                "DWPose model",
+            ),
         ]
         for path, name in required_files:
             if not os.path.exists(path):
-                raise FileNotFoundError(f"Required model file missing: {name} at {path}")
-        
+                raise FileNotFoundError(
+                    f"Required model file missing: {name} at {path}"
+                )
+
         print(f"[AIVisualWorker] All model files verified, loading models...")
-        
+
         args = Namespace(
             gpu_id=0,
             use_float16=use_fp16,
@@ -3285,9 +3307,12 @@ class AIVisualWorker:
         os.chdir(musetalk_dir)
         try:
             self._models = _load_models_cached(args)
-            print(f"[AIVisualWorker] Models loaded successfully: {list(self._models.keys())}")
+            print(
+                f"[AIVisualWorker] Models loaded successfully: {list(self._models.keys())}"
+            )
         except Exception as e:
             import traceback
+
             print(f"[AIVisualWorker] ERROR loading models: {e}")
             traceback.print_exc()
             raise
@@ -3326,7 +3351,7 @@ class AIVisualWorker:
         models = self._load_models()
         self._bank = AssetBank(self.assets_dir, host=self.host, models_bundle=models)
         self._bank.discover_and_load()
-        
+
         ready = self._bank.talk_clips_ready()
         if not ready:
             raise RuntimeError(
@@ -3343,7 +3368,7 @@ class AIVisualWorker:
             f"[AIVisualWorker] Crash fallback: {self._bank.crash_fallback_name()} "
             f"(hanya jika pool bicara gagal)"
         )
-        
+
         self._face_registry = FaceCoordRegistry(BBOX_SMOOTH_WINDOW)
         self._sm = VideoStateMachine(
             self._bank,

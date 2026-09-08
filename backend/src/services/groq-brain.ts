@@ -4,7 +4,8 @@ import type { StreamPlan } from "./live-host-orchestrator.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.LIVE_BRAIN_API_KEY || "";
-const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 21);
+const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 20);
+const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 22);
 
 const GEMINI_MODEL_RAW = process.env.GEMINI_MODEL || process.env.LIVE_BRAIN_MODEL || "gemini-3.6-flash";
 const DEPRECATED_GEMINI_MODELS: Record<string, string> = {
@@ -27,12 +28,7 @@ const DEPRECATED_GEMINI_MODELS: Record<string, string> = {
   "gemini-1.0-pro": "gemini-3.6-flash",
 };
 
-const GEMINI_MODEL_FALLBACKS = [
-  "gemini-3.6-flash",
-  "gemini-3.5-flash",
-  "gemini-3.5-flash-lite",
-  "gemini-flash-latest",
-] as const;
+const GEMINI_MODEL_FALLBACKS = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-latest"] as const;
 
 function resolveGeminiModel(requested = GEMINI_MODEL_RAW): string {
   const normalized = requested.trim();
@@ -178,16 +174,7 @@ function getGeminiClient(): GoogleGenAI {
   return geminiClient;
 }
 
-export type HostMode =
-  | "ENGAGE"
-  | "SELL"
-  | "QNA"
-  | "DEMO"
-  | "OBJECTION"
-  | "SOCIAL"
-  | "ANNOUNCEMENT"
-  | "RECOVERY"
-  | "CLOSING";
+export type HostMode = "ENGAGE" | "SELL" | "QNA" | "DEMO" | "OBJECTION" | "SOCIAL" | "ANNOUNCEMENT" | "RECOVERY" | "CLOSING";
 
 export type HostIntent =
   | "ANSWER"
@@ -213,17 +200,7 @@ export function normalizeLunaAction(_action: unknown): LunaAction {
 export const LunaEmotionEnum = z.enum(["happy", "neutral", "surprised", "thinking", "warm", "excited", "empathetic"]);
 export type LunaEmotion = z.infer<typeof LunaEmotionEnum>;
 
-export const HostModeEnum = z.enum([
-  "ENGAGE",
-  "SELL",
-  "QNA",
-  "DEMO",
-  "OBJECTION",
-  "SOCIAL",
-  "ANNOUNCEMENT",
-  "RECOVERY",
-  "CLOSING",
-]);
+export const HostModeEnum = z.enum(["ENGAGE", "SELL", "QNA", "DEMO", "OBJECTION", "SOCIAL", "ANNOUNCEMENT", "RECOVERY", "CLOSING"]);
 
 export const HostIntentEnum = z.enum([
   "ANSWER",
@@ -675,12 +652,7 @@ function parseRetryAfterMs(response: Response): number | undefined {
   return undefined;
 }
 
-async function callGroqWithModel(
-  prompt: string,
-  model: string,
-  options: BrainCallOptions = {},
-  useJsonFormat = true,
-): Promise<ProviderResult> {
+async function callGroqWithModel(prompt: string, model: string, options: BrainCallOptions = {}, useJsonFormat = true): Promise<ProviderResult> {
   const maxTokens = options.maxTokens || Number(process.env.LIVE_BRAIN_MAX_TOKENS || 320);
   const body: Record<string, unknown> = {
     model,
@@ -989,7 +961,7 @@ export async function generateScriptBankLines(input: SalesBrainInput): Promise<H
   const prompt = `${systemPrompt}
 
 TUGAS: buat 20–24 ucapan host otonom yang BERBEDA dan NATURAL (bukan robot).
-Gaya TikTok/Shopee host: kasual, hidup, 18–21 kata per baris agar selesai maksimal sekitar 9 detik dalam satu video talk.
+Gaya TikTok/Shopee host: kasual, hidup, tepat ${SCRIPT_BANK_MIN_WORDS}–${SCRIPT_BANK_MAX_WORDS} kata per baris agar durasi bicara sekitar 8–9 detik dalam satu video talk.
 Setiap baris harus selesai dalam satu napas/utterance; jangan membuat paragraf atau dua kalimat panjang yang perlu dipotong.
 LARANG frasa kaku berulang: "dari data produk", "yang tertulis", "aku nggak nebak", "patokannya".
 Jangan mengarang fakta. Campur topik: benefit, how_to_use, value, social, objection, micro_tip, reframe, use_case, promo_pitch, filler.
@@ -1015,6 +987,7 @@ Kembalikan JSON murni:
       const safe = selectSafeParsedResponse(validated.data, input);
       if (safe) {
         const words = safe.speech.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+        if (words.length < SCRIPT_BANK_MIN_WORDS) continue;
         safe.speech =
           words
             .slice(0, SCRIPT_BANK_MAX_WORDS)
@@ -1097,8 +1070,7 @@ function mapTopicMode(topic: string): { topic: string; mode: HostMode; intent?: 
   if (t.includes("banner")) return { topic: "banner_callout", mode: "ENGAGE", intent: "SOCIAL" };
   if (t.includes("bridge") || t.includes("transisi")) return { topic: "catalog_bridge", mode: "SELL" };
   if (t.includes("sold")) return { topic: "sold_out", mode: "SELL", intent: "ANNOUNCEMENT" };
-  if (t.includes("troll") || t.includes("spam") || t.includes("out"))
-    return { topic: "deflection", mode: "SOCIAL", intent: "SOCIAL" };
+  if (t.includes("troll") || t.includes("spam") || t.includes("out")) return { topic: "deflection", mode: "SOCIAL", intent: "SOCIAL" };
   if (t.includes("faq") || t.includes("qna")) return { topic: "faq", mode: "QNA", intent: "PRODUCT_INFO" };
   if (t.includes("usage") || t.includes("pakai")) return { topic: "how_to_use", mode: "DEMO", intent: "PRODUCT_INFO" };
   return { topic: topic || "benefit", mode: "ENGAGE" };
@@ -1134,25 +1106,13 @@ export async function prepareProductScriptPack(input: {
   faqPack: Array<{ category: string; triggers: string[]; answers: string[] }>;
 }> {
   const priceDisplay =
-    input.price == null
-      ? "Harga live"
-      : typeof input.price === "number"
-        ? `Rp${input.price.toLocaleString("id-ID")}`
-        : String(input.price);
+    input.price == null ? "Harga live" : typeof input.price === "number" ? `Rp${input.price.toLocaleString("id-ID")}` : String(input.price);
 
-  const {
-    seedLocalScriptBank,
-    emptyScriptBank,
-    mergeScriptLines,
-    buildDefaultFaqPack,
-    faqAnswerLines,
-    mergeProductKnowledge,
-  } = await import("./live-script-bank.js");
+  const { seedLocalScriptBank, emptyScriptBank, mergeScriptLines, buildDefaultFaqPack, faqAnswerLines, mergeProductKnowledge } =
+    await import("./live-script-bank.js");
 
   const category =
-    input.category && input.category !== "Lainnya" && input.category !== "General" && input.category !== "Umum"
-      ? input.category
-      : "Umum";
+    input.category && input.category !== "Lainnya" && input.category !== "General" && input.category !== "Umum" ? input.category : "Umum";
 
   const knowledge = mergeProductKnowledge(input.description || "", {
     benefits: input.benefits,
@@ -1176,11 +1136,7 @@ export async function prepareProductScriptPack(input: {
   };
 
   const needOptional =
-    !input.benefits?.trim() ||
-    !input.usage?.trim() ||
-    !input.faq?.trim() ||
-    !input.targetAudience?.trim() ||
-    !input.copywriting?.trim();
+    !input.benefits?.trim() || !input.usage?.trim() || !input.faq?.trim() || !input.targetAudience?.trim() || !input.copywriting?.trim();
 
   let enriched: {
     benefits?: string;
@@ -1250,23 +1206,11 @@ ${factsBase.hasBanner ? 'Sertakan 1 baris topic "banner_callout".' : "Jangan seb
       const data = parsed.data;
       if (data.enriched) {
         enriched = {
-          benefits:
-            !input.benefits?.trim() && (data.enriched as any).benefits?.trim?.()
-              ? String((data.enriched as any).benefits).trim()
-              : undefined,
-          usage:
-            !input.usage?.trim() && (data.enriched as any).usage?.trim?.()
-              ? String((data.enriched as any).usage).trim()
-              : undefined,
+          benefits: !input.benefits?.trim() && (data.enriched as any).benefits?.trim?.() ? String((data.enriched as any).benefits).trim() : undefined,
+          usage: !input.usage?.trim() && (data.enriched as any).usage?.trim?.() ? String((data.enriched as any).usage).trim() : undefined,
           faq: !input.faq?.trim() && data.enriched.faq?.trim() ? data.enriched.faq.trim() : undefined,
-          targetAudience:
-            !input.targetAudience?.trim() && data.enriched.targetAudience?.trim()
-              ? data.enriched.targetAudience.trim()
-              : undefined,
-          copywriting:
-            !input.copywriting?.trim() && data.enriched.copywriting?.trim()
-              ? data.enriched.copywriting.trim()
-              : undefined,
+          targetAudience: !input.targetAudience?.trim() && data.enriched.targetAudience?.trim() ? data.enriched.targetAudience.trim() : undefined,
+          copywriting: !input.copywriting?.trim() && data.enriched.copywriting?.trim() ? data.enriched.copywriting.trim() : undefined,
         };
       }
       if (data.faqPack?.length) {
@@ -1460,9 +1404,7 @@ export const checkOllamaHealth = checkGroqHealth;
 
 export function getGroqClient() {
   if (!GEMINI_API_KEY) {
-    console.warn(
-      "[LiveBrain] getGroqClient() dipertahankan hanya untuk kompatibilitas lama. Request baru lewat generateDynamicSalesResponse().",
-    );
+    console.warn("[LiveBrain] getGroqClient() dipertahankan hanya untuk kompatibilitas lama. Request baru lewat generateDynamicSalesResponse().");
   }
   return new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 }
