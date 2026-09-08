@@ -227,7 +227,7 @@ describe("memory bounds + smoke", () => {
     const seeded = seedLocalScriptBank(sampleProduct("budget", "Serum Budget"), [], {
       cycleId: 0,
     });
-    assert.ok(seeded.every((item) => item.speech.split(/\s+/).length <= 18));
+    assert.ok(seeded.every((item) => item.speech.split(/\s+/).length <= 21));
   });
 
   it("keeps semantic memory bounded", () => {

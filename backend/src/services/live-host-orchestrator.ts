@@ -269,23 +269,11 @@ interface PlanPolicy {
 }
 
 const LIVE_MIN_BUFFER = Number(process.env.LIVE_MIN_BUFFER_SECONDS || 6);
-const LIVE_MAX_UTTERANCE_SECONDS = Number(process.env.LIVE_MAX_UTTERANCE_SECONDS || 8.5);
+// Satu utterance harus muat dalam satu video talk; audio tidak pernah dipotong.
+const LIVE_MAX_UTTERANCE_SECONDS = Number(process.env.LIVE_MAX_UTTERANCE_SECONDS || 9);
 const LIVE_TTS_MAX_SPEED = Number(process.env.LIVE_TTS_MAX_SPEED || 1.35);
 /** Minimal ucapan playable siap sebelum tombol Go Live. */
 const GO_LIVE_MIN_UTTERANCES = Number(process.env.GO_LIVE_MIN_UTTERANCES || 1);
-
-function trimSpeechToWordBudget(text: string, maxWords: number): string {
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  if (words.length <= maxWords) return text.trim();
-  const clipped = words.slice(0, Math.max(1, maxWords)).join(" ");
-  return clipped.replace(/[,;:!?]+$/g, "") + ".";
-}
-
-function speechWithinBudget(text: string, speed: number, maxSeconds: number): string {
-  const wordsPerSecond = (140 * Math.max(0.75, speed)) / 60;
-  const maxWords = Math.max(6, Math.floor(maxSeconds * wordsPerSecond));
-  return trimSpeechToWordBudget(text, maxWords);
-}
 
 const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   // Buffer realtime ai_worker: default 6s (bukan 1018) supaya Go confirm lebih cepat.
@@ -1669,7 +1657,9 @@ class LiveHostOrchestrator {
 
     for (const seg of segments) {
       let audioBase64: string | undefined;
-      let spokenText = speechWithinBudget(seg.text, state.config.speechSpeed ?? 1, LIVE_MAX_UTTERANCE_SECONDS);
+      // Script Bank sudah dibatasi sebelum TTS. Jangan potong lagi di runtime:
+      // satu job harus membawa audio utuh sampai worker.
+      const spokenText = seg.text.trim();
       let synthesisSpeed = state.config.speechSpeed ?? 1;
       let withinDurationBudget = false;
       try {
@@ -1701,9 +1691,6 @@ class LiveHostOrchestrator {
             break;
           }
 
-          const ratio = Math.max(0.35, Math.min(0.92, (LIVE_MAX_UTTERANCE_SECONDS / actualDuration) * 0.94));
-          const currentWords = spokenText.split(/\s+/).filter(Boolean).length;
-          spokenText = trimSpeechToWordBudget(spokenText, Math.max(6, Math.floor(currentWords * ratio)));
           synthesisSpeed = Math.min(
             LIVE_TTS_MAX_SPEED,
             Math.max(synthesisSpeed, synthesisSpeed * (actualDuration / LIVE_MAX_UTTERANCE_SECONDS) * 1.02),
@@ -1711,7 +1698,7 @@ class LiveHostOrchestrator {
           console.warn(
             `[LiveHost] TTS duration ${actualDuration.toFixed(2)}s exceeds ` +
               `${LIVE_MAX_UTTERANCE_SECONDS}s; retry ${attempt + 1}/4 ` +
-              `text=${spokenText.length} speed=${synthesisSpeed.toFixed(2)}`,
+              `audio utuh, speed=${synthesisSpeed.toFixed(2)}`,
           );
         }
 

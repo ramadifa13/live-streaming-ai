@@ -303,7 +303,8 @@ function clampSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
   return fitScriptBankSpeech(text, Math.min(maxWords, SCRIPT_BANK_MAX_WORDS));
 }
 
-export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 18);
+// 18-21 kata memberi ruang tail/transisi di dalam video talk 10 detik.
+export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 21);
 
 function splitFacts(text: string): string[] {
   if (!text?.trim()) return [];
@@ -364,7 +365,7 @@ function withParaphraseVariants(items: HostResponse[]): HostResponse[] {
     if (normalize(variant) === normalize(speech)) continue;
     out.push({
       ...item,
-      speech: clampSpeech(variant, FILLER_TOPICS.has(item.topic) ? 16 : SCRIPT_BANK_MAX_WORDS),
+      speech: clampSpeech(variant, FILLER_TOPICS.has(item.topic) ? 22 : SCRIPT_BANK_MAX_WORDS),
     });
     variantsAdded++;
   }
@@ -1511,7 +1512,7 @@ export function mergeScriptLines(bank: ScriptBankState, incoming: HostResponse[]
     const isFiller = FILLER_TOPICS.has(item.topic || "");
     const speech = clampSpeech(
       item.speech || "",
-      Math.min(SCRIPT_BANK_MAX_WORDS, isFiller ? 16 : SCRIPT_BANK_MAX_WORDS),
+      Math.min(SCRIPT_BANK_MAX_WORDS, isFiller ? 22 : SCRIPT_BANK_MAX_WORDS),
     );
     const key = normalize(speech);
     const minWords = isFiller ? 5 : 8;
@@ -1899,6 +1900,6 @@ export function buildLocalCommentResponse(
   }
   return {
     ...chosen,
-    speech: clampSpeech(chosen.speech, FILLER_TOPICS.has(chosen.topic) ? 14 : 18),
+    speech: clampSpeech(chosen.speech, FILLER_TOPICS.has(chosen.topic) ? 22 : SCRIPT_BANK_MAX_WORDS),
   };
 }

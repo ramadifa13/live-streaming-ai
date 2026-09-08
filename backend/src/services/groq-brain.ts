@@ -4,7 +4,7 @@ import type { StreamPlan } from "./live-host-orchestrator.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.LIVE_BRAIN_API_KEY || "";
-const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 18);
+const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 21);
 
 const GEMINI_MODEL_RAW = process.env.GEMINI_MODEL || process.env.LIVE_BRAIN_MODEL || "gemini-3.6-flash";
 const DEPRECATED_GEMINI_MODELS: Record<string, string> = {
@@ -1006,7 +1006,8 @@ export async function generateScriptBankLines(input: SalesBrainInput): Promise<H
   const prompt = `${systemPrompt}
 
 TUGAS: buat 20–24 ucapan host otonom yang BERBEDA dan NATURAL (bukan robot).
-Gaya TikTok/Shopee host: kasual, hidup, 12–18 kata per baris agar selesai sebelum video talk berganti.
+Gaya TikTok/Shopee host: kasual, hidup, 18–21 kata per baris agar selesai maksimal sekitar 9 detik dalam satu video talk.
+Setiap baris harus selesai dalam satu napas/utterance; jangan membuat paragraf atau dua kalimat panjang yang perlu dipotong.
 LARANG frasa kaku berulang: "dari data produk", "yang tertulis", "aku nggak nebak", "patokannya".
 Jangan mengarang fakta. Campur topik: benefit, how_to_use, value, social, objection, micro_tip, reframe, use_case, promo_pitch, filler.
 Setiap baris harus beda angle/pembuka — jangan parafrase ulang baris sebelumnya.
