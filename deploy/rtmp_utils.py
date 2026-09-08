@@ -291,6 +291,11 @@ class FfmpegLogWatcher:
         if not text:
             return
         self._buf += text
+        # FFmpeg progress can arrive as an unterminated carriage-return chunk.
+        if re.search(r"frame=\s*\d+", self._buf, re.IGNORECASE):
+            if self.on_progress and not self.fatal and self.frames_seen < 2:
+                self.frames_seen = 2
+                self.on_progress()
         parts = re.split(r"[\r\n]+", self._buf)
         self._buf = parts.pop() if parts else ""
         for part in parts:

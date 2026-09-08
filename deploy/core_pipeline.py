@@ -494,6 +494,8 @@ class StreamBroadcaster(threading.Thread):
                     except Exception:
                         pass
                     finally:
+                        if watcher:
+                            watcher.ingest("\n")
                         try:
                             log_fh.close()
                         except Exception:
