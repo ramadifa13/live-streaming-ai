@@ -332,16 +332,7 @@ export default function Dashboard() {
       stopped = true;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [
-    isLiveActive,
-    isLivePaused,
-    currentLiveSessionId,
-    setIsLiveActive,
-    setIsLivePaused,
-    setLiveSessionPhase,
-    setMetrics,
-    addChatMessage,
-  ]);
+  }, [isLiveActive, isLivePaused, currentLiveSessionId, setIsLiveActive, setIsLivePaused, setLiveSessionPhase, setMetrics, addChatMessage]);
 
   useEffect(() => {
     if (!isConnectingLive || !currentLiveSessionId) return;
@@ -350,7 +341,12 @@ export default function Dashboard() {
       const json = await liveSessionService.fetchPipelineStatus(currentLiveSessionId);
       if (!json) return;
       setPipelineStatus(json);
-      if (json.stageText) {
+      if (json.rtmpFatal || json.workerError || json.broadcastBootState === "error") {
+        useLiveSessionStore.setState({
+          connectingStageIndex: 3,
+          connectingStageText: String(json.rtmpError || json.workerError || json.stageText || "Host AI gagal tersambung."),
+        });
+      } else if (json.stageText) {
         useLiveSessionStore.setState({ connectingStageText: String(json.stageText) });
       }
     };

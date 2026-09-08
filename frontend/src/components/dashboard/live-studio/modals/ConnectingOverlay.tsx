@@ -48,7 +48,7 @@ export const ConnectingOverlay: React.FC = () => {
   const canGoLive =
     !connectionFailed && !podBooting && pipelineStatus?.podReady !== false && rtmpConnected && videosReady && pipelineStatus?.ready === true;
 
-  const activeStep = Math.min(4, Math.max(0, canGoLive ? 4 : stageIndex));
+  const activeStep = Math.min(4, Math.max(0, connectionFailed ? 3 : canGoLive ? 4 : stageIndex));
   const progressPct = canGoLive ? 100 : Math.min(95, Math.max(8, ((activeStep + 1) / PREP_STEPS.length) * 100));
 
   const rawStatusLine = connectionFailed

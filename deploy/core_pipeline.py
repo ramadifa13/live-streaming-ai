@@ -165,7 +165,7 @@ class StreamBroadcaster(threading.Thread):
             except Exception as e:
                 print(f"[StreamBroadcaster] Failed to load overlay: {e}")
 
-    def is_alive(self) -> bool:
+    def is_ffmpeg_alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
     @classmethod
@@ -846,7 +846,10 @@ class NewAIVisualWorker:
                 f"[NewAIVisualWorker] Menunggu handshake RTMP ({timeout_sec:.1f}s)..."
             )
             while time.monotonic() < deadline:
-                if not broadcaster_t.is_alive():
+                if not broadcaster_t.is_alive() or (
+                    broadcaster_t.proc is not None
+                    and broadcaster_t.proc.poll() is not None
+                ):
                     err_msg = (
                         broadcaster_t.last_error
                         or "FFmpeg RTMP berhenti saat handshake — periksa stream key / server URL."
@@ -859,7 +862,10 @@ class NewAIVisualWorker:
                     break
                 time.sleep(0.15)
             else:
-                if not broadcaster_t.is_alive():
+                if not broadcaster_t.is_alive() or (
+                    broadcaster_t.proc is not None
+                    and broadcaster_t.proc.poll() is not None
+                ):
                     err_msg = broadcaster_t.last_error or "FFmpeg RTMP gagal terhubung."
                     raise RuntimeError(f"FFmpeg RTMP gagal: {err_msg}")
                 print(
@@ -898,6 +904,14 @@ class NewAIVisualWorker:
     @property
     def is_pipeline_active(self):
         return self._is_running
+
+    @property
+    def is_rtmp_connected(self):
+        return bool(
+            self.broadcaster
+            and self.broadcaster.progress_seen
+            and self.broadcaster.is_ffmpeg_alive()
+        )
 
     def enqueue_utterance(
         self,
