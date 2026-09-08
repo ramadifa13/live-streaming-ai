@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useState, useRef } from "react";
+import Image from "next/image";
 import { X, Upload, Crop, Check, Sparkles, RotateCcw, Image as ImageIcon, Layers, Trash2 } from "lucide-react";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
@@ -282,9 +283,11 @@ export const ChooseBackgroundModal: React.FC = () => {
                           : "border-slate-800 hover:border-slate-500 opacity-80 hover:opacity-100"
                       }`}
                     >
-                      <img
+                      <Image
                         src={bg.preview}
                         alt={bg.name}
+                        fill
+                        unoptimized
                         className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
@@ -308,13 +311,15 @@ export const ChooseBackgroundModal: React.FC = () => {
                   Status Pilihan Aktif
                 </p>
                 <div className="relative w-32 aspect-[9/16] rounded-xl overflow-hidden border-2 border-blue-500/40 shadow-xl mb-4 bg-black">
-                  <img
+                  <Image
                     src={
                       selectedBackground.startsWith("data:")
                         ? selectedBackground
                         : DEFAULT_BACKGROUNDS.find((b) => b.url === selectedBackground)?.preview || selectedBackground
                     }
                     alt="Active Preview"
+                    fill
+                    unoptimized
                     className="w-full h-full object-cover"
                   />
                 </div>
@@ -396,7 +401,14 @@ export const ChooseBackgroundModal: React.FC = () => {
                                   }}
                                   className="absolute inset-0"
                                 >
-                                  <img src={bgUrl} alt={`Custom ${i}`} className="w-full h-full object-cover" />
+                                  <Image
+                                    src={bgUrl}
+                                    alt={`Custom ${i}`}
+                                    fill
+                                    unoptimized
+                                    sizes="20vw"
+                                    className="object-cover"
+                                  />
                                 </button>
                                 {isSelected && (
                                   <div className="absolute top-1 right-1 h-4 w-4 rounded-full bg-indigo-500 text-white flex items-center justify-center shadow">
@@ -431,11 +443,18 @@ export const ChooseBackgroundModal: React.FC = () => {
                       ref={containerRef}
                       className="relative w-full h-[280px] bg-black/90 rounded-xl overflow-hidden border border-slate-700 flex items-center justify-center"
                     >
-                      <img
+                      <Image
                         ref={imagePreviewRef}
                         src={rawUploadSrc}
                         alt="To Crop"
-                        onLoad={() => setImageLoaded(true)}
+                        width={naturalSize.width || 1}
+                        height={naturalSize.height || 1}
+                        unoptimized
+                        onLoad={(event) => {
+                          const image = event.currentTarget;
+                          setNaturalSize({ width: image.naturalWidth, height: image.naturalHeight });
+                          setImageLoaded(true);
+                        }}
                         className="max-h-full max-w-full object-contain pointer-events-none"
                         draggable={false}
                       />

@@ -8,7 +8,6 @@ export const TTS_LANGS: Array<{
   label: string;
 }> = [
   { code: "id", short: "ID", label: "Indonesia" },
-  { code: "en", short: "EN", label: "English" },
 ];
 
 export type HostVoiceGender = "female" | "male";

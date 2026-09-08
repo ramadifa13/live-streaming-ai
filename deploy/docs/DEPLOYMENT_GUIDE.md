@@ -1,138 +1,22 @@
 # Deployment Guide
 
-Live host AI: **frontend** (Next.js) + **backend** (Node, LLM, Pocket-TTS/voice cloning) + **AI worker** (RunPod **L40S** / 4090: MuseTalk + RTMP).
-
-```
-Browser  →  Frontend :3000  →  Backend :4000
-                                │
-                                └─ RunPod proxy :8000
-                                      ├─ /tts/synthesize  → VoxCPM2 (GPU, venv terpisah :8091)
-                                      └─ /stream/*        → MuseTalk + FFmpeg RTMP
-```
-
-**Satu TTS engine: VoxCPM2.** Piper / Supertonic / Chatterbox sudah dihapus.
-
-**Pre-live:** preview suara = file lokal `frontend/public/voices/<voice_id>/preview_{id|en}.wav` (tidak hit pod).  
-**Live:** VoxCPM2 di worker memakai `voices/<voice_id>/reference.wav`.
-
-Katalog `voice_id` (host perempuan):
-
-| voice_id                 | Label                      |
-| ------------------------ | -------------------------- |
-| `girl_cute_kids`         | girl - cute kids           |
-| `girl_warm_youthful`     | girl - warm & youthful     |
-| `girl_warm_friendly`     | girl - warm & friendly     |
-| `girl_calm_professional` | girl - calm & professional |
-
----
-
-## 1. Arsitektur & peran
-
-| Komponen  | Mesin                            | Tugas                                                      |
-| --------- | -------------------------------- | ---------------------------------------------------------- |
-| Frontend  | VPS / laptop                     | UI, Go Live, **preview suara lokal**                       |
-| Backend   | VPS / laptop                     | LLM/script bank, orkestrasi live, panggil worker saat live |
-| AI worker | RunPod GPU + volume `/workspace` | VoxCPM2 + MuseTalk + idle clips + RTMP                     |
-
-### Pod STATIS vs ON-DEMAND (backend `.env`)
-
-| Mode          | `RUNPOD_POD_ID` | `RUNPOD_WORKER_URL` | `RUNPOD_API_KEY` + `NETWORK_VOLUME_ID` | Perilaku                                                                         |
-| ------------- | --------------- | ------------------- | -------------------------------------- | -------------------------------------------------------------------------------- |
-| **STATIS**    | terisi          | terisi (proxy pod)  | opsional                               | Pakai pod tetap; health/resume; end-live biasanya pause (jika `KEEP_POD_WARM=1`) |
-| **ON-DEMAND** | **kosong**      | **kosong**          | **wajib**                              | Mulai Siaran = create pod; Akhiri = terminate                                    |
-
-Frontend `AVATAR_WORKER_URL` pada mode statis **samakan** dengan `RUNPOD_WORKER_URL`. Pada on-demand, pre-live tidak bergantung worker.
-
----
-
-## 2. Setup Network Volume RunPod
-
-```
-RunPod Console → Storage → Network Volume → Create (disarankan ≥50GB)
-Pod → Edit → Network Volume → Mount Path: /workspace
-HTTP service: port 8000 (proxy publik worker)
-```
-
-Layout volume (setelah bootstrap):
-
-```
-/workspace/models/voxcpm2/
-/workspace/models/...          # MuseTalk weights (via sync/setup)
-/workspace/voices/
-  girl_cute_kids/reference.wav
-  girl_warm_youthful/reference.wav
-  girl_warm_friendly/reference.wav
-  girl_calm_professional/reference.wav
-/workspace/voxcpm2_env/        # torch 2.5+ / CUDA 12 (VoxCPM2 saja)
-/workspace/ai_live_worker/     # kode worker + MuseTalk venv (torch 2.1 / cu118)
-  env/
-  assets/3d/namira_idle_*.mp4
-  .env                         # copy dari deploy/.env.example
-```
-
-Simpan `RUNPOD_API_KEY`, volume ID, (opsional) pod ID + URL proxy ke backend `.env`.
-
----
-
-## 3. VoxCPM2 TTS (GPU di AI Worker)
-
-Venv **terpisah** dari MuseTalk (konflik torch). `api_server` spawn `127.0.0.1:8091` saat startup.
-
-Requirements: [`deploy/voxcpm2_tts/requirements.txt`](../voxcpm2_tts/requirements.txt)  
-MuseTalk worker: [`deploy/requirements-worker.txt`](../requirements-worker.txt)
-
-Endpoints: `GET /tts/health`, `POST /tts/synthesize`, `POST /tts/invalidate-voice`.
-
-```bash
-cd /workspace/ai_live_worker   # atau path sync deploy/
-bash voxcpm2_tts/setup.sh
-cp -n .env.example .env        # VOICE_ID=girl_cute_kids
-# pastikan /workspace/voices/<voice_id>/reference.wav ada
-bash sync.sh --restart         # atau: python -u api_server.py
-curl -s http://127.0.0.1:8000/tts/health
-curl -s http://127.0.0.1:8000/health
-```
-
-Ganti suara live: timpa `reference.wav` → `POST /tts/invalidate-voice` `{ "voice_id": "girl_cute_kids" }`.
-
----
-
-## 4. Dev lokal (laptop)
-
-Terminal 1 — backend:
-
-```bash
-cd backend
-cp -n .env.example .env
-# Mode STATIS: isi RUNPOD_POD_ID + RUNPOD_WORKER_URL (+ KEEP_POD_WARM=1)
-# Mode ON-DEMAND: kosongkan keduanya; isi API_KEY + NETWORK_VOLUME_ID
-npm install && npx prisma generate && npm run dev
-```
-
-Terminal 2 — frontend:
-
-```bash
-cd frontend
-cp -n .env.example .env
-# AVATAR_WORKER_URL = sama dengan RUNPOD_WORKER_URL (statis)
-npm install && npm run dev
-```
-
-Cek: `curl -s http://localhost:4000/health` · preview suara di dashboard **tidak** memanggil pod.
-
----
-
-## 5. Setup worker pertama kali (di dalam pod)
+## 1. Setup worker pertama kali (di dalam pod)
 
 Butuh `HF_TOKEN` (Hugging Face) untuk model MuseTalk.
 
+### Setup awal lengkap
+
 ```bash
+apt-get update
+apt-get install -y git curl ffmpeg ca-certificates
+
 cd /workspace
 git clone https://github.com/ramadifa13/live-streaming-ai.git live-streaming-ai
 cd /workspace/live-streaming-ai/deploy
 export HF_TOKEN="hf_xxx"
 bash setup.sh
 cp -n .env.example /workspace/ai_live_worker/.env
+nano /workspace/ai_live_worker/.env
 FORCE_ASSETS=1 bash sync.sh --restart
 curl -s http://127.0.0.1:8000/health
 ```
@@ -144,7 +28,25 @@ cd /workspace/live-streaming-ai && git checkout main && git pull origin main
 cd deploy && export HF_TOKEN="hf_xxx" && bash setup.sh
 ```
 
-Worker dir: `/workspace/ai_live_worker`. Env: `/workspace/ai_live_worker/.env` (lihat `deploy/.env.example`). RTMP diisi saat Go Live dari backend, bukan di-hardcode di pod kecuali tes manual.
+### Start worker
+
+```bash
+cd /workspace/live-streaming-ai/deploy
+bash start.sh
+```
+
+Untuk mengambil kode terbaru lalu start ulang:
+
+```bash
+bash /workspace/live-streaming-ai/deploy/start.sh --pull
+```
+
+Worker dianggap siap jika hasilnya `status: ok`:
+
+```bash
+curl -fsS http://127.0.0.1:8000/health
+curl -fsS http://127.0.0.1:8000/tts/health
+```
 
 Health worker **hanya**:
 
@@ -154,37 +56,13 @@ curl -s http://127.0.0.1:8000/health
 
 Audio lip-sync datang dari backend sebagai WAV (`audio_base64`) ke `/stream/live-utterance`.
 
-### Bersihkan Piper/Supertonic lama (sekali saja)
 
-Jalankan di **terminal pod**, bukan di laptop. `setup.sh` MuseTalk **tidak** perlu diulang.
-
-```bash
-pkill -f 'piper_tts/server.py|uvicorn.*8090' || true
-rm -rf /workspace/piper_tts /workspace/supertonic_tts
-
-cd /workspace/live-streaming-ai
-git checkout main
-git pull origin main
-bash deploy/sync.sh --pull --restart
-
-curl -s http://127.0.0.1:8000/health
-ls /workspace/piper_tts 2>/dev/null && echo "MASIH ADA piper_tts" || echo "OK: piper_tts sudah hilang"
-ss -lptn | grep -E ':8000|:8090' || true
-```
-
-Yang harus hidup: **port 8000**. Port **8090** harus kosong. Jangan install Piper/Supertonic. Pakai bash voxcpm2_tts/setup.sh.
-
-sync.sh menghapus folder/env Piper dan Supertonic.
-
----
-
-## 6. Redeploy worker
+### Redeploy worker
 
 Dari shell pod (**satu perintah**):
 
 ```bash
 bash /workspace/live-streaming-ai/deploy/redeploy.sh
-# alias: bash deploy/sync.sh --restart   ← otomatis git pull + sync + start (venv)
 ```
 
 Opsi:
@@ -214,10 +92,46 @@ Jika `git pull` gagal (`not a git repository`): `sync.sh` otomatis restore `.git
 apt update
 apt install -y nano
 nano /workspace/ai_live_worker/.env
+bash /workspace/live-streaming-ai/deploy/start.sh
+```
+
+Jika env dikelola dari checkout repo, simpan salinannya di `deploy/.env`, lalu
+sync akan menambahkan key baru tanpa menimpa value yang sudah ada di worker:
+
+```bash
+nano /workspace/live-streaming-ai/deploy/.env
 bash /workspace/live-streaming-ai/deploy/sync.sh --restart
 ```
 
-### Log worker
+Jangan menaruh token di `.env.example` atau melakukan commit terhadap `.env`.
+
+### Cek log worker
+
+```bash
+tail -f /workspace/ai_live_worker/api_server.log
+tail -f /workspace/ai_live_worker/output/broadcaster.log
+tail -f /workspace/ai_live_worker/logs/master_ffmpeg.log
+```
+
+Pengecekan cepat tanpa mengikuti log:
+
+```bash
+curl -s http://127.0.0.1:8000/health
+curl -s http://127.0.0.1:8000/logs
+ps aux | grep -E '[a]pi_server|[b]roadcaster|[f]fmpeg'
+```
+
+### Edit env worker (cara lama, tetap didukung)
+
+```bash
+nano /workspace/ai_live_worker/.env
+bash /workspace/live-streaming-ai/deploy/sync.sh --restart
+```
+
+`sync.sh --restart` akan melakukan sync dan restart. Gunakan ini setelah mengubah
+kode atau dependency worker.
+
+### Log worker (referensi)
 
 ```bash
 tail -f /workspace/ai_live_worker/api_server.log
@@ -242,28 +156,32 @@ rm -rf /workspace/tmp/pip_cache /workspace/tmp/* 2>/dev/null || true
 
 ---
 
-## 7. Setup FE + BE di VPS (pertama kali)
+## 2. Setup FE + BE di VPS (pertama kali)
 
-Ganti host/domain sesuai server. Contoh di bawah: `202.10.35.186`, `livio.id`.
 
 ```bash
 ssh root@202.10.35.186
 apt update && apt upgrade -y
 apt install -y nodejs npm git ufw nginx certbot python3-certbot-nginx python3 python3-venv python3-pip ffmpeg
+pm2 delete api frontend 2>/dev/null || true
+systemctl stop nginx 2>/dev/null || true
 cd /var/www
 git clone https://github.com/ramadifa13/live-streaming-ai.git app
+```
 
+```bash
 cd /var/www/app/backend
 cp -n .env.example .env
 nano .env
-# Wajib: DATABASE_URL, BACKEND_PUBLIC_URL, CORS_ORIGIN,
-# GROQ/GEMINI, RUNPOD_* (statis ATAU on-demand), VOICE_ID=girl_cute_kids
-# VoxCPM2 setup di pod: bash deploy/voxcpm2_tts/setup.sh
-# Pre-live voices: frontend/public/voices/<voice_id>/preview_*.wav
 npm install
 npx prisma generate
 npx prisma migrate deploy
 npm run build
+
+cd /var/www/app/backend/pocket_tts
+python3 -m venv env
+env/bin/python -m pip install --upgrade pip
+env/bin/python -m pip install -r requirements.txt
 
 cd /var/www/app/frontend
 cp -n .env.example .env
@@ -323,6 +241,43 @@ systemctl reload nginx
 certbot --nginx -d livio.id -d www.livio.id
 ```
 
+### Membersihkan setup lama yang sudah terlanjur ada
+
+Gunakan ini jika VPS pernah dipasang versi lama, library TTS lama, atau build
+yang rusak. Jalankan setelah backup env. Perintah ini tidak menghapus database.
+
+```bash
+pm2 delete api frontend 2>/dev/null || true
+pkill -f 'pocket_tts|piper_tts|supertonic|api_server.py' 2>/dev/null || true
+
+cd /var/www/app
+rm -rf backend/dist frontend/.next
+rm -rf backend/node_modules frontend/node_modules
+rm -rf backend/pocket_tts/env
+```
+
+Install ulang dependency sesuai source terbaru:
+
+```bash
+cd /var/www/app/backend
+npm install
+npx prisma generate
+npx prisma migrate deploy
+npm run build
+python3 -m venv pocket_tts/env
+pocket_tts/env/bin/python -m pip install --upgrade pip
+pocket_tts/env/bin/python -m pip install -r pocket_tts/requirements.txt
+
+cd ../frontend
+npm install
+npm run build
+```
+
+Pocket TTS **jangan dihapus dari source** selama `backend/src/services/tts.ts`
+atau `backend/src/services/pocket-tts-bridge.ts` masih merujuk ke folder tersebut.
+Jika sudah benar-benar migrasi ke VoxCPM2, hapus hanya setelah kode terbaru tidak
+lagi memiliki referensi Pocket TTS, lalu jalankan build bersih.
+
 ---
 
 ## 8. Redeploy FE + BE
@@ -352,6 +307,48 @@ pm2 restart frontend --update-env
 pm2 save
 ```
 
+### Redeploy setelah library baru ditambahkan
+
+`npm install` akan mengambil dependency yang tercantum di `package.json`. Jika
+fitur baru seperti remove-background menambah library, pastikan library tersebut
+masuk ke `package.json` dan `package-lock.json`, lalu jalankan:
+
+```bash
+cd /var/www/app
+git pull origin main
+
+cd backend
+npm install
+npm run build
+
+cd ../frontend
+npm install
+npm run build
+
+pm2 restart api --update-env
+pm2 restart frontend --update-env
+pm2 save
+```
+
+Jika ingin memastikan dependency lama tidak tersisa:
+
+```bash
+cd /var/www/app/frontend
+rm -rf node_modules .next
+npm ci
+npm run build
+
+cd ../backend
+rm -rf node_modules dist
+npm ci
+npx prisma generate
+npm run build
+```
+
+Gunakan `npm ci` bila `package-lock.json` tersedia dan sudah di-commit. Jangan
+menjalankan `npm install <nama-library>` hanya di VPS tanpa memperbarui manifest
+di repository, karena library itu akan hilang pada redeploy berikutnya.
+
 ### Edit env FE/BE
 
 ```bash
@@ -362,7 +359,21 @@ pm2 restart frontend --update-env
 pm2 save
 ```
 
-Setelah ganti reference.wav / model VoxCPM2, restart API atau invalidate-voice.
+Untuk perubahan `NEXT_PUBLIC_*`, wajib jalankan build frontend lagi karena nilainya
+dibaca saat build:
+
+```bash
+cd /var/www/app/frontend
+npm run build
+pm2 restart frontend --update-env
+```
+
+Untuk perubahan backend, restart API saja cukup:
+
+```bash
+pm2 restart api --update-env
+```
+
 
 ### Log FE/BE
 
@@ -372,49 +383,3 @@ pm2 logs frontend --lines 50
 curl -s http://127.0.0.1:4000/health
 curl -s https://livio.id/api/health
 ```
-
----
-
-## 9. Env yang sering salah
-
-**Backend** (`backend/.env.example`):
-
-- `VOICE_ID=girl_cute_kids` (katalog perempuan; bukan `default_host`).
-- **Statis:** isi `RUNPOD_POD_ID` + `RUNPOD_WORKER_URL` (+ `KEEP_POD_WARM=1`).
-- **On-demand:** kosongkan keduanya; isi `RUNPOD_API_KEY` + `RUNPOD_NETWORK_VOLUME_ID` (+ `KEEP_POD_WARM=0`).
-- Pre-live **tidak** butuh TTS di backend; live memanggil worker `/tts/synthesize`.
-
-**Worker** (`deploy/.env.example` → `/workspace/ai_live_worker/.env`):
-
-- `PORT=8000`, `BROADCAST_MODE=ai_worker`, `WORKER_REQUIRE_AUDIO=1`.
-- `VOICE_ID=girl_cute_kids`, `VOICE_ROOT=/workspace/voices`, `VOXCPM2_VENV=/workspace/voxcpm2_env`.
-- L40S: `MUSETALK_BATCH_SIZE=16`, `AI_WORKER_HOLD_TALK_SEC=90`, `MUSETALK_PREROLL_TIMEOUT_SEC=2.5`, `MUSETALK_HARD_PREROLL=1`, `AI_WORKER_TALK_CLIP=talk_1`, `AI_WORKER_PIN_TALK=1`, `AI_WORKER_TALK_STREAK=999`, `AI_WORKER_OVERLAP_FRAMES=12`. Assets: `namira_idle.mp4` + `namira_talk_1.mp4` (+ `talk_2`/`talk_3`). Validate: `python scripts/validate_idle_assets.py --assets-dir assets/3d --write-meta`.
-- Jangan install Piper/Supertonic.
-
-**Frontend**:
-
-- Browser memakai `NEXT_PUBLIC_BACKEND_URL`.
-- Preview suara = `/public/voices/...` (lokal).
-- `AVATAR_WORKER_URL` hanya server-side (rewrite `/live_videos`); samakan dengan worker URL saat mode statis.
-
-### Kontinuitas visual (anti “clip disambung”)
-
-Worker **bukan** merender MP4 lalu concatenate — tubuh loop di RAM + lipsync MuseTalk @30fps. Agar terasa realtime:
-
-| Setting / perilaku                                                              | Tujuan                                                     |
-| ------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Soft cut + soft loop wrap                                                       | Hindari hard pose jump mid-speech                          |
-| Complete utterance setelah audio (+ grace singkat), **bukan** tunggu `end_pose` | Hilangkan mute talking-body & delay kalimat berikutnya     |
-| Hold talk 90s                                                                   | Jangan jatuh ke idle saat TTS lambat                       |
-| Talk pool `talk,talk_2,talk_3`                                                  | Bedakan rest (`idle`) vs talk                              |
-| Script bank **tidak** harus match durasi clip                                   | Clip loop mengikuti audio; yang penting buffer audio nyata |
-
----
-
-## 10. Cek alur live (ringkas)
-
-1. Worker curl /tts/health; backend npx tsx test-tts.ts (engine voxcpm2).
-2. Worker: `curl :8000/health` (`status: ok`).
-3. Go Live → VoxCPM2 → MuseTalk + RTMP.
-
-Jika bibir tidak gerak: pastikan WAV sampai worker, `playback_active` setelah konfirmasi Go Live, dan Whisper di MuseTalk mendapat audio 16 kHz (backend sudah men-synth/resample 16 kHz).
