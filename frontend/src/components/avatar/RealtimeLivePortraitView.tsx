@@ -32,6 +32,7 @@ export default function RealtimeLivePortraitView({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const backgroundCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const backgroundRef = useRef<HTMLImageElement | null>(null);
+  const backgroundPixelsRef = useRef<Uint8ClampedArray | null>(null);
   const [canvasAvailable, setCanvasAvailable] = useState(true);
 
   const resolvedFillerSrc = "/avatars/namira_idle.mp4";
@@ -66,6 +67,7 @@ export default function RealtimeLivePortraitView({
     const image = new Image();
     image.onload = () => {
       backgroundRef.current = image;
+      backgroundPixelsRef.current = null;
       setCanvasAvailable(true);
     };
     image.src = backgroundImage;
@@ -74,6 +76,7 @@ export default function RealtimeLivePortraitView({
   useEffect(() => {
     if (!backgroundImage || !canvasAvailable) return;
     let frameId = 0;
+    let lastProcessedAt = 0;
     const canvas = canvasRef.current;
     const video = videoRef.current;
     if (!canvas || !video) return;
@@ -89,16 +92,28 @@ export default function RealtimeLivePortraitView({
     backgroundCanvas.height = height;
     backgroundCanvasRef.current = backgroundCanvas;
     const backgroundContext = backgroundCanvas.getContext("2d");
+    const targetFrameInterval = 1000 / 15;
 
     const draw = () => {
+      const now = performance.now();
+      if (now - lastProcessedAt < targetFrameInterval) {
+        frameId = requestAnimationFrame(draw);
+        return;
+      }
       if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
         frameId = requestAnimationFrame(draw);
         return;
       }
+      lastProcessedAt = now;
       try {
         context.drawImage(video, 0, 0, width, height);
         const background = backgroundRef.current;
-        if (background?.complete && background.naturalWidth > 0 && backgroundContext) {
+        if (
+          backgroundPixelsRef.current === null &&
+          background?.complete &&
+          background.naturalWidth > 0 &&
+          backgroundContext
+        ) {
           backgroundContext.clearRect(0, 0, width, height);
           const scale = Math.max(width / background.naturalWidth, height / background.naturalHeight);
           const drawWidth = background.naturalWidth * scale;
@@ -110,7 +125,10 @@ export default function RealtimeLivePortraitView({
             drawWidth,
             drawHeight,
           );
-          const replacement = backgroundContext.getImageData(0, 0, width, height).data;
+          backgroundPixelsRef.current = backgroundContext.getImageData(0, 0, width, height).data;
+        }
+        if (backgroundPixelsRef.current) {
+          const replacement = backgroundPixelsRef.current;
           const pixels = context.getImageData(0, 0, width, height);
           for (let index = 0; index < width * height; index += 1) {
             const pixelOffset = index * 4;

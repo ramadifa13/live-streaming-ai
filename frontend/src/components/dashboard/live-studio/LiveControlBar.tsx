@@ -2,19 +2,7 @@
 
 import React, { useRef } from "react";
 import Image from "next/image";
-import {
-  Radio,
-  Pause,
-  Play,
-  RotateCw,
-  Copy,
-  Loader2,
-  BookOpen,
-  User,
-  Clock,
-  ShoppingBag,
-  Tag,
-} from "lucide-react";
+import { Radio, Pause, Play, Copy, Loader2, BookOpen, User, Clock, ShoppingBag } from "lucide-react";
 import { PlatformIcon } from "@/components/shared/PlatformIcon";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { useProductStore } from "@/stores/useProductStore";
@@ -24,9 +12,8 @@ import { liveSessionService, toLiveProductSnapshot } from "@/services/liveSessio
 import { avatarIdleVideoPath } from "@/app/dashboard/constants";
 import { oauthService } from "@/services/oauthService";
 import { copyToClipboard } from "@/utils/clipboard";
-import { formatTime } from "@/utils/formatters";
+import { LiveRuntimePanel } from "@/components/dashboard/live-studio/LiveRuntimePanel";
 import { isValidRtmpUrl, normalizeRtmpInput } from "@/utils/rtmp";
-import { LiveMetricsBar } from "@/components/dashboard/LiveMetricsBar";
 import { ChatMessage } from "@/app/dashboard/types";
 
 export const LiveControlBar: React.FC = () => {
@@ -49,7 +36,6 @@ export const LiveControlBar: React.FC = () => {
   const isLivePaused = useLiveSessionStore((state) => state.isLivePaused);
   const setIsLivePaused = useLiveSessionStore((state) => state.setIsLivePaused);
   const isConnectingLive = useLiveSessionStore((state) => state.isConnectingLive);
-  const liveSeconds = useLiveSessionStore((state) => state.liveSeconds);
   const selectedDuration = useLiveSessionStore((state) => state.selectedDuration);
   const selectedPlatform = useLiveSessionStore((state) => state.selectedPlatform);
   const connectMode = useLiveSessionStore((state) => state.connectMode);
@@ -62,11 +48,9 @@ export const LiveControlBar: React.FC = () => {
   const setConnectedAccount = useLiveSessionStore((state) => state.setConnectedAccount);
   const oauthConfigStatus = useLiveSessionStore((state) => state.oauthConfigStatus);
   const automations = useLiveSessionStore((state) => state.automations);
-  const metrics = useLiveSessionStore((state) => state.metrics);
   const connectingStageText = useLiveSessionStore((state) => state.connectingStageText);
   const addChatMessage = useLiveSessionStore((state) => state.addChatMessage);
   const currentLiveSessionId = useLiveSessionStore((state) => state.currentLiveSessionId);
-  const pipelineStatus = useLiveSessionStore((state) => state.pipelineStatus);
 
   const connectingAbortRef = useRef<AbortController | null>(null);
 
@@ -79,18 +63,17 @@ export const LiveControlBar: React.FC = () => {
     if (ok) showToast(`${label} berhasil disalin ke clipboard!`);
   };
 
-  const rtmpUrlPlaceholder =
-    selectedPlatform.includes("Instagram")
-      ? "Salin Server URL dari Instagram Live Producer / Professional Dashboard..."
-      : selectedPlatform.includes("YouTube")
-        ? "Salin Server URL dari YouTube Studio → Go Live..."
-        : selectedPlatform.includes("TikTok")
-          ? "Salin Server URL dari TikTok LIVE Studio..."
-          : selectedPlatform.includes("Shopee")
-            ? "Salin Server URL dari Shopee Live Center..."
-            : selectedPlatform.includes("Facebook")
-              ? "Salin Server URL dari Meta Live Producer..."
-              : "Salin Server / Stream URL dari dashboard platform live Anda...";
+  const rtmpUrlPlaceholder = selectedPlatform.includes("Instagram")
+    ? "Salin Server URL dari Instagram Live Producer / Professional Dashboard..."
+    : selectedPlatform.includes("YouTube")
+      ? "Salin Server URL dari YouTube Studio → Go Live..."
+      : selectedPlatform.includes("TikTok")
+        ? "Salin Server URL dari TikTok LIVE Studio..."
+        : selectedPlatform.includes("Shopee")
+          ? "Salin Server URL dari Shopee Live Center..."
+          : selectedPlatform.includes("Facebook")
+            ? "Salin Server URL dari Meta Live Producer..."
+            : "Salin Server / Stream URL dari dashboard platform live Anda...";
 
   const handleSwitchNextProduct = async () => {
     if (products.length === 0) return;
@@ -134,10 +117,7 @@ export const LiveControlBar: React.FC = () => {
 
     const attemptId = Date.now();
     const controller = new AbortController();
-    const { rtmpUrl: normalizedUrl, streamKey: normalizedKey } = normalizeRtmpInput(
-      customRtmpUrl,
-      streamKey,
-    );
+    const { rtmpUrl: normalizedUrl, streamKey: normalizedKey } = normalizeRtmpInput(customRtmpUrl, streamKey);
 
     if (!normalizedUrl.trim()) {
       showToast(
@@ -276,13 +256,11 @@ export const LiveControlBar: React.FC = () => {
           controller.signal,
         );
       } catch (broadcastErr) {
-        const msg =
-          broadcastErr instanceof Error ? broadcastErr.message : String(broadcastErr);
+        const msg = broadcastErr instanceof Error ? broadcastErr.message : String(broadcastErr);
         const looksLikeTimeout = /timeout|504|502|gateway/i.test(msg);
         if (looksLikeTimeout && sessionId) {
           useLiveSessionStore.setState({
-            connectingStageText:
-              "Masih menyiapkan siaran… Jangan tutup halaman, kami cek otomatis.",
+            connectingStageText: "Masih menyiapkan siaran… Jangan tutup halaman, kami cek otomatis.",
           });
           await liveSessionService.waitForRtmpConnected(sessionId, {
             signal: controller.signal,
@@ -338,15 +316,12 @@ export const LiveControlBar: React.FC = () => {
           liveSessionPhase: "idle",
           pipelineStatus: null,
         });
-        showToast(
-          `Belum berhasil ke ${selectedPlatform}. Cek Stream Key (sekali pakai), lalu Connect lagi.`,
-        );
+        showToast(`Belum berhasil ke ${selectedPlatform}. Cek Stream Key (sekali pakai), lalu Connect lagi.`);
       }
     } catch (err) {
       if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
       if (connectingAbortRef.current?.signal.aborted) return;
-      const message =
-        err instanceof Error ? err.message : "Error koneksi: Pastikan server backend online.";
+      const message = err instanceof Error ? err.message : "Error koneksi: Pastikan server backend online.";
       await liveSessionService.teardownSession(createdSessionId);
       useLiveSessionStore.setState({
         isConnectingLive: false,
@@ -404,8 +379,7 @@ export const LiveControlBar: React.FC = () => {
                 <div>
                   <p className="text-slate-500 leading-none">AI Host &amp; Suara</p>
                   <p className="font-medium text-slate-200 mt-1">
-                    {selectedAvatar.name} · {selectedVoice || selectedAvatar.voice} ·{" "}
-                    {selectedLang.toUpperCase()}
+                    {selectedAvatar.name} · {selectedVoice || selectedAvatar.voice} · {selectedLang.toUpperCase()}
                   </p>
                 </div>
               </div>
@@ -595,7 +569,8 @@ export const LiveControlBar: React.FC = () => {
                   </div>
                   {selectedPlatform.includes("Instagram") && (
                     <p className="mt-1 text-[8.5px] text-amber-400/90 leading-relaxed">
-                      Stream key Instagram sekali pakai. Kalau siaran putus, buat live baru di Instagram lalu tempel key yang baru.
+                      Stream key Instagram sekali pakai. Kalau siaran putus, buat live baru di Instagram lalu tempel key
+                      yang baru.
                     </p>
                   )}
                 </div>
@@ -672,121 +647,7 @@ export const LiveControlBar: React.FC = () => {
         </div>
       </div>
 
-      <div className="mb-3 border-b border-[#232c42] pb-3">
-        <div className="flex items-center justify-between mb-1.5">
-          <div className="flex items-center gap-2">
-            <span
-              className={`rounded px-2 py-0.5 text-[9px] font-bold tracking-widest text-white ${
-                !isLivePaused ? "bg-red-500 animate-pulse" : "bg-amber-600"
-              }`}
-            >
-              {isLivePaused ? "PAUSED" : "LIVE"}
-            </span>
-            <span className="text-[12px] font-bold text-slate-100 tracking-wider font-mono">
-              {formatTime(liveSeconds)}{" "}
-              <span className="text-[9px] font-normal text-slate-400 font-sans">/ {selectedDuration} Jam</span>
-            </span>
-          </div>
-          <span className="text-[10px] font-mono text-emerald-400 font-bold">
-            {Math.min(100, Math.round((liveSeconds / (selectedDuration * 3600)) * 100))}%
-          </span>
-        </div>
-
-        <div className="w-full h-1.5 rounded-full bg-[#1c2438] overflow-hidden">
-          <div
-            className={`h-full transition-all duration-300 ${
-              liveSeconds / (selectedDuration * 3600) > 0.9
-                ? "bg-gradient-to-r from-amber-500 to-red-500 animate-pulse"
-                : "bg-gradient-to-r from-blue-500 to-emerald-400"
-            }`}
-            style={{
-              width: `${Math.min(100, (liveSeconds / (selectedDuration * 3600)) * 100)}%`,
-            }}
-          />
-        </div>
-      </div>
-
-      <div className="mb-3">
-        <LiveMetricsBar
-          viewers={metrics.viewers}
-          comments={metrics.comments}
-          clicks={metrics.clicks}
-          sales={metrics.sales}
-        />
-      </div>
-
-      {isLiveActive && pipelineStatus && (
-        <div className="mb-3 rounded-xl border border-purple-500/20 bg-purple-950/20 px-2.5 py-2 flex items-center justify-between gap-2 text-[9px]">
-          <span className="text-purple-300 font-semibold">Script Bank</span>
-          <span className="text-slate-300">
-            {pipelineStatus.scriptBankRemaining ?? "—"} naskah tersisa
-          </span>
-          <span className="text-slate-500">
-            {pipelineStatus.scriptBankSource === "mixed"
-              ? "LLM+lokal"
-              : pipelineStatus.scriptBankSource === "payload"
-                ? "prepared"
-                : "lokal"}
-          </span>
-          {(pipelineStatus.scriptBankRemaining ?? 99) <= 8 && (
-            <span className="text-amber-400 font-bold">Refill...</span>
-          )}
-        </div>
-      )}
-
-      <div className="mb-3 rounded-xl border border-blue-500/20 bg-[#111827] p-2.5">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-[9px] font-bold text-slate-300 flex items-center gap-1.5">
-            <Tag className="w-3 h-3 text-blue-400" />
-            <span>Produk Aktif di Siaran</span>
-          </p>
-          <button
-            type="button"
-            onClick={handleSwitchNextProduct}
-            className="text-[8.5px] font-bold text-blue-400 hover:underline cursor-pointer"
-          >
-            Ganti Produk
-          </button>
-        </div>
-        <div className="flex items-center gap-2.5">
-          <div className="relative h-10 w-10 shrink-0 rounded-lg overflow-hidden border border-white/20 shadow">
-            <Image
-              src={
-                activeFeaturedProduct.image?.startsWith("http") ||
-                activeFeaturedProduct.image?.startsWith("/") ||
-                activeFeaturedProduct.image?.startsWith("data:")
-                  ? activeFeaturedProduct.image
-                  : "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&h=400&fit=crop&q=80"
-              }
-              alt={activeFeaturedProduct.name}
-              fill
-              unoptimized
-              className="object-cover"
-            />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] font-bold text-white truncate">{activeFeaturedProduct.name}</p>
-            <p className="text-[11px] font-bold text-emerald-400">{activeFeaturedProduct.price}</p>
-          </div>
-          <div className="text-right border-l border-[#232c42] pl-2">
-            <p className="text-[7.5px] text-slate-500">Klik</p>
-            <p className="text-[9.5px] font-bold text-white">{metrics.activeProductClicks}</p>
-          </div>
-          <div className="text-right border-l border-[#232c42] pl-2">
-            <p className="text-[7.5px] text-slate-500">Terjual</p>
-            <p className="text-[9.5px] font-bold text-emerald-400">{metrics.activeProductSold} ↑</p>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={handleSwitchNextProduct}
-          className="mt-2 w-full rounded-lg bg-[#4148e2] py-1.5 text-[9px] font-bold text-white hover:bg-blue-600 transition active:scale-95 flex items-center justify-center gap-1 shadow-sm cursor-pointer"
-        >
-          <RotateCw className="w-3 h-3" />
-          <span>Pin &amp; Sorot Produk Berikutnya</span>
-        </button>
-      </div>
+      <LiveRuntimePanel activeFeaturedProduct={activeFeaturedProduct} onSwitchProduct={handleSwitchNextProduct} />
 
       <div className="mt-auto flex flex-col gap-2">
         <button

@@ -36,15 +36,13 @@ function resolveVoiceId(voiceOrName?: string): string {
   if (!raw || raw.includes("gadis") || raw.includes("neural") || raw.includes("edge")) {
     return "girl_cute_kids";
   }
-  if (
-    raw.includes("namira") ||
-    raw === "namira" ||
-    raw === "default_host" ||
-    raw.includes("default")
-  ) {
+  if (raw.includes("namira") || raw === "namira" || raw === "default_host" || raw.includes("default")) {
     return "girl_cute_kids";
   }
-  return raw.replace(/\s+/g, "_").replace(/&/g, "and").replace(/[^a-z0-9_]/g, "_");
+  return raw
+    .replace(/\s+/g, "_")
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9_]/g, "_");
 }
 
 export const aiService = {
@@ -57,9 +55,7 @@ export const aiService = {
 
   /** Pocket TTS Indonesian — preview dan live melalui backend yang sama. */
   async synthesizeTTS(options: SynthesizeTTSOptions): Promise<Blob> {
-    const voiceId = resolveVoiceId(
-      options.voiceId || options.voice || options.avatarName,
-    );
+    const voiceId = resolveVoiceId(options.voiceId || options.voice || options.avatarName);
     const res = await fetch("/api/tts/synthesize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -79,9 +75,7 @@ export const aiService = {
 
     if (!res.ok) {
       const errJson = await res.json().catch(() => null);
-      const errorMsg =
-        errJson?.error ||
-        `HTTP ${res.status}: Gagal sintesis Pocket TTS.`;
+      const errorMsg = errJson?.error || `HTTP ${res.status}: Gagal sintesis Pocket TTS.`;
       throw new Error(errorMsg);
     }
 
@@ -249,12 +243,5 @@ export const aiService = {
     const res = await fetch(`/api/avatar/video-status/${jobId}`);
     const json = await res.json();
     return json.data ?? {};
-  },
-
-  async listTTSVoices(): Promise<BackendVoice[]> {
-    const res = await fetch("/api/tts/voices");
-    if (!res.ok) throw new Error(`HTTP ${res.status}: Gagal memuat katalog voice.`);
-    const json = await res.json();
-    return Array.isArray(json?.data) ? json.data : [];
   },
 };

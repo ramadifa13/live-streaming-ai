@@ -38,7 +38,6 @@ export default function Dashboard() {
   const automations = useLiveSessionStore((state) => state.automations);
   const currentLiveSessionId = useLiveSessionStore((state) => state.currentLiveSessionId);
   const isConnectingLive = useLiveSessionStore((state) => state.isConnectingLive);
-  const liveSessionPhase = useLiveSessionStore((state) => state.liveSessionPhase);
   const setLiveSessionPhase = useLiveSessionStore((state) => state.setLiveSessionPhase);
   const setLiveSeconds = useLiveSessionStore((state) => state.setLiveSeconds);
   const setMetrics = useLiveSessionStore((state) => state.setMetrics);
@@ -74,11 +73,7 @@ export default function Dashboard() {
     void liveSessionService.fetchMetrics(sid).then((json) => {
       const sessionStatus = json?.data?.sessionStatus as string | undefined;
       const backendSid = (json?.data?.sessionId as string | undefined) || sid;
-      const dead =
-        !sessionStatus ||
-        sessionStatus === "ended" ||
-        sessionStatus === "error" ||
-        sessionStatus === "idle";
+      const dead = !sessionStatus || sessionStatus === "ended" || sessionStatus === "error" || sessionStatus === "idle";
 
       if (dead) {
         useLiveSessionStore.setState({
@@ -260,69 +255,93 @@ export default function Dashboard() {
   useEffect(() => {
     if (!isLiveActive || isLivePaused) return;
 
-    const interval = setInterval(async () => {
-      const json = await liveSessionService.fetchMetrics(currentLiveSessionId);
-      if (!json) return;
+    let stopped = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-      const backendMetrics = json.data?.metrics;
-      const sessionStatus = json.data?.sessionStatus;
+    const pollMetrics = async () => {
+      if (stopped) return;
+      try {
+        const json = await liveSessionService.fetchMetrics(currentLiveSessionId);
+        if (!json || stopped) return;
 
-      if (sessionStatus === "live" && liveSessionPhase !== "live") {
-        setLiveSessionPhase("live");
-      } else if (sessionStatus === "pending" && liveSessionPhase !== "pending") {
-        setLiveSessionPhase("pending");
-      } else if (!sessionStatus && liveSessionPhase !== "idle" && liveSessionPhase !== "ended") {
-        setLiveSessionPhase("ended");
-        setIsLiveActive(false);
-        setIsLivePaused(false);
-      }
+        const backendMetrics = json.data?.metrics;
+        const sessionStatus = json.data?.sessionStatus;
+        const currentPhase = useLiveSessionStore.getState().liveSessionPhase;
 
-      if (backendMetrics) {
-        setMetrics({
-          viewers: Number(backendMetrics.viewers || 0),
-          comments: Number(backendMetrics.comments || 0),
-          clicks: Number(backendMetrics.clicks || 0),
-          sales: Number(backendMetrics.sales || 0),
-          activeProductClicks: Number(backendMetrics.clicks || 0),
-          activeProductSold: Number(backendMetrics.orders || 0),
-        });
+        if (sessionStatus === "live" && currentPhase !== "live") {
+          setLiveSessionPhase("live");
+        } else if (sessionStatus === "pending" && currentPhase !== "pending") {
+          setLiveSessionPhase("pending");
+        } else if (!sessionStatus && currentPhase !== "idle" && currentPhase !== "ended") {
+          setLiveSessionPhase("ended");
+          setIsLiveActive(false);
+          setIsLivePaused(false);
+        }
 
-        const recent = backendMetrics.recentComments as
-          | Array<{ id: string; sender: string; text: string; time: string; aiReply?: string }>
-          | undefined;
-        if (recent?.length) {
-          const existing = useLiveSessionStore.getState().chatMessages;
-          const known = new Set(existing.map((m) => m.id));
-          for (const c of recent) {
-            if (!known.has(c.id)) {
-              addChatMessage({
-                id: c.id,
-                sender: c.sender || "Penonton",
-                isAi: false,
-                avatarColor: "bg-amber-600",
-                text: c.text,
-                time: c.time,
-              });
-              known.add(c.id);
-            }
-            if (c.aiReply && !known.has(`${c.id}-ai`)) {
-              addChatMessage({
-                id: `${c.id}-ai`,
-                sender: `AI Host`,
-                isAi: true,
-                avatarColor: "bg-[#4148e2]",
-                text: c.aiReply,
-                time: c.time,
-              });
-              known.add(`${c.id}-ai`);
+        if (backendMetrics) {
+          setMetrics({
+            viewers: Number(backendMetrics.viewers || 0),
+            comments: Number(backendMetrics.comments || 0),
+            clicks: Number(backendMetrics.clicks || 0),
+            sales: Number(backendMetrics.sales || 0),
+            activeProductClicks: Number(backendMetrics.clicks || 0),
+            activeProductSold: Number(backendMetrics.orders || 0),
+          });
+
+          const recent = backendMetrics.recentComments as
+            | Array<{ id: string; sender: string; text: string; time: string; aiReply?: string }>
+            | undefined;
+          if (recent?.length) {
+            const existing = useLiveSessionStore.getState().chatMessages;
+            const known = new Set(existing.map((m) => m.id));
+            for (const c of recent) {
+              if (!known.has(c.id)) {
+                addChatMessage({
+                  id: c.id,
+                  sender: c.sender || "Penonton",
+                  isAi: false,
+                  avatarColor: "bg-amber-600",
+                  text: c.text,
+                  time: c.time,
+                });
+                known.add(c.id);
+              }
+              if (c.aiReply && !known.has(`${c.id}-ai`)) {
+                addChatMessage({
+                  id: `${c.id}-ai`,
+                  sender: `AI Host`,
+                  isAi: true,
+                  avatarColor: "bg-[#4148e2]",
+                  text: c.aiReply,
+                  time: c.time,
+                });
+                known.add(`${c.id}-ai`);
+              }
             }
           }
         }
+      } catch {
+        // Retry on the next cycle; a transient metrics failure should not stop live mode.
+      } finally {
+        if (!stopped) timeoutId = setTimeout(() => void pollMetrics(), 2500);
       }
-    }, 2500);
+    };
 
-    return () => clearInterval(interval);
-  }, [isLiveActive, isLivePaused, liveSessionPhase, currentLiveSessionId, setIsLiveActive, setIsLivePaused, setLiveSessionPhase, setMetrics, addChatMessage]);
+    void pollMetrics();
+    return () => {
+      stopped = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [
+    isLiveActive,
+    isLivePaused,
+    currentLiveSessionId,
+    setIsLiveActive,
+    setIsLivePaused,
+    setLiveSessionPhase,
+    setMetrics,
+    addChatMessage,
+  ]);
 
   useEffect(() => {
     if (!isConnectingLive || !currentLiveSessionId) return;
@@ -336,9 +355,19 @@ export default function Dashboard() {
       }
     };
 
-    void pollPipeline();
-    const interval = setInterval(pollPipeline, 2000);
-    return () => clearInterval(interval);
+    let stopped = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const pollSerial = async () => {
+      if (stopped) return;
+      await pollPipeline();
+      if (!stopped) timeoutId = setTimeout(() => void pollSerial(), 2000);
+    };
+
+    void pollSerial();
+    return () => {
+      stopped = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [isConnectingLive, currentLiveSessionId, setPipelineStatus]);
 
   useEffect(() => {
@@ -350,9 +379,19 @@ export default function Dashboard() {
       setPipelineStatus(json);
     };
 
-    void pollPipeline();
-    const interval = setInterval(pollPipeline, 5000);
-    return () => clearInterval(interval);
+    let stopped = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const pollSerial = async () => {
+      if (stopped) return;
+      await pollPipeline();
+      if (!stopped) timeoutId = setTimeout(() => void pollSerial(), 5000);
+    };
+
+    void pollSerial();
+    return () => {
+      stopped = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [isLiveActive, isLivePaused, currentLiveSessionId, setPipelineStatus]);
 
   return (

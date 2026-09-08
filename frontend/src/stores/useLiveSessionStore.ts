@@ -4,6 +4,8 @@ import { ChatMessage, SessionSummaryData } from "@/app/dashboard/types";
 import { ConnectedAccount } from "@/services/oauthService";
 import { liveSessionService } from "@/services/liveSessionService";
 
+const MAX_CHAT_MESSAGES = 200;
+
 export interface LiveMetrics {
   viewers: number;
   comments: number;
@@ -50,7 +52,6 @@ export interface PipelineStatus {
 }
 
 interface LiveSessionState {
-
   currentLiveSessionId: string | null;
   liveSessionPhase: "idle" | "pending" | "live" | "ended";
   isLiveActive: boolean;
@@ -104,12 +105,7 @@ interface LiveSessionState {
           autoPromo: boolean;
           autoModeration: boolean;
         }
-      | ((prev: {
-          autoReply: boolean;
-          autoPin: boolean;
-          autoPromo: boolean;
-          autoModeration: boolean;
-        }) => {
+      | ((prev: { autoReply: boolean; autoPin: boolean; autoPromo: boolean; autoModeration: boolean }) => {
           autoReply: boolean;
           autoPin: boolean;
           autoPromo: boolean;
@@ -186,22 +182,21 @@ export const useLiveSessionStore = create<LiveSessionState>()(
       setOauthConfigStatus: (status) => set({ oauthConfigStatus: status }),
       setAutomations: (auto) =>
         set((state) => ({
-          automations:
-            typeof auto === "function" ? auto(state.automations) : auto,
+          automations: typeof auto === "function" ? auto(state.automations) : auto,
         })),
       setInputChat: (chat) => set({ inputChat: chat }),
       setIsAiAutoReplyOn: (on) => set({ isAiAutoReplyOn: on }),
       addChatMessage: (msg) =>
-        set((state) => ({ chatMessages: [...state.chatMessages, msg] })),
+        set((state) => ({
+          chatMessages: [...state.chatMessages, msg].slice(-MAX_CHAT_MESSAGES),
+        })),
       setMetrics: (metrics) =>
         set((state) => ({
-          metrics:
-            typeof metrics === "function" ? metrics(state.metrics) : metrics,
+          metrics: typeof metrics === "function" ? metrics(state.metrics) : metrics,
         })),
       setLiveSeconds: (secs) =>
         set((state) => ({
-          liveSeconds:
-            typeof secs === "function" ? secs(state.liveSeconds) : secs,
+          liveSeconds: typeof secs === "function" ? secs(state.liveSeconds) : secs,
         })),
       setSessionSummary: (sum) => set({ sessionSummary: sum }),
       setPipelineStatus: (status) =>
@@ -284,7 +279,13 @@ export const useLiveSessionStore = create<LiveSessionState>()(
         const net = Math.max(0, state.metrics.sales - estGpuCost);
         const fallbackSummary: SessionSummaryData = {
           durationSeconds: state.liveSeconds,
-          durationFormatted: `${Math.floor(state.liveSeconds / 3600).toString().padStart(2, "0")}:${Math.floor((state.liveSeconds % 3600) / 60).toString().padStart(2, "0")}:${Math.floor(state.liveSeconds % 60).toString().padStart(2, "0")}`,
+          durationFormatted: `${Math.floor(state.liveSeconds / 3600)
+            .toString()
+            .padStart(2, "0")}:${Math.floor((state.liveSeconds % 3600) / 60)
+            .toString()
+            .padStart(2, "0")}:${Math.floor(state.liveSeconds % 60)
+            .toString()
+            .padStart(2, "0")}`,
           totalViewers: state.metrics.viewers,
           peakViewers: state.metrics.viewers,
           totalComments: state.metrics.comments,
@@ -323,4 +324,3 @@ export const useLiveSessionStore = create<LiveSessionState>()(
     },
   ),
 );
-

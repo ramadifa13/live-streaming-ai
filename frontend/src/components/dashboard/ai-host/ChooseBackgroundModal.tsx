@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useRef } from "react";
-import { X, Upload, Crop, Check, Sparkles, RotateCcw, Image as ImageIcon, Layers } from "lucide-react";
+import { X, Upload, Crop, Check, Sparkles, RotateCcw, Image as ImageIcon, Layers, Trash2 } from "lucide-react";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { DEFAULT_BACKGROUNDS } from "@/app/dashboard/constants";
@@ -16,6 +16,7 @@ export const ChooseBackgroundModal: React.FC = () => {
   const customBackgrounds = useAiHostStore((state) => state.customBackgrounds);
   const setSelectedBackground = useAiHostStore((state) => state.setSelectedBackground);
   const addCustomBackground = useAiHostStore((state) => state.addCustomBackground);
+  const removeCustomBackground = useAiHostStore((state) => state.removeCustomBackground);
 
   // Tab state untuk memisahkan "Default" dan "Custom / Upload" agar tidak panjang ke bawah
   const [activeTab, setActiveTab] = useState<"default" | "custom">("default");
@@ -44,6 +45,11 @@ export const ChooseBackgroundModal: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [initialCropPos, setInitialCropPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [resizeStart, setResizeStart] = useState<{
+    clientX: number;
+    clientY: number;
+    cropBox: typeof cropBox;
+  } | null>(null);
 
   if (!show) return null;
 
@@ -129,6 +135,30 @@ export const ChooseBackgroundModal: React.FC = () => {
 
   const handleMouseUp = () => {
     setIsDragging(false);
+    setResizeStart(null);
+  };
+
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setResizeStart({ clientX: e.clientX, clientY: e.clientY, cropBox });
+  };
+
+  const handleResizeMove = (e: React.MouseEvent) => {
+    if (!resizeStart || !imagePreviewRef.current || naturalSize.width === 0) return;
+
+    const displayRect = imagePreviewRef.current.getBoundingClientRect();
+    const scale = naturalSize.width / displayRect.width;
+    const deltaX = (e.clientX - resizeStart.clientX) * scale;
+    const deltaY = (e.clientY - resizeStart.clientY) * scale;
+    const start = resizeStart.cropBox;
+    const maxWidth = Math.min(naturalSize.width - start.x, (naturalSize.height - start.y) * TARGET_ASPECT);
+    const widthFromX = start.width + deltaX;
+    const widthFromY = start.width + deltaY * TARGET_ASPECT;
+    const nextWidth = Math.min(maxWidth, Math.max(20, Math.max(widthFromX, widthFromY)));
+    const nextHeight = nextWidth / TARGET_ASPECT;
+
+    setCropBox((prev) => ({ ...prev, width: Math.round(nextWidth), height: Math.round(nextHeight) }));
   };
 
   const handleApplyCropAndSave = () => {
@@ -166,7 +196,10 @@ export const ChooseBackgroundModal: React.FC = () => {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-fadeIn select-none"
-      onMouseMove={handleMouseMove}
+      onMouseMove={(e) => {
+        handleMouseMove(e);
+        handleResizeMove(e);
+      }}
       onMouseUp={handleMouseUp}
     >
       {/* Modal Utama Dibuat Lebar (max-w-4xl) & Fix Tinggi Tanpa Scroll */}
@@ -347,26 +380,42 @@ export const ChooseBackgroundModal: React.FC = () => {
                           {customBackgrounds.map((bgUrl, i) => {
                             const isSelected = selectedBackground === bgUrl;
                             return (
-                              <button
+                              <div
                                 key={i}
-                                type="button"
-                                onClick={() => {
-                                  setSelectedBackground(bgUrl);
-                                  showToast("Background custom dipilih!", "success");
-                                }}
                                 className={`group relative aspect-[9/16] rounded-lg overflow-hidden border transition cursor-pointer ${
                                   isSelected
                                     ? "border-indigo-400 ring-2 ring-indigo-500/50 scale-105"
                                     : "border-slate-800 hover:border-slate-500"
                                 }`}
                               >
-                                <img src={bgUrl} alt={`Custom ${i}`} className="w-full h-full object-cover" />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedBackground(bgUrl);
+                                    showToast("Background custom dipilih!", "success");
+                                  }}
+                                  className="absolute inset-0"
+                                >
+                                  <img src={bgUrl} alt={`Custom ${i}`} className="w-full h-full object-cover" />
+                                </button>
                                 {isSelected && (
                                   <div className="absolute top-1 right-1 h-4 w-4 rounded-full bg-indigo-500 text-white flex items-center justify-center shadow">
                                     <Check className="w-2.5 h-2.5" />
                                   </div>
                                 )}
-                              </button>
+                                <button
+                                  type="button"
+                                  aria-label={`Hapus custom background ${i + 1}`}
+                                  title="Hapus background"
+                                  onClick={() => {
+                                    removeCustomBackground(bgUrl);
+                                    showToast("Background custom dihapus.", "success");
+                                  }}
+                                  className="absolute bottom-1 right-1 z-10 flex h-6 w-6 items-center justify-center rounded-md border border-red-300/30 bg-red-950/80 text-red-200 shadow hover:bg-red-700"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
                             );
                           })}
                         </div>
@@ -412,6 +461,12 @@ export const ChooseBackgroundModal: React.FC = () => {
                             Area 9:16 Live Canvas
                           </div>
                           <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none border border-white/20 divide-x divide-y divide-white/15" />
+                          <button
+                            type="button"
+                            aria-label="Perbesar atau perkecil area crop"
+                            onMouseDown={handleResizeStart}
+                            className="absolute bottom-[-7px] right-[-7px] h-4 w-4 rounded-full border-2 border-white bg-indigo-500 shadow-lg cursor-se-resize"
+                          />
                         </div>
                       )}
                     </div>

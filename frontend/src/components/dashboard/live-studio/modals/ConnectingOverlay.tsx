@@ -10,11 +10,11 @@ import { liveSessionService } from "@/services/liveSessionService";
 import { isDeferredGoLivePlatform } from "@/lib/rtmpPlatform";
 
 const PREP_STEPS = [
-  { id: 0, label: "Menyalakan cloud" },
-  { id: 1, label: "Menyiapkan host AI" },
-  { id: 2, label: "Menyiapkan kata pembuka" },
-  { id: 3, label: "Menyambung ke platform" },
-  { id: 4, label: "Siap siaran" },
+  { id: 0, label: "Studio" },
+  { id: 1, label: "Host AI" },
+  { id: 2, label: "Pembuka" },
+  { id: 3, label: "Platform" },
+  { id: 4, label: "Siaran" },
 ] as const;
 
 export const ConnectingOverlay: React.FC = () => {
@@ -39,17 +39,13 @@ export const ConnectingOverlay: React.FC = () => {
     pipelineStatus?.visualWorkerRunning === true;
   const minUtterances = pipelineStatus?.goLiveMinUtterances ?? 3;
   const bufferCount = isRealtimeWorker
-    ? Math.max(
-        pipelineStatus?.readyUtteranceCount ?? 0,
-        pipelineStatus?.utteranceQueueCount ?? 0,
-      )
-    : pipelineStatus?.videosQueued ?? 0;
+    ? Math.max(pipelineStatus?.readyUtteranceCount ?? 0, pipelineStatus?.utteranceQueueCount ?? 0)
+    : (pipelineStatus?.videosQueued ?? 0);
   const videosReady = bufferCount >= minUtterances;
   const rtmpConnected = pipelineStatus?.isRtmpConnected === true;
   const podBooting = pipelineStatus?.podBooting === true;
   const initializing =
-    pipelineStatus?.visualWorkerInitializing === true ||
-    pipelineStatus?.broadcastBootState === "starting";
+    pipelineStatus?.visualWorkerInitializing === true || pipelineStatus?.broadcastBootState === "starting";
   const rtmpFailed =
     pipelineStatus?.rtmpFatal === true ||
     (pipelineStatus?.rtmpState === "failed" && Boolean(pipelineStatus?.rtmpError));
@@ -64,18 +60,24 @@ export const ConnectingOverlay: React.FC = () => {
     pipelineStatus?.ready === true;
 
   const activeStep = Math.min(4, Math.max(0, canGoLive ? 4 : stageIndex));
-  const progressPct = canGoLive
-    ? 100
-    : Math.min(95, Math.max(8, ((activeStep + 1) / PREP_STEPS.length) * 100));
+  const progressPct = canGoLive ? 100 : Math.min(95, Math.max(8, ((activeStep + 1) / PREP_STEPS.length) * 100));
 
-  const statusLine =
+  const rawStatusLine =
     connectingStageText ||
     pipelineStatus?.rtmpHint ||
     (canGoLive
       ? deferredPlatform
-        ? "Siap. Tekan Siarkan di app, lalu tombol hijau di bawah."
-        : "Siaran terhubung — host mulai otomatis…"
-      : "Mohon tunggu, sistem sedang bekerja…");
+        ? "Semua sudah siap. Mulai siaran dari aplikasi pilihan Anda."
+        : "Siaran terhubung. Host AI akan mulai menyapa pembeli Anda."
+      : "Kami sedang menyiapkan siaran Anda…");
+  const statusLine = rawStatusLine
+    .replace(/cloud\s+gpu\s+l40s?/gi, "studio AI")
+    .replace(/cloud\s+ai/gi, "studio AI")
+    .replace(/cloud/gi, "studio")
+    .replace(/rtmp/gi, "platform live")
+    .replace(/stream\s+key/gi, "kode siaran")
+    .replace(/\bpod\b/gi, "sistem")
+    .replace(/worker/gi, "host AI");
 
   const finishGoLiveLocal = () => {
     useLiveSessionStore.setState({
@@ -122,33 +124,27 @@ export const ConnectingOverlay: React.FC = () => {
     autoArmedRef.current = true;
     void handleConfirmGoLive();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- arm once when ready
-  }, [
-    isConnectingLive,
-    deferredPlatform,
-    canGoLive,
-    currentLiveSessionId,
-    isSubmittingGoLive,
-  ]);
+  }, [isConnectingLive, deferredPlatform, canGoLive, currentLiveSessionId, isSubmittingGoLive]);
 
   if (!isConnectingLive) return null;
 
   return (
-    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/85 backdrop-blur-xl p-4 animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md max-h-[90vh] rounded-3xl border border-indigo-500/30 bg-[#0a0f1d] text-center shadow-2xl shadow-indigo-500/25 flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-99999 flex items-center justify-center bg-black/85 backdrop-blur-xl p-4 animate-in fade-in duration-200">
+      <div className="relative w-full max-w-lg rounded-3xl border border-indigo-500/30 bg-[#0a0f1d] text-center shadow-2xl shadow-indigo-500/25 overflow-hidden">
         <div className="pointer-events-none absolute -top-20 left-1/2 -translate-x-1/2 w-64 h-64 bg-gradient-to-br from-blue-600/25 via-indigo-600/15 to-purple-600/25 blur-3xl rounded-full z-0" />
 
-        <div className="p-5 sm:p-6 overflow-y-auto flex-1 z-10 custom-scrollbar relative">
-          <div className="relative mx-auto mb-3 flex h-12 w-12 items-center justify-center">
+        <div className="relative z-10 p-4 sm:p-6">
+          <div className="relative mx-auto mb-3 flex h-11 w-11 items-center justify-center">
             {connectionFailed ? (
-              <div className="flex h-12 w-12 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10">
                 <AlertTriangle className="w-6 h-6 text-red-400" />
               </div>
             ) : canGoLive && !deferredPlatform ? (
-              <div className="flex h-12 w-12 items-center justify-center rounded-full border border-emerald-500/40 bg-emerald-500/10">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full border border-emerald-500/40 bg-emerald-500/10">
                 <Loader2 className="w-6 h-6 text-emerald-400 animate-spin" />
               </div>
             ) : canGoLive ? (
-              <div className="flex h-12 w-12 items-center justify-center rounded-full border border-emerald-500/40 bg-emerald-500/10">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full border border-emerald-500/40 bg-emerald-500/10">
                 <Check className="w-6 h-6 text-emerald-400" />
               </div>
             ) : (
@@ -162,7 +158,7 @@ export const ConnectingOverlay: React.FC = () => {
 
           <h3 className="text-base sm:text-lg font-extrabold text-white tracking-wide mb-0.5">
             {workerFailed
-              ? "Ada gangguan di cloud"
+              ? "Ada kendala menyiapkan host"
               : rtmpFailed
                 ? "Siaran belum tersambung"
                 : canGoLive && !deferredPlatform
@@ -172,8 +168,7 @@ export const ConnectingOverlay: React.FC = () => {
                     : "Sedang menyiapkan siaran"}
           </h3>
           <p className="text-[11px] text-slate-400 mb-3 flex items-center justify-center gap-2 flex-wrap">
-            Host{" "}
-            <span className="text-indigo-300 font-semibold">{selectedAvatar.name}</span> ·{" "}
+            Host <span className="text-indigo-300 font-semibold">{selectedAvatar.name}</span> ·{" "}
             <span className="inline-flex items-center gap-1.5 text-indigo-300 font-semibold">
               <PlatformIcon platformName={selectedPlatform} size="sm" />
               {selectedPlatform}
@@ -181,14 +176,14 @@ export const ConnectingOverlay: React.FC = () => {
           </p>
 
           {!connectionFailed && (
-            <p className="text-[12px] text-slate-300 leading-relaxed mb-3 px-1">
+            <p className="mx-auto max-w-md text-[12px] text-slate-300 leading-relaxed mb-3 px-1">
               {canGoLive && deferredPlatform
-                ? "Tekan Siarkan di aplikasi live, lalu tekan tombol hijau di bawah."
+                ? "Tekan tombol Siarkan di aplikasi live, lalu lanjutkan di sini."
                 : canGoLive && !deferredPlatform
-                  ? "Platform sudah live — host AI mulai bicara otomatis."
+                  ? "Platform Anda sudah aktif. Host AI akan berbicara secara otomatis."
                   : initializing || podBooting
-                    ? "Pertama kali bisa 2–5 menit. Jangan tutup halaman ini."
-                    : "Sistem bekerja otomatis. Anda cukup menunggu."}
+                    ? "Persiapan awal dapat memerlukan beberapa menit. Anda cukup menunggu."
+                    : "Sistem sedang bekerja otomatis untuk menyiapkan siaran Anda."}
             </p>
           )}
 
@@ -204,19 +199,17 @@ export const ConnectingOverlay: React.FC = () => {
               style={{ width: `${progressPct}%` }}
             />
           </div>
-          <p className="text-[11px] text-indigo-200/90 font-medium mb-4 px-1 leading-snug">
-            {statusLine}
-          </p>
+          <p className="text-[11px] text-indigo-200/90 font-medium mb-3 px-1 leading-snug">{statusLine}</p>
 
           {!connectionFailed && (
-            <div className="mb-4 rounded-xl bg-black/30 border border-white/10 p-3 text-left space-y-2">
+            <div className="mb-3 grid grid-cols-5 gap-1.5 rounded-xl border border-white/10 bg-black/30 p-2.5">
               {PREP_STEPS.map((step) => {
                 const done = activeStep > step.id || (canGoLive && step.id <= 4);
                 const current = !canGoLive && activeStep === step.id;
                 return (
-                  <div key={step.id} className="flex items-center gap-2.5 text-[11px]">
+                  <div key={step.id} className="flex min-w-0 flex-col items-center gap-1 text-[9px]">
                     <span
-                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${
+                      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${
                         done
                           ? "border-emerald-500/50 bg-emerald-500/20 text-emerald-300"
                           : current
@@ -233,13 +226,9 @@ export const ConnectingOverlay: React.FC = () => {
                       )}
                     </span>
                     <span
-                      className={
-                        done
-                          ? "text-emerald-200/90"
-                          : current
-                            ? "text-white font-semibold"
-                            : "text-slate-500"
-                      }
+                      className={`truncate max-w-full ${
+                        done ? "text-emerald-200/90" : current ? "text-white font-semibold" : "text-slate-500"
+                      }`}
                     >
                       {step.label}
                     </span>
@@ -249,9 +238,9 @@ export const ConnectingOverlay: React.FC = () => {
             </div>
           )}
 
-          <div className="mb-4 grid grid-cols-2 gap-2 text-[10px]">
+          <div className="mb-3 grid grid-cols-3 gap-2 text-[10px]">
             <div className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-left">
-              <p className="text-slate-500 mb-0.5">Host AI</p>
+              <p className="text-slate-500 mb-0.5">Host Anda</p>
               <p
                 className={
                   workerFailed
@@ -265,7 +254,7 @@ export const ConnectingOverlay: React.FC = () => {
               </p>
             </div>
             <div className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-left">
-              <p className="text-slate-500 mb-0.5">Siaran platform</p>
+              <p className="text-slate-500 mb-0.5">Platform live</p>
               <p
                 className={
                   rtmpFailed
@@ -278,8 +267,8 @@ export const ConnectingOverlay: React.FC = () => {
                 {rtmpFailed ? "Gagal" : rtmpConnected ? "Terhubung" : "Menyambung…"}
               </p>
             </div>
-            <div className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-left col-span-2">
-              <p className="text-slate-500 mb-0.5">Kata pembuka</p>
+            <div className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-left">
+              <p className="text-slate-500 mb-0.5">Materi pembuka</p>
               <p className={videosReady ? "text-emerald-300 font-semibold" : "text-amber-300"}>
                 {bufferCount}/{minUtterances} siap
               </p>
@@ -287,31 +276,28 @@ export const ConnectingOverlay: React.FC = () => {
           </div>
 
           {workerFailed && (
-            <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-left">
+            <div className="mb-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-left">
               <p className="text-[11px] font-semibold text-red-200 leading-relaxed">
-                Cloud AI sedang bermasalah. Tutup, tunggu sebentar, lalu Connect lagi.
+                Persiapan host sedang mengalami kendala. Silakan tutup pesan ini, tunggu sebentar, lalu coba lagi.
               </p>
             </div>
           )}
 
           {rtmpFailed && !workerFailed && (
-            <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-left">
+            <div className="mb-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-left">
               <p className="text-[11px] font-semibold text-red-200 leading-relaxed">
-                Stream Key hanya berlaku sekali. Buat siaran baru di aplikasi live,
-                salin key baru, lalu Connect lagi.
+                Siaran belum tersambung. Pastikan siaran baru sudah dibuat di aplikasi pilihan Anda, lalu coba lagi.
               </p>
             </div>
           )}
 
           {canGoLive && deferredPlatform && (
-            <div className="mb-4 rounded-xl border border-yellow-500/30 bg-yellow-500/5 p-3 text-left">
-              <p className="text-[10px] font-bold text-yellow-400 mb-2 uppercase tracking-wide">
-                Lakukan berurutan
-              </p>
+            <div className="mb-3 rounded-xl border border-yellow-500/30 bg-yellow-500/5 p-3 text-left">
+              <p className="text-[10px] font-bold text-yellow-400 mb-2 uppercase tracking-wide">Tinggal satu langkah</p>
               <ol className="list-decimal pl-4 text-[10px] text-slate-300 space-y-1">
-                <li>Lihat preview host di sebelah kiri aplikasi live.</li>
+                <li>Lihat preview host di aplikasi live Anda.</li>
                 <li>
-                  Tekan <strong>Siarkan</strong> di aplikasi live.
+                  Tekan <strong>Siarkan</strong> di aplikasi live Anda.
                 </li>
                 <li>Kembali ke sini, tekan tombol hijau di bawah.</li>
               </ol>
@@ -328,12 +314,12 @@ export const ConnectingOverlay: React.FC = () => {
               {isSubmittingGoLive ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Memulai siaran…
+                  Mengaktifkan host…
                 </>
               ) : (
                 <>
                   <Radio className="w-4 h-4" />
-                  Mulai Siaran Sekarang
+                  Aktifkan Host AI
                 </>
               )}
             </button>
@@ -343,20 +329,18 @@ export const ConnectingOverlay: React.FC = () => {
               onClick={cancelInitialization}
               className="w-full mb-2 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-red-600 to-rose-500 hover:brightness-110 active:scale-95 transition cursor-pointer"
             >
-              {workerFailed ? "Tutup & coba lagi" : "Tutup & ganti Stream Key"}
+              {workerFailed ? "Tutup & coba lagi" : "Tutup & periksa siaran"}
             </button>
           ) : (
             <div className="mb-2 rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-3 py-3 text-center">
               <div className="flex items-center justify-center gap-2 text-[12px] text-indigo-100 font-medium">
                 <Loader2 className="w-4 h-4 animate-spin text-indigo-300 shrink-0" />
-                {canGoLive && !deferredPlatform
-                  ? "Menyalakan suara host…"
-                  : "Mohon tunggu…"}
+                {canGoLive && !deferredPlatform ? "Mengaktifkan host…" : "Mohon tunggu…"}
               </div>
               <p className="mt-1.5 text-[10px] text-slate-400 leading-snug">
                 {rtmpConnected
-                  ? "Hampir selesai — menyiapkan kata pembuka host."
-                  : "Jangan tutup halaman. Progress akan berlanjut otomatis."}
+                  ? "Hampir selesai. Menyiapkan sapaan untuk pembeli Anda."
+                  : "Persiapan akan berlanjut otomatis."}
               </p>
             </div>
           )}

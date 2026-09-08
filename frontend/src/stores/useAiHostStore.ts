@@ -1,10 +1,6 @@
 import { create } from "zustand";
 import { Avatar, LiveSalesScript, Product } from "@/app/dashboard/types";
-import {
-  avatars,
-  DEFAULT_VOICE_ID,
-  type TtsLangCode,
-} from "@/app/dashboard/constants";
+import { avatars, DEFAULT_VOICE_ID, DEFAULT_BACKGROUNDS, type TtsLangCode } from "@/app/dashboard/constants";
 import { aiService, VideoScriptData } from "@/services/aiService";
 
 interface AiHostState {
@@ -39,6 +35,7 @@ interface AiHostState {
   setSpeechSpeed: (speed: number) => void;
   setSelectedBackground: (bg: string) => void;
   addCustomBackground: (bg: string) => void;
+  removeCustomBackground: (bg: string) => void;
   setCurrentLiveVideoUrl: (url: string | null) => void;
   setVideoDuration: (dur: "15s" | "30s" | "60s") => void;
   setVideoScript: (script: VideoScriptData | Partial<VideoScriptData>) => void;
@@ -80,7 +77,7 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
   liveSalesScriptData: null,
   isLoadingLiveScript: false,
 
-  selectedBackground: "/banner_studio_live_streaming.jpg",
+  selectedBackground: DEFAULT_BACKGROUNDS[0]?.url || "",
   customBackgrounds: [],
 
   videoDuration: "30s",
@@ -89,8 +86,7 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
     problem: "Jelaskan masalah yang dialami penonton.",
     solution: "Tawarkan produk Anda sebagai solusinya.",
     cta: "Ajak penonton untuk membeli sekarang!",
-    fullVoiceover:
-      "Naskah lengkap akan muncul di sini setelah Anda menekan tombol Generate Script.",
+    fullVoiceover: "Naskah lengkap akan muncul di sini setelah Anda menekan tombol Generate Script.",
   },
   isGeneratingScript: false,
   isRenderingVideo: false,
@@ -112,10 +108,20 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
       customBackgrounds: [bg, ...state.customBackgrounds.filter((item) => item !== bg)],
       selectedBackground: bg,
     })),
+  removeCustomBackground: (bg) =>
+    set((state) => {
+      const customBackgrounds = state.customBackgrounds.filter((item) => item !== bg);
+      return {
+        customBackgrounds,
+        selectedBackground:
+          state.selectedBackground === bg
+            ? customBackgrounds[0] || DEFAULT_BACKGROUNDS[0]?.url || ""
+            : state.selectedBackground,
+      };
+    }),
   setCurrentLiveVideoUrl: (url) => set({ currentLiveVideoUrl: url }),
   setVideoDuration: (dur) => set({ videoDuration: dur }),
-  setVideoScript: (script) =>
-    set((state) => ({ videoScript: { ...state.videoScript, ...script } })),
+  setVideoScript: (script) => set((state) => ({ videoScript: { ...state.videoScript, ...script } })),
   setLiveSalesScriptData: (data) => set({ liveSalesScriptData: data }),
 
   stopAudio: () => {
@@ -139,19 +145,13 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
     set({ isSynthesizingAudio: true, isAvatarSpeaking: true });
 
     const state = get();
-    const voiceId =
-      opts?.voice ||
-      state.selectedVoice ||
-      state.selectedAvatar.voice ||
-      DEFAULT_VOICE_ID;
+    const voiceId = opts?.voice || state.selectedVoice || state.selectedAvatar.voice || DEFAULT_VOICE_ID;
     const langRaw = (opts?.lang || state.selectedLang || "id").toString();
     const lang = langRaw === "en" ? "en" : "id";
 
     try {
       const blob = await aiService.synthesizeTTS({
-        text: text === "__local_preview__"
-          ? "Halo, ini adalah preview suara host Anda."
-          : text,
+        text: text === "__local_preview__" ? "Halo, ini adalah preview suara host Anda." : text,
         voice: voiceId,
         voiceId,
         avatarName: opts?.avatar || state.selectedAvatar.name,
@@ -244,9 +244,7 @@ export const useAiHostStore = create<AiHostState>((set, get) => ({
         avatarImageUrl: state.selectedAvatar.image?.startsWith("http")
           ? state.selectedAvatar.image
           : `http://localhost:3000${state.selectedAvatar.image}`,
-        productImageUrl: activeProduct.image?.startsWith("http")
-          ? activeProduct.image
-          : undefined,
+        productImageUrl: activeProduct.image?.startsWith("http") ? activeProduct.image : undefined,
         scriptText: fullScript,
         avatarName: state.selectedAvatar.id,
         tone: state.selectedTone,
