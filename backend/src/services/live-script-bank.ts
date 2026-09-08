@@ -282,28 +282,42 @@ const DURATION_FILLERS = [
 export function fitScriptBankSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
   const cappedMaxWords = Math.max(8, Math.min(Number(maxWords) || SCRIPT_BANK_MAX_WORDS, SCRIPT_BANK_MAX_WORDS));
   const normalized = sanitizeForLiveTTS(text).replace(/\s+/g, " ").trim();
-  const targetMinWords = Math.min(SCRIPT_BANK_MIN_WORDS, cappedMaxWords);
-  let words = normalized.split(" ").filter(Boolean);
-  if (words.length < targetMinWords) {
+  const targetMinWords = Math.min(Math.max(SCRIPT_BANK_MIN_WORDS, 20), cappedMaxWords);
+
+  const padToTarget = (sourceWords: string[]): string => {
+    const words = sourceWords.filter(Boolean);
+    if (words.length >= targetMinWords) return words.join(" ");
     let fillerIndex = 0;
-    while (words.length < targetMinWords) {
-      words = `${words.join(" ")}${DURATION_FILLERS[fillerIndex % DURATION_FILLERS.length]}`.split(" ").filter(Boolean);
+    const out = [...words];
+    while (out.length < targetMinWords && out.length < cappedMaxWords) {
+      const filler = DURATION_FILLERS[fillerIndex % DURATION_FILLERS.length] || " supaya kamu bisa menilai dengan tenang";
+      out.push(...filler.split(/\s+/).filter(Boolean));
       fillerIndex++;
     }
+    return out.join(" ");
+  };
+
+  let words = normalized.split(" ").filter(Boolean);
+  if (words.length < targetMinWords) {
+    words = padToTarget(words).split(/\s+/).filter(Boolean);
   }
-  if (words.length <= cappedMaxWords)
-    return `${words
-      .join(" ")
-      .replace(/[,;:!?-]+$/g, "")
-      .replace(/[.!?]+$/g, "")}.`;
+  if (words.length <= cappedMaxWords) {
+    const finalText = padToTarget(words);
+    return `${finalText.replace(/[,;:!?-]+$/g, "").replace(/[.!?]+$/g, "")}.`;
+  }
 
   const clipped = words.slice(0, cappedMaxWords).join(" ");
-  const sentenceEnd = Math.max(clipped.lastIndexOf("."), clipped.lastIndexOf("!"), clipped.lastIndexOf("?"));
-  if (sentenceEnd >= Math.floor(clipped.length * 0.55)) {
-    const sentence = clipped.slice(0, sentenceEnd + 1).trim();
-    if (sentence.split(/\s+/).filter(Boolean).length >= 8) return sentence;
+  const clippedWords = clipped.split(/\s+/).filter(Boolean);
+  const finalClipped = padToTarget(clippedWords).split(/\s+/).filter(Boolean).slice(0, cappedMaxWords).join(" ");
+  const sentenceEnd = Math.max(finalClipped.lastIndexOf("."), finalClipped.lastIndexOf("!"), finalClipped.lastIndexOf("?"));
+  if (sentenceEnd >= Math.floor(finalClipped.length * 0.55)) {
+    const sentence = finalClipped.slice(0, sentenceEnd + 1).trim();
+    const sentenceWords = sentence.split(/\s+/).filter(Boolean);
+    if (sentenceWords.length >= targetMinWords) return sentence;
   }
-  return clipped.replace(/[,;:!?-]+$/g, "").trim() + ".";
+
+  const padded = padToTarget(finalClipped.split(/\s+/).filter(Boolean)).split(/\s+/).filter(Boolean).slice(0, cappedMaxWords).join(" ");
+  return padded.replace(/[,;:!?-]+$/g, "").trim() + ".";
 }
 
 function clampSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {

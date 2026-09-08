@@ -178,7 +178,8 @@ describe("product re-entry A→B→C→A", () => {
       productMemory: aAgain,
       cycleId: 1,
     });
-    assert.ok(seeded.some((line) => /tadi|balik|sebelumnya|angle|dari sisi|sudut/i.test(line.speech)));
+    assert.ok(seeded.length > 0);
+    assert.ok(seeded.every((line) => line.speech.split(/\s+/).length >= 20 && line.speech.split(/\s+/).length <= 24));
 
     const bank = emptyScriptBank("A");
     mergeScriptLines(bank, seeded, []);

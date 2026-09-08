@@ -68,15 +68,13 @@ BROADCAST_SPEECH_GAP_WAIT_SEC = 0.25
 PENDING_MAX = RENDER_QUEUE_SIZE + BROADCAST_MAX_LAG
 SEAMLESS_THRESHOLD = 0.92
 # Keep the worker deterministic and environment-free for deploy/test invariants.
-MOUTH_STRENGTH = 0.65
-MOUTH_TEMPORAL = 0.22
+MOUTH_STRENGTH = 1.0
+MOUTH_TEMPORAL = 0.12
 MOUTH_MAX_DELTA = 0
 MOUTH_FRAME_DELTA = 0
 LIPSYNC_PREROLL_FRAMES = 10
 LIPSYNC_WAIT_SEC = 0
-# Sync shift di-set ke 0 agar mulut mengikuti audio tanpa lead palsu.
-# Shift negatif membuat host terlihat seperti bicara lebih dulu dari audio,
-# yang terasa tidak natural saat live stream.
+# Sync shift 0 memastikan viseme tepat waktu dengan audio stream
 LIPSYNC_SYNC_SHIFT = 0
 LIPSYNC_PREROLL_TIMEOUT_SEC = 4.0
 # 1 = jangan start audio sampai preroll mouths penuh (anti stutter awal kalimat).
@@ -2053,10 +2051,6 @@ class LipSyncEngine:
                 return body
             # Jangan mix/unsharp: VAE 256 + lerp idle = bibir buram.
             strength = _mouth_strength_for_pcm(pcm)
-            if whisper_idx is not None and whisper_idx < 3:
-                # Transisi lembut 3 frame pertama agar mulut tidak kaget/goyang saat audio masuk
-                ramp = (float(whisper_idx) + 1.0) / 3.0
-                strength *= ramp
             if strength >= 0.999 and float(MOUTH_MAX_DELTA) <= 0:
                 damped = mouth
             else:
@@ -2554,6 +2548,8 @@ class StreamBroadcaster:
                 "aac",
                 "-b:a",
                 "128k",
+                "-af",
+                "aresample=async=1000:min_hard_comp=0.100000:first_pts=0",
                 "-flvflags",
                 "no_duration_filesize",
                 "-f",
