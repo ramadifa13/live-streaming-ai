@@ -135,7 +135,6 @@ class StreamBroadcaster(threading.Thread):
         self._init_bg_overlay()
 
     def _init_bg_overlay(self):
-        if self.background_path and os.path.exists(self.background_path):
         bg_path = self.background_path
         if not bg_path and self.output_folder:
             for ext in (".jpg", ".png", ".jpeg", ".webp"):
@@ -146,11 +145,9 @@ class StreamBroadcaster(threading.Thread):
 
         if bg_path and os.path.exists(bg_path):
             try:
-                bg = cv2.imread(self.background_path)
                 bg = cv2.imread(bg_path)
                 if bg is not None:
                     self._bg_bgr = fit_bgr(bg, CANVAS_W, CANVAS_H)
-                    print(f"[StreamBroadcaster] ✅ Custom background berhasil dimuat: {bg_path}")
                     print(
                         f"[StreamBroadcaster] ✅ Custom background berhasil dimuat: {bg_path}"
                     )
@@ -630,7 +627,6 @@ class StreamBroadcaster(threading.Thread):
                         self._write_all(self.v_fh, buf)
                         self._write_all(self.a_fh, pcm)
 
-                now = time.perf_counter()
                 sleep_time = next_frame_time - now
                 if sleep_time > 0:
                     time.sleep(sleep_time)
