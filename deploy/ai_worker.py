@@ -82,6 +82,12 @@ BROADCAST_RENDER_WAIT_SEC = float(
 BROADCAST_SPEECH_WAIT_SEC = float(
     os.environ.get("AI_WORKER_SPEECH_WAIT_SEC", "10.0")
 )
+BROADCAST_SPEECH_GAP_WAIT_SEC = float(
+    os.environ.get("AI_WORKER_SPEECH_GAP_WAIT_SEC", "0.25")
+)
+PENDING_MAX = int(
+    os.environ.get("AI_WORKER_PENDING_MAX", str(RENDER_QUEUE_SIZE + BROADCAST_MAX_LAG))
+)
 SEAMLESS_THRESHOLD = float(os.environ.get("AI_WORKER_SEAMLESS_THRESHOLD", "0.92"))
 MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "1.0"))
 MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0"))
@@ -1155,27 +1161,18 @@ class VideoStateMachine:
 
             cur = self.bank.get_clip(self.current_name)
             at_rest = False
-            near_rest = False
             if cur is not None:
                 at_rest = (
                     self.frame_idx == cur.base_pose_frame
                     or self.frame_idx >= cur.end_pose
                 )
-                near = max(1, REST_GATE_NEAR_FRAMES)
-                near_rest = (
-                    abs(self.frame_idx - cur.base_pose_frame) <= near
-                    or (cur.end_pose - self.frame_idx) <= near
-                )
-
-            # Audio sudah start di SpeechBridge — jangan defer tanpa utterance_active.
-            # Jika dekat rest: snap ke rest dulu lalu soft-cut (lebih pendek morph).
-            if near_rest and not at_rest and cur is not None and REST_GATE_MAX_MS > 0:
-                if (cur.end_pose - self.frame_idx) <= near:
-                    self.frame_idx = cur.end_pose
-                else:
-                    self.frame_idx = cur.base_pose_frame
-                at_rest = True
-                metrics.inc("rest_gate_snap")
+                if self.frame_idx < cur.base_pose_frame or self.frame_idx > cur.end_pose:
+                    self.frame_idx = max(
+                        cur.base_pose_frame,
+                        min(self.frame_idx, cur.end_pose),
+                    )
+                    at_rest = True
+                    metrics.inc("rest_gate_recovery")
 
             self._pending_begin_utterance = False
             self._begin_wait_since = None
@@ -2171,30 +2168,18 @@ def lipsync_worker_loop(
             metrics.set_gauge("render_queue_depth", float(render_q.qsize()))
             speaking = bool(pkt.is_speech or pkt.needs_lipsync)
             try:
-                render_q.put(out, timeout=0.25 if speaking else 0.15)
+                render_q.put(out, block=False)
             except queue.Full:
-                if speaking:
-                    # Jangan drop frame bicara — block lebih lama.
-                    try:
-                        render_q.put(out, timeout=0.35)
-                    except queue.Full:
-                        metrics.inc("render_queue_backpressure")
-                        while not stop_event.is_set():
-                            try:
-                                render_q.put(out, timeout=0.1)
-                                break
-                            except queue.Full:
-                                continue
-                else:
+                metrics.inc("render_queue_backpressure")
+                try:
+                    render_q.get_nowait()
+                    render_q.task_done()
+                except queue.Empty:
+                    pass
+                try:
+                    render_q.put_nowait(out)
+                except queue.Full:
                     metrics.inc("render_queue_dropped")
-                    try:
-                        render_q.get_nowait()
-                    except queue.Empty:
-                        pass
-                    try:
-                        render_q.put(out, block=False)
-                    except queue.Full:
-                        pass
             frame_count += 1
             if frame_count % 300 == 0:
                 print(f"[LipSync] Processed {frame_count} frames, queue depth: {render_q.qsize()}")
@@ -2209,12 +2194,17 @@ def lipsync_worker_loop(
                 clip_name=pkt.clip_name,
                 frame_idx=pkt.frame_idx,
             )
-            while not stop_event.is_set():
+            try:
+                render_q.put_nowait(fallback)
+            except queue.Full:
                 try:
-                    render_q.put(fallback, timeout=0.1)
-                    break
+                    render_q.get_nowait()
+                    render_q.task_done()
+                    render_q.put_nowait(fallback)
+                except queue.Empty:
+                    pass
                 except queue.Full:
-                    metrics.inc("render_queue_backpressure")
+                    metrics.inc("render_queue_dropped")
         finally:
             raw_q.task_done()
 
@@ -2228,54 +2218,22 @@ def _put_raw_frame(
     *,
     must_keep: bool = False,
 ) -> None:
-    """Backpressure: tunggu slot queue. Saat bicara, jangan drop seq."""
-    wait = max(0.01, block_sec * (4.0 if must_keep else 1.0))
-    deadline = time.perf_counter() + wait
-    while not stop_event.is_set():
-        try:
-            raw_q.put(pkt, timeout=0.01)
-            return
-        except queue.Full:
-            if time.perf_counter() >= deadline:
-                if must_keep:
-                    # Evict hanya packet idle; packet speech tetap dipertahankan.
-                    retained = []
-                    evicted = False
-                    while True:
-                        try:
-                            queued = raw_q.get_nowait()
-                        except queue.Empty:
-                            break
-                        queued_speech = bool(
-                            getattr(queued, "is_speech", False)
-                            or getattr(queued, "needs_lipsync", False)
-                        )
-                        if not evicted and not queued_speech:
-                            raw_q.task_done()
-                            evicted = True
-                            metrics.inc("raw_queue_dropped_idle")
-                        else:
-                            retained.append(queued)
-                            raw_q.task_done()
-                    for queued in retained:
-                        raw_q.put_nowait(queued)
-                    if evicted:
-                        try:
-                            raw_q.put_nowait(pkt)
-                            return
-                        except queue.Full:
-                            pass
-                    # Packet speech adalah sumber audio dan viseme yang sama.
-                    # Tunggu sampai ada slot agar sequence tidak pernah bolong.
-                    while not stop_event.is_set():
-                        try:
-                            raw_q.put(pkt, timeout=0.2)
-                            return
-                        except queue.Full:
-                            metrics.inc("raw_queue_backpressure")
-                    return
-                metrics.inc("raw_queue_dropped")
-                return
+    """Bounded enqueue: drop oldest packet rather than blocking the frame clock."""
+    try:
+        raw_q.put_nowait(pkt)
+        return
+    except queue.Full:
+        metrics.inc("raw_queue_backpressure")
+    try:
+        raw_q.get_nowait()
+        raw_q.task_done()
+        metrics.inc("raw_queue_dropped")
+    except queue.Empty:
+        return
+    try:
+        raw_q.put_nowait(pkt)
+    except queue.Full:
+        metrics.inc("raw_queue_dropped")
 
 
 def frame_fetcher_loop(
@@ -2308,8 +2266,8 @@ def frame_fetcher_loop(
                 sm.mark_utterance_audio_done()
             if sm.utterance_visual_complete():
                 another_ready = (
-                    bridge.has_ready_pending()
-                    if hasattr(bridge, "has_ready_pending")
+                    bridge.has_upcoming_work()
+                    if hasattr(bridge, "has_upcoming_work")
                     else False
                 )
                 sm.end_utterance(another_utterance_ready=another_ready)
@@ -2318,8 +2276,8 @@ def frame_fetcher_loop(
         # BE reload / diam: jangan stuck hold-talk di talk clip.
         if bridge is not None and not bridge.is_utterance_active():
             queue_ready = (
-                bridge.has_ready_pending()
-                if hasattr(bridge, "has_ready_pending")
+                bridge.has_upcoming_work()
+                if hasattr(bridge, "has_upcoming_work")
                 else False
             )
             sm.release_stale_hold_talk(queue_has_ready=queue_ready)
@@ -2969,9 +2927,21 @@ def broadcaster_loop(
         while True:
             try:
                 pkt = render_q.get_nowait()
+                if pkt.seq < next_seq:
+                    metrics.inc("broadcast_stale_packet_dropped")
+                    continue
                 pending[pkt.seq] = pkt
             except queue.Empty:
                 break
+
+        if len(pending) > max(1, PENDING_MAX):
+            cutoff = max(next_seq, max(pending) - max(1, BROADCAST_MAX_LAG))
+            for stale in [s for s in list(pending) if s < cutoff]:
+                pending.pop(stale, None)
+                metrics.inc("broadcast_pending_overflow")
+            if cutoff > next_seq:
+                next_seq = cutoff
+                metrics.inc("broadcast_seq_fast_forward")
 
         metrics.set_gauge("render_queue_depth", float(render_q.qsize()))
         utterance_active = bridge_ref is not None and bridge_ref.is_utterance_active()
@@ -2990,7 +2960,7 @@ def broadcaster_loop(
             # Jangan menulis last_pcm berulang: audio dan MuseTalk harus maju
             # dari RenderedPacket sequence yang sama.
             wait_deadline = time.perf_counter() + max(
-                BROADCAST_RENDER_WAIT_SEC, BROADCAST_SPEECH_WAIT_SEC
+                BROADCAST_RENDER_WAIT_SEC, BROADCAST_SPEECH_GAP_WAIT_SEC
             )
             while pkt is None and not stop_event.is_set():
                 pkt = pending.pop(next_seq, None)
@@ -3010,14 +2980,20 @@ def broadcaster_loop(
                     fresh: RenderedPacket = render_q.get(
                         timeout=min(0.25, remaining)
                     )
-                    pending[fresh.seq] = fresh
+                    if fresh.seq < next_seq:
+                        metrics.inc("broadcast_stale_packet_dropped")
+                    else:
+                        pending[fresh.seq] = fresh
                 except queue.Empty:
                     continue
+            if pkt is None and not stop_event.is_set():
+                metrics.inc("broadcast_seq_gap_committed")
 
         if pkt is None and pending:
             if utterance_active:
-                # Jangan resync loncat seq saat bicara — tunggu next_seq / duplikasi frame.
-                pass
+                future = min((seq for seq in pending if seq > next_seq), default=None)
+                if future is not None:
+                    metrics.inc("broadcast_seq_gap_committed")
             else:
                 pick = min(pending.keys())
                 for stale in [s for s in list(pending.keys()) if s < pick]:
@@ -3037,7 +3013,7 @@ def broadcaster_loop(
         else:
             consumed_seq = False
             stale_misses += 1
-            metrics.inc("frames_duplicated")
+            metrics.inc("broadcast_fallback_frames")
             # Micro-advance body instead of freezing last_good (lebih natural).
             if stale_misses >= 1:
                 last_good = idle_player.next_frame()
@@ -3097,9 +3073,8 @@ def broadcaster_loop(
                             )
                         except Exception:
                             pass
-        # Advance seq hanya jika packet terpakai, atau saat idle (boleh catch up).
-        # Saat bicara + miss: tahan next_seq supaya packet terlambat tidak di-skip.
-        if consumed_seq or not utterance_active:
+        # Commit every output tick so a missing speech packet cannot stall the timeline.
+        if consumed_seq or pkt is None:
             next_seq += 1
 
         metrics.record_latency(

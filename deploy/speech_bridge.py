@@ -679,6 +679,14 @@ class SpeechBridge:
         """True jika ada utterance *berikutnya* di antrian (bukan yang sedang main)."""
         return self.ready_pending_count() > 0
 
+    def has_upcoming_work(self) -> bool:
+        """True jika ada job berikutnya, termasuk job yang masih dipersiapkan."""
+        with self._lock:
+            return any(
+                not job.error and (not job.ready.is_set() or job.num_frames > 0)
+                for job in self._pending
+            )
+
     def ready_pending_count(self) -> int:
         """Jumlah job di `_pending` yang sudah prepared — jangan hitung `_current`.
 
