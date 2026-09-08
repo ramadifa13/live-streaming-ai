@@ -135,6 +135,14 @@ class StreamBroadcaster(threading.Thread):
         self._init_bg_overlay()
 
     def _init_bg_overlay(self):
+        self._bg_mtime = 0.0
+        self._last_bg_check = 0.0
+        self._reload_background()
+        self._ov_candidate = self.overlay_path
+        self._last_ov_check = 0.0
+        self._reload_overlay()
+
+    def _reload_background(self):
         bg_path = self.background_path
         if not bg_path and self.output_folder:
             for ext in (".jpg", ".png", ".jpeg", ".webp"):
@@ -145,18 +153,18 @@ class StreamBroadcaster(threading.Thread):
 
         if bg_path and os.path.exists(bg_path):
             try:
+                mtime = os.path.getmtime(bg_path)
+                if getattr(self, "_bg_mtime", None) == mtime and self._bg_bgr is not None:
+                    return
                 bg = cv2.imread(bg_path)
                 if bg is not None:
                     self._bg_bgr = fit_bgr(bg, CANVAS_W, CANVAS_H)
+                    self._bg_mtime = mtime
                     print(
                         f"[StreamBroadcaster] ✅ Custom background berhasil dimuat: {bg_path}"
                     )
             except Exception as e:
                 print(f"[StreamBroadcaster] Failed to load background: {e}")
-
-        self._ov_candidate = self.overlay_path
-        self._last_ov_check = 0.0
-        self._reload_overlay()
 
     def _reload_overlay(self):
         cand = self._ov_candidate
@@ -612,6 +620,11 @@ class StreamBroadcaster(threading.Thread):
                     if w != CANVAS_W or h != CANVAS_H:
                         frame = fit_bgr(frame, CANVAS_W, CANVAS_H)
 
+                    # Cek berkala apakah background baru siap (hot-reload)
+                    if self._bg_bgr is None or now - getattr(self, "_last_bg_check", 0.0) > 2.0:
+                        self._last_bg_check = now
+                        self._reload_background()
+
                     frame = self._replace_video_background(frame, clip_name, frame_idx)
 
                     # Cek berkala apakah overlay baru selesai dirender di latar belakang (hot-reload)
@@ -699,15 +712,16 @@ class NewAIVisualWorker:
     def initialize(self):
         print("[NewAIVisualWorker] Initializing assets and models...")
         from argparse import Namespace
-        from inference import _load_models_cached
+        from inference import _load_models_cached, musetalk_visual_params
 
+        vparams = musetalk_visual_params()
         models_root = os.environ.get("MODELS_DIR", "./models")
         dummy_args = Namespace(
             gpu_id=0,
             use_float16=True,
             version="v15",
-            left_cheek_width=90,
-            right_cheek_width=90,
+            left_cheek_width=vparams.get("left_cheek_width", 60),
+            right_cheek_width=vparams.get("right_cheek_width", 60),
             unet_model_path=os.path.join(models_root, "musetalkV15", "unet.pth"),
             unet_config=os.path.join(models_root, "musetalkV15", "musetalk.json"),
             whisper_dir=os.path.join(models_root, "whisper"),

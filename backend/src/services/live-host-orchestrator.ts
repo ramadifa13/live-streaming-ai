@@ -1,4 +1,4 @@
-import { forwardToRunPodGPU, getRunPodQueueStatus, startRunPodBroadcast } from "./runpod-bridge.js";
+import { forwardToRunPodGPU, getRunPodQueueStatus, startRunPodBroadcast, resolveMediaAsDataUrl } from "./runpod-bridge.js";
 import {
   generateHostResponse,
   generateScriptBankLines,
@@ -234,8 +234,8 @@ interface PlanPolicy {
 }
 
 const LIVE_MIN_BUFFER = Number(process.env.LIVE_MIN_BUFFER_SECONDS || 6);
-const LIVE_MAX_UTTERANCE_SECONDS = Number(process.env.LIVE_MAX_UTTERANCE_SECONDS || 9);
-const LIVE_TTS_MAX_SPEED = Number(process.env.LIVE_TTS_MAX_SPEED || 1.35);
+const LIVE_MAX_UTTERANCE_SECONDS = Number(process.env.LIVE_MAX_UTTERANCE_SECONDS || 10);
+const LIVE_TTS_MAX_SPEED = 1.0;
 const GO_LIVE_MIN_UTTERANCES = Number(process.env.GO_LIVE_MIN_UTTERANCES || 1);
 
 const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
@@ -857,13 +857,7 @@ class LiveHostOrchestrator {
     state.broadcastRetryAt = now + 15_000;
 
     const product = state.product || state.config.product;
-    const liveOverlayMedia = (url?: string) => {
-      const u = (url || "").trim();
-      if (!u) return undefined;
-      if (/^https?:\/\//i.test(u)) return u;
-      if (/^data:image\//i.test(u)) return u;
-      return undefined;
-    };
+    const liveOverlayMedia = (url?: string) => resolveMediaAsDataUrl(url);
 
     console.log(`[LiveHost] ðŸ” Retry start-broadcast (${state.broadcastRetryCount}/8): ${sessionId}`);
 
@@ -1538,51 +1532,46 @@ class LiveHostOrchestrator {
 
     for (const seg of segments) {
       let audioBase64: string | undefined;
-      const spokenText = seg.text.trim();
-      let synthesisSpeed = state.config.speechSpeed ?? 1;
-      let withinDurationBudget = false;
-      try {
-        for (let attempt = 0; attempt < 4; attempt += 1) {
-          const ttsResult = await synthesizeSpeech({
-            text: spokenText,
-            voiceId: state.config.voiceId || process.env.VOICE_ID || "girl_cute_kids",
-            host: state.config.voice || state.config.avatarName || "girl_cute_kids",
-            voice: state.config.voice || state.config.avatarName || "girl_cute_kids",
-            avatarName: state.config.avatarName,
-            tone: state.config.tone,
-            emotion: response.emotion,
-            style: state.config.style || state.config.tone,
-            lang: state.config.ttsLang || "id",
-            speed: synthesisSpeed,
-            podId: state.config.podId || process.env.RUNPOD_POD_ID || null,
-            sessionId,
-            allowOfflineSynth: true,
-          });
-          if (!ttsResult.success || !ttsResult.audioBuffer) {
-            console.warn(`[LiveHost] TTS failed (no fallback): ${ttsResult.message}`);
-            break;
-          }
-
-          const actualDuration = ttsResult.metrics?.audioDuration;
-          if (!actualDuration || actualDuration <= LIVE_MAX_UTTERANCE_SECONDS + 0.05) {
-            audioBase64 = ttsResult.audioBuffer.toString("base64");
-            withinDurationBudget = true;
-            break;
-          }
-
-          synthesisSpeed = Math.min(
-            LIVE_TTS_MAX_SPEED,
-            Math.max(synthesisSpeed, synthesisSpeed * (actualDuration / LIVE_MAX_UTTERANCE_SECONDS) * 1.02),
-          );
-          console.warn(
-            `[LiveHost] TTS duration ${actualDuration.toFixed(2)}s exceeds ` +
-              `${LIVE_MAX_UTTERANCE_SECONDS}s; retry ${attempt + 1}/4 ` +
-              `audio utuh, speed=${synthesisSpeed.toFixed(2)}`,
-          );
+      // Batasi kalimat maksimal 20 kata agar durasi selalu di bawah 10 detik (pas dengan 10s video)
+      const rawText = seg.text.trim();
+      const words = rawText.split(/\s+/).filter(Boolean);
+      let spokenText = rawText;
+      if (words.length > 20) {
+        const slice = words.slice(0, 20).join(" ");
+        const lastPunct = Math.max(slice.lastIndexOf("."), slice.lastIndexOf("!"), slice.lastIndexOf("?"), slice.lastIndexOf(","));
+        if (lastPunct > slice.length * 0.5) {
+          spokenText =
+            slice
+              .slice(0, lastPunct)
+              .replace(/[,;:!?-]+$/g, "")
+              .trim() + ".";
+        } else {
+          spokenText = slice.replace(/[,;:!?-]+$/g, "").trim() + ".";
         }
+      }
 
-        if (!withinDurationBudget) {
-          console.warn(`[LiveHost] Utterance skipped: could not fit TTS audio within ${LIVE_MAX_UTTERANCE_SECONDS}s`);
+      // Selalu gunakan kecepatan natural 1.0x (jangan dipercepat / chipmunk)
+      const synthesisSpeed = 1.0;
+      try {
+        const ttsResult = await synthesizeSpeech({
+          text: spokenText,
+          voiceId: state.config.voiceId || process.env.VOICE_ID || "girl_cute_kids",
+          host: state.config.voice || state.config.avatarName || "girl_cute_kids",
+          voice: state.config.voice || state.config.avatarName || "girl_cute_kids",
+          avatarName: state.config.avatarName,
+          tone: state.config.tone,
+          emotion: response.emotion,
+          style: state.config.style || state.config.tone,
+          lang: state.config.ttsLang || "id",
+          speed: synthesisSpeed,
+          podId: state.config.podId || process.env.RUNPOD_POD_ID || null,
+          sessionId,
+          allowOfflineSynth: true,
+        });
+        if (ttsResult.success && ttsResult.audioBuffer) {
+          audioBase64 = ttsResult.audioBuffer.toString("base64");
+        } else {
+          console.warn(`[LiveHost] TTS failed: ${ttsResult.message}`);
           continue;
         }
       } catch (err: any) {

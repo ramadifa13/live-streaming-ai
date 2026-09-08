@@ -4,8 +4,8 @@ import type { StreamPlan } from "./live-host-orchestrator.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.LIVE_BRAIN_API_KEY || "";
-const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 20);
-const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 22);
+const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 14);
+const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 20);
 
 const GEMINI_MODEL_RAW = process.env.GEMINI_MODEL || process.env.LIVE_BRAIN_MODEL || "gemini-3.6-flash";
 const DEPRECATED_GEMINI_MODELS: Record<string, string> = {
@@ -537,7 +537,7 @@ Kembalikan SATU JSON murni, tanpa markdown, dengan schema:
   "claims": []
 }
 
-Panjang speech: MAKSIMAL 20–35 kata (≈8–14 detik audio). Komentar balasan 8–18 kata. Speech pendek = render lebih cepat & siaran lebih hidup. Jangan menambahkan salam pembuka robotik.`;
+Panjang speech: WAJIB 14–20 kata (durasi 6.5–9.0 detik, SELALU DI BAWAH 10 DETIK agar pas dalam 1 siklus video host 10 detik). Komentar balasan 10–16 kata. Kalimat harus utuh, tuntas, padat, alami, dan bertenaga. DILARANG membuat kalimat lebih dari 20 kata agar tidak memicu over-looping dan tidak ada space kosong/idle. Jangan menambahkan salam pembuka robotik.`;
 }
 
 function isGemini3FamilyModel(model: string): boolean {
@@ -961,7 +961,7 @@ export async function generateScriptBankLines(input: SalesBrainInput): Promise<H
   const prompt = `${systemPrompt}
 
 TUGAS: buat 20–24 ucapan host otonom yang BERBEDA dan NATURAL (bukan robot).
-Gaya TikTok/Shopee host: kasual, hidup, tepat ${SCRIPT_BANK_MIN_WORDS}–${SCRIPT_BANK_MAX_WORDS} kata per baris agar durasi bicara sekitar 8–9 detik dalam satu video talk.
+Gaya TikTok/Shopee host: kasual, hidup, tepat ${SCRIPT_BANK_MIN_WORDS}–${SCRIPT_BANK_MAX_WORDS} kata per baris agar durasi bicara sekitar 6.5–9.0 detik (selalu di bawah 10 detik) pas dalam satu video talk.
 Setiap baris harus selesai dalam satu napas/utterance; jangan membuat paragraf atau dua kalimat panjang yang perlu dipotong.
 LARANG frasa kaku berulang: "dari data produk", "yang tertulis", "aku nggak nebak", "patokannya".
 Jangan mengarang fakta. Campur topik: benefit, how_to_use, value, social, objection, micro_tip, reframe, use_case, promo_pitch, filler.
@@ -1152,7 +1152,7 @@ export async function prepareProductScriptPack(input: {
   const systemRules = `Kamu penulis naskah host live TikTok/Shopee (Bahasa Indonesia kasual, natural, antusias).
 Wajib:
 - Sapaan natural (Kak/Guys/Bestie) TIDAK di setiap baris; campur tanpa sapaan.
-- Speech 5–15 detik (12–32 kata), terdengar manusia, JANGAN kaku/robot.
+- Speech 6.5–9.0 detik (14–20 kata, SELALU di bawah 10 detik pas dengan durasi 10 detik video host), kalimat utuh dan lengkap tanpa terpotong, suara natural 1.0x, JANGAN kaku/robot dan JANGAN kepanjangan.
 - LARANG frasa robotik berulang seperti "dari data produk", "yang tertulis", "aku nggak nebak", "patokannya".
 - JANGAN mengarang klaim medis/legal/garansi/testimoni palsu.
 - Field enriched HANYA diisi bila input kosong; isi HANYA dengan memparafrase/mengekstrak dari Deskripsi (+Manfaat/Cara pakai jika ada). DILARANG menambah fakta baru di luar input.

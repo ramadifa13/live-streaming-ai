@@ -60,7 +60,53 @@ export interface RunPodQueueStatus {
   broadcast_boot_error?: string;
 }
 
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { getWorkerUrl } from "./runpod-manager.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+export function resolveMediaAsDataUrl(url?: string | null, fallbackPath?: string): string | undefined {
+  const tryResolve = (val?: string | null): string | undefined => {
+    if (!val || typeof val !== "string") return undefined;
+    const trimmed = val.trim();
+    if (!trimmed) return undefined;
+    if (trimmed.startsWith("data:image/") || trimmed.startsWith("data:video/")) {
+      return trimmed;
+    }
+    if (/^https?:\/\//i.test(trimmed)) {
+      return trimmed;
+    }
+    const clean = trimmed.replace(/^\/+/, "");
+    const candidates = [
+      path.resolve(__dirname, "../../../frontend/public", clean),
+      path.resolve(__dirname, "../../frontend/public", clean),
+      path.resolve(process.cwd(), "frontend/public", clean),
+      path.resolve(process.cwd(), "../frontend/public", clean),
+      path.resolve(clean),
+    ];
+    for (const cand of candidates) {
+      try {
+        if (fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+          const ext = path.extname(cand).toLowerCase().replace(".", "");
+          const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+          const b64 = fs.readFileSync(cand).toString("base64");
+          return `data:${mime};base64,${b64}`;
+        }
+      } catch {}
+    }
+    return undefined;
+  };
+
+  const resolved = tryResolve(url);
+  if (resolved) return resolved;
+  if (fallbackPath) {
+    return tryResolve(fallbackPath);
+  }
+  return undefined;
+}
 
 function isDemoFallbackAllowed() {
   return (process.env.ALLOW_MEDIA_FALLBACK ?? "false").toLowerCase() === "true";
@@ -166,6 +212,9 @@ export async function startRunPodBroadcast(
   },
 ): Promise<RunPodBroadcastResult> {
   const hostSlug = (params.hostName || "namira").trim().toLowerCase() || "namira";
+  const resolvedBanner = resolveMediaAsDataUrl(params.bannerImageUrl, "/banner_atas_tengah.png");
+  const resolvedBackground = resolveMediaAsDataUrl(params.backgroundImage, "/banner_studio_live_streaming.jpg");
+  const resolvedProduct = resolveMediaAsDataUrl(params.productImageUrl);
 
   const kickoff = (await workerRequestWithRetry(
     podId,
@@ -179,11 +228,11 @@ export async function startRunPodBroadcast(
         streamKey: params.streamKey,
         product_name: params.productName,
         product_price: params.productPrice,
-        product_image_url: params.productImageUrl,
-        banner_image_url: params.bannerImageUrl,
-        bannerImageUrl: params.bannerImageUrl,
-        background_image: params.backgroundImage,
-        backgroundImage: params.backgroundImage,
+        product_image_url: resolvedProduct,
+        banner_image_url: resolvedBanner,
+        bannerImageUrl: resolvedBanner,
+        background_image: resolvedBackground,
+        backgroundImage: resolvedBackground,
         platform: params.platform,
         stock_count: params.stockCount,
         cta_label: params.ctaLabel,
@@ -268,15 +317,21 @@ export async function updateRunPodBroadcastProduct(
     productPrice?: string;
     productImageUrl?: string;
     bannerImageUrl?: string;
+    backgroundImage?: string;
   },
 ): Promise<RunPodBroadcastResult> {
+  const resolvedBanner = resolveMediaAsDataUrl(params.bannerImageUrl, "/banner_atas_tengah.png");
+  const resolvedProduct = resolveMediaAsDataUrl(params.productImageUrl);
+  const resolvedBackground = resolveMediaAsDataUrl(params.backgroundImage, "/banner_studio_live_streaming.jpg");
+
   return workerRequestWithRetry(podId, "/stream/update-product", {
     method: "POST",
     body: JSON.stringify({
       product_name: params.productName,
       product_price: params.productPrice,
-      product_image_url: params.productImageUrl,
-      banner_image_url: params.bannerImageUrl,
+      product_image_url: resolvedProduct,
+      banner_image_url: resolvedBanner,
+      background_image: resolvedBackground,
     }),
   }).catch(() => ({
     success: false,

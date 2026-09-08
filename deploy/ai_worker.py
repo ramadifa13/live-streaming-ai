@@ -56,7 +56,7 @@ AMBIENT_MAX_SEC = float(os.environ.get("AI_WORKER_AMBIENT_MAX_SEC", "6"))
 IDLE_BREATH_CHANCE = float(os.environ.get("AI_WORKER_IDLE_BREATH_CHANCE", "0.18"))
 IDLE_FALLBACK_AFTER = int(os.environ.get("AI_WORKER_IDLE_FALLBACK_AFTER", "2"))
 # Hold talk antar-utterance: kalau tidak ada suara baru, segera balik ke idle.
-HOLD_TALK_MAX_SEC = float(os.environ.get("AI_WORKER_HOLD_TALK_SEC", "1.0"))
+HOLD_TALK_MAX_SEC = float(os.environ.get("AI_WORKER_HOLD_TALK_SEC", "3.5"))
 # Pin talk clip panjang (continuous body timeline) — rotasi tiap 1-2 utterance agar bervariasi.
 TALK_STREAK_BEFORE_ROTATE = int(os.environ.get("AI_WORKER_TALK_STREAK", "2"))
 
@@ -85,7 +85,7 @@ PENDING_MAX = int(
     os.environ.get("AI_WORKER_PENDING_MAX", str(RENDER_QUEUE_SIZE + BROADCAST_MAX_LAG))
 )
 SEAMLESS_THRESHOLD = float(os.environ.get("AI_WORKER_SEAMLESS_THRESHOLD", "0.92"))
-MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "1.0"))
+MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.85"))
 MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0"))
 MOUTH_MAX_DELTA = float(os.environ.get("MUSETALK_MAX_DELTA", "0"))
 MOUTH_FRAME_DELTA = float(os.environ.get("MUSETALK_FRAME_DELTA", "0"))
@@ -93,7 +93,7 @@ LIPSYNC_PREROLL_FRAMES = int(os.environ.get("MUSETALK_PREROLL_FRAMES", "10"))
 LIPSYNC_WAIT_SEC = float(os.environ.get("MUSETALK_MOUTH_WAIT_SEC", "0"))
 # SYNC_SHIFT negatif: audio dimajukan relatif terhadap mouth (kompensasi inference delay).
 # Default -2: mulut muncul ~2 frame lebih awal → terlihat lebih in-sync.
-LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "0"))
+LIPSYNC_SYNC_SHIFT = int(os.environ.get("MUSETALK_SYNC_SHIFT", "-2"))
 LIPSYNC_PREROLL_TIMEOUT_SEC = float(
     os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "4.0")
 )
@@ -1299,19 +1299,17 @@ class VideoStateMachine:
             if self._face_registry:
                 self._face_registry.release_lock()
             self._drain_action_queue()
-            # Jika ada utterance berikutnya siap, pertahankan gesture talk.
-            # Jika tidak ada suara lagi (diam), segera transisi kembali ke idle_1.
-            if (
-                self.bank.clip_has_musetalk(self.current_name)
-                and another_utterance_ready
-            ):
+            # Pertahankan mode TALK (continuous host presentation) saat utterance selesai.
+            # StateMachine akan transisi ke IDLE melalui release_stale_hold_talk()
+            # hanya bila tidak ada utterance berikutnya setelah HOLD_TALK_MAX_SEC detik.
+            if self.bank.clip_has_musetalk(self.current_name):
                 self.pending_action = None
                 self.state = PlayState.TALK
                 self._talk_pinned = True
                 self._hold_pose_for_infer = False
                 self._hold_talk_since = time.perf_counter()
                 print(
-                    "[StateMachine] Utterance selesai → lanjut talk (utterance berikutnya siap)"
+                    "[StateMachine] Utterance selesai → hold talk (menunggu utterance berikutnya tanpa potong video)"
                 )
             else:
                 self._talk_pinned = False

@@ -1,4 +1,4 @@
-﻿"""Overlay Generator: Render visual overlay (banner promo & product card) using PIL."""
+"""Overlay Generator: Render visual overlay (banner promo & product card) using PIL."""
 
 from __future__ import annotations
 
@@ -242,11 +242,31 @@ def prepare_overlay_files(
         if local_banner_img:
             print(f"[OVERLAY] Banner Promo siap: {local_banner_img}")
 
+    if not local_banner_img or not os.path.exists(local_banner_img):
+        for candidate in [
+            os.path.join(tmp_dir, "banner_promo.png"),
+            os.path.join(output_folder, "banner_promo.png"),
+            os.path.join(output_folder, "banner_atas_tengah.png"),
+            "/workspace/ai_live_worker/assets/banner_atas_tengah.png",
+            "/workspace/live-streaming-ai/frontend/public/banner_atas_tengah.png",
+            os.path.join(os.path.dirname(__file__), "../frontend/public/banner_atas_tengah.png"),
+        ]:
+            if os.path.isfile(candidate):
+                local_banner_img = candidate
+                print(f"[OVERLAY] Banner fallback ditemukan: {local_banner_img}")
+                break
+
+    resolved_name = (product_name or "").strip()
+    resolved_price = (product_price or "").strip()
+    if not resolved_name and not resolved_price and not local_product_img:
+        resolved_name = "SPECIAL LIVE PROMO"
+        resolved_price = "99000"
+
     return render_pil_overlay(
         tmp_dir=tmp_dir,
         output_folder=output_folder,
         local_banner_img=local_banner_img,
         local_product_img=local_product_img,
-        product_name=product_name,
-        product_price=product_price,
+        product_name=resolved_name,
+        product_price=resolved_price,
     )

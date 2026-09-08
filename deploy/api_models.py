@@ -1,4 +1,4 @@
-﻿"""Pydantic request and response models for LiveStreamer AI Worker API server."""
+"""Pydantic request and response models for LiveStreamer AI Worker API server."""
 
 from __future__ import annotations
 
@@ -88,3 +88,5 @@ class UpdateProductRequest(BaseModel):
     productImageUrl: Optional[str] = None
     banner_image_url: Optional[str] = None
     bannerImageUrl: Optional[str] = None
+    background_image: Optional[str] = None
+    backgroundImage: Optional[str] = None

@@ -1417,7 +1417,15 @@ async def update_stream_product(req: UpdateProductRequest):
         "product_price": req.product_price or req.productPrice or "",
         "product_image_url": req.product_image_url or req.productImageUrl or "",
         "banner_image_url": req.banner_image_url or req.bannerImageUrl or "",
+        "background_image": req.background_image or req.backgroundImage or "",
     }
+    bg_img = payload["background_image"]
+    if bg_img:
+        try:
+            _materialize_background(bg_img, output_dir)
+            print("[AI-Worker] Background image di-materialize ulang untuk hot-swap")
+        except Exception as bg_err:
+            print(f"[AI-Worker] update-product background notice: {bg_err}")
     # Render overlay dulu (support http + data:image), baru signal hot-reload.
     try:
         from broadcaster import prepare_overlay_files

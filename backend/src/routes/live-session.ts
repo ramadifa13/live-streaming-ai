@@ -10,6 +10,7 @@ import {
   ensureWorkerReachable,
   pauseRunPodBroadcast,
   resumeRunPodBroadcast,
+  resolveMediaAsDataUrl,
 } from "../services/runpod-bridge.js";
 import { livePlatformConnector } from "../services/live-platform-connector.js";
 import { liveSessionManager } from "../services/live-session-manager.js";
@@ -330,13 +331,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         };
       }
     }
-    const liveOverlayMedia = (url?: string) => {
-      const u = (url || "").trim();
-      if (!u) return undefined;
-      if (/^https?:\/\//i.test(u)) return u;
-      if (/^data:image\//i.test(u)) return u;
-      return undefined;
-    };
+    const liveOverlayMedia = (url?: string) => resolveMediaAsDataUrl(url);
 
     if (managedSession && liveSession && parsed.data.sessionId) {
       liveHostOrchestrator.startPipelineBackground({
@@ -732,13 +727,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         const switchedProd = snapshot || managedSession?.product;
         if (switchedProd) {
           const podId = managedSession?.podId;
-          const overlayMedia = (url?: string) => {
-            const u = (url || "").trim();
-            if (!u) return undefined;
-            if (/^https?:\/\//i.test(u)) return u;
-            if (/^data:image\//i.test(u)) return u;
-            return undefined;
-          };
+          const overlayMedia = (url?: string) => resolveMediaAsDataUrl(url);
           updateRunPodBroadcastProduct(podId, {
             productName: switchedProd.name,
             productPrice: String(switchedProd.price),

@@ -282,7 +282,7 @@ export function fitScriptBankSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WOR
   const normalized = text.replace(/\s+/g, " ").trim();
   const targetMinWords = Math.min(SCRIPT_BANK_MIN_WORDS, maxWords);
   let words = normalized.split(" ").filter(Boolean);
-  if (words.length < targetMinWords) {
+  if (words.length < 8) {
     let fillerIndex = 0;
     while (words.length < targetMinWords) {
       words = `${words.join(" ")}${DURATION_FILLERS[fillerIndex % DURATION_FILLERS.length]}`.split(" ").filter(Boolean);
@@ -299,7 +299,7 @@ export function fitScriptBankSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WOR
   const sentenceEnd = Math.max(clipped.lastIndexOf("."), clipped.lastIndexOf("!"), clipped.lastIndexOf("?"));
   if (sentenceEnd >= Math.floor(clipped.length * 0.55)) {
     const sentence = clipped.slice(0, sentenceEnd + 1).trim();
-    if (sentence.split(/\s+/).filter(Boolean).length >= targetMinWords) return sentence;
+    if (sentence.split(/\s+/).filter(Boolean).length >= 8) return sentence;
   }
   return clipped.replace(/[,;:!?-]+$/g, "").trim() + ".";
 }
@@ -308,8 +308,8 @@ function clampSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
   return fitScriptBankSpeech(text, Math.min(maxWords, SCRIPT_BANK_MAX_WORDS));
 }
 
-export const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 20);
-export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 22);
+export const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 14);
+export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 20);
 
 function splitFacts(text: string): string[] {
   if (!text?.trim()) return [];
