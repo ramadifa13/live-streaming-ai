@@ -116,92 +116,10 @@ purge_legacy_tts() {
 	echo "[TTS] Sisa Piper/Supertonic dihapus. Worker hanya menerima audio backend."
 }
 
-bootstrap_worker_env() {
-	mkdir -p "$WORKER_DIR"
-
-	if [ ! -f "$WORKER_DIR/.env" ]; then
-		if [ -f "$DEPLOY_DIR/.env" ]; then
-			echo "[ENV] Membuat $WORKER_DIR/.env dari deploy/.env ..."
-			cp -f "$DEPLOY_DIR/.env" "$WORKER_DIR/.env"
-			return 0
-		fi
-		if [ -f "$DEPLOY_DIR/.env.example" ]; then
-			echo "[ENV] deploy/.env tidak ada — membuat $WORKER_DIR/.env dari .env.example ..."
-			cp -f "$DEPLOY_DIR/.env.example" "$WORKER_DIR/.env"
-			return 0
-		fi
-		echo "[WARN] Tidak ada deploy/.env atau .env.example — worker memakai default env."
-		return 0
-	fi
-
-	local src=""
-	if [ -f "$DEPLOY_DIR/.env" ]; then
-		src="$DEPLOY_DIR/.env"
-	elif [ -f "$DEPLOY_DIR/.env.example" ]; then
-		src="$DEPLOY_DIR/.env.example"
-	else
-		return 0
-	fi
-
-	python3 - "$src" "$WORKER_DIR/.env" <<'PY' || true
-import sys
-src, dest = sys.argv[1], sys.argv[2]
-def parse(path):
-    data = {}
-    order = []
-    with open(path, "r", encoding="utf-8") as fh:
-        for raw in fh:
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            if line.startswith("export "):
-                line = line[7:].strip()
-            key, val = line.split("=", 1)
-            key = key.strip()
-            if key and key not in data:
-                data[key] = raw if raw.endswith("\n") else raw + "\n"
-                order.append(key)
-    return data, order
-src_data, src_order = parse(src)
-dest_data, _ = parse(dest)
-missing = [k for k in src_order if k not in dest_data]
-if not missing:
-    sys.exit(0)
-with open(dest, "a", encoding="utf-8") as fh:
-    fh.write("\n# merged from deploy .env\n")
-    for key in missing:
-        fh.write(src_data[key])
-print("[ENV] Ditambah ke worker .env:", ", ".join(missing))
-PY
-	dedupe_worker_env
-}
-
-dedupe_worker_env() {
-	local env_file="$WORKER_DIR/.env"
-	[ -f "$env_file" ] || return 0
-	python3 - "$env_file" <<'PY' || true
-import sys
-path = sys.argv[1]
-with open(path, "r", encoding="utf-8") as fh:
-    lines = fh.readlines()
-seen = {}
-out = []
-for raw in lines:
-    line = raw.strip()
-    if not line or line.startswith("#") or "=" not in line:
-        out.append(raw)
-        continue
-    key = line.split("=", 1)[0].strip()
-    if key.startswith("export "):
-        key = key[7:].strip().split("=", 1)[0].strip()
-    if key in seen:
-        out[seen[key]] = raw
-    else:
-        seen[key] = len(out)
-        out.append(raw)
-with open(path, "w", encoding="utf-8") as fh:
-    fh.writelines(out)
-PY
+cleanup_legacy_env() {
+	echo "[ENV] Membersihkan sisa file .env lama untuk zero-config..."
+	rm -f "$WORKER_DIR/.env" "$DEPLOY_DIR/.env" "$DEPLOY_DIR/.env.example" "$DEPLOY_DIR/env.local" 2>/dev/null || true
+	echo "[ENV] Zero-config aktif — worker menggunakan code defaults optimal."
 }
 
 ensure_venv_pip() {
@@ -437,8 +355,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	export REPO_DIR WORKER_DIR DEPLOY_DIR FORCE_ASSETS REPO_URL REPO_BRANCH
 
 	sync_worker_files
-	bootstrap_worker_env
-	dedupe_worker_env
+	cleanup_legacy_env
 	ensure_worker_python_deps || true
 
 	echo "[check] invariant worker ..."

@@ -1,10 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import type { StreamPlan } from "./live-host-orchestrator.js";
+import { sanitizeForLiveTTS } from "./tts.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.LIVE_BRAIN_API_KEY || "";
-const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 14);
+const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 16);
 const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 20);
 
 const GEMINI_MODEL_RAW = process.env.GEMINI_MODEL || process.env.LIVE_BRAIN_MODEL || "gemini-3.6-flash";
@@ -953,16 +954,18 @@ export const generateDynamicSalesResponseGroq = generateDynamicSalesResponse;
 export const generateDynamicSalesResponseGemini = generateDynamicSalesResponse;
 
 const ScriptBankLineSchema = HostResponseSchema.extend({
-  speech: z.string().min(8),
+  speech: z.string().min(16),
 });
 
 export async function generateScriptBankLines(input: SalesBrainInput): Promise<HostResponse[]> {
   const systemPrompt = buildHostSystemPrompt(input);
   const prompt = `${systemPrompt}
 
-TUGAS: buat 20–24 ucapan host otonom yang BERBEDA dan NATURAL (bukan robot).
-Gaya TikTok/Shopee host: kasual, hidup, tepat ${SCRIPT_BANK_MIN_WORDS}–${SCRIPT_BANK_MAX_WORDS} kata per baris agar durasi bicara sekitar 6.5–9.0 detik (selalu di bawah 10 detik) pas dalam satu video talk.
+TUGAS: buat 20–24 ucapan host otonom yang BERBEDA dan NATURAL, menggunakan bahasa Indonesia lisan yang jelas dan sopan.
+Gunakan tepat ${SCRIPT_BANK_MIN_WORDS}–${SCRIPT_BANK_MAX_WORDS} kata per baris agar durasi bicara tetap ringkas dan nyaman untuk satu video talk.
 Setiap baris harus selesai dalam satu napas/utterance; jangan membuat paragraf atau dua kalimat panjang yang perlu dipotong.
+HINDARI bahasa gaul berlebihan dan istilah bahasa Inggris; gunakan padanan bahasa Indonesia untuk checkout, live, review, guys, simple, worth, join, stay, budget, dan FOMO.
+Tulis harga dengan format rupiah yang mudah dibaca, misalnya "Rp25.000", dan jangan menulis simbol atau singkatan yang sulit diucapkan.
 LARANG frasa kaku berulang: "dari data produk", "yang tertulis", "aku nggak nebak", "patokannya".
 Jangan mengarang fakta. Campur topik: benefit, how_to_use, value, social, objection, micro_tip, reframe, use_case, promo_pitch, filler.
 Setiap baris harus beda angle/pembuka — jangan parafrase ulang baris sebelumnya.
@@ -986,13 +989,10 @@ Kembalikan JSON murni:
       if (!validated.success) continue;
       const safe = selectSafeParsedResponse(validated.data, input);
       if (safe) {
+        safe.speech = sanitizeForLiveTTS(safe.speech);
         const words = safe.speech.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
-        if (words.length < SCRIPT_BANK_MIN_WORDS) continue;
-        safe.speech =
-          words
-            .slice(0, SCRIPT_BANK_MAX_WORDS)
-            .join(" ")
-            .replace(/[,;:!?-]+$/g, "") + ".";
+        if (words.length < SCRIPT_BANK_MIN_WORDS || words.length > SCRIPT_BANK_MAX_WORDS) continue;
+        safe.speech = words.join(" ").replace(/[,;:!?-]+$/g, "") + ".";
         accepted.push(safe);
       }
     }

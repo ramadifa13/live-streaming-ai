@@ -32,6 +32,7 @@ export interface ManagedSession {
   onStateChange?: (state: SessionState, sessionId: string) => void;
   product?: ProductSnapshot;
   catalog: ProductSnapshot[];
+  backgroundImage?: string;
 }
 
 const PENDING_TIMEOUT_MS = Math.max(60_000, Number(process.env.LIVE_PENDING_TIMEOUT_MS || "1800000"));
@@ -73,6 +74,7 @@ class LiveSessionManager {
     tone?: string;
     product?: ProductSnapshot;
     catalog?: ProductSnapshot[];
+    backgroundImage?: string;
   }): Promise<{ sessionId: string; state: SessionState }> {
     const previousIds = Array.from(this.activeSessions.keys());
     const staticPodId = getStaticPodId();
@@ -126,6 +128,7 @@ class LiveSessionManager {
       onStateChange: undefined,
       product,
       catalog,
+      backgroundImage: params.backgroundImage,
     };
 
     this.activeSessions.set(session.id, managedSession);

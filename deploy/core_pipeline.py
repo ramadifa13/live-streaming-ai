@@ -145,16 +145,36 @@ class StreamBroadcaster(threading.Thread):
     def _reload_background(self):
         bg_path = self.background_path
         if not bg_path and self.output_folder:
+        if (not bg_path or not os.path.exists(bg_path)) and self.output_folder:
             for ext in (".jpg", ".png", ".jpeg", ".webp"):
                 cand = os.path.join(self.output_folder, f"custom_background{ext}")
                 if os.path.exists(cand):
                     bg_path = cand
                     break
 
+        if not bg_path or not os.path.exists(bg_path):
+            for cand in [
+                "/workspace/live-streaming-ai/frontend/public/banner_studio_live_streaming.jpg",
+                os.path.join(
+                    os.path.dirname(__file__),
+                    "../frontend/public/banner_studio_live_streaming.jpg",
+                ),
+                "/workspace/ai_live_worker/assets/banner_studio_live_streaming.jpg",
+                os.path.join(
+                    os.path.dirname(__file__), "assets/banner_studio_live_streaming.jpg"
+                ),
+            ]:
+                if os.path.isfile(cand):
+                    bg_path = cand
+                    break
+
         if bg_path and os.path.exists(bg_path):
             try:
                 mtime = os.path.getmtime(bg_path)
-                if getattr(self, "_bg_mtime", None) == mtime and self._bg_bgr is not None:
+                if (
+                    getattr(self, "_bg_mtime", None) == mtime
+                    and self._bg_bgr is not None
+                ):
                     return
                 bg = cv2.imread(bg_path)
                 if bg is not None:
@@ -169,6 +189,7 @@ class StreamBroadcaster(threading.Thread):
     def _reload_overlay(self):
         cand = self._ov_candidate
         if not cand and self.output_folder:
+        if (not cand or not os.path.exists(cand)) and self.output_folder:
             for c in (
                 os.path.join(self.output_folder, "overlay_live.png"),
                 os.path.join(self.output_folder, "tmp_assets", "live_overlay.png"),
@@ -178,6 +199,12 @@ class StreamBroadcaster(threading.Thread):
                     break
         if cand and os.path.exists(cand):
             try:
+                mtime = os.path.getmtime(cand)
+                if (
+                    getattr(self, "_ov_mtime", None) == mtime
+                    and self._ov_alpha is not None
+                ):
+                    return
                 ov = cv2.imread(cand, cv2.IMREAD_UNCHANGED)
                 if ov is not None:
                     if ov.shape[0] != CANVAS_H or ov.shape[1] != CANVAS_W:
@@ -185,6 +212,7 @@ class StreamBroadcaster(threading.Thread):
                     if ov.shape[2] == 4:
                         self._ov_alpha = ov[:, :, 3:4].astype(np.float32) / 255.0
                         self._ov_rgb = ov[:, :, :3].astype(np.float32)
+                        self._ov_mtime = mtime
                         print(
                             f"[StreamBroadcaster] ✅ Overlay berhasil dimuat dari: {cand}"
                         )
@@ -621,7 +649,10 @@ class StreamBroadcaster(threading.Thread):
                         frame = fit_bgr(frame, CANVAS_W, CANVAS_H)
 
                     # Cek berkala apakah background baru siap (hot-reload)
-                    if self._bg_bgr is None or now - getattr(self, "_last_bg_check", 0.0) > 2.0:
+                    if (
+                        self._bg_bgr is None
+                        or now - getattr(self, "_last_bg_check", 0.0) > 2.0
+                    ):
                         self._last_bg_check = now
                         self._reload_background()
 
@@ -720,8 +751,8 @@ class NewAIVisualWorker:
             gpu_id=0,
             use_float16=True,
             version="v15",
-            left_cheek_width=vparams.get("left_cheek_width", 60),
-            right_cheek_width=vparams.get("right_cheek_width", 60),
+            left_cheek_width=vparams.get("left_cheek_width", 45),
+            right_cheek_width=vparams.get("right_cheek_width", 45),
             unet_model_path=os.path.join(models_root, "musetalkV15", "unet.pth"),
             unet_config=os.path.join(models_root, "musetalkV15", "musetalk.json"),
             whisper_dir=os.path.join(models_root, "whisper"),
@@ -777,8 +808,10 @@ class NewAIVisualWorker:
             def _on_utterance_ready(job):
                 start_idx = 0
                 body = None
+                task_id = getattr(job, "task_id", None)
                 if self.sm:
                     start_idx = self.sm.pin_talk_body()
+                    start_idx = self.sm.pin_talk_body(task_id)
                     body = self.sm._talk_target or self.sm.current_name
                 if self.engine:
                     self.engine.set_utterance(
@@ -813,6 +846,12 @@ class NewAIVisualWorker:
                     self.engine, "_utterance_id", None
                 ) != getattr(job, "task_id", None):
                     start_idx = self.sm.pin_talk_body() if self.sm else 0
+                task_id = getattr(job, "task_id", None)
+                if (
+                    self.engine
+                    and getattr(self.engine, "_utterance_id", None) != task_id
+                ):
+                    start_idx = self.sm.pin_talk_body(task_id) if self.sm else 0
                     body = (
                         (self.sm._talk_target or self.sm.current_name)
                         if self.sm
@@ -829,6 +868,8 @@ class NewAIVisualWorker:
             def _on_utterance_end(_job):
                 if self.engine:
                     self.engine.clear_utterance()
+                if self.sm:
+                    self.sm.end_utterance()
 
             self._bridge.set_callbacks(
                 on_start=_on_utterance_start,

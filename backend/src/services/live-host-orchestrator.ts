@@ -311,6 +311,7 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
 
 const FALLBACK_SPEECH_SECONDS = 5;
 const IN_FLIGHT_RENDER_SECONDS = 10;
+const MIN_PLAYABLE_UTTERANCES = 2;
 
 function isAiWorkerBroadcastMode(mode: string): boolean {
   const m = (mode || "").trim().toLowerCase();
@@ -975,6 +976,16 @@ class LiveHostOrchestrator {
 
         this.pruneCommentQueue(s);
 
+        const playableQueueDepth = isAiWorkerBroadcastMode(s.lastQueue.broadcastMode)
+          ? s.lastQueue.readyUtteranceCount || 0
+          : s.lastQueue.queuedVideos || 0;
+        const queueNeedsContinuity = playableQueueDepth < MIN_PLAYABLE_UTTERANCES || s.lastQueue.bufferSeconds <= MAX_ONAIR_IDLE_SECONDS;
+
+        if (queueNeedsContinuity) {
+          await this.generateAndQueueNext(sessionId, "live");
+          continue;
+        }
+
         const comment = this.takeBestComment(s);
         const urgentComment = comment && (comment.priority >= 45 || s.lastQueue.bufferSeconds <= MAX_ONAIR_IDLE_SECONDS);
 
@@ -996,7 +1007,7 @@ class LiveHostOrchestrator {
           s.lastQueue.bufferSeconds < policy.targetBufferSeconds ||
           s.lastQueue.bufferSeconds < policy.minBufferSeconds ||
           s.lastQueue.queuedVideos === 0 ||
-          queueDepth < 2 ||
+          queueDepth < MIN_PLAYABLE_UTTERANCES ||
           queueDepth < GO_LIVE_MIN_UTTERANCES;
 
         if (needsRefill) {
@@ -1369,7 +1380,7 @@ class LiveHostOrchestrator {
           sessionId,
           {
             ...hostResponse,
-            speech: `${product.name || "Produk ini"}  ${hostResponse.speech}`.slice(0, 180),
+            speech: `${product.name || "Produk ini"}  ${hostResponse.speech}`,
           },
           source,
           hostResponse.topic || topic.topic,
@@ -1532,23 +1543,8 @@ class LiveHostOrchestrator {
 
     for (const seg of segments) {
       let audioBase64: string | undefined;
-      // Batasi kalimat maksimal 20 kata agar durasi selalu di bawah 10 detik (pas dengan 10s video)
-      const rawText = seg.text.trim();
-      const words = rawText.split(/\s+/).filter(Boolean);
-      let spokenText = rawText;
-      if (words.length > 20) {
-        const slice = words.slice(0, 20).join(" ");
-        const lastPunct = Math.max(slice.lastIndexOf("."), slice.lastIndexOf("!"), slice.lastIndexOf("?"), slice.lastIndexOf(","));
-        if (lastPunct > slice.length * 0.5) {
-          spokenText =
-            slice
-              .slice(0, lastPunct)
-              .replace(/[,;:!?-]+$/g, "")
-              .trim() + ".";
-        } else {
-          spokenText = slice.replace(/[,;:!?-]+$/g, "").trim() + ".";
-        }
-      }
+      const spokenText = seg.text.trim();
+      if (!spokenText) continue;
 
       // Selalu gunakan kecepatan natural 1.0x (jangan dipercepat / chipmunk)
       const synthesisSpeed = 1.0;

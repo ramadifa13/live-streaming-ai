@@ -1,5 +1,6 @@
 import type { HostIntent, HostMode, HostResponse, LunaEmotion } from "./groq-brain.js";
 import { inferCtaPointAction, normalizeLunaAction } from "./groq-brain.js";
+import { sanitizeForLiveTTS } from "./tts.js";
 import {
   BANNER_CTA_COOLDOWN_MS,
   CTA_COOLDOWN_MS,
@@ -279,10 +280,10 @@ const DURATION_FILLERS = [
 ];
 
 export function fitScriptBankSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
+  const normalized = sanitizeForLiveTTS(text).replace(/\s+/g, " ").trim();
   const targetMinWords = Math.min(SCRIPT_BANK_MIN_WORDS, maxWords);
   let words = normalized.split(" ").filter(Boolean);
-  if (words.length < 8) {
+  if (words.length < targetMinWords) {
     let fillerIndex = 0;
     while (words.length < targetMinWords) {
       words = `${words.join(" ")}${DURATION_FILLERS[fillerIndex % DURATION_FILLERS.length]}`.split(" ").filter(Boolean);
@@ -308,7 +309,7 @@ function clampSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
   return fitScriptBankSpeech(text, Math.min(maxWords, SCRIPT_BANK_MAX_WORDS));
 }
 
-export const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 14);
+export const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 16);
 export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 20);
 
 function splitFacts(text: string): string[] {
@@ -357,7 +358,7 @@ function withParaphraseVariants(items: HostResponse[]): HostResponse[] {
     if (variantsAdded >= maxVariants) continue;
     if (Math.random() > PARAPHRASE_VARIANT_RATE) continue;
     const speech = item.speech.trim();
-    if (!speech || speech.split(" ").length < 8) continue;
+    if (!speech || speech.split(" ").length < SCRIPT_BANK_MIN_WORDS) continue;
     if (/^(nah|oke jadi|yang penting|intinya|biar jelas|singkatnya|jadi gini)\b/i.test(speech)) {
       continue;
     }
@@ -712,6 +713,31 @@ function deflectionLines(product: ScriptProductFacts): HostResponse[] {
     line(`${greet()}santai, nggak perlu debat. Ada pertanyaan spesifik soal ${name}?`, "deflection", "SOCIAL", {
       intent: "SOCIAL",
     }),
+  ];
+}
+
+function enrichedAngleLines(product: ScriptProductFacts, entryMode: ProductEntryMode = "continuing"): HostResponse[] {
+  const name = ref(product, entryMode);
+  const category = product.category || "kebutuhan sehari-hari";
+  const price = product.price || "harga siaran";
+  const facts = factChunks(product);
+  const primary = pickFact(facts, `manfaat ${name} yang paling relevan`);
+  const secondary = pickFact(facts.slice(1), `cara penggunaan ${name} yang praktis`);
+  const need = domainNeed(category);
+
+  return [
+    line(`Kalau kebutuhanmu berkaitan dengan ${need}, ${name} layak dipertimbangkan karena ${primary}.`, "problem", "ENGAGE"),
+    line(`Sebelum memilih ${name}, cocokkan dulu manfaatnya dengan kebutuhanmu, terutama pada bagian ${primary}.`, "buyer_fit", "ENGAGE"),
+    line(`Dari sisi pemakaian, ${name} lebih mudah dipahami karena ${secondary}.`, "how_to_use", "DEMO"),
+    line(`Satu hal yang sering terlewat, ${name} bukan sekadar nama produk, tetapi menawarkan ${primary}.`, "micro_tip", "ENGAGE"),
+    line(`Kalau dibandingkan dengan kebutuhanmu hari ini, ${name} masuk akal selama kamu memerlukan ${primary}.`, "comparison", "SELL"),
+    line(`Untuk yang baru mengenal ${category}, ${name} bisa menjadi pilihan awal karena ${primary}.`, "social_engagement", "ENGAGE"),
+    line(`Pertimbangannya sederhana, ${name} memberikan ${primary}, sedangkan penggunaannya mengikuti ${secondary}.`, "value", "SELL"),
+    line(`Tidak perlu terburu-buru membeli, periksa dulu apakah ${primary} memang sesuai dengan kebutuhanmu.`, "objection", "OBJECTION"),
+    line(`Kalau pertanyaannya soal nilai, bandingkan ${price} dengan manfaat ${name} yang kamu perlukan.`, "value", "QNA"),
+    line(`Mari lihat dari sudut berbeda, ${name} membantu ketika kebutuhanmu adalah ${need} dan kamu mengutamakan ${primary}.`, "reframe", "ENGAGE"),
+    line(`Untuk penggunaan rutin, perhatikan ${secondary} supaya manfaat ${name} tetap sesuai harapan.`, "how_to_use", "DEMO"),
+    line(`Jika informasinya sudah sesuai, ${name} dapat kamu simpan sebagai pilihan untuk kebutuhan ${category}.`, "closing_loop", "SELL"),
   ];
 }
 
@@ -1217,6 +1243,7 @@ export function seedLocalScriptBank(
     ...intentAgnosticHooks(product, entryMode),
     ...categorySalesHooks(product),
     ...crossFactLines(product),
+    ...enrichedAngleLines(product, entryMode),
     ...combinatorialLines(product, catalog, entryMode),
   ].map((item) => ({
     ...item,
@@ -1232,7 +1259,7 @@ export function seedLocalScriptBank(
 
   for (const item of shuffled(drafts)) {
     const key = normalize(item.speech);
-    const minWords = FILLER_TOPICS.has(item.topic) ? 5 : 8;
+    const minWords = SCRIPT_BANK_MIN_WORDS;
     if (!key || seen.has(key) || item.speech.split(" ").length < minWords) continue;
     const sem = item.semanticKey || inferSemanticKey(item.speech, item.topic);
     if (hotKeys.has(sem) || hotKeys.has(normalize(item.topic || ""))) {
@@ -1418,10 +1445,9 @@ export function mergeScriptLines(bank: ScriptBankState, incoming: HostResponse[]
   const seen = new Set(bank.lines.map((item) => normalize(item.speech)));
   let added = 0;
   for (const item of incoming) {
-    const isFiller = FILLER_TOPICS.has(item.topic || "");
-    const speech = clampSpeech(item.speech || "", Math.min(SCRIPT_BANK_MAX_WORDS, isFiller ? 22 : SCRIPT_BANK_MAX_WORDS));
+    const speech = clampSpeech(item.speech || "", SCRIPT_BANK_MAX_WORDS);
     const key = normalize(speech);
-    const minWords = isFiller ? 5 : 8;
+    const minWords = SCRIPT_BANK_MIN_WORDS;
     if (!key || seen.has(key) || similarToAny(speech, recent)) continue;
     if (speech.split(" ").length < minWords) continue;
     const mode = (TOPIC_MODES[item.topic]?.[0] || item.mode || "ENGAGE") as HostMode;
@@ -1757,6 +1783,6 @@ export function buildLocalCommentResponse(
   }
   return {
     ...chosen,
-    speech: clampSpeech(chosen.speech, FILLER_TOPICS.has(chosen.topic) ? 22 : SCRIPT_BANK_MAX_WORDS),
+    speech: clampSpeech(chosen.speech, SCRIPT_BANK_MAX_WORDS),
   };
 }

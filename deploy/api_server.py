@@ -40,11 +40,6 @@ from broadcast_supervisor import (
 )
 
 try:
-    from load_env import load_env_files
-except ImportError:
-    load_env_files = None
-
-try:
     from rtmp_utils import read_rtmp_status, write_rtmp_status
 except ImportError:
     read_rtmp_status = None
@@ -54,18 +49,6 @@ try:
     from video_canvas import prefer_idle_clip
 except ImportError:
     prefer_idle_clip = None
-
-if load_env_files is not None:
-    _here = os.path.dirname(os.path.abspath(__file__))
-    _loaded = load_env_files(
-        [
-            os.path.join(_here, ".env"),
-            "/workspace/ai_live_worker/.env",
-            os.path.join(_here, "env.local"),
-        ]
-    )
-    if _loaded:
-        print(f"[AI-Worker] Env loaded: {', '.join(_loaded)}")
 
 from live_worker import AILiveWorker
 
@@ -154,6 +137,13 @@ def _normalize_body_action(action: Optional[str]) -> Optional[str]:
         "neutral": "idle",
     }
     value = aliases.get(value, value)
+    if not action:
+        return None
+    value = action.strip().lower().replace("-", "_")
+    if value in ("talk", "speak", "speaking"):
+        return None
+    if value in ("rest", "neutral"):
+        return "idle"
     return value if value in {"idle", "talk_1", "talk_2", "talk_3"} else None
 
 
@@ -1034,6 +1024,17 @@ def _materialize_background(value: str, output_dir: str) -> str:
 
     suffix = ".jpg"
     payload: bytes
+    clean = source.lstrip("/\\")
+    for cand in [
+        os.path.join("/workspace/live-streaming-ai/frontend/public", clean),
+        os.path.join(os.path.dirname(__file__), "../frontend/public", clean),
+        os.path.join("/workspace/ai_live_worker/assets", clean),
+        os.path.join(os.path.dirname(__file__), "assets", clean),
+        os.path.join(output_dir, clean),
+    ]:
+        if os.path.isfile(cand):
+            return cand
+
     if source.startswith("data:image/"):
         header, encoded = source.split(",", 1)
         if ";base64" not in header:
@@ -1055,8 +1056,22 @@ def _materialize_background(value: str, output_dir: str) -> str:
         elif content_type == "image/webp":
             suffix = ".webp"
     else:
+        for cand in [
+            "/workspace/live-streaming-ai/frontend/public/banner_studio_live_streaming.jpg",
+            os.path.join(
+                os.path.dirname(__file__),
+                "../frontend/public/banner_studio_live_streaming.jpg",
+            ),
+            "/workspace/ai_live_worker/assets/banner_studio_live_streaming.jpg",
+            os.path.join(
+                os.path.dirname(__file__), "assets/banner_studio_live_streaming.jpg"
+            ),
+        ]:
+            if os.path.isfile(cand):
+                return cand
         raise ValueError(
             "backgroundImage harus berupa data URL, URL HTTP, atau path file worker"
+            f"backgroundImage '{source}' tidak valid dan tidak ditemukan di asset lokal"
         )
 
     if not payload or len(payload) > 20 * 1024 * 1024:
@@ -1251,6 +1266,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
 
     try:
         from broadcaster import prepare_overlay_files
+        from overlay_generator import prepare_overlay_files
 
         try:
             from overlay_generator import prepare_overlay_files
@@ -1429,6 +1445,7 @@ async def update_stream_product(req: UpdateProductRequest):
     # Render overlay dulu (support http + data:image), baru signal hot-reload.
     try:
         from broadcaster import prepare_overlay_files
+        from overlay_generator import prepare_overlay_files
 
         try:
             from overlay_generator import prepare_overlay_files

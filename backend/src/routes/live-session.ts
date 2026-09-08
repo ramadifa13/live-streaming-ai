@@ -58,6 +58,7 @@ const liveSessionSchema = z.object({
   tone: z.string().optional(),
   product: productSnapshotSchema.optional(),
   products: z.array(productSnapshotSchema).optional(),
+  backgroundImage: z.string().optional(),
 });
 
 const liveStopSchema = z.object({
@@ -178,6 +179,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         tone: parsed.data.tone || "Persuasif",
         product: product || undefined,
         catalog,
+        backgroundImage: parsed.data.backgroundImage,
       });
 
       reply.code(201);
@@ -332,6 +334,13 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       }
     }
     const liveOverlayMedia = (url?: string) => resolveMediaAsDataUrl(url);
+    const effectiveBg = parsed.data.backgroundImage || managedSession?.backgroundImage;
+    const effectiveProduct = managedSession?.product;
+    const effectiveProductName = parsed.data.productName || effectiveProduct?.name;
+    const effectiveProductPrice =
+      parsed.data.productPrice || (effectiveProduct?.price ? String(effectiveProduct.price).replace(/\D/g, "") : undefined);
+    const effectiveProductImg = parsed.data.productImageUrl || effectiveProduct?.image;
+    const effectiveBanner = parsed.data.bannerImageUrl || effectiveProduct?.bannerImage;
 
     if (managedSession && liveSession && parsed.data.sessionId) {
       liveHostOrchestrator.startPipelineBackground({
@@ -352,6 +361,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         product: managedSession.product,
         catalog: managedSession.catalog,
         backgroundImage: liveOverlayMedia(parsed.data.backgroundImage),
+        backgroundImage: liveOverlayMedia(effectiveBg),
       });
     }
 
@@ -366,8 +376,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
             productImageUrl: liveOverlayMedia(productImageUrl),
             bannerImageUrl: liveOverlayMedia(bannerImageUrl),
             backgroundImage: liveOverlayMedia(parsed.data.backgroundImage),
+            productName: effectiveProductName,
+            productPrice: effectiveProductPrice,
+            productImageUrl: liveOverlayMedia(effectiveProductImg),
+            bannerImageUrl: liveOverlayMedia(effectiveBanner),
+            backgroundImage: liveOverlayMedia(effectiveBg),
             platform,
             stockCount,
+            stockCount: stockCount ?? effectiveProduct?.stock,
             ctaLabel,
             hostName: parsed.data.avatarName?.trim() || managedSession?.avatarName || "namira",
             waitForReady: false,
@@ -733,6 +749,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
             productPrice: String(switchedProd.price),
             productImageUrl: overlayMedia(switchedProd.image),
             bannerImageUrl: overlayMedia(switchedProd.bannerImage),
+            backgroundImage: overlayMedia(managedSession?.backgroundImage),
           }).catch(() => {});
         }
       }

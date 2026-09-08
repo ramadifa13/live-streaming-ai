@@ -65,11 +65,13 @@ def _env_flag(name: str, default: str = "1") -> bool:
 def musetalk_visual_params():
     """Crop wajah untuk MuseTalk — proporsional ramping rahang & mulut Namira."""
     bbox_shift = int(os.environ.get("MUSETALK_BBOX_SHIFT", "-2"))
-    extra_margin = int(os.environ.get("MUSETALK_EXTRA_MARGIN", "4"))
-    upper_boundary_ratio = float(os.environ.get("MUSETALK_UPPER_BOUNDARY", "0.54"))
-    cheek_width = int(os.environ.get("MUSETALK_CHEEK_WIDTH", "60"))
+    bbox_shift_x = int(os.environ.get("MUSETALK_BBOX_SHIFT_X", "-5"))
+    extra_margin = int(os.environ.get("MUSETALK_EXTRA_MARGIN", "2"))
+    upper_boundary_ratio = float(os.environ.get("MUSETALK_UPPER_BOUNDARY", "0.55"))
+    cheek_width = int(os.environ.get("MUSETALK_CHEEK_WIDTH", "45"))
     return {
         "bbox_shift": bbox_shift,
+        "bbox_shift_x": bbox_shift_x,
         "extra_margin": extra_margin,
         "parsing_mode": (os.environ.get("MUSETALK_PARSING_MODE") or "jaw").strip()
         or "jaw",
@@ -129,11 +131,16 @@ def resize_generated_to_bbox(generated, bbox, square_pad: bool = True) -> np.nda
     )
 
 
-def _extract_landmarks_from_frames(frames, bbox_shift=0):
+def _extract_landmarks_from_frames(frames, bbox_shift=0, bbox_shift_x=None):
     """
     Ekstraksi landmark dan bounding box langsung dari list frame array numpy (RAM).
     Tidak menggunakan penulisan/pembacaan file PNG ke disk sehingga bebas error imread.
     """
+    if bbox_shift_x is None:
+        try:
+            bbox_shift_x = int(os.environ.get("MUSETALK_BBOX_SHIFT_X", "-5"))
+        except Exception:
+            bbox_shift_x = -5
     try:
         from musetalk.utils.preprocessing import (
             model as dwpose_model,
@@ -143,7 +150,7 @@ def _extract_landmarks_from_frames(frames, bbox_shift=0):
         from mmpose.structures import merge_data_samples
 
         print(
-            f"[Landmarks] Extracting landmarks for {len(frames)} frames (bbox_shift={bbox_shift})"
+            f"[Landmarks] Extracting landmarks for {len(frames)} frames (bbox_shift={bbox_shift}, bbox_shift_x={bbox_shift_x})"
         )
         coords_list = []
         failed_frames = 0
@@ -168,17 +175,20 @@ def _extract_landmarks_from_frames(frames, bbox_shift=0):
                 half_face_dist = np.max(face_land_mark[:, 1]) - half_face_coord[1]
                 upper_bond = max(0, half_face_coord[1] - half_face_dist)
 
-                f_landmark = (
-                    int(np.min(face_land_mark[:, 0])),
-                    int(upper_bond),
-                    int(np.max(face_land_mark[:, 0])),
-                    int(np.max(face_land_mark[:, 1])),
-                )
-                x1, y1, x2, y2 = f_landmark
-                if y2 - y1 <= 0 or x2 - x1 <= 0 or x1 < 0:
-                    coords_list.append(tuple(map(int, f)))
-                else:
-                    coords_list.append(f_landmark)
+                h, w = frame.shape[:2]
+                x1 = int(np.min(face_land_mark[:, 0])) + int(bbox_shift_x)
+                x2 = int(np.max(face_land_mark[:, 0])) + int(bbox_shift_x)
+                y1 = int(upper_bond)
+                y2 = int(np.max(face_land_mark[:, 1]))
+
+                # Clamp bounding box within frame bounds
+                x1 = max(0, min(x1, w - 2))
+                x2 = max(x1 + 1, min(x2, w))
+                y1 = max(0, min(y1, h - 2))
+                y2 = max(y1 + 1, min(y2, h))
+
+                f_landmark = (x1, y1, x2, y2)
+                coords_list.append(f_landmark)
             except Exception as e:
                 failed_frames += 1
                 if failed_frames <= 3:
@@ -188,7 +198,11 @@ def _extract_landmarks_from_frames(frames, bbox_shift=0):
                         np.asarray([frame])
                     )
                     if bbox and bbox[0] is not None:
-                        coords_list.append(tuple(map(int, bbox[0])))
+                        bx1, by1, bx2, by2 = map(int, bbox[0])
+                        h, w = frame.shape[:2]
+                        bx1 = max(0, min(bx1 + int(bbox_shift_x), w - 2))
+                        bx2 = max(bx1 + 1, min(bx2 + int(bbox_shift_x), w))
+                        coords_list.append((bx1, by1, bx2, by2))
                     else:
                         coords_list.append(coord_placeholder)
                 except Exception as e2:
@@ -330,13 +344,15 @@ def _nn_device(module) -> str:
 
 def _load_models_cached(args=None):
     global _models_cache
+    vis = musetalk_visual_params()
+    def_cheek = vis.get("left_cheek_width", 45)
     if args is None:
         args = argparse.Namespace(
             gpu_id=0,
             use_float16=True,
             version="v15",
-            left_cheek_width=90,
-            right_cheek_width=90,
+            left_cheek_width=def_cheek,
+            right_cheek_width=def_cheek,
             unet_model_path="./models/musetalkV15/unet.pth",
             unet_config="./models/musetalkV15/musetalk.json",
             whisper_dir="./models/whisper",
@@ -345,12 +361,19 @@ def _load_models_cached(args=None):
         )
     gpu_id = getattr(args, "gpu_id", 0)
     use_float16 = resolve_use_float16(getattr(args, "use_float16", True), gpu_id)
+    left_w = getattr(args, "left_cheek_width", None)
+    if left_w is None:
+        left_w = def_cheek
+    right_w = getattr(args, "right_cheek_width", None)
+    if right_w is None:
+        right_w = def_cheek
+
     cache_key = (
         gpu_id,
         use_float16,
         getattr(args, "version", "v15"),
-        getattr(args, "left_cheek_width", 90),
-        getattr(args, "right_cheek_width", 90),
+        left_w,
+        right_w,
         getattr(args, "unet_model_path", "./models/musetalkV15/unet.pth"),
         getattr(args, "unet_config", "./models/musetalkV15/musetalk.json"),
         getattr(args, "whisper_dir", "./models/whisper"),
@@ -403,8 +426,8 @@ def _load_models_cached(args=None):
 
                 if getattr(args, "version", "v15") == "v15":
                     fp = FaceParsing(
-                        left_cheek_width=getattr(args, "left_cheek_width", 90),
-                        right_cheek_width=getattr(args, "right_cheek_width", 90),
+                        left_cheek_width=left_w,
+                        right_cheek_width=right_w,
                     )
                 else:
                     fp = FaceParsing()
@@ -452,6 +475,7 @@ def _get_avatar_materials(
     default_fps=None,
     upper_boundary_ratio=None,
     square_pad=None,
+    bbox_shift_x=None,
 ):
     """
     Pre-cache all decoded frames, landmark bounding boxes, VAE latents, and blending masks in RAM.
@@ -465,10 +489,13 @@ def _get_avatar_materials(
         upper_boundary_ratio = vis["upper_boundary_ratio"]
     if square_pad is None:
         square_pad = vis["square_pad"]
+    if bbox_shift_x is None:
+        bbox_shift_x = vis["bbox_shift_x"]
     global _avatar_assets_cache
     cache_key = (
         os.path.abspath(video_path),
         bbox_shift,
+        bbox_shift_x,
         extra_margin,
         version,
         parsing_mode,
@@ -511,11 +538,12 @@ def _get_avatar_materials(
 
         frame_h, frame_w = frame_list[0].shape[:2]
         cache_signature = {
-            "format": 3,
+            "format": 4,
             "frames": len(frame_list),
             "width": frame_w,
             "height": frame_h,
             "bbox_shift": bbox_shift,
+            "bbox_shift_x": bbox_shift_x,
             "extra_margin": extra_margin,
             "upper_boundary_ratio": round(float(upper_boundary_ratio), 3),
             "square_pad": bool(square_pad),
@@ -545,7 +573,9 @@ def _get_avatar_materials(
                 print(f"[AvatarCache] Cache landmark gagal dibaca: {cache_err}")
 
         if coord_list is None:
-            coord_list = _extract_landmarks_from_frames(frame_list, bbox_shift)
+            coord_list = _extract_landmarks_from_frames(
+                frame_list, bbox_shift, bbox_shift_x
+            )
             try:
                 with open(pkl_path, "wb") as f:
                     pickle.dump({"signature": cache_signature, "coords": coord_list}, f)
@@ -704,6 +734,7 @@ def main(args):
                 default_fps=args.fps,
                 upper_boundary_ratio=vis["upper_boundary_ratio"],
                 square_pad=vis["square_pad"],
+                bbox_shift_x=vis["bbox_shift_x"],
             )
             frame_list_cycle = materials["frame_list_cycle"]
             coord_list_cycle = materials["coord_list_cycle"]

@@ -42,9 +42,9 @@ TARGET_FPS = int(
 SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
 BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2
-CROSSFADE_FRAMES = int(os.environ.get("AI_WORKER_CROSSFADE", "10"))
-OVERLAP_FRAMES = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "12"))
-OVERLAP_FRAMES_MAX = int(os.environ.get("AI_WORKER_OVERLAP_MAX", "20"))
+CROSSFADE_FRAMES = int(os.environ.get("AI_WORKER_CROSSFADE", "4"))
+OVERLAP_FRAMES = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "4"))
+OVERLAP_FRAMES_MAX = int(os.environ.get("AI_WORKER_OVERLAP_MAX", "6"))
 BBOX_SMOOTH_WINDOW = int(os.environ.get("AI_WORKER_BBOX_SMOOTH", "7"))
 RAW_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RAW_QUEUE", "24"))
 RENDER_QUEUE_SIZE = int(os.environ.get("AI_WORKER_RENDER_QUEUE", "48"))
@@ -85,8 +85,8 @@ PENDING_MAX = int(
     os.environ.get("AI_WORKER_PENDING_MAX", str(RENDER_QUEUE_SIZE + BROADCAST_MAX_LAG))
 )
 SEAMLESS_THRESHOLD = float(os.environ.get("AI_WORKER_SEAMLESS_THRESHOLD", "0.92"))
-MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.85"))
-MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0"))
+MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.72"))
+MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0.15"))
 MOUTH_MAX_DELTA = float(os.environ.get("MUSETALK_MAX_DELTA", "0"))
 MOUTH_FRAME_DELTA = float(os.environ.get("MUSETALK_FRAME_DELTA", "0"))
 LIPSYNC_PREROLL_FRAMES = int(os.environ.get("MUSETALK_PREROLL_FRAMES", "10"))
@@ -117,6 +117,7 @@ ALLOWED_GESTURES: frozenset = frozenset()
 # Body clips mengikuti nama file langsung dari sample.
 TRUE_IDLE_NAMES = frozenset({"idle"})
 TALK_CLIP_NAMES = frozenset({"talk_1", "talk_2", "talk_3"})
+TALK_CLIP_NAMES = frozenset({"idle", "talk_1", "talk_2", "talk_3"})
 BODY_CLIP_NAMES = TRUE_IDLE_NAMES | TALK_CLIP_NAMES
 
 
@@ -150,10 +151,12 @@ def _ambient_gesture_names() -> List[str]:
 
 def _talk_clip_pool_names() -> List[str]:
     """Clip tubuh saat bicara — default talk_1,talk_2,talk_3."""
+    """Clip tubuh saat bicara — default idle,talk_1,talk_2,talk_3."""
     raw = (os.environ.get("AI_WORKER_TALK_CLIPS") or "").strip()
     if raw:
         return [_normalize_clip_name(n.strip()) for n in raw.split(",") if n.strip()]
     return ["talk_1", "talk_2", "talk_3"]
+    return ["idle", "talk_1", "talk_2", "talk_3"]
 
 
 def _idle_variant_names() -> List[str]:
@@ -542,6 +545,7 @@ class AssetBank:
         avoid_repeat: Optional[str] = None,
     ) -> str:
         """Pilih clip bicara dari pool. avoid_repeat = clip yang sudah 2x beruntun."""
+        """Pilih clip bicara dari pool secara random tanpa berulang sama dengan clip sebelumnya."""
         ready = self.talk_clips_ready()
         if not ready:
             return self.crash_fallback_name()
@@ -553,8 +557,20 @@ class AssetBank:
             if narrowed:
                 pool = narrowed
         if prefer in pool and prefer != avoid_repeat:
+        disallowed = set()
+        if avoid_repeat:
+            disallowed.add(avoid_repeat)
+        if exclude:
+            disallowed.add(exclude)
+        candidates = [c for c in pool if c not in disallowed]
+        if not candidates and disallowed:
+            candidates = [c for c in pool if c != avoid_repeat] or pool
+        if not candidates:
+            return pool[0]
+        if prefer and prefer in candidates:
             return prefer
         return random.choice(pool)
+        return random.choice(candidates)
 
     def talk_clip_name(self) -> str:
         """Return the default talk clip without triggering recursion.
@@ -773,6 +789,7 @@ class AssetBank:
             default_fps=TARGET_FPS,
             upper_boundary_ratio=vis["upper_boundary_ratio"],
             square_pad=vis["square_pad"],
+            bbox_shift_x=vis.get("bbox_shift_x", -5),
         )
 
         # Validate materials
@@ -947,6 +964,8 @@ class VideoStateMachine:
         self._hold_talk_since: Optional[float] = None
         self._talk_streak_name: Optional[str] = None
         self._talk_streak_count = 0
+        self._last_talk_clip: Optional[str] = None
+        self._pinned_task_id: Optional[str] = None
         self._pending_begin_utterance = False
         self._begin_wait_since: Optional[float] = None
         self._talk_direction = 1  # +1 forward / -1 ping-pong reverse
@@ -975,6 +994,8 @@ class VideoStateMachine:
 
     def _pick_next_talk_clip(self) -> str:
         """Pin talk clip (continuous body) — rotasi sangat jarang."""
+    def _pick_next_talk_clip(self, avoid: Optional[str] = None) -> str:
+        """Pilih clip bicara berikutnya: RANDOM dari pool, dan TIDAK SAMA dengan clip sebelumnya."""
         metrics = get_telemetry()
         # Single body timeline: selalu AI_WORKER_TALK_CLIP jika ready.
         if PIN_TALK_SCENE:
@@ -986,6 +1007,9 @@ class VideoStateMachine:
                 else:
                     self._talk_streak_count += 1
                 return pinned
+        ready = self.bank.talk_clips_ready()
+        if not ready:
+            return self.bank.crash_fallback_name()
 
         # Sudah di talk clip yang valid: reuse (hold antar kalimat).
         if (
@@ -1000,6 +1024,13 @@ class VideoStateMachine:
                 self._talk_streak_count = 1
             if self._talk_streak_count < max(2, TALK_STREAK_BEFORE_ROTATE):
                 return self.current_name
+        # Hindari clip yang baru saja dipakai agar tidak berulang / berurutan sama
+        avoid_clip = (
+            avoid
+            or self._last_talk_clip
+            or (self.current_name if self.state == PlayState.TALK else None)
+        )
+        choice = self.bank.pick_talk_clip(avoid_repeat=avoid_clip)
 
         avoid = None
         if (
@@ -1015,6 +1046,13 @@ class VideoStateMachine:
             self._talk_streak_name = choice
             self._talk_streak_count = 1
             metrics.inc("talk_clip_rotate")
+        self._last_talk_clip = choice
+        self._talk_streak_name = choice
+        self._talk_streak_count = 1
+        metrics.inc("talk_clip_rotate")
+        print(
+            f"[StateMachine] Random talk clip selected: {choice} (avoided: {avoid_clip})"
+        )
         return choice
 
     def _maybe_queue_ambient_gesture(self) -> None:
@@ -1098,6 +1136,7 @@ class VideoStateMachine:
                 self.pending_action = target
 
     def pin_talk_body(self) -> int:
+    def pin_talk_body(self, task_id: Optional[str] = None) -> int:
         """Siapkan clip bicara untuk infer — tubuh tetap bergerak (tanpa freeze).
 
         Infer memakai base pose clip target; audio + cut ke talk di begin_utterance.
@@ -1108,15 +1147,29 @@ class VideoStateMachine:
             self.pending_action = None
             if self._utterance_active:
                 self._talk_target = self.current_name
+            if (
+                self._utterance_active
+                and self._talk_target
+                and self.bank.clip_has_musetalk(self._talk_target)
+            ):
                 return int(self.frame_idx)
             # Reuse target jika sudah di-pin (hindari double-pick di on_start).
             if self._talk_target and self.bank.clip_has_musetalk(self._talk_target):
+            # Reuse target jika sudah di-pin untuk task yang sama (hindari double-pick di on_start).
+            if (
+                task_id is not None
+                and getattr(self, "_pinned_task_id", None) == task_id
+                and self._talk_target
+                and self.bank.clip_has_musetalk(self._talk_target)
+            ):
                 target = self._talk_target
             else:
                 target = self._pick_next_talk_clip()
                 if not self.bank.clip_has_musetalk(target):
                     target = self.bank.crash_fallback_name()
                 self._talk_target = target
+                if task_id is not None:
+                    self._pinned_task_id = task_id
             talk_clip = self.bank.get_clip(target)
             if talk_clip is None:
                 return int(self.frame_idx)
@@ -1296,6 +1349,9 @@ class VideoStateMachine:
                 self._talk_target = None
             else:
                 self._talk_target = self.current_name
+            # Reset _talk_target dan _pinned_task_id agar utterance berikutnya bebas memilih random clip baru!
+            self._talk_target = None
+            self._pinned_task_id = None
             if self._face_registry:
                 self._face_registry.release_lock()
             self._drain_action_queue()
@@ -1365,15 +1421,14 @@ class VideoStateMachine:
     def _dynamic_overlap_n(
         self, from_clip: Optional[ClipAsset], from_idx: int, to_clip: ClipAsset
     ) -> int:
-        """Overlap lebih panjang bila pose jauh dari rest (anti morph pendek)."""
-        base_n = max(self.overlap_frames, self.crossfade_frames)
+        """Overlap cepat dan rapi (4-6 frame) agar tidak ghosting/goyang."""
+        base_n = max(3, min(self.overlap_frames, self.crossfade_frames))
         if from_clip is None:
-            return max(4, min(base_n, OVERLAP_FRAMES_MAX))
+            return base_n
         dist = abs(int(from_idx) - int(to_clip.base_pose_frame))
         span = max(1, from_clip.end_pose - from_clip.base_pose_frame)
-        # Proporsional jarak pose; clamp 12..OVERLAP_FRAMES_MAX.
-        extra = int(round(8.0 * min(1.0, dist / float(span))))
-        return max(4, min(base_n + extra, OVERLAP_FRAMES_MAX))
+        extra = int(round(2.0 * min(1.0, dist / float(span))))
+        return max(3, min(base_n + extra, OVERLAP_FRAMES_MAX))
 
     def _build_overlap_pairs(
         self,
@@ -1382,18 +1437,22 @@ class VideoStateMachine:
         to_clip: ClipAsset,
         n: int,
     ) -> Tuple[List[Tuple[np.ndarray, np.ndarray]], List[int]]:
-        """Pasangan frame untuk blend tubuh (tanpa MuseTalk) saat ganti clip."""
+        """Pasangan frame untuk blend tubuh (bergerak maju mulus tanpa lompat mundur)."""
         self.bank.ensure_frames(from_clip)
         self.bank.ensure_frames(to_clip)
-        n = max(4, min(int(n), OVERLAP_FRAMES_MAX))
+        n = max(3, min(int(n), OVERLAP_FRAMES_MAX))
         pairs: List[Tuple[np.ndarray, np.ndarray]] = []
         target_cycles: List[int] = []
+        span_from = max(1, from_clip.end_pose - from_clip.base_pose_frame)
+        span_to = max(1, to_clip.end_pose - to_clip.base_pose_frame)
         for i in range(n):
-            src_i = max(from_clip.base_pose_frame, int(from_idx) - n + 1 + i)
-            src_i = min(src_i, from_clip.end_pose)
-            dst_i = to_clip.base_pose_frame + i
-            if dst_i > to_clip.end_pose:
-                dst_i = to_clip.end_pose
+            if from_clip.loop:
+                src_offset = (int(from_idx) - from_clip.base_pose_frame + i) % span_from
+                src_i = from_clip.base_pose_frame + src_offset
+            else:
+                src_i = min(int(from_idx) + i, from_clip.end_pose)
+            dst_offset = i % span_to
+            dst_i = to_clip.base_pose_frame + dst_offset
             fa, _ = from_clip.forward_at(src_i)
             fb, _ = to_clip.forward_at(dst_i)
             pairs.append((fa.copy(), fb.copy()))
@@ -1415,7 +1474,7 @@ class VideoStateMachine:
             )
             return
 
-        n = max(4, min(int(self.overlap_frames), OVERLAP_FRAMES_MAX))
+        n = max(3, min(int(self.overlap_frames), OVERLAP_FRAMES_MAX))
         try:
             pairs, target_cycles = self._build_overlap_pairs(
                 clip, clip.end_pose, clip, n
@@ -1478,8 +1537,9 @@ class VideoStateMachine:
                 print(f"[StateMachine] Soft transition notice: {err}")
                 pairs, target_cycles = [], []
             if pairs:
-                # Resume di base pose — jangan skip rest (first=end kontrak).
-                resume = to_clip.base_pose_frame
+                resume = to_clip.base_pose_frame + len(pairs)
+                if resume > to_clip.end_pose:
+                    resume = to_clip.base_pose_frame
                 self._overlap = _OverlapTransition(
                     pairs=pairs,
                     step=0,
@@ -1487,7 +1547,7 @@ class VideoStateMachine:
                     target_cycle_indices=target_cycles,
                 )
                 self.current_name = to_name
-                self.frame_idx = to_clip.base_pose_frame
+                self.frame_idx = resume
                 self.state = new_state
                 self._talk_direction = 1
                 if lock_face and self._face_registry:
@@ -2023,6 +2083,7 @@ class LipSyncEngine:
         clip: ClipAsset,
         cidx: int,
         pcm: bytes,
+        whisper_idx: Optional[int] = None,
     ) -> np.ndarray:
         from musetalk.utils.blending import get_image_blending
         from inference import resize_generated_to_bbox
@@ -2051,6 +2112,10 @@ class LipSyncEngine:
                 return body
             # Jangan mix/unsharp: VAE 256 + lerp idle = bibir buram.
             strength = _mouth_strength_for_pcm(pcm)
+            if whisper_idx is not None and whisper_idx < 3:
+                # Transisi lembut 3 frame pertama agar mulut tidak kaget/goyang saat audio masuk
+                ramp = (float(whisper_idx) + 1.0) / 3.0
+                strength *= ramp
             if strength >= 0.999 and float(MOUTH_MAX_DELTA) <= 0:
                 damped = mouth
             else:
@@ -2145,7 +2210,12 @@ class LipSyncEngine:
         metrics.inc("lipsync_cache_hit")
 
         return self._compose_mouth(
-            pkt.frame, mouth, clip, int(pkt.cycle_idx), pkt.audio_pcm
+            pkt.frame,
+            mouth,
+            clip,
+            int(pkt.cycle_idx),
+            pkt.audio_pcm,
+            whisper_idx=pkt.whisper_idx,
         )
 
 
@@ -2911,6 +2981,7 @@ def broadcaster_loop(
                         with open(update_file, "r", encoding="utf-8") as uf:
                             upd = json.load(uf)
                         from broadcaster import prepare_overlay_files
+                        from overlay_generator import prepare_overlay_files
 
                         prepare_overlay_files(
                             out_dir,
@@ -3393,7 +3464,8 @@ class AIVisualWorker:
             vis = musetalk_visual_params()
             print(
                 f"[AIVisualWorker] Lip-sync: fps={self.fps}, "
-                f"bbox_shift={vis['bbox_shift']}, extra_margin={vis['extra_margin']}, "
+                f"bbox_shift={vis['bbox_shift']}, bbox_shift_x={vis.get('bbox_shift_x', 0)}, "
+                f"cheek_width={vis.get('left_cheek_width', 45)}, extra_margin={vis['extra_margin']}, "
                 f"upper={vis['upper_boundary_ratio']}, strength={MOUTH_STRENGTH}, "
                 f"temporal={MOUTH_TEMPORAL}, max_delta={MOUTH_MAX_DELTA}, "
                 f"frame_delta={MOUTH_FRAME_DELTA}, preroll={LIPSYNC_PREROLL_FRAMES}"

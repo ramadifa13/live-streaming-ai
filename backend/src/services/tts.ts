@@ -193,6 +193,7 @@ export function sanitizeForLiveTTS(text: string): string {
 
   out = normalizeCurrencyForTts(out);
   out = normalizePercentsAndUnits(out);
+  out = normalizeConversationalTerms(out);
   out = normalizeAbbreviations(out);
 
   return out
@@ -207,6 +208,31 @@ export function sanitizeForLiveTTS(text: string): string {
     .replace(/,{2,}/g, ",")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeConversationalTerms(text: string): string {
+  return text
+    .replace(/\b(check\s*out|checkout)\b/gi, "pesan")
+    .replace(/\b(ready\s*stock)\b/gi, "stok tersedia")
+    .replace(/\b(best\s*seller)\b/gi, "produk terlaris")
+    .replace(/\b(sold\s*out)\b/gi, "stok habis")
+    .replace(/\b(soft\s*sell)\b/gi, "ajakan ringan")
+    .replace(/\b(review)\b/gi, "ulasan")
+    .replace(/\b(guys)\b/gi, "teman-teman")
+    .replace(/\b(join)\b/gi, "bergabung")
+    .replace(/\b(stay)\b/gi, "tetap")
+    .replace(/\b(simple)\b/gi, "sederhana")
+    .replace(/\b(worth)\b/gi, "sepadan")
+    .replace(/\b(hook)\b/gi, "pembuka")
+    .replace(/\b(price)\b/gi, "harga")
+    .replace(/\b(budget)\b/gi, "anggaran")
+    .replace(/\b(fomo)\b/gi, "terburu-buru")
+    .replace(/\b(live)\b/gi, "siaran")
+    .replace(/\b(nggak|gak|ga)\b/gi, "tidak")
+    .replace(/\b(emang)\b/gi, "memang")
+    .replace(/\b(aja)\b/gi, "saja")
+    .replace(/\b(banget)\b/gi, "sekali")
+    .replace(/\b(nah|oke)\b/gi, "baik");
 }
 
 export function normalizeCurrencyForTts(text: string): string {

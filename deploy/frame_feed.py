@@ -264,6 +264,9 @@ class FrameFeedBroadcaster:
         write_rtmp_status(
             self.output_folder,
             "connected" if connected else ("failed" if self._rtmp_fatal else "disconnected"),
+            "connected"
+            if connected
+            else ("failed" if self._rtmp_fatal else "disconnected"),
             error or self._rtmp_fatal_hint,
         )
 
@@ -307,6 +310,7 @@ class FrameFeedBroadcaster:
         """Generate overlay PNG (nama file harus overlay_live.png, sama dengan hot-swap)."""
         try:
             from broadcaster import prepare_overlay_files
+            from overlay_generator import prepare_overlay_files
 
             path = prepare_overlay_files(
                 self.output_folder,
@@ -346,6 +350,9 @@ class FrameFeedBroadcaster:
             self._overlay_rgb = overlay[:, :, :3].astype(np.float32)
         else:
             self._overlay_alpha = np.ones((self.height, self.width, 1), dtype=np.float32)
+            self._overlay_alpha = np.ones(
+                (self.height, self.width, 1), dtype=np.float32
+            )
             self._overlay_rgb = overlay[:, :, :3].astype(np.float32)
 
     def _apply_overlay(self, frame: np.ndarray) -> np.ndarray:
@@ -354,6 +361,10 @@ class FrameFeedBroadcaster:
         try:
             base = frame.astype(np.float32)
             out = base * (1.0 - self._overlay_alpha) + self._overlay_rgb * self._overlay_alpha
+            out = (
+                base * (1.0 - self._overlay_alpha)
+                + self._overlay_rgb * self._overlay_alpha
+            )
             return out.astype(np.uint8)
         except Exception:
             return frame
@@ -376,6 +387,9 @@ class FrameFeedBroadcaster:
             import fcntl
 
             pipe_bytes = min(4 * 1024 * 1024, max(1024 * 1024, self.width * self.height * 3))
+            pipe_bytes = min(
+                4 * 1024 * 1024, max(1024 * 1024, self.width * self.height * 3)
+            )
             set_sz = getattr(fcntl, "F_SETPIPE_SZ", 1031)
             for fd in (video_r, video_w, audio_r, audio_w):
                 try:
@@ -579,6 +593,9 @@ class FrameFeedBroadcaster:
         items = []
         # Raw packs (prioritas) — tanpa decode H264
         for path in glob.glob(os.path.join(self.output_folder, "**", "*.ffseg"), recursive=True):
+        for path in glob.glob(
+            os.path.join(self.output_folder, "**", "*.ffseg"), recursive=True
+        ):
             if not os.path.isdir(path):
                 continue
             if path == last_spoken:
@@ -590,6 +607,9 @@ class FrameFeedBroadcaster:
             items.append(path)
         # Fallback MP4 (segment / legacy)
         for path in glob.glob(os.path.join(self.output_folder, "**", "*.mp4"), recursive=True):
+        for path in glob.glob(
+            os.path.join(self.output_folder, "**", "*.mp4"), recursive=True
+        ):
             if path == last_spoken:
                 continue
             if idle_abs and os.path.abspath(path) == idle_abs:
@@ -699,6 +719,9 @@ class FrameFeedBroadcaster:
         return None
 
     def _feed_ai_clip(self, video_path: str, *, fade_in: bool = True, prefetched=None) -> bool:
+    def _feed_ai_clip(
+        self, video_path: str, *, fade_in: bool = True, prefetched=None
+    ) -> bool:
         """Dorong segmen AI (ffseg raw atau MP4) ke encoder realtime."""
         print(f"[FRAME-FEED] ▶ {os.path.basename(video_path)} fade_in={fade_in}")
         frame_period = 1.0 / float(self.fps)
@@ -723,6 +746,9 @@ class FrameFeedBroadcaster:
                 if fade_frames and idx < fade_frames:
                     gain = (idx + 1) / float(fade_frames)
                     samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) * gain
+                    samples = (
+                        np.frombuffer(chunk, dtype=np.int16).astype(np.float32) * gain
+                    )
                     chunk = np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
                 frame = fit_bgr(frame, self.width, self.height)
                 if not self._write_av(frame, chunk):
@@ -760,6 +786,13 @@ class FrameFeedBroadcaster:
                         gain = (idx + 1) / float(fade_frames)
                         samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) * gain
                         chunk = np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
+                        samples = (
+                            np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
+                            * gain
+                        )
+                        chunk = (
+                            np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
+                        )
                     if not self._write_av(frame, chunk):
                         return False
                     ok_any = True
@@ -852,6 +885,9 @@ class FrameFeedBroadcaster:
                             data = json.load(fh)
                         self.product_name = data.get("product_name", self.product_name)
                         self.product_price = data.get("product_price", self.product_price)
+                        self.product_price = data.get(
+                            "product_price", self.product_price
+                        )
                         self.product_image_url = data.get(
                             "product_image_url", self.product_image_url
                         )
@@ -887,6 +923,9 @@ class FrameFeedBroadcaster:
                 prefetched = self._prefetch.take(path)
                 fade_in = (not came_from_idle) and (not self._chain_from_ai)
                 played = self._feed_ai_clip(path, fade_in=fade_in, prefetched=prefetched)
+                played = self._feed_ai_clip(
+                    path, fade_in=fade_in, prefetched=prefetched
+                )
                 if played:
                     last_spoken = path
                     self._chain_from_ai = True

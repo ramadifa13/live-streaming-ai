@@ -46,6 +46,9 @@ class AILiveWorker:
         # Warmup berat (load model ke VRAM & pre-cache avatar) — jangan blokir HTTP startup.
         self._warmed_up = False
         warmup_flag = (os.environ.get("MUSETALK_WARMUP_ON_START") or "0").strip().lower()
+        warmup_flag = (
+            (os.environ.get("MUSETALK_WARMUP_ON_START") or "0").strip().lower()
+        )
         marker_path = os.path.join(self.base_dir, ".musetalk_warmed_up")
         if os.path.exists(marker_path):
             print("[WARMUP] MuseTalk already warmed up – skipping")
@@ -105,6 +108,7 @@ class AILiveWorker:
                 # Replace existing regular directory with symlink
                 try:
                     import shutil
+
                     shutil.rmtree(link_path)
                 except Exception as e:
                     print(f"[WARNING] Failed to remove dir {link_path}: {e}")
@@ -121,11 +125,18 @@ class AILiveWorker:
                 print(
                     f"[WARNING] Could not create symlink {link_path}: {link_err}"
                 )
+                print(f"[WARNING] Could not create symlink {link_path}: {link_err}")
 
     def _resolve_use_float16(self) -> bool:
         mode = (os.environ.get("BROADCAST_MODE") or "segment").strip().lower()
         warmup = (os.environ.get("MUSETALK_WARMUP_ON_START") or "0").strip().lower()
         if mode in ("ai_worker", "ai-worker", "realtime", "visual_worker") and warmup not in (
+        if mode in (
+            "ai_worker",
+            "ai-worker",
+            "realtime",
+            "visual_worker",
+        ) and warmup not in (
             "1",
             "true",
             "yes",
@@ -159,11 +170,16 @@ class AILiveWorker:
             "unet_model_path": os.path.join(
                 models_root, "musetalkV15", "unet.pth"
             ),
+            "unet_config": os.path.join(models_root, "musetalkV15", "musetalk.json"),
+            "unet_model_path": os.path.join(models_root, "musetalkV15", "unet.pth"),
             "whisper_dir": os.path.join(models_root, "whisper"),
         }
 
     def _warmup_musetalk(self):
         print(f"[WARMUP] ⏳ Pre-loading MuseTalk models ke GPU VRAM (batch_size={self.batch_size})...")
+        print(
+            f"[WARMUP] ⏳ Pre-loading MuseTalk models ke GPU VRAM (batch_size={self.batch_size})..."
+        )
         musetalk_dir = self.musetalk_dir
         if self.base_dir not in sys.path:
             sys.path.insert(0, self.base_dir)
@@ -207,6 +223,9 @@ class AILiveWorker:
         
         vae = models_bundle['vae'] if models_bundle else None
         fp = models_bundle['fp'] if models_bundle else None
+
+        vae = models_bundle["vae"] if models_bundle else None
+        fp = models_bundle["fp"] if models_bundle else None
         if not vae or not fp:
             return
 
@@ -258,6 +277,13 @@ class AILiveWorker:
         ]
 
         clean_name = host_name.lower().replace(".png", "").replace(".jpg", "").replace(".mp4", "").strip()
+        clean_name = (
+            host_name.lower()
+            .replace(".png", "")
+            .replace(".jpg", "")
+            .replace(".mp4", "")
+            .strip()
+        )
 
         body_tokens = ("talk_1", "talk_2", "talk_3", "idle")
         is_specific_clip = any(
@@ -335,10 +361,22 @@ class AILiveWorker:
             action = "talk_1"
         if action == "talk":
             action = "talk_1"
+        action = (action_tag or "").lower().strip().replace("-", "_")
+        if not action or action in ("talk", "speak", "speaking"):
+            pool = ["idle", "talk_1", "talk_2", "talk_3"]
+            last = getattr(self, "_last_talk_action", None)
+            candidates = [c for c in pool if c != last] or pool
+            action = random.choice(candidates)
+            self._last_talk_action = action
         if action in ("rest", "neutral"):
             action = "idle"
         if action not in ("idle", "talk_1", "talk_2", "talk_3"):
             action = "talk_1"
+            pool = ["idle", "talk_1", "talk_2", "talk_3"]
+            last = getattr(self, "_last_talk_action", None)
+            candidates = [c for c in pool if c != last] or pool
+            action = random.choice(candidates)
+            self._last_talk_action = action
         candidates = [
             f"{host}_{action}",
             action,
@@ -388,12 +426,23 @@ class AILiveWorker:
             ).strip()
         if action_tag in ("speak", "speaking"):
             action_tag = "talk_1"
+        if not action_tag or action_tag in ("talk", "speak", "speaking"):
+            pool = ["idle", "talk_1", "talk_2", "talk_3"]
+            last = getattr(self, "_last_talk_action", None)
+            candidates = [c for c in pool if c != last] or pool
+            action_tag = random.choice(candidates)
+            self._last_talk_action = action_tag
         if action_tag in ("rest", "neutral"):
             action_tag = "idle"
         if action_tag == "talk":
             action_tag = "talk_1"
         if action_tag not in ("idle", "talk_1", "talk_2", "talk_3"):
             action_tag = "talk_1"
+            pool = ["idle", "talk_1", "talk_2", "talk_3"]
+            last = getattr(self, "_last_talk_action", None)
+            candidates = [c for c in pool if c != last] or pool
+            action_tag = random.choice(candidates)
+            self._last_talk_action = action_tag
 
         print(
             f"\n[MEMPROSES] {task_id} | Host: {host_name} ({host_type.upper()}) | Action: {action_tag}"
@@ -415,6 +464,7 @@ class AILiveWorker:
             print(
                 f"[ERROR] Audio dari backend tidak tersedia untuk {task_id}."
             )
+            print(f"[ERROR] Audio dari backend tidak tersedia untuk {task_id}.")
             return None
 
         # 3. Fast Lipsync Video Generation (< 3-5 detik)
@@ -422,6 +472,7 @@ class AILiveWorker:
         final_video = await self._sync_lips_async(
             idle_video, audio_file, task_id
         )
+        final_video = await self._sync_lips_async(idle_video, audio_file, task_id)
         lipsync_elapsed = round((time.time() - lipsync_start) * 1000)
 
         if (
@@ -535,6 +586,7 @@ class AILiveWorker:
                 target_audio = audio_path
                 try:
                     import wave
+
                     with wave.open(audio_path, "rb") as wf:
                         if wf.getframerate() != 16000 or wf.getnchannels() != 1:
                             raise ValueError("Need re-sample")
@@ -543,10 +595,13 @@ class AILiveWorker:
                     norm_audio_path = os.path.join(
                         self.temp_dir, f"{task_id}_16k.wav"
                     )
+                    norm_audio_path = os.path.join(self.temp_dir, f"{task_id}_16k.wav")
                     norm_cmd = [
                         "ffmpeg",
                         "-y",
                         "-v", "error",
+                        "-v",
+                        "error",
                         "-i",
                         audio_path,
                         "-ac",
@@ -654,6 +709,11 @@ class AILiveWorker:
                 for root, dirs, _files in os.walk(self.temp_dir):
                     for d in dirs:
                         if d.endswith(".ffseg") and task_id in d and not d.endswith(".partial"):
+                        if (
+                            d.endswith(".ffseg")
+                            and task_id in d
+                            and not d.endswith(".partial")
+                        ):
                             ffseg_candidates.append(os.path.join(root, d))
                 if ffseg_candidates:
                     latest_ffseg = max(ffseg_candidates, key=os.path.getctime)
@@ -687,6 +747,7 @@ class AILiveWorker:
                 raise RuntimeError(f"GPU OOM: {oom}")
             except Exception as e:
                 import traceback
+
                 print(f"[MuseTalk ERROR] {type(e).__name__}: {e}")
                 traceback.print_exc()
                 raise RuntimeError(f"{type(e).__name__}: {str(e)}")
@@ -699,6 +760,7 @@ class AILiveWorker:
                 if "norm_audio_path" in locals() and os.path.exists(
                     norm_audio_path
                 ):
+                if "norm_audio_path" in locals() and os.path.exists(norm_audio_path):
                     try:
                         os.remove(norm_audio_path)
                     except Exception:
