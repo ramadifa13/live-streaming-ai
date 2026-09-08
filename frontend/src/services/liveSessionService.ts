@@ -30,8 +30,20 @@ export function toLiveProductSnapshot(product: Product, options: boolean | { inc
     link: product.link,
     scriptBank: opts.includeScriptBank ? product.scriptBank : undefined,
     faqPack: opts.includeScriptBank ? product.faqPack : undefined,
-    image: opts.includeMedia || isHttpUrl(product.image) ? product.image : undefined,
-    bannerImage: opts.includeMedia || isHttpUrl(product.bannerImage) ? product.bannerImage : undefined,
+    image:
+      opts.includeMedia ||
+      isHttpUrl(product.image) ||
+      product.image?.startsWith("/") ||
+      product.image?.startsWith("data:image/")
+        ? product.image
+        : undefined,
+    bannerImage:
+      opts.includeMedia ||
+      isHttpUrl(product.bannerImage) ||
+      product.bannerImage?.startsWith("/") ||
+      product.bannerImage?.startsWith("data:image/")
+        ? product.bannerImage
+        : undefined,
   };
 }
 

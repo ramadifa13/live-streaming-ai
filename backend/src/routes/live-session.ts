@@ -342,6 +342,19 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     const effectiveProductImg = parsed.data.productImageUrl || effectiveProduct?.image;
     const effectiveBanner = parsed.data.bannerImageUrl || effectiveProduct?.bannerImage;
 
+    const mergedProduct = effectiveProduct
+      ? {
+          ...effectiveProduct,
+          name: effectiveProductName || effectiveProduct.name || "",
+          price: effectiveProductPrice || (effectiveProduct.price ? String(effectiveProduct.price) : ""),
+          image: effectiveProductImg || effectiveProduct.image,
+          bannerImage: effectiveBanner || effectiveProduct.bannerImage,
+        }
+      : undefined;
+    if (managedSession && mergedProduct) {
+      managedSession.product = mergedProduct;
+    }
+
     if (managedSession && liveSession && parsed.data.sessionId) {
       liveHostOrchestrator.startPipelineBackground({
         productId: liveSession.productId,
@@ -358,7 +371,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         streamKey,
         plan: durationHoursToPlan(managedSession.durationHours ?? 2),
         maxDurationMs: (managedSession.durationHours ?? 2) * 3600 * 1000,
-        product: managedSession.product,
+        product: mergedProduct,
         catalog: managedSession.catalog,
         backgroundImage: liveOverlayMedia(effectiveBg),
       });

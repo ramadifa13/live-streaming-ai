@@ -538,7 +538,7 @@ Kembalikan SATU JSON murni, tanpa markdown, dengan schema:
   "claims": []
 }
 
-Panjang speech: WAJIB 12–16 kata (durasi 5.5–8.0 detik, SELALU DI BAWAH 9 DETIK agar pas dalam 1 siklus video host 10 detik). Komentar balasan 9–14 kata. Kalimat harus utuh, tuntas, padat, alami, dan bertenaga. DILARANG membuat kalimat lebih dari 16 kata agar tidak memicu over-looping dan tidak ada space kosong/idle. Jangan menambahkan salam pembuka robotik.`;
+Panjang speech: WAJIB 20–24 kata (durasi ideal 8.5–9.5 detik pada TTS normal agar tidak terlalu cepat dan tetap natural untuk alur live tanpa idle). Komentar balasan 9–14 kata. Kalimat harus utuh, tuntas, padat, alami, dan bertenaga. Jangan membuat kalimat lebih pendek dari 20 kata atau terlalu panjang dari 24 kata agar ritme host stabil. Jangan menambahkan salam pembuka robotik.`;
 }
 
 function isGemini3FamilyModel(model: string): boolean {
@@ -954,7 +954,7 @@ export const generateDynamicSalesResponseGroq = generateDynamicSalesResponse;
 export const generateDynamicSalesResponseGemini = generateDynamicSalesResponse;
 
 const ScriptBankLineSchema = HostResponseSchema.extend({
-  speech: z.string().min(16),
+  speech: z.string().min(20),
 });
 
 export async function generateScriptBankLines(input: SalesBrainInput): Promise<HostResponse[]> {
@@ -962,7 +962,7 @@ export async function generateScriptBankLines(input: SalesBrainInput): Promise<H
   const prompt = `${systemPrompt}
 
 TUGAS: buat 20–24 ucapan host otonom yang BERBEDA dan NATURAL, menggunakan bahasa Indonesia lisan yang jelas dan sopan.
-Gunakan tepat ${SCRIPT_BANK_MIN_WORDS}–${SCRIPT_BANK_MAX_WORDS} kata per baris agar durasi bicara tetap ringkas dan nyaman untuk satu video talk.
+Gunakan tepat ${SCRIPT_BANK_MIN_WORDS}–${SCRIPT_BANK_MAX_WORDS} kata per baris agar durasi bicara tetap ideal sekitar 8,5–9,5 detik pada TTS speed normal.
 Setiap baris harus selesai dalam satu napas/utterance; jangan membuat paragraf atau dua kalimat panjang yang perlu dipotong.
 HINDARI bahasa gaul berlebihan dan istilah bahasa Inggris; gunakan padanan bahasa Indonesia untuk checkout, live, review, guys, simple, worth, join, stay, budget, dan FOMO.
 Tulis harga dengan format rupiah yang mudah dibaca, misalnya "Rp25.000", dan jangan menulis simbol atau singkatan yang sulit diucapkan.

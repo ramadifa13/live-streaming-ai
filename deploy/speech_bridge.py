@@ -62,6 +62,173 @@ def _sequence_key(task_id: str):
     return (2, 0, task_id)
 
 
+TARGET_MIN_SEC = 8.5
+TARGET_MAX_SEC = 9.5
+TARGET_WPM = 150.0
+FILLER_PATTERNS = [
+    "yang sebenarnya",
+    "pada dasarnya",
+    "jadi, secara umum",
+    "yang penting",
+    "sebenarnya",
+    "sekadar",
+]
+EXPANDERS = [
+    " Jadi, ini penting untuk dipahami dengan baik.",
+    " Secara sederhana, ini yang paling relevan.",
+    " Yang perlu diingat, konsistensi lebih penting daripada sekadar ambisi.",
+]
+
+
+def normalize_script(text: str) -> str:
+    if not text:
+        return ""
+    text = text.strip()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def estimate_duration_seconds(text: str) -> float:
+    cleaned = normalize_script(text)
+    if not cleaned:
+        return 0.0
+    words = len(cleaned.split())
+    return (words / TARGET_WPM) * 60.0
+
+
+def shorten_script(text: str) -> str:
+    cleaned = normalize_script(text)
+    if not cleaned:
+        return ""
+
+    candidate = cleaned
+    for filler in FILLER_PATTERNS:
+        candidate = candidate.replace(filler, "").strip()
+        candidate = re.sub(r"\s+", " ", candidate)
+
+    if TARGET_MIN_SEC <= estimate_duration_seconds(candidate) <= TARGET_MAX_SEC:
+        return candidate
+
+    sentences = [s.strip() for s in cleaned.split(".") if s.strip()]
+    for count in range(len(sentences), 1, -1):
+        trial = ". ".join(sentences[:count]).strip()
+        if TARGET_MIN_SEC <= estimate_duration_seconds(trial) <= TARGET_MAX_SEC:
+            return trial
+
+    chunked = [p.strip() for p in re.split(r"[.;!?]\s+|,\s*", cleaned) if p.strip()]
+    for count in range(len(chunked), 1, -1):
+        trial = " ".join(chunked[:count]).strip()
+        if TARGET_MIN_SEC <= estimate_duration_seconds(trial) <= TARGET_MAX_SEC:
+            return trial
+
+    words = cleaned.split()
+    target_words = max(10, int(round(((TARGET_MIN_SEC + TARGET_MAX_SEC) / 2.0) * TARGET_WPM / 60.0)))
+    if len(words) > target_words:
+        trimmed = " ".join(words[:target_words]).rstrip(" ,.;:!?")
+        if trimmed:
+            return trimmed
+
+    return cleaned
+
+
+def expand_script(text: str) -> str:
+    cleaned = normalize_script(text)
+    if not cleaned:
+        return ""
+
+    for extra in EXPANDERS:
+        trial = cleaned + extra
+        if TARGET_MIN_SEC <= estimate_duration_seconds(trial) <= TARGET_MAX_SEC:
+            return trial
+    return cleaned + " Jadi, ini penting untuk dipahami dengan baik."
+
+
+def fit_script_to_target(text: str) -> str:
+    """Pastikan script tetap natural di rentang 8,5–9,5 detik tanpa memotong audio."""
+    cleaned = normalize_script(text)
+    if not cleaned:
+        return ""
+
+    duration = estimate_duration_seconds(cleaned)
+    if TARGET_MIN_SEC <= duration <= TARGET_MAX_SEC:
+        return cleaned
+    if duration < TARGET_MIN_SEC:
+        return expand_script(cleaned)
+    return shorten_script(cleaned)
+
+
+@dataclass
+class RuntimeGuard:
+    """Menjaga host tetap TALK/hold talk sampai benar-benar ada alasan idle."""
+
+    idle_timeout_sec: float = 2.5
+    tail_visual_grace_sec: float = 0.5
+
+    def should_keep_talk(
+        self,
+        *,
+        queue_has_work: bool,
+        current_pcm_remaining: bool,
+        current_audio_done: bool,
+        visual_tail_active: bool,
+    ) -> bool:
+        if queue_has_work:
+            return True
+        if current_pcm_remaining:
+            return True
+        if current_audio_done and visual_tail_active:
+            return True
+        return False
+
+    def should_enter_idle(
+        self,
+        *,
+        queue_has_work: bool,
+        current_pcm_remaining: bool,
+        idle_since: Optional[float],
+        now: Optional[float],
+    ) -> bool:
+        if queue_has_work:
+            return False
+        if current_pcm_remaining:
+            return False
+        if idle_since is None:
+            return False
+        if now is None:
+            now = time.monotonic()
+        return (now - idle_since) >= self.idle_timeout_sec
+
+
+def build_live_script(raw_text: str) -> str:
+    """Wrapper production: ubah teks saja agar durasi tetap natural tanpa memotong audio."""
+    return fit_script_to_target(raw_text)
+
+
+def ensure_no_idle_policy(
+    *,
+    queue_has_work: bool,
+    current_pcm_remaining: bool,
+    current_audio_done: bool,
+    visual_tail_active: bool,
+    idle_since: Optional[float],
+    now: Optional[float],
+) -> Tuple[bool, bool]:
+    guard = RuntimeGuard()
+    keep_talk = guard.should_keep_talk(
+        queue_has_work=queue_has_work,
+        current_pcm_remaining=current_pcm_remaining,
+        current_audio_done=current_audio_done,
+        visual_tail_active=visual_tail_active,
+    )
+    enter_idle = guard.should_enter_idle(
+        queue_has_work=queue_has_work,
+        current_pcm_remaining=current_pcm_remaining,
+        idle_since=idle_since,
+        now=now,
+    )
+    return keep_talk, enter_idle
+
+
 def _normalize_to_16k_wav(src_path: str) -> str:
     """Konversi audio apa pun ke mono 16 kHz PCM WAV (untuk Whisper)."""
     fd, dst = tempfile.mkstemp(suffix="_16k.wav", prefix="utter_")
@@ -637,6 +804,7 @@ class SpeechBridge:
             self._current is not None
             and self._active_deadline > 0
             and time.monotonic() > self._active_deadline
+            and self._frame_cursor >= self._current.num_frames
         ):
             print("[SpeechBridge] Active utterance deadline reached; advancing queue")
             self._finish_current()

@@ -1,11 +1,22 @@
 import sys
+import time
 from pathlib import Path
+
+import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from speech_bridge import _split_pcm_frames
+from speech_bridge import (
+    TARGET_MAX_SEC,
+    TARGET_MIN_SEC,
+    SpeechBridge,
+    _split_pcm_frames,
+    build_live_script,
+    ensure_no_idle_policy,
+    estimate_duration_seconds,
+)
 
 
 def test_split_pcm_frames_does_not_append_silence_tail():
@@ -16,3 +27,54 @@ def test_split_pcm_frames_does_not_append_silence_tail():
     assert sum(len(frame) for frame in frames) == len(pcm)
     assert all(frame[:1] == b"\x00" for frame in frames)
     assert len(frames) >= 1
+
+
+def test_hard_deadline_does_not_cut_active_pcm():
+    bridge = SpeechBridge(output_folder="/tmp/ai_live_worker_test")
+    bridge._current = type("Job", (), {})()
+    bridge._current.task_id = "task_deadline_guard"
+    bridge._current.pcm_frames = [b"A", b"B", b"C", b"D"]
+    bridge._current.num_frames = 4
+    bridge._current.whisper_chunks = torch.zeros((4, 1))
+    bridge._current.audio_path = ""
+    bridge._current.action = "talk"
+    bridge._current.ready = type("Ready", (), {"is_set": lambda self: True})()
+    bridge._current.lipsync_ready = type("Ready", (), {"is_set": lambda self: True})()
+    bridge._current.error = ""
+    bridge._frame_cursor = 0
+    bridge._audio_exhausted = False
+    bridge._awaiting_visual_tail = False
+    bridge._active_deadline = time.monotonic() - 1.0
+    bridge._ever_started = True
+
+    pcm, is_speech, idx = bridge.get_audio_chunk()
+
+    assert pcm == b"A"
+    assert is_speech is True
+    assert idx == 0
+    assert bridge._current is not None
+    assert bridge._frame_cursor == 1
+
+
+def test_script_is_rewritten_to_target_duration_without_truncating_audio():
+    raw = "Baik teman-teman hari ini saya ingin menjelaskan bahwa keberhasilan itu tidak datang dari satu langkah besar tetapi dari konsistensi kecil yang kita lakukan setiap hari."
+    fixed = build_live_script(raw)
+    duration = estimate_duration_seconds(fixed)
+
+    assert TARGET_MIN_SEC <= duration <= TARGET_MAX_SEC
+    assert fixed != raw
+    assert fixed.startswith("Baik") or fixed.startswith("Keberhasilan")
+
+
+def test_idle_policy_keeps_talk_when_queue_still_has_work():
+    keep_talk, enter_idle = ensure_no_idle_policy(
+        queue_has_work=True,
+        current_pcm_remaining=False,
+        current_audio_done=True,
+        visual_tail_active=False,
+        idle_since=None,
+        now=None,
+    )
+
+    assert keep_talk is True
+    assert enter_idle is False

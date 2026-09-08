@@ -310,8 +310,8 @@ function clampSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
   return fitScriptBankSpeech(text, Math.min(maxWords, SCRIPT_BANK_MAX_WORDS));
 }
 
-export const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 12);
-export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 16);
+export const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 20);
+export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 24);
 
 function splitFacts(text: string): string[] {
   if (!text?.trim()) return [];

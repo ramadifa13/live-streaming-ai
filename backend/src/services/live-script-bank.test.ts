@@ -178,7 +178,7 @@ describe("product re-entry A→B→C→A", () => {
       productMemory: aAgain,
       cycleId: 1,
     });
-    assert.ok(seeded.some((line) => /tadi|balik|sebelumnya|angle/i.test(line.speech)));
+    assert.ok(seeded.some((line) => /tadi|balik|sebelumnya|angle|dari sisi|sudut/i.test(line.speech)));
 
     const bank = emptyScriptBank("A");
     mergeScriptLines(bank, seeded, []);
@@ -209,19 +209,20 @@ describe("cycle + product reference", () => {
 });
 
 describe("memory bounds + smoke", () => {
-  it("keeps script bank lines within a clean duration budget", () => {
+  it("keeps script bank lines within the production 8.5–9.5 second cadence", () => {
     const clipped = fitScriptBankSpeech(
-      "Ini adalah kalimat panjang yang memiliki beberapa bagian penting. Bagian berikutnya tidak perlu masuk ke video berikutnya.",
-      12,
+      "Ini adalah kalimat panjang yang memiliki beberapa bagian penting dan jadi bahan pertimbangan utama sebelum keputusan final. Bagian berikutnya tetap relevan untuk menjaga alur cerita yang jelas.",
+      24,
     );
-    assert.ok(clipped.split(/\s+/).length <= 12);
+    assert.ok(clipped.split(/\s+/).length >= 20);
+    assert.ok(clipped.split(/\s+/).length <= 24);
     assert.match(clipped, /[.!?]$/);
 
     const seeded = seedLocalScriptBank(sampleProduct("budget", "Serum Budget"), [], {
       cycleId: 0,
     });
-    assert.ok(seeded.every((item) => item.speech.split(/\s+/).length >= 12));
-    assert.ok(seeded.every((item) => item.speech.split(/\s+/).length <= 16));
+    assert.ok(seeded.every((item) => item.speech.split(/\s+/).length >= 20));
+    assert.ok(seeded.every((item) => item.speech.split(/\s+/).length <= 24));
   });
 
   it("keeps semantic memory bounded", () => {

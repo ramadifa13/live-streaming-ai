@@ -326,14 +326,27 @@ class RenderedPacket:
 
 
 def feather_mask(mask_array: np.ndarray, kernel: int = MASK_FEATHER_PX) -> np.ndarray:
-    """Extra Gaussian feather on MuseTalk jaw mask edges."""
+    """Extra Gaussian feather on MuseTalk jaw mask edges with lateral corner tapering."""
     if mask_array is None:
         return mask_array
     arr = np.asarray(mask_array, dtype=np.uint8)
     if arr.ndim != 2:
         return mask_array
     k = max(3, kernel | 1)
-    return cv2.GaussianBlur(arr, (k, k), 0)
+    blurred = cv2.GaussianBlur(arr, (k, k), 0)
+    
+    # Redam ujung lateral paling luar (5% kiri & 5% kanan) agar sudut bibir
+    # tidak terdistorsi melebar seperti Joker/seram saat ekspresi bicara.
+    h, w = blurred.shape
+    if w > 20:
+        margin_x = max(2, int(w * 0.08))
+        ramp = np.linspace(0.0, 1.0, margin_x, dtype=np.float32)
+        weight_x = np.ones(w, dtype=np.float32)
+        weight_x[:margin_x] = ramp
+        weight_x[-margin_x:] = ramp[::-1]
+        blurred = np.clip(blurred.astype(np.float32) * weight_x[None, :], 0, 255).astype(np.uint8)
+
+    return blurred
 
 
 def blend_weighted(a: np.ndarray, b: np.ndarray, alpha: float) -> np.ndarray:
@@ -2933,6 +2946,28 @@ def broadcaster_loop(
                             break
                 except Exception:
                     pass
+
+        # Periodic check jika overlay belum sempat siap di awal (race condition)
+        if out_dir and overlay_rgb is None and (frames_written % 30 == 0):
+            for candidate in (
+                os.path.join(out_dir, "overlay_live.png"),
+                os.path.join(out_dir, "tmp_assets", "live_overlay.png"),
+            ):
+                if os.path.exists(candidate):
+                    try:
+                        ov = cv2.imread(candidate, cv2.IMREAD_UNCHANGED)
+                        if ov is not None:
+                            if ov.shape[0] != CANVAS_H or ov.shape[1] != CANVAS_W:
+                                ov = cv2.resize(ov, (CANVAS_W, CANVAS_H))
+                            if ov.shape[2] == 4:
+                                overlay_alpha = (
+                                    ov[:, :, 3:4].astype(np.float32) / 255.0
+                                )
+                                overlay_rgb = ov[:, :, :3].astype(np.float32)
+                                print(f"[Broadcaster] Overlay loaded asynchronously: {candidate}")
+                        break
+                    except Exception:
+                        pass
 
         while True:
             try:

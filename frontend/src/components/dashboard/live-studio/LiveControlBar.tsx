@@ -227,13 +227,16 @@ export const LiveControlBar: React.FC = () => {
         connectingStageText: "Menyambungkan siaran ke Instagram…",
       });
 
-      // http(s) atau data:image (upload studio) — worker decode base64.
+      // http(s), data:image, atau path relatif publik (/banner_atas_tengah.png)
       const liveOverlayMedia = (url?: string) => {
         const u = (url || "").trim();
         if (!u) return undefined;
         if (/^https?:\/\//i.test(u)) return u;
         if (/^data:image\//i.test(u)) return u;
-        return undefined;
+        if (u.startsWith("/")) {
+          return typeof window !== "undefined" ? `${window.location.origin}${u}` : u;
+        }
+        return u;
       };
 
       let bcastJson: {

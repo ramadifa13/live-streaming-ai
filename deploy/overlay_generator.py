@@ -109,29 +109,39 @@ def render_pil_overlay(
 
     if has_banner and local_banner_img:
         try:
-            banner_max_w, banner_max_h, banner_y = 540, 245, 12
+            banner_max_w, banner_max_h, banner_y = 540, 200, 16
             banner = Image.open(local_banner_img).convert("RGBA")
             banner.thumbnail((banner_max_w, banner_max_h), Image.Resampling.LANCZOS)
             bw, bh = banner.size
             bx = (canvas_w - bw) // 2
             by = banner_y
 
+            # Shadow effect
             shadow_banner = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
             sb_draw = ImageDraw.Draw(shadow_banner)
-            sb_draw.rounded_rectangle((bx, by + 4, bx + bw, by + bh + 4), radius=20, fill=(0, 0, 0, 90))
+            sb_draw.rounded_rectangle((bx, by + 4, bx + bw, by + bh + 4), radius=20, fill=(0, 0, 0, 120))
             shadow_banner = shadow_banner.filter(ImageFilter.GaussianBlur(radius=8))
             overlay = Image.alpha_composite(overlay, shadow_banner)
 
+            # Rounded banner mask with clean border
             b_mask = Image.new("L", (bw, bh), 0)
             b_draw = ImageDraw.Draw(b_mask)
             b_draw.rounded_rectangle((0, 0, bw, bh), radius=20, fill=255)
 
             overlay.paste(banner, (bx, by), b_mask)
-            print(f"[OVERLAY] Banner diperbesar & ditempelkan di posisi ({bx}, {by}) ukuran {bw}x{bh}")
+            draw_banner_border = ImageDraw.Draw(overlay)
+            draw_banner_border.rounded_rectangle(
+                (bx, by, bx + bw, by + bh),
+                radius=20,
+                outline=(255, 255, 255, 140),
+                width=2,
+            )
+            print(f"[OVERLAY] Top banner rendered: pos=({bx}, {by}), size={bw}x{bh}")
         except Exception as e:
             print(f"[OVERLAY ERROR] Gagal merender banner: {e}")
 
     if has_product:
+        # Card rounded design matching Step 4 (w=630, h=138, y=1080)
         card_w, card_h = 630, 138
         card_x = (canvas_w - card_w) // 2
         card_y = canvas_h - card_h - 150
@@ -142,9 +152,9 @@ def render_pil_overlay(
         sc_draw.rounded_rectangle(
             (card_x, card_y + 8, card_x + card_w, card_y + card_h + 8),
             radius=radius,
-            fill=(0, 0, 0, 85),
+            fill=(0, 0, 0, 95),
         )
-        shadow_card = shadow_card.filter(ImageFilter.GaussianBlur(radius=14))
+        shadow_card = shadow_card.filter(ImageFilter.GaussianBlur(radius=12))
         overlay = Image.alpha_composite(overlay, shadow_card)
 
         card_img = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
@@ -153,7 +163,7 @@ def render_pil_overlay(
             (0, 0, card_w, card_h),
             radius=radius,
             fill=(255, 255, 255, 250),
-            outline=(226, 232, 240, 255),
+            outline=(241, 245, 249, 255),
             width=2,
         )
         overlay.paste(card_img, (card_x, card_y), card_img)
@@ -161,7 +171,7 @@ def render_pil_overlay(
 
         thumb_size = 106
         thumb_x = card_x + 18
-        thumb_y = card_y + 17
+        thumb_y = card_y + 16
 
         if local_product_img and os.path.exists(local_product_img):
             try:
@@ -170,12 +180,12 @@ def render_pil_overlay(
 
                 p_mask = Image.new("L", (thumb_size, thumb_size), 0)
                 pm_draw = ImageDraw.Draw(p_mask)
-                pm_draw.rounded_rectangle((0, 0, thumb_size, thumb_size), radius=16, fill=255)
+                pm_draw.rounded_rectangle((0, 0, thumb_size, thumb_size), radius=18, fill=255)
 
                 overlay.paste(p_img, (thumb_x, thumb_y), p_mask)
                 draw.rounded_rectangle(
                     (thumb_x, thumb_y, thumb_x + thumb_size, thumb_y + thumb_size),
-                    radius=16,
+                    radius=18,
                     outline=(226, 232, 240, 255),
                     width=2,
                 )
@@ -186,8 +196,10 @@ def render_pil_overlay(
         font_name, font_price, font_strike = resolve_fonts()
 
         if product_name:
-            clean_name = product_name[:26]
-            draw.text((text_x, card_y + 26), clean_name, font=font_name, fill=(15, 23, 42, 255))
+            clean_name = product_name.strip()
+            if len(clean_name) > 28:
+                clean_name = clean_name[:26] + "…"
+            draw.text((text_x, card_y + 24), clean_name, font=font_name, fill=(15, 23, 42, 255))
 
         raw_price = 0
         if product_price:
@@ -200,13 +212,13 @@ def render_pil_overlay(
             auto_orig_price = int(math.ceil((raw_price * 1.35) / 5000.0) * 5000)
             strikethrough_str = f"Rp{auto_orig_price:,}".replace(",", ".")
 
-            draw.text((text_x, card_y + 70), current_price_str, font=font_price, fill=(225, 29, 72, 255))
+            draw.text((text_x, card_y + 68), current_price_str, font=font_price, fill=(225, 29, 72, 255))
 
             bbox = font_price.getbbox(current_price_str)
             price_w = bbox[2] - bbox[0] if bbox else 150
 
             strike_x = text_x + price_w + 16
-            strike_y = card_y + 80
+            strike_y = card_y + 78
 
             draw.text((strike_x, strike_y), strikethrough_str, font=font_strike, fill=(148, 163, 184, 255))
 
@@ -215,7 +227,7 @@ def render_pil_overlay(
             line_y = strike_y + 11
             draw.line((strike_x - 2, line_y, strike_x + strike_w + 2, line_y), fill=(148, 163, 184, 255), width=2)
         elif product_price:
-            draw.text((text_x, card_y + 70), str(product_price), font=font_price, fill=(225, 29, 72, 255))
+            draw.text((text_x, card_y + 68), str(product_price), font=font_price, fill=(225, 29, 72, 255))
 
     out_path = os.path.join(tmp_dir, "live_overlay.png")
     overlay.save(out_path, "PNG")
@@ -265,6 +277,8 @@ def prepare_overlay_files(
             "/workspace/ai_live_worker/assets/banner_atas_tengah.png",
             "/workspace/live-streaming-ai/frontend/public/banner_atas_tengah.png",
             os.path.join(os.path.dirname(__file__), "../frontend/public/banner_atas_tengah.png"),
+            os.path.join(os.path.dirname(__file__), "assets/banner_atas_tengah.png"),
+            os.path.join(os.getcwd(), "frontend/public/banner_atas_tengah.png"),
         ]:
             if os.path.isfile(candidate):
                 local_banner_img = candidate

@@ -68,7 +68,8 @@ def musetalk_visual_params():
     bbox_shift_x = -5
     extra_margin = 0
     upper_boundary_ratio = 0.58
-    cheek_width = 38
+    # cheek_width 26 merampingkan sudut bibir lateral agar ujung kanan-kiri tidak melebar/seram
+    cheek_width = int(os.environ.get("MUSETALK_CHEEK_WIDTH", "26"))
     return {
         "bbox_shift": bbox_shift,
         "bbox_shift_x": bbox_shift_x,
