@@ -29,6 +29,7 @@ except ImportError:
     def fit_bgr(frame, width=CANVAS_W, height=CANVAS_H):
         return frame
 
+# BROADCAST_MODE=ai_worker / AI_WORKER_FPS lock
 TARGET_FPS = 24
 SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
