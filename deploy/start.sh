@@ -74,18 +74,16 @@ SYNC_SCRIPT="${SYNC_SCRIPT:-$DEPLOY_DIR/sync.sh}"
 if [ -f "$SYNC_SCRIPT" ]; then
 	# shellcheck source=sync.sh
 	source "$SYNC_SCRIPT"
-	bootstrap_worker_env
+	if command -v cleanup_legacy_env >/dev/null 2>&1; then
+		cleanup_legacy_env
+	elif command -v bootstrap_worker_env >/dev/null 2>&1; then
+		bootstrap_worker_env
+	fi
 	purge_legacy_tts
 fi
 
-# Load worker .env (BROADCAST_MODE / MuseTalk flags)
-if [ -f "$WORKER_DIR/.env" ]; then
-	echo "[INFO] Memuat $WORKER_DIR/.env ..."
-	set -a
-	# shellcheck disable=SC1091
-	source "$WORKER_DIR/.env"
-	set +a
-fi
+# Zero-config: hapus file .env lama jika ada
+rm -f "$WORKER_DIR/.env" 2>/dev/null || true
 WORKER_PORT="${PORT:-8000}"
 echo "[INFO] BROADCAST_MODE=${BROADCAST_MODE:-segment}"
 echo "[INFO] PORT=${WORKER_PORT}"

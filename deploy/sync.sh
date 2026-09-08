@@ -122,6 +122,10 @@ cleanup_legacy_env() {
 	echo "[ENV] Zero-config aktif — worker menggunakan code defaults optimal."
 }
 
+bootstrap_worker_env() {
+	cleanup_legacy_env
+}
+
 ensure_venv_pip() {
 	local py="${1:-}"
 	if [ -z "$py" ]; then
