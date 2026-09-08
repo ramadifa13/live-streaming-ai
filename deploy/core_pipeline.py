@@ -136,10 +136,24 @@ class StreamBroadcaster(threading.Thread):
 
     def _init_bg_overlay(self):
         if self.background_path and os.path.exists(self.background_path):
+        bg_path = self.background_path
+        if not bg_path and self.output_folder:
+            for ext in (".jpg", ".png", ".jpeg", ".webp"):
+                cand = os.path.join(self.output_folder, f"custom_background{ext}")
+                if os.path.exists(cand):
+                    bg_path = cand
+                    break
+
+        if bg_path and os.path.exists(bg_path):
             try:
                 bg = cv2.imread(self.background_path)
+                bg = cv2.imread(bg_path)
                 if bg is not None:
                     self._bg_bgr = fit_bgr(bg, CANVAS_W, CANVAS_H)
+                    print(f"[StreamBroadcaster] ✅ Custom background berhasil dimuat: {bg_path}")
+                    print(
+                        f"[StreamBroadcaster] ✅ Custom background berhasil dimuat: {bg_path}"
+                    )
             except Exception as e:
                 print(f"[StreamBroadcaster] Failed to load background: {e}")
 
@@ -593,6 +607,8 @@ class StreamBroadcaster(threading.Thread):
                 if pcm is None:
                     pcm = _silence_bytes_for_frame(self._audio_frame_index)
                 self._audio_frame_index += 1
+
+                now = time.perf_counter()
 
                 if frame is not None and frame.size > 0:
                     h, w = frame.shape[:2]
