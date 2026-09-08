@@ -76,7 +76,7 @@ try:
         stop_visual_broadcast,
         TARGET_FPS as AI_WORKER_TARGET_FPS,
         pause_visual_broadcast,
-        resume_visual_broadcast
+        resume_visual_broadcast,
     )
     from speech_bridge import get_speech_bridge
 except ImportError as e:
@@ -85,14 +85,20 @@ except ImportError as e:
     start_visual_broadcast = None
     stop_visual_broadcast = None
     AI_WORKER_TARGET_FPS = 30
-    def pause_visual_broadcast(output_folder: str = ""): return {}
-    def resume_visual_broadcast(output_folder: str = ""): return {}
+
+    def pause_visual_broadcast(output_folder: str = ""):
+        return {}
+
+    def resume_visual_broadcast(output_folder: str = ""):
+        return {}
 
     def get_speech_bridge(output_folder: str = ""):
         return None
 
+
 def is_ai_worker_mode() -> bool:
     import os
+
     mode = (os.environ.get("BROADCAST_MODE") or "").strip().lower()
     return mode in ("ai_worker", "ai-worker", "realtime", "visual_worker")
 
@@ -100,6 +106,7 @@ def is_ai_worker_mode() -> bool:
 try:
     from worker_telemetry import get_telemetry
 except ImportError:
+
     def get_telemetry():
         return None
 
@@ -191,7 +198,10 @@ async def periodic_cleanup_and_watchdog():
         try:
             await asyncio.sleep(5)
             prune_old_jobs()
-            if broadcaster_process is not None and broadcaster_process.poll() is not None:
+            if (
+                broadcaster_process is not None
+                and broadcaster_process.poll() is not None
+            ):
                 exited = broadcaster_process
                 broadcaster_process = None
                 print(
@@ -212,7 +222,9 @@ async def periodic_cleanup_and_watchdog():
                             60.0, 2.0 ** min(broadcaster_restarts, 5)
                         )
                         if write_rtmp_status is not None:
-                            write_rtmp_status(output_dir, "connecting", "Broadcaster restarting")
+                            write_rtmp_status(
+                                output_dir, "connecting", "Broadcaster restarting"
+                            )
                         print(
                             f"[WATCHDOG] Broadcaster restart {broadcaster_restarts}/"
                             f"{MAX_BROADCASTER_RESTARTS}",
@@ -221,7 +233,9 @@ async def periodic_cleanup_and_watchdog():
                     except Exception as restart_err:
                         print(f"[WATCHDOG] Broadcaster restart failed: {restart_err}")
                 elif write_rtmp_status is not None:
-                    write_rtmp_status(output_dir, "failed", "Broadcaster berhenti tidak terduga")
+                    write_rtmp_status(
+                        output_dir, "failed", "Broadcaster berhenti tidak terduga"
+                    )
             if visual_worker is not None and not _visual_worker_pipeline_active():
                 print("[WATCHDOG] Visual worker tidak aktif", flush=True)
         except asyncio.CancelledError:
@@ -236,7 +250,10 @@ async def lifespan(app: FastAPI):
     os.makedirs(worker.output_dir, exist_ok=True)
     os.makedirs(worker.temp_dir, exist_ok=True)
 
-    print("[AI-Worker] TTS source: backend Pocket TTS; worker menerima WAV saja", flush=True)
+    print(
+        "[AI-Worker] TTS source: backend Pocket TTS; worker menerima WAV saja",
+        flush=True,
+    )
 
     global watchdog_task
     watchdog_task = asyncio.create_task(periodic_cleanup_and_watchdog())
@@ -270,10 +287,14 @@ def _resolve_voice_id(*candidates: Optional[str]) -> str:
         v = v.replace(".wav", "").replace(".mp3", "")
         if not v:
             continue
-        if (
-            v in ("namira", "siti", "ardi", "budi", "default_host", "default")
-            or v.startswith("id-id-")
-        ):
+        if v in (
+            "namira",
+            "siti",
+            "ardi",
+            "budi",
+            "default_host",
+            "default",
+        ) or v.startswith("id-id-"):
             return default
         return v
     return default
@@ -307,19 +328,25 @@ def _synthesize_voxcpm2_wav(
         import io
         import soundfile as sf
         import numpy as np
+
         data, sr = sf.read(io.BytesIO(wav_bytes))
         # Resample to 16kHz mono (MuseTalk requirement)
         if sr != 16000:
             try:
                 import soxr
+
                 data = soxr.resample(data, sr, 16000)
             except ImportError:
                 try:
                     import librosa
-                    data = librosa.resample(data.astype(np.float32), orig_sr=sr, target_sr=16000)
+
+                    data = librosa.resample(
+                        data.astype(np.float32), orig_sr=sr, target_sr=16000
+                    )
                 except Exception:
                     try:
                         from scipy import signal
+
                         num_samples = int(round(len(data) * 16000 / float(sr)))
                         data = signal.resample(data, num_samples)
                     except Exception:
@@ -327,7 +354,9 @@ def _synthesize_voxcpm2_wav(
                         num_samples = max(1, int(round(len(data) * ratio)))
                         x_old = np.linspace(0.0, 1.0, num=len(data), endpoint=False)
                         x_new = np.linspace(0.0, 1.0, num=num_samples, endpoint=False)
-                        data = np.interp(x_new, x_old, data.astype(np.float64)).astype(np.float32)
+                        data = np.interp(x_new, x_old, data.astype(np.float64)).astype(
+                            np.float32
+                        )
             sr = 16000
         # Convert to mono if needed
         if data.ndim > 1:
@@ -338,7 +367,6 @@ def _synthesize_voxcpm2_wav(
     except Exception as e:
         print(f"[WARN] Audio processing failed: {e}")
     return wav_bytes, headers
-
 
 
 output_dir = worker.output_dir
@@ -357,10 +385,17 @@ async def health():
     visual_running = _visual_worker_pipeline_active() or (
         visual_worker is not None and visual_worker.is_running
     )
-    broadcaster_running = broadcaster_process is not None and broadcaster_process.poll() is None
-    stream_ready = (visual_running or broadcaster_running) and rtmp_state in ("connected", "connecting")
+    broadcaster_running = (
+        broadcaster_process is not None and broadcaster_process.poll() is None
+    )
+    stream_ready = (visual_running or broadcaster_running) and rtmp_state in (
+        "connected",
+        "connecting",
+    )
     return {
-        "status": "ok" if stream_ready or not (visual_running or broadcaster_running) else "degraded",
+        "status": "ok"
+        if stream_ready or not (visual_running or broadcaster_running)
+        else "degraded",
         "message": "AI Live Worker API is running",
         "warmed_up": getattr(worker, "_warmed_up", False),
         "batch_size": worker.batch_size,
@@ -652,9 +687,7 @@ async def get_queue_status():
         playback_armed = os.path.exists(
             os.path.join(output_dir, "playback_active.flag")
         )
-        stream_paused = os.path.exists(
-            os.path.join(output_dir, "stream_paused.flag")
-        )
+        stream_paused = os.path.exists(os.path.join(output_dir, "stream_paused.flag"))
     else:
         stream_paused = False
     playable_seconds = sum(_probe_duration_seconds(p) for p in playable_paths)
@@ -664,7 +697,9 @@ async def get_queue_status():
 
     broadcast_mode = os.environ.get("BROADCAST_MODE", "segment")
     if is_ai_worker_mode():
-        fps = float(os.environ.get("AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "30")))
+        fps = float(
+            os.environ.get("AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "30"))
+        )
         playable_seconds = 0.0
         if bridge is not None and hasattr(bridge, "queued_audio_seconds"):
             try:
@@ -811,12 +846,12 @@ async def rtmp_preflight(req: BroadcastRequest):
             validate_publish_url,
         )
     except ImportError:
-        join_rtmp_url = lambda base, key: f"{base.rstrip('/')}/{key}"  
+        join_rtmp_url = lambda base, key: f"{base.rstrip('/')}/{key}"
 
-        def validate_publish_url(u):  
+        def validate_publish_url(u):
             return u
 
-        def preflight_rtmp_publish(_u): 
+        def preflight_rtmp_publish(_u):
             return None
 
     publish_url = join_rtmp_url(final_rtmp_url, final_stream_key)
@@ -867,7 +902,9 @@ async def resume_broadcast_soft():
         pass
 
         result = resume_visual_broadcast(output_dir)
-        return result if isinstance(result, dict) else {"success": True, "paused": False}
+        return (
+            result if isinstance(result, dict) else {"success": True, "paused": False}
+        )
     except Exception as err:
         return {"success": False, "error": str(err)}
 
@@ -937,12 +974,21 @@ async def start_broadcast(req: BroadcastRequest):
                 "pid": broadcaster_process.pid,
             }
 
+    if _broadcast_boot_task and not _broadcast_boot_task.done():
+        if _broadcast_boot_state == "starting":
+            return {"success": True, "status": "starting", "async": True}
+        return {
+            "success": False,
+            "status": "busy",
+            "error": "Worker masih menyelesaikan perubahan siaran sebelumnya.",
+        }
+
     print(f"[AI-Worker] start-broadcast diterima (async) rtmp={final_rtmp_url[:60]}...")
+    _broadcast_boot_state = "starting"
+    _broadcast_boot_error = ""
 
     async def _boot() -> None:
         global _broadcast_boot_state, _broadcast_boot_error, visual_worker
-        _broadcast_boot_state = "starting"
-        _broadcast_boot_error = ""
         try:
             await asyncio.to_thread(_start_broadcast_sync, req)
             _broadcast_boot_state = "running"
@@ -960,10 +1006,6 @@ async def start_broadcast(req: BroadcastRequest):
             visual_worker = None
             traceback.print_exc()
 
-    if _broadcast_boot_task and not _broadcast_boot_task.done():
-        if _broadcast_boot_state == "starting":
-            return {"success": True, "status": "starting", "async": True}
-        _broadcast_boot_task.cancel()
     _broadcast_boot_task = asyncio.create_task(_boot())
     return {"success": True, "status": "starting", "async": True}
 
@@ -986,16 +1028,22 @@ def _materialize_background(value: str, output_dir: str) -> str:
         suffix = {"image/png": ".png", "image/webp": ".webp"}.get(media_type, ".jpg")
         payload = base64.b64decode(encoded, validate=True)
     elif source.startswith(("http://", "https://")):
-        request = urllib.request.Request(source, headers={"User-Agent": "live-streaming-ai/1.0"})
+        request = urllib.request.Request(
+            source, headers={"User-Agent": "live-streaming-ai/1.0"}
+        )
         with urllib.request.urlopen(request, timeout=15) as response:
             payload = response.read(20 * 1024 * 1024 + 1)
-            content_type = (response.headers.get("Content-Type") or "").split(";", 1)[0].lower()
+            content_type = (
+                (response.headers.get("Content-Type") or "").split(";", 1)[0].lower()
+            )
         if content_type == "image/png":
             suffix = ".png"
         elif content_type == "image/webp":
             suffix = ".webp"
     else:
-        raise ValueError("backgroundImage harus berupa data URL, URL HTTP, atau path file worker")
+        raise ValueError(
+            "backgroundImage harus berupa data URL, URL HTTP, atau path file worker"
+        )
 
     if not payload or len(payload) > 20 * 1024 * 1024:
         raise ValueError("backgroundImage kosong atau lebih besar dari 20 MB")
@@ -1136,7 +1184,6 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     broadcaster_restarts = 0
     broadcaster_next_restart_at = 0.0
 
-
     flag_path = os.path.join(output_dir, "playback_active.flag")
     if os.path.exists(flag_path):
         try:
@@ -1160,7 +1207,6 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     }
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config_data, f)
-
 
     env = os.environ.copy()
     env.pop("PRODUCT_IMAGE_URL", None)
@@ -1189,9 +1235,9 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         env["MUSETALK_SKIP_MP4"] = os.environ.get("MUSETALK_SKIP_MP4", "1")
     current_broadcast_env = env
 
-
     try:
         from broadcaster import prepare_overlay_files
+
         try:
             from overlay_generator import prepare_overlay_files
         except ImportError:
@@ -1361,6 +1407,7 @@ async def update_stream_product(req: UpdateProductRequest):
     # Render overlay dulu (support http + data:image), baru signal hot-reload.
     try:
         from broadcaster import prepare_overlay_files
+
         try:
             from overlay_generator import prepare_overlay_files
         except ImportError:
