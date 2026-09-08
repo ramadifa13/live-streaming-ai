@@ -36,6 +36,7 @@ export const DashboardHeader: React.FC = () => {
   const showToast = useDashboardUIStore((state) => state.showToast);
 
   const handleStepChange = (step: number) => {
+    if (isLiveActive && step <= 3) return;
     if (step <= currentStep) {
       setCurrentStep(step);
       return;
@@ -107,33 +108,40 @@ export const DashboardHeader: React.FC = () => {
       </div>
       {appMode === "LIVE_STUDIO" ? (
         <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] text-slate-400 overflow-x-auto py-0.5">
-          {STEPS.map((step, idx) => (
-            <React.Fragment key={step.num}>
-              <button
-                type="button"
-                onClick={() => handleStepChange(step.num)}
-                className="flex items-center gap-1 focus:outline-none transition group cursor-pointer"
-              >
-                <span
-                  className={`flex h-5 w-5 items-center justify-center rounded-full font-semibold transition ${
-                    currentStep === step.num
-                      ? "bg-[#4148e2] text-white shadow-[0_0_10px_rgba(65,72,226,0.6)]"
-                      : "border border-white/10 bg-[#161d2d] text-slate-400 group-hover:border-blue-500"
+          {STEPS.map((step, idx) => {
+            const isStepLocked = isLiveActive && step.num <= 3;
+            return (
+              <React.Fragment key={step.num}>
+                <button
+                  type="button"
+                  onClick={() => handleStepChange(step.num)}
+                  disabled={isStepLocked}
+                  className={`flex items-center gap-1 focus:outline-none transition group ${
+                    isStepLocked ? "cursor-not-allowed opacity-50" : "cursor-pointer"
                   }`}
+                  title={isStepLocked ? "Pengaturan terkunci selama live aktif" : undefined}
                 >
-                  {step.num}
-                </span>
-                <span
-                  className={`${
-                    currentStep === step.num ? "text-blue-400 font-bold" : "text-slate-400 group-hover:text-slate-200"
-                  }`}
-                >
-                  {step.label}
-                </span>
-              </button>
-              {idx < STEPS.length - 1 && <span className="h-px w-4 sm:w-8 bg-white/10" />}
-            </React.Fragment>
-          ))}
+                  <span
+                    className={`flex h-5 w-5 items-center justify-center rounded-full font-semibold transition ${
+                      currentStep === step.num
+                        ? "bg-[#4148e2] text-white shadow-[0_0_10px_rgba(65,72,226,0.6)]"
+                        : "border border-white/10 bg-[#161d2d] text-slate-400 group-hover:border-blue-500"
+                    }`}
+                  >
+                    {step.num}
+                  </span>
+                  <span
+                    className={`${
+                      currentStep === step.num ? "text-blue-400 font-bold" : "text-slate-400 group-hover:text-slate-200"
+                    }`}
+                  >
+                    {step.label}
+                  </span>
+                </button>
+                {idx < STEPS.length - 1 && <span className="h-px w-4 sm:w-8 bg-white/10" />}
+              </React.Fragment>
+            );
+          })}
         </div>
       ) : (
         <div className="flex items-center gap-1.5 text-[10px] text-slate-400">

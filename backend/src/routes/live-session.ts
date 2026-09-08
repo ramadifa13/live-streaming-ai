@@ -471,12 +471,12 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     try {
-      // Pastikan RTMP + minimal 2 ucapan playable siap (bukan lifetime counter).
+      // Pastikan RTMP + minimal satu ucapan benar-benar siap sebelum playback.
       const pipelineStatus = await liveHostOrchestrator.getPipelineStatus(sessionId);
       const realtime = /ai_worker|ai-worker|realtime|visual_worker/i.test(String(pipelineStatus.broadcastMode || ""));
-      const minUtt = Number(pipelineStatus.goLiveMinUtterances || 2);
+      const minUtt = Number(pipelineStatus.goLiveMinUtterances || 1);
       const playable = realtime
-        ? Math.max(Number(pipelineStatus.readyUtteranceCount || 0), Number(pipelineStatus.utteranceQueueCount || 0))
+        ? Number(pipelineStatus.readyUtteranceCount || 0)
         : Number(pipelineStatus.videosQueued || 0);
       if (!pipelineStatus.ready || playable < minUtt) {
         reply.code(409);

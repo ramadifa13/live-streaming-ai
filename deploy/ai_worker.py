@@ -79,6 +79,9 @@ BROADCAST_MAX_LAG = int(os.environ.get("AI_WORKER_BROADCAST_MAX_LAG", "8"))
 BROADCAST_RENDER_WAIT_SEC = float(
     os.environ.get("AI_WORKER_BROADCAST_RENDER_WAIT_SEC", "0.10")
 )
+BROADCAST_SPEECH_WAIT_SEC = float(
+    os.environ.get("AI_WORKER_SPEECH_WAIT_SEC", "10.0")
+)
 SEAMLESS_THRESHOLD = float(os.environ.get("AI_WORKER_SEAMLESS_THRESHOLD", "0.92"))
 MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "1.0"))
 MOUTH_TEMPORAL = float(os.environ.get("MUSETALK_TEMPORAL_SMOOTH", "0"))
@@ -2262,13 +2265,15 @@ def _put_raw_frame(
                             return
                         except queue.Full:
                             pass
-                    # Tetap coba block lebih lama daripada drop speech.
-                    try:
-                        raw_q.put(pkt, timeout=0.2)
-                        return
-                    except queue.Full:
-                        metrics.inc("raw_queue_dropped")
-                        return
+                    # Packet speech adalah sumber audio dan viseme yang sama.
+                    # Tunggu sampai ada slot agar sequence tidak pernah bolong.
+                    while not stop_event.is_set():
+                        try:
+                            raw_q.put(pkt, timeout=0.2)
+                            return
+                        except queue.Full:
+                            metrics.inc("raw_queue_backpressure")
+                    return
                 metrics.inc("raw_queue_dropped")
                 return
 
@@ -2865,7 +2870,6 @@ def broadcaster_loop(
 
     fallback = bank.idle_clip.frames[bank.idle_clip.base_pose_frame].copy()
     last_good = fallback.copy()
-    last_pcm = silence
     idle_player = _IdleFallbackPlayer(bank)
     stale_misses = 0
     pending: Dict[int, RenderedPacket] = {}
@@ -2982,12 +2986,33 @@ def broadcaster_loop(
                 next_seq = target
 
         pkt = pending.pop(next_seq, None)
-        if pkt is None and not pending and utterance_active:
-            try:
-                fresh: RenderedPacket = render_q.get(timeout=BROADCAST_RENDER_WAIT_SEC)
-                pending[fresh.seq] = fresh
-            except queue.Empty:
-                pass
+        if pkt is None and utterance_active:
+            # Jangan menulis last_pcm berulang: audio dan MuseTalk harus maju
+            # dari RenderedPacket sequence yang sama.
+            wait_deadline = time.perf_counter() + max(
+                BROADCAST_RENDER_WAIT_SEC, BROADCAST_SPEECH_WAIT_SEC
+            )
+            while pkt is None and not stop_event.is_set():
+                pkt = pending.pop(next_seq, None)
+                if pkt is not None:
+                    break
+                remaining = wait_deadline - time.perf_counter()
+                if remaining <= 0:
+                    metrics.inc("broadcast_speech_packet_timeout")
+                    print(
+                        f"[Broadcaster] Timeout menunggu speech packet seq={next_seq}; "
+                        "menghentikan broadcaster agar audio tidak diulang.",
+                        flush=True,
+                    )
+                    stop_event.set()
+                    break
+                try:
+                    fresh: RenderedPacket = render_q.get(
+                        timeout=min(0.25, remaining)
+                    )
+                    pending[fresh.seq] = fresh
+                except queue.Empty:
+                    continue
 
         if pkt is None and pending:
             if utterance_active:
@@ -3004,7 +3029,6 @@ def broadcaster_loop(
 
         if pkt is not None:
             last_good = pkt.frame
-            last_pcm = pkt.audio_pcm
             pcm = pkt.audio_pcm
             stale_misses = 0
             if pkt.clip_name:
@@ -3021,7 +3045,7 @@ def broadcaster_loop(
                     metrics.inc("broadcast_micro_advance")
                 elif stale_misses >= IDLE_FALLBACK_AFTER:
                     metrics.inc("idle_fallback_frames")
-            pcm = last_pcm if utterance_active else silence
+            pcm = silence
 
         frame_out = _apply_overlay(last_good)
         if bc and not stop_event.is_set():

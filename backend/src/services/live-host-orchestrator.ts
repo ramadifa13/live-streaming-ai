@@ -272,7 +272,7 @@ const LIVE_MIN_BUFFER = Number(process.env.LIVE_MIN_BUFFER_SECONDS || 6);
 const LIVE_MAX_UTTERANCE_SECONDS = Number(process.env.LIVE_MAX_UTTERANCE_SECONDS || 8.5);
 const LIVE_TTS_MAX_SPEED = Number(process.env.LIVE_TTS_MAX_SPEED || 1.35);
 /** Minimal ucapan playable siap sebelum tombol Go Live. */
-const GO_LIVE_MIN_UTTERANCES = Number(process.env.GO_LIVE_MIN_UTTERANCES || 3);
+const GO_LIVE_MIN_UTTERANCES = Number(process.env.GO_LIVE_MIN_UTTERANCES || 1);
 
 function trimSpeechToWordBudget(text: string, maxWords: number): string {
   const words = text.trim().split(/\s+/).filter(Boolean);
