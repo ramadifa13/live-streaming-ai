@@ -38,6 +38,7 @@ import {
   pickScriptBankCommentLine,
   stripLeadingGreeting,
   takeScriptLine,
+  fitScriptBankSpeech,
   touchProductVisit,
   shouldUseLlmForComment,
   type FaqPackEntry,
@@ -268,8 +269,23 @@ interface PlanPolicy {
 }
 
 const LIVE_MIN_BUFFER = Number(process.env.LIVE_MIN_BUFFER_SECONDS || 6);
+const LIVE_MAX_UTTERANCE_SECONDS = Number(process.env.LIVE_MAX_UTTERANCE_SECONDS || 8.5);
+const LIVE_TTS_MAX_SPEED = Number(process.env.LIVE_TTS_MAX_SPEED || 1.35);
 /** Minimal ucapan playable siap sebelum tombol Go Live. */
 const GO_LIVE_MIN_UTTERANCES = Number(process.env.GO_LIVE_MIN_UTTERANCES || 3);
+
+function trimSpeechToWordBudget(text: string, maxWords: number): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return text.trim();
+  const clipped = words.slice(0, Math.max(1, maxWords)).join(" ");
+  return clipped.replace(/[,;:!?]+$/g, "") + ".";
+}
+
+function speechWithinBudget(text: string, speed: number, maxSeconds: number): string {
+  const wordsPerSecond = (140 * Math.max(0.75, speed)) / 60;
+  const maxWords = Math.max(6, Math.floor(maxSeconds * wordsPerSecond));
+  return trimSpeechToWordBudget(text, maxWords);
+}
 
 const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   // Buffer realtime ai_worker: default 6s (bukan 1018) supaya Go confirm lebih cepat.
@@ -1200,7 +1216,9 @@ class LiveHostOrchestrator {
     };
 
     if (product.scriptBank && product.scriptBank.length > 0) {
-      state.scriptBank.lines = product.scriptBank.slice();
+      state.scriptBank.lines = product.scriptBank
+        .map((item) => ({ ...item, speech: fitScriptBankSpeech(item.speech) }))
+        .filter((item) => item.speech.split(/\s+/).filter(Boolean).length >= 8);
       // Pastikan selalu ada filler lokal agar buffer rendah tidak idle.
       mergeScriptLines(
         state.scriptBank,
@@ -1651,27 +1669,54 @@ class LiveHostOrchestrator {
 
     for (const seg of segments) {
       let audioBase64: string | undefined;
+      let spokenText = speechWithinBudget(seg.text, state.config.speechSpeed ?? 1, LIVE_MAX_UTTERANCE_SECONDS);
+      let synthesisSpeed = state.config.speechSpeed ?? 1;
+      let withinDurationBudget = false;
       try {
-        const ttsResult = await synthesizeSpeech({
-          text: seg.text,
-          voiceId: state.config.voiceId || process.env.VOICE_ID || "girl_cute_kids",
-          host: state.config.voice || state.config.avatarName || "girl_cute_kids",
-          voice: state.config.voice || state.config.avatarName || "girl_cute_kids",
-          avatarName: state.config.avatarName,
-          tone: state.config.tone,
-          emotion: response.emotion,
-          style: state.config.style || state.config.tone,
-          lang: state.config.ttsLang || "id",
-          speed: state.config.speechSpeed ?? 1,
-          podId: state.config.podId || process.env.RUNPOD_POD_ID || null,
-          sessionId,
-          allowOfflineSynth: true,
-        });
-        if (ttsResult.success && ttsResult.audioBuffer) {
-          audioBase64 = ttsResult.audioBuffer.toString("base64");
-        } else {
-          console.warn(`[LiveHost] TTS failed (no fallback): ${ttsResult.message}`);
-          // Jangan submit utterance tanpa audio  worker tidak boleh fallback engine lama.
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          const ttsResult = await synthesizeSpeech({
+            text: spokenText,
+            voiceId: state.config.voiceId || process.env.VOICE_ID || "girl_cute_kids",
+            host: state.config.voice || state.config.avatarName || "girl_cute_kids",
+            voice: state.config.voice || state.config.avatarName || "girl_cute_kids",
+            avatarName: state.config.avatarName,
+            tone: state.config.tone,
+            emotion: response.emotion,
+            style: state.config.style || state.config.tone,
+            lang: state.config.ttsLang || "id",
+            speed: synthesisSpeed,
+            podId: state.config.podId || process.env.RUNPOD_POD_ID || null,
+            sessionId,
+            allowOfflineSynth: true,
+          });
+          if (!ttsResult.success || !ttsResult.audioBuffer) {
+            console.warn(`[LiveHost] TTS failed (no fallback): ${ttsResult.message}`);
+            break;
+          }
+
+          const actualDuration = ttsResult.metrics?.audioDuration;
+          if (!actualDuration || actualDuration <= LIVE_MAX_UTTERANCE_SECONDS + 0.05) {
+            audioBase64 = ttsResult.audioBuffer.toString("base64");
+            withinDurationBudget = true;
+            break;
+          }
+
+          const ratio = Math.max(0.35, Math.min(0.92, (LIVE_MAX_UTTERANCE_SECONDS / actualDuration) * 0.94));
+          const currentWords = spokenText.split(/\s+/).filter(Boolean).length;
+          spokenText = trimSpeechToWordBudget(spokenText, Math.max(6, Math.floor(currentWords * ratio)));
+          synthesisSpeed = Math.min(
+            LIVE_TTS_MAX_SPEED,
+            Math.max(synthesisSpeed, synthesisSpeed * (actualDuration / LIVE_MAX_UTTERANCE_SECONDS) * 1.02),
+          );
+          console.warn(
+            `[LiveHost] TTS duration ${actualDuration.toFixed(2)}s exceeds ` +
+              `${LIVE_MAX_UTTERANCE_SECONDS}s; retry ${attempt + 1}/4 ` +
+              `text=${spokenText.length} speed=${synthesisSpeed.toFixed(2)}`,
+          );
+        }
+
+        if (!withinDurationBudget) {
+          console.warn(`[LiveHost] Utterance skipped: could not fit TTS audio within ${LIVE_MAX_UTTERANCE_SECONDS}s`);
           continue;
         }
       } catch (err: any) {
@@ -1680,7 +1725,7 @@ class LiveHostOrchestrator {
       }
 
       // Semua segmen jawaban komentar tetap priority agar tidak terpotong buffer otonom.
-      await this.submitToGPU(sessionId, seg.text, audioBase64, seg.action, priority);
+      await this.submitToGPU(sessionId, spokenText, audioBase64, seg.action, priority);
     }
 
     state.counters.generated++;

@@ -415,7 +415,7 @@ def _get_avatar_materials(
     parsing_mode,
     vae,
     fp,
-    default_fps=25,
+    default_fps=None,
     upper_boundary_ratio=None,
     square_pad=None,
 ):
@@ -424,6 +424,8 @@ def _get_avatar_materials(
     Subsequent tasks for the same avatar will fetch materials instantly in 0 ms.
     """
     global _avatar_assets_cache
+    if default_fps is None:
+        default_fps = int(os.environ.get("AI_WORKER_FPS", "30"))
     vis = musetalk_visual_params()
     if upper_boundary_ratio is None:
         upper_boundary_ratio = vis["upper_boundary_ratio"]

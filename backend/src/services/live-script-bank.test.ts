@@ -8,6 +8,7 @@ import {
   emptyProductMemory,
   emptySalesRuleMemory,
   emptyScriptBank,
+  fitScriptBankSpeech,
   inferSemanticKey,
   isExactRepeat,
   isLexicalRepeat,
@@ -199,10 +200,7 @@ describe("product re-entry A→B→C→A", () => {
 
 describe("cycle + product reference", () => {
   it("rotates preferred angles across cycles", () => {
-    assert.notEqual(
-      preferredAnglesForCycle(0).join(","),
-      preferredAnglesForCycle(1).join(","),
-    );
+    assert.notEqual(preferredAnglesForCycle(0).join(","), preferredAnglesForCycle(1).join(","));
     assert.equal(marathonCycleId(0), 0);
     assert.equal(marathonCycleId(45), 1);
   });
@@ -218,6 +216,20 @@ describe("cycle + product reference", () => {
 });
 
 describe("memory bounds + smoke", () => {
+  it("keeps script bank lines within a clean duration budget", () => {
+    const clipped = fitScriptBankSpeech(
+      "Ini adalah kalimat panjang yang memiliki beberapa bagian penting. Bagian berikutnya tidak perlu masuk ke video berikutnya.",
+      12,
+    );
+    assert.ok(clipped.split(/\s+/).length <= 12);
+    assert.match(clipped, /[.!?]$/);
+
+    const seeded = seedLocalScriptBank(sampleProduct("budget", "Serum Budget"), [], {
+      cycleId: 0,
+    });
+    assert.ok(seeded.every((item) => item.speech.split(/\s+/).length <= 18));
+  });
+
   it("keeps semantic memory bounded", () => {
     const mem = emptyProductMemory("bound");
     for (let i = 0; i < SEMANTIC_MEMORY_LIMIT + 40; i++) {

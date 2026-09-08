@@ -4,9 +4,9 @@ import type { StreamPlan } from "./live-host-orchestrator.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.LIVE_BRAIN_API_KEY || "";
+const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 18);
 
-const GEMINI_MODEL_RAW =
-  process.env.GEMINI_MODEL || process.env.LIVE_BRAIN_MODEL || "gemini-3.6-flash";
+const GEMINI_MODEL_RAW = process.env.GEMINI_MODEL || process.env.LIVE_BRAIN_MODEL || "gemini-3.6-flash";
 const DEPRECATED_GEMINI_MODELS: Record<string, string> = {
   "gemini-3.7-flash": "gemini-3.6-flash",
   "gemini-2.5-flash": "gemini-3.6-flash",
@@ -42,15 +42,10 @@ function resolveGeminiModel(requested = GEMINI_MODEL_RAW): string {
 const GEMINI_MODEL = resolveGeminiModel();
 
 if (GEMINI_MODEL !== GEMINI_MODEL_RAW.trim()) {
-  console.warn(
-    `[LiveBrain] GEMINI_MODEL "${GEMINI_MODEL_RAW}" sudah deprecated → memakai "${GEMINI_MODEL}"`,
-  );
+  console.warn(`[LiveBrain] GEMINI_MODEL "${GEMINI_MODEL_RAW}" sudah deprecated → memakai "${GEMINI_MODEL}"`);
 }
 
-const GROQ_MODEL_RAW =
-  process.env.GROQ_MODEL ||
-  process.env.LIVE_BRAIN_MODEL ||
-  "openai/gpt-oss-20b";
+const GROQ_MODEL_RAW = process.env.GROQ_MODEL || process.env.LIVE_BRAIN_MODEL || "openai/gpt-oss-20b";
 
 const DEPRECATED_GROQ_MODELS: Record<string, string> = {
   "llama-3.1-8b-instant": "openai/gpt-oss-20b",
@@ -63,10 +58,7 @@ const DEPRECATED_GROQ_MODELS: Record<string, string> = {
 };
 
 /** Model aktif Groq (developer tier). Primary cepat; fallback lebih kuat. */
-const GROQ_MODEL_FALLBACKS = [
-  "openai/gpt-oss-20b",
-  "openai/gpt-oss-120b",
-] as const;
+const GROQ_MODEL_FALLBACKS = ["openai/gpt-oss-20b", "openai/gpt-oss-120b"] as const;
 
 function resolveGroqModel(requested = GROQ_MODEL_RAW): string {
   const normalized = requested.trim();
@@ -76,15 +68,10 @@ function resolveGroqModel(requested = GROQ_MODEL_RAW): string {
 const GROQ_MODEL = resolveGroqModel();
 
 if (GROQ_MODEL !== GROQ_MODEL_RAW.trim()) {
-  console.warn(
-    `[LiveBrain] GROQ_MODEL "${GROQ_MODEL_RAW}" sudah deprecated → memakai "${GROQ_MODEL}"`,
-  );
+  console.warn(`[LiveBrain] GROQ_MODEL "${GROQ_MODEL_RAW}" sudah deprecated → memakai "${GROQ_MODEL}"`);
 }
 
-const GROQ_BASE_URL = (process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").replace(
-  /\/+$/,
-  "",
-);
+const GROQ_BASE_URL = (process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
 
 const CIRCUIT_BREAKER_MS = Number(process.env.LIVE_BRAIN_CIRCUIT_MS || 45_000);
 const SELFHOST_CIRCUIT_MS = Number(process.env.LIVE_BRAIN_SELFHOST_CIRCUIT_MS || 5_000);
@@ -151,11 +138,7 @@ function pruneBackoffMap(map: Map<string, number>): void {
   }
 }
 
-function tripCircuit(
-  provider: "groq" | "gemini",
-  ms = CIRCUIT_BREAKER_MS,
-  sessionId?: string,
-): void {
+function tripCircuit(provider: "groq" | "gemini", ms = CIRCUIT_BREAKER_MS, sessionId?: string): void {
   const selfHostedGroq = provider === "groq" && isSelfHostedBrain();
   const duration = selfHostedGroq ? Math.min(ms, SELFHOST_CIRCUIT_MS) : ms;
   const until = Date.now() + duration;
@@ -176,9 +159,7 @@ function tripCircuit(
 
 export function getBrainBackoffMs(sessionId?: string): number {
   pruneBackoffMap(sessionBackoffUntil);
-  const sessionWait = sessionId
-    ? Math.max(0, (sessionBackoffUntil.get(sessionId) || 0) - Date.now())
-    : 0;
+  const sessionWait = sessionId ? Math.max(0, (sessionBackoffUntil.get(sessionId) || 0) - Date.now()) : 0;
   const globalWait = Math.max(0, globalBrainBackoffUntil - Date.now());
   return Math.max(sessionWait, globalWait);
 }
@@ -226,9 +207,7 @@ export type HostIntent =
   | "SPAM"
   | "OTHER";
 
-export const LunaActionEnum = z.enum([
-  "IDLE",
-]);
+export const LunaActionEnum = z.enum(["IDLE"]);
 export type LunaAction = z.infer<typeof LunaActionEnum>;
 
 /** Semua action → IDLE hint. Body = idle/talk* di worker. */
@@ -295,10 +274,7 @@ export type SpeechGestureSegment = { text: string; action: LunaAction };
  * Saat point off: selalu 1 segmen IDLE.
  * (API tetap ada supaya orchestrator tidak pecah saat CTA diaktifkan lagi.)
  */
-export function splitSpeechIntoGestureSegments(
-  speech: string,
-  _action: unknown,
-): SpeechGestureSegment[] {
+export function splitSpeechIntoGestureSegments(speech: string, _action: unknown): SpeechGestureSegment[] {
   const clean = String(speech || "")
     .replace(/^\s*\[[A-Z_]+\]\s*/i, "")
     .replace(/\s+/g, " ")
@@ -470,14 +446,14 @@ function hasHighPhraseOverlap(text: string, previous: string[]): boolean {
 }
 
 function extractActionTag(text: string): { speech: string; action: LunaAction } {
-    const match = text.match(/^\s*\[([A-Z_]+)\]\s*/i);
-    if (!match) return { speech: text.trim(), action: "IDLE" };
-    const tag = String(match[1]).toUpperCase();
-    return {
-      speech: text.slice(match[0].length).trim(),
-      action: normalizeLunaAction(tag),
-    };
-  }
+  const match = text.match(/^\s*\[([A-Z_]+)\]\s*/i);
+  if (!match) return { speech: text.trim(), action: "IDLE" };
+  const tag = String(match[1]).toUpperCase();
+  return {
+    speech: text.slice(match[0].length).trim(),
+    action: normalizeLunaAction(tag),
+  };
+}
 
 function cleanForTts(text: string): string {
   return extractActionTag(text)
@@ -618,10 +594,7 @@ function buildGeminiGenerationConfig(model: string) {
   return config;
 }
 
-async function callGeminiWithModel(
-  prompt: string,
-  model: string,
-): Promise<ProviderResult> {
+async function callGeminiWithModel(prompt: string, model: string): Promise<ProviderResult> {
   const client = getGeminiClient();
   const response = await client.models.generateContent({
     model,
@@ -681,9 +654,7 @@ async function callGemini(prompt: string, options: BrainCallOptions = {}): Promi
       }
       const canRetry = i < candidates.length - 1 && isGeminiModelNotFound(err);
       if (!canRetry) throw lastError;
-      console.warn(
-        `[LiveBrain] Gemini model ${model} tidak tersedia, coba berikutnya...`,
-      );
+      console.warn(`[LiveBrain] Gemini model ${model} tidak tersedia, coba berikutnya...`);
     }
   }
 
@@ -792,12 +763,9 @@ async function callGroq(prompt: string, options: BrainCallOptions = {}): Promise
       return await callGroqWithModel(prompt, model, options);
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      const canRetry =
-        i < candidates.length - 1 && isGroqModelNotFound(lastError.message);
+      const canRetry = i < candidates.length - 1 && isGroqModelNotFound(lastError.message);
       if (!canRetry) throw lastError;
-      console.warn(
-        `[LiveBrain] Groq model ${model} tidak tersedia, coba berikutnya...`,
-      );
+      console.warn(`[LiveBrain] Groq model ${model} tidak tersedia, coba berikutnya...`);
     }
   }
 
@@ -1038,7 +1006,7 @@ export async function generateScriptBankLines(input: SalesBrainInput): Promise<H
   const prompt = `${systemPrompt}
 
 TUGAS: buat 20–24 ucapan host otonom yang BERBEDA dan NATURAL (bukan robot).
-Gaya TikTok/Shopee host: kasual, hidup, 12–32 kata.
+Gaya TikTok/Shopee host: kasual, hidup, 12–18 kata per baris agar selesai sebelum video talk berganti.
 LARANG frasa kaku berulang: "dari data produk", "yang tertulis", "aku nggak nebak", "patokannya".
 Jangan mengarang fakta. Campur topik: benefit, how_to_use, value, social, objection, micro_tip, reframe, use_case, promo_pitch, filler.
 Setiap baris harus beda angle/pembuka — jangan parafrase ulang baris sebelumnya.
@@ -1061,7 +1029,15 @@ Kembalikan JSON murni:
       const validated = ScriptBankLineSchema.safeParse(item);
       if (!validated.success) continue;
       const safe = selectSafeParsedResponse(validated.data, input);
-      if (safe) accepted.push(safe);
+      if (safe) {
+        const words = safe.speech.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+        safe.speech =
+          words
+            .slice(0, SCRIPT_BANK_MAX_WORDS)
+            .join(" ")
+            .replace(/[,;:!?-]+$/g, "") + ".";
+        accepted.push(safe);
+      }
     }
     return accepted;
   } catch (err: any) {
@@ -1139,7 +1115,8 @@ function mapTopicMode(topic: string): { topic: string; mode: HostMode; intent?: 
   if (t.includes("banner")) return { topic: "banner_callout", mode: "ENGAGE", intent: "SOCIAL" };
   if (t.includes("bridge") || t.includes("transisi")) return { topic: "catalog_bridge", mode: "SELL" };
   if (t.includes("sold")) return { topic: "sold_out", mode: "SELL", intent: "ANNOUNCEMENT" };
-  if (t.includes("troll") || t.includes("spam") || t.includes("out")) return { topic: "deflection", mode: "SOCIAL", intent: "SOCIAL" };
+  if (t.includes("troll") || t.includes("spam") || t.includes("out"))
+    return { topic: "deflection", mode: "SOCIAL", intent: "SOCIAL" };
   if (t.includes("faq") || t.includes("qna")) return { topic: "faq", mode: "QNA", intent: "PRODUCT_INFO" };
   if (t.includes("usage") || t.includes("pakai")) return { topic: "how_to_use", mode: "DEMO", intent: "PRODUCT_INFO" };
   return { topic: topic || "benefit", mode: "ENGAGE" };
@@ -1376,7 +1353,14 @@ Kembalikan JSON murni: {"lines":[{ "speech":"", "topic":"", "mode":"ENGAGE|SELL|
           const extraRaw = cleanAndExtractJson(extraResult.text) as { lines?: unknown } | null;
           const extraLines = Array.isArray(extraRaw?.lines) ? extraRaw.lines : [];
           for (const item of extraLines) {
-            const row = item as { speech?: string; topic?: string; mode?: string; intent?: string; ctaType?: string; emotion?: string };
+            const row = item as {
+              speech?: string;
+              topic?: string;
+              mode?: string;
+              intent?: string;
+              ctaType?: string;
+              emotion?: string;
+            };
             if (!row.speech || row.speech.length < 8) continue;
             const meta = mapTopicMode(row.topic || "benefit");
             llmLines.push({
@@ -1620,4 +1604,3 @@ export async function generateLunaResponse(
 }
 
 export const generateLunaResponseGroq = generateLunaResponse;
-

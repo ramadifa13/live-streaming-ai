@@ -1,9 +1,4 @@
-import type {
-  HostIntent,
-  HostMode,
-  HostResponse,
-  LunaEmotion,
-} from "./groq-brain.js";
+import type { HostIntent, HostMode, HostResponse, LunaEmotion } from "./groq-brain.js";
 import { inferCtaPointAction, normalizeLunaAction } from "./groq-brain.js";
 import {
   BANNER_CTA_COOLDOWN_MS,
@@ -125,9 +120,7 @@ const FAQ_HINT =
   /\b(berapa|harga|ongkir|kirim|cod|garansi|bpom|halal|expired|ed|ukuran|ml|gram|isi|kemasan|varian|warna|size|sisa|stok|berapa lama|berapa kali)\b/i;
 
 /** Ekstrak benefits/usage/faq HANYA dari teks deskripsi — tanpa mengarang fakta baru. */
-export function extractProductKnowledgeFromDescription(
-  description: string,
-): ExtractedProductKnowledge {
+export function extractProductKnowledgeFromDescription(description: string): ExtractedProductKnowledge {
   const sentences = splitFacts(description);
   const benefits: string[] = [];
   const usage: string[] = [];
@@ -202,8 +195,8 @@ export const RHYTHM_SLOTS: string[] = [
 export const FILLER_TOPICS = new Set(["filler", "energy_reset"]);
 
 /** Kapasitas bank lokal per produk — cukup untuk marathon 8–24 jam tanpa LLM live. */
-export const SCRIPT_BANK_CAP = Number(process.env.LIVE_SCRIPT_BANK_CAP || 520);
-const RECYCLE_BATCH = Number(process.env.LIVE_SCRIPT_BANK_RECYCLE_BATCH || 160);
+export const SCRIPT_BANK_CAP = Number(process.env.LIVE_SCRIPT_BANK_CAP || 900);
+const RECYCLE_BATCH = Number(process.env.LIVE_SCRIPT_BANK_RECYCLE_BATCH || 220);
 const RECYCLE_ROUNDS = Number(process.env.LIVE_SCRIPT_BANK_RECYCLE_ROUNDS || 3);
 
 const PARAPHRASE_OPENERS = [
@@ -224,13 +217,7 @@ const PARAPHRASE_OPENERS = [
 /** Max fraction of recycle lines that may get a paraphrase opener (anti AI-template). */
 const PARAPHRASE_VARIANT_RATE = Number(process.env.LIVE_PARAPHRASE_VARIANT_RATE || 0.18);
 
-const LLM_COMMENT_INTENTS = new Set<HostIntent>([
-  "OBJECTION",
-  "BUYING_INTENT",
-  "COMPLAINT",
-  "ANSWER",
-  "ANNOUNCEMENT",
-]);
+const LLM_COMMENT_INTENTS = new Set<HostIntent>(["OBJECTION", "BUYING_INTENT", "COMPLAINT", "ANSWER", "ANNOUNCEMENT"]);
 
 const TOPIC_MODES: Record<string, HostMode[]> = {
   problem: ["ENGAGE", "SELL"],
@@ -280,11 +267,7 @@ export function detectGreetingClass(speech: string): string | null {
   return null;
 }
 
-export function hasRecentGreetingClass(
-  speech: string,
-  recentSpeeches: string[],
-  window = 8,
-): boolean {
+export function hasRecentGreetingClass(speech: string, recentSpeeches: string[], window = 8): boolean {
   const cls = detectGreetingClass(speech);
   if (!cls) return false;
   return recentSpeeches.slice(-window).some((item) => detectGreetingClass(item) === cls);
@@ -303,11 +286,24 @@ export function stripLeadingGreeting(speech: string): string {
   return stripped.charAt(0).toUpperCase() + stripped.slice(1);
 }
 
-function clampSpeech(text: string, maxWords = 32): string {
-  const words = text.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
-  if (words.length <= maxWords) return words.join(" ");
-  return words.slice(0, maxWords).join(" ");
+export function fitScriptBankSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const words = normalized.split(" ").filter(Boolean);
+  if (words.length <= maxWords) return normalized;
+
+  const clipped = words.slice(0, maxWords).join(" ");
+  const sentenceEnd = Math.max(clipped.lastIndexOf("."), clipped.lastIndexOf("!"), clipped.lastIndexOf("?"));
+  if (sentenceEnd >= Math.floor(clipped.length * 0.55)) {
+    return clipped.slice(0, sentenceEnd + 1).trim();
+  }
+  return clipped.replace(/[,;:!?-]+$/g, "").trim() + ".";
 }
+
+function clampSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
+  return fitScriptBankSpeech(text, Math.min(maxWords, SCRIPT_BANK_MAX_WORDS));
+}
+
+export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 18);
 
 function splitFacts(text: string): string[] {
   if (!text?.trim()) return [];
@@ -368,7 +364,7 @@ function withParaphraseVariants(items: HostResponse[]): HostResponse[] {
     if (normalize(variant) === normalize(speech)) continue;
     out.push({
       ...item,
-      speech: clampSpeech(variant, FILLER_TOPICS.has(item.topic) ? 16 : 32),
+      speech: clampSpeech(variant, FILLER_TOPICS.has(item.topic) ? 16 : SCRIPT_BANK_MAX_WORDS),
     });
     variantsAdded++;
   }
@@ -376,10 +372,7 @@ function withParaphraseVariants(items: HostResponse[]): HostResponse[] {
 }
 
 /** Hook penjualan product-agnostic (intent-first) — cocok semua kategori. */
-function intentAgnosticHooks(
-  product: ScriptProductFacts,
-  entryMode: ProductEntryMode = "continuing",
-): HostResponse[] {
+function intentAgnosticHooks(product: ScriptProductFacts, entryMode: ProductEntryMode = "continuing"): HostResponse[] {
   const name = ref(product, entryMode);
   const price = product.price || "harga live";
   const fact = pickFact(factChunks(product), `kelebihan ${product.name || "produk ini"}`);
@@ -470,28 +463,20 @@ function categorySalesHooks(product: ScriptProductFacts): HostResponse[] {
     },
     {
       match: /makanan|minuman|fnb|kuliner/,
-      speeches: [
-        `Buat stok atau coba rasa baru, ${name} — ${fact}. Harga live ${price}.`,
-      ],
+      speeches: [`Buat stok atau coba rasa baru, ${name} — ${fact}. Harga live ${price}.`],
     },
     {
       match: /elektronik|gadget/,
-      speeches: [
-        `Yang cari perangkat praktis, ${name}: ${fact}. Live ${price}.`,
-      ],
+      speeches: [`Yang cari perangkat praktis, ${name}: ${fact}. Live ${price}.`],
     },
     {
       match: /kesehatan|herbal|ibu|bayi|rumah|tangga/,
-      speeches: [
-        `Yang prioritaskan ${domainNeed(cat)}, ${name} — ${fact}.`,
-      ],
+      speeches: [`Yang prioritaskan ${domainNeed(cat)}, ${name} — ${fact}.`],
     },
   ];
   const matched = templates.find((t) => t.match.test(cat));
   if (!matched) return [];
-  return matched.speeches.map((speech) =>
-    line(speech, "promo_pitch", "SELL", { ctaType: "SOFT" }),
-  );
+  return matched.speeches.map((speech) => line(speech, "promo_pitch", "SELL", { ctaType: "SOFT" }));
 }
 
 /** Kombinasi 2 fakta → variasi ekstra tanpa LLM. */
@@ -529,26 +514,17 @@ function greet(): string {
   return RARE_GREETINGS[Math.floor(Math.random() * RARE_GREETINGS.length)] || "";
 }
 
-function line(
-  speech: string,
-  topic: string,
-  mode: HostMode,
-  extras?: Partial<HostResponse>,
-): HostResponse {
+function line(speech: string, topic: string, mode: HostMode, extras?: Partial<HostResponse>): HostResponse {
   const emotions: LunaEmotion[] = ["warm", "neutral", "happy", "excited"];
   const maxWords = FILLER_TOPICS.has(topic) ? 16 : 32;
   const clamped = clampSpeech(speech, maxWords);
   const semanticKey = extras?.semanticKey || inferSemanticKey(clamped, topic);
   const salesRule =
     extras?.salesRule ||
-    (extras?.ctaType && extras.ctaType !== "NONE"
-      ? inferSalesRule(topic, extras.ctaType) || undefined
-      : undefined);
+    (extras?.ctaType && extras.ctaType !== "NONE" ? inferSalesRule(topic, extras.ctaType) || undefined : undefined);
   return {
     speech: clamped,
-    action: extras?.action
-      ? normalizeLunaAction(extras.action)
-      : inferCtaPointAction(speech, topic),
+    action: extras?.action ? normalizeLunaAction(extras.action) : inferCtaPointAction(speech, topic),
     emotion: extras?.emotion || emotions[Math.floor(Math.random() * emotions.length)] || "warm",
     intent: extras?.intent || "SELL",
     mode,
@@ -564,11 +540,7 @@ function line(
   };
 }
 
-function ref(
-  product: ScriptProductFacts,
-  entryMode: ProductEntryMode = "continuing",
-  forceName = false,
-): string {
+function ref(product: ScriptProductFacts, entryMode: ProductEntryMode = "continuing", forceName = false): string {
   return productReference(product.name || "produk ini", entryMode, { forceName });
 }
 
@@ -624,10 +596,7 @@ function fillerLines(product: ScriptProductFacts): HostResponse[] {
   );
 }
 
-function promoPitchLines(
-  product: ScriptProductFacts,
-  entryMode: ProductEntryMode = "continuing",
-): HostResponse[] {
+function promoPitchLines(product: ScriptProductFacts, entryMode: ProductEntryMode = "continuing"): HostResponse[] {
   const name = ref(product, entryMode);
   const price = product.price || "harga live";
   const benefit = pickFact(
@@ -666,18 +635,14 @@ function promoPitchLines(
       "SELL",
       { ctaType: "SOFT", behavior: "soft_cta" },
     ),
-    line(
-      `Yang nanya ${name} — ${benefit}, live ${price}.`,
-      "promo_pitch",
-      "SELL",
-      { ctaType: "SOFT", behavior: "answer" },
-    ),
-    line(
-      `${greet()}banyak yang nanya ${name}. ${benefit}. ${price} di live.`,
-      "promo_pitch",
-      "SELL",
-      { ctaType: "DIRECT", behavior: "observation" },
-    ),
+    line(`Yang nanya ${name} — ${benefit}, live ${price}.`, "promo_pitch", "SELL", {
+      ctaType: "SOFT",
+      behavior: "answer",
+    }),
+    line(`${greet()}banyak yang nanya ${name}. ${benefit}. ${price} di live.`, "promo_pitch", "SELL", {
+      ctaType: "DIRECT",
+      behavior: "observation",
+    }),
     line(
       entryMode === "new_viewer" || entryMode === "first_intro"
         ? `Yang baru join, kita bahas ${name}: ${benefit}. Harganya ${price}.`
@@ -689,25 +654,14 @@ function promoPitchLines(
   ];
 }
 
-function bridgeLines(
-  product: ScriptProductFacts,
-  catalog: Array<{ name: string }>,
-): HostResponse[] {
+function bridgeLines(product: ScriptProductFacts, catalog: Array<{ name: string }>): HostResponse[] {
   const name = product.name || "produk ini";
   const other = catalog.find((item) => item.name && item.name !== name)?.name;
   if (!other) {
     return [
-      line(
-        `${greet()}fokus dulu di ${name}. Produk lain kita buka kalau emang perlu.`,
-        "catalog_bridge",
-        "ENGAGE",
-      ),
+      line(`${greet()}fokus dulu di ${name}. Produk lain kita buka kalau emang perlu.`, "catalog_bridge", "ENGAGE"),
       line(`Kita lag di ${name} dulu biar nggak lompat-lompat.`, "catalog_bridge", "ENGAGE"),
-      line(
-        `Etalase lain nanti. Sekarang masih soal ${name}.`,
-        "catalog_bridge",
-        "SELL",
-      ),
+      line(`Etalase lain nanti. Sekarang masih soal ${name}.`, "catalog_bridge", "SELL"),
     ];
   }
   return [
@@ -729,10 +683,7 @@ function bridgeLines(
   ];
 }
 
-function stockLines(
-  product: ScriptProductFacts,
-  catalog: Array<{ name: string }>,
-): HostResponse[] {
+function stockLines(product: ScriptProductFacts, catalog: Array<{ name: string }>): HostResponse[] {
   const name = product.name || "produk ini";
   const stock = Number(product.stock);
   const other = catalog.find((item) => item.name && item.name !== name)?.name;
@@ -767,21 +718,15 @@ function stockLines(
         "SELL",
         { intent: "ANNOUNCEMENT", ctaType: "SOFT" },
       ),
-      line(
-        `Info stok: ${name} sisa ${stock}. Itu angka etalase saat ini.`,
-        "value",
-        "ENGAGE",
-        { intent: "ANNOUNCEMENT" },
-      ),
+      line(`Info stok: ${name} sisa ${stock}. Itu angka etalase saat ini.`, "value", "ENGAGE", {
+        intent: "ANNOUNCEMENT",
+      }),
     );
   }
   return lines;
 }
 
-function bannerLines(
-  product: ScriptProductFacts,
-  entryMode: ProductEntryMode = "continuing",
-): HostResponse[] {
+function bannerLines(product: ScriptProductFacts, entryMode: ProductEntryMode = "continuing"): HostResponse[] {
   if (!product.hasBanner) return [];
   const name = ref(product, entryMode);
   const contexts: BannerCTAContext[] =
@@ -804,24 +749,15 @@ function bannerLines(
 function deflectionLines(product: ScriptProductFacts): HostResponse[] {
   const name = product.name || "produk ini";
   return [
-    line(
-      `${greet()}topiknya agak melebar. Kita balik ke ${name} dulu ya.`,
-      "deflection",
-      "SOCIAL",
-      { intent: "SOCIAL" },
-    ),
-    line(
-      `Aku skip yang spam ya. Fokus ke ${name} biar chatnya bermanfaat.`,
-      "deflection",
-      "ENGAGE",
-      { intent: "SPAM" },
-    ),
-    line(
-      `${greet()}santai, nggak perlu debat. Ada pertanyaan spesifik soal ${name}?`,
-      "deflection",
-      "SOCIAL",
-      { intent: "SOCIAL" },
-    ),
+    line(`${greet()}topiknya agak melebar. Kita balik ke ${name} dulu ya.`, "deflection", "SOCIAL", {
+      intent: "SOCIAL",
+    }),
+    line(`Aku skip yang spam ya. Fokus ke ${name} biar chatnya bermanfaat.`, "deflection", "ENGAGE", {
+      intent: "SPAM",
+    }),
+    line(`${greet()}santai, nggak perlu debat. Ada pertanyaan spesifik soal ${name}?`, "deflection", "SOCIAL", {
+      intent: "SOCIAL",
+    }),
   ];
 }
 
@@ -848,13 +784,23 @@ function combinatorialLines(
     { topic: "problem", mode: "ENGAGE", build: (fact) => `${greet()}lagi ribet soal ${need}? Coba cek ${fact}.` },
     { topic: "problem", mode: "SELL", build: (fact) => `Buat yang butuh ${need}, ${name} nyambung karena ${fact}.` },
     { topic: "how_to_use", mode: "DEMO", build: (fact) => `${greet()}cara pakainya gampang: ${fact}.` },
-    { topic: "how_to_use", mode: "QNA", build: (fact) => `Pakai ${name} begini aja: ${fact}.`, extras: { intent: "PRODUCT_INFO" } },
+    {
+      topic: "how_to_use",
+      mode: "QNA",
+      build: (fact) => `Pakai ${name} begini aja: ${fact}.`,
+      extras: { intent: "PRODUCT_INFO" },
+    },
     { topic: "how_to_use", mode: "DEMO", build: (fact) => `Jangan dipersulit — ${fact}.` },
     { topic: "value", mode: "SELL", build: (fact) => `Live ${price}. Worth-nya kalau kamu emang butuh ${fact}.` },
     { topic: "value", mode: "ENGAGE", build: (fact) => `${name} ${price}. Bandingin sama ${fact}, santai aja.` },
     { topic: "value", mode: "SELL", build: (fact) => `${greet()}intinya ${fact}, harganya ${price}.` },
     { topic: "faq", mode: "QNA", build: (fact) => `Yang sering ditanya: ${fact}.`, extras: { intent: "PRODUCT_INFO" } },
-    { topic: "faq", mode: "QNA", build: (fact) => `${greet()}${fact} — itu yang aku bisa jawab dari info ${name}.`, extras: { intent: "PRODUCT_INFO" } },
+    {
+      topic: "faq",
+      mode: "QNA",
+      build: (fact) => `${greet()}${fact} — itu yang aku bisa jawab dari info ${name}.`,
+      extras: { intent: "PRODUCT_INFO" },
+    },
     { topic: "objection", mode: "OBJECTION", build: (fact) => `Ragu? Wajar. Aku pegang yang ini dulu: ${fact}.` },
     { topic: "objection", mode: "OBJECTION", build: (fact) => `${greet()}nggak usah ribut. Kita lihat ${fact} aja.` },
     { topic: "use_case", mode: "DEMO", build: (fact) => `Bayangin pas lagi butuh ${need} — ${fact}.` },
@@ -864,32 +810,133 @@ function combinatorialLines(
     { topic: "reframe", mode: "ENGAGE", build: (fact) => `Jangan ikut ramai dulu. Cek ${fact}.` },
     { topic: "reframe", mode: "OBJECTION", build: (fact) => `${greet()}sudut lain: ${fact}.` },
     { topic: "buyer_fit", mode: "SELL", build: (fact) => `Cocok buat yang lagi cari ${need} — ${fact}.` },
-    { topic: "buyer_fit", mode: "ENGAGE", build: (fact) => `${greet()}${name} lebih pas kalau kamu butuh ${need}: ${fact}.` },
-    { topic: "price_context", mode: "SELL", build: (fact) => `${name} sekarang ${price}. ${fact}.`, extras: { ctaType: "PRICE", intent: "PRICE" } },
-    { topic: "price_context", mode: "QNA", build: () => `${greet()}harganya ${price} ya. Ongkirnya cek di checkout.`, extras: { ctaType: "NONE", intent: "PRICE" } },
-    { topic: "soft_cta", mode: "SELL", build: (fact) => `Kalau ${fact} emang kamu butuhin, boleh cek keranjangnya.`, extras: { ctaType: "SOFT" } },
-    { topic: "soft_cta", mode: "SELL", build: (fact) => `${greet()}nggak dipaksa. Kalau ${fact} nyambung, keranjangnya siap.`, extras: { ctaType: "SOFT" } },
-    { topic: "social_engagement", mode: "SOCIAL", build: (fact) => `Mau nanya soal ${fact}? Langsung ketik aja.`, extras: { intent: "SOCIAL" } },
-    { topic: "social_engagement", mode: "ENGAGE", build: () => `Ada yang belum jelas soal ${name}? Tulis di chat, nanti aku jawab.`, extras: { intent: "SOCIAL" } },
-    { topic: "social_engagement", mode: "SOCIAL", build: (fact) => `Chat spesifik aja — misalnya soal ${fact}.`, extras: { intent: "SOCIAL" } },
-    { topic: "energy_reset", mode: "ENGAGE", build: (fact) => `Intinya ${name}: ${fact}.`, extras: { intent: "SOCIAL" } },
-    { topic: "energy_reset", mode: "SOCIAL", build: (fact) => `Kita pegang poin ini dulu: ${fact}.`, extras: { intent: "SOCIAL" } },
-    { topic: "closing_loop", mode: "CLOSING", build: (fact) => `Jadi ${name}: ${fact}. Live ${price}.`, extras: { ctaType: "SOFT" } },
-    { topic: "closing_loop", mode: "CLOSING", build: (fact) => `${greet()}ingat ya — ${fact}. ${name} ${price}.`, extras: { ctaType: "SOFT" } },
+    {
+      topic: "buyer_fit",
+      mode: "ENGAGE",
+      build: (fact) => `${greet()}${name} lebih pas kalau kamu butuh ${need}: ${fact}.`,
+    },
+    {
+      topic: "price_context",
+      mode: "SELL",
+      build: (fact) => `${name} sekarang ${price}. ${fact}.`,
+      extras: { ctaType: "PRICE", intent: "PRICE" },
+    },
+    {
+      topic: "price_context",
+      mode: "QNA",
+      build: () => `${greet()}harganya ${price} ya. Ongkirnya cek di checkout.`,
+      extras: { ctaType: "NONE", intent: "PRICE" },
+    },
+    {
+      topic: "soft_cta",
+      mode: "SELL",
+      build: (fact) => `Kalau ${fact} emang kamu butuhin, boleh cek keranjangnya.`,
+      extras: { ctaType: "SOFT" },
+    },
+    {
+      topic: "soft_cta",
+      mode: "SELL",
+      build: (fact) => `${greet()}nggak dipaksa. Kalau ${fact} nyambung, keranjangnya siap.`,
+      extras: { ctaType: "SOFT" },
+    },
+    {
+      topic: "social_engagement",
+      mode: "SOCIAL",
+      build: (fact) => `Mau nanya soal ${fact}? Langsung ketik aja.`,
+      extras: { intent: "SOCIAL" },
+    },
+    {
+      topic: "social_engagement",
+      mode: "ENGAGE",
+      build: () => `Ada yang belum jelas soal ${name}? Tulis di chat, nanti aku jawab.`,
+      extras: { intent: "SOCIAL" },
+    },
+    {
+      topic: "social_engagement",
+      mode: "SOCIAL",
+      build: (fact) => `Chat spesifik aja — misalnya soal ${fact}.`,
+      extras: { intent: "SOCIAL" },
+    },
+    {
+      topic: "energy_reset",
+      mode: "ENGAGE",
+      build: (fact) => `Intinya ${name}: ${fact}.`,
+      extras: { intent: "SOCIAL" },
+    },
+    {
+      topic: "energy_reset",
+      mode: "SOCIAL",
+      build: (fact) => `Kita pegang poin ini dulu: ${fact}.`,
+      extras: { intent: "SOCIAL" },
+    },
+    {
+      topic: "closing_loop",
+      mode: "CLOSING",
+      build: (fact) => `Jadi ${name}: ${fact}. Live ${price}.`,
+      extras: { ctaType: "SOFT" },
+    },
+    {
+      topic: "closing_loop",
+      mode: "CLOSING",
+      build: (fact) => `${greet()}ingat ya — ${fact}. ${name} ${price}.`,
+      extras: { ctaType: "SOFT" },
+    },
     { topic: "mini_story", mode: "ENGAGE", build: (fact) => `Cerita singkatnya: ${fact}.` },
     { topic: "mini_story", mode: "SOCIAL", build: (fact) => `${greet()}singkat aja — ${fact}.` },
-    { topic: "comparison", mode: "QNA", build: (fact) => other
-      ? `${name} soal ${fact}. Kalau mau opsi lain, ada ${other} di etalase.`
-      : `Fokus ${name} dulu: ${fact}.` },
-    { topic: "promo_pitch", mode: "SELL", build: (fact) => `${greet()}yang lagi scroll, ${name} ${price} — ${fact}.`, extras: { ctaType: "SOFT" } },
-    { topic: "promo_pitch", mode: "SELL", build: (fact) => `Kalau ${fact} penting buatmu, ${name} patut dicek.`, extras: { ctaType: "SOFT" } },
-    { topic: "benefit", mode: "SELL", build: (fact) => `Ini yang bikin ${name} beda: ${fact}.`, extras: { ctaType: "NONE" } },
-    { topic: "benefit", mode: "ENGAGE", build: (fact) => `${greet()}dari info produknya, ${fact} — itu kekuatan ${name}.` },
-    { topic: "value", mode: "SELL", build: (fact) => `Harga ${price}, dapat ${fact}. Hitung sendiri apakah masuk.`, extras: { ctaType: "PRICE", intent: "PRICE" } },
-    { topic: "objection", mode: "OBJECTION", build: (fact) => `Takut nggak cocok? Cek dulu: ${fact}.`, extras: { intent: "OBJECTION" } },
-    { topic: "use_case", mode: "ENGAGE", build: (fact) => `Pas banget ${name} kalau ${fact}.`, extras: { intent: "SOCIAL" } },
+    {
+      topic: "comparison",
+      mode: "QNA",
+      build: (fact) =>
+        other ? `${name} soal ${fact}. Kalau mau opsi lain, ada ${other} di etalase.` : `Fokus ${name} dulu: ${fact}.`,
+    },
+    {
+      topic: "promo_pitch",
+      mode: "SELL",
+      build: (fact) => `${greet()}yang lagi scroll, ${name} ${price} — ${fact}.`,
+      extras: { ctaType: "SOFT" },
+    },
+    {
+      topic: "promo_pitch",
+      mode: "SELL",
+      build: (fact) => `Kalau ${fact} penting buatmu, ${name} patut dicek.`,
+      extras: { ctaType: "SOFT" },
+    },
+    {
+      topic: "benefit",
+      mode: "SELL",
+      build: (fact) => `Ini yang bikin ${name} beda: ${fact}.`,
+      extras: { ctaType: "NONE" },
+    },
+    {
+      topic: "benefit",
+      mode: "ENGAGE",
+      build: (fact) => `${greet()}dari info produknya, ${fact} — itu kekuatan ${name}.`,
+    },
+    {
+      topic: "value",
+      mode: "SELL",
+      build: (fact) => `Harga ${price}, dapat ${fact}. Hitung sendiri apakah masuk.`,
+      extras: { ctaType: "PRICE", intent: "PRICE" },
+    },
+    {
+      topic: "objection",
+      mode: "OBJECTION",
+      build: (fact) => `Takut nggak cocok? Cek dulu: ${fact}.`,
+      extras: { intent: "OBJECTION" },
+    },
+    {
+      topic: "use_case",
+      mode: "ENGAGE",
+      build: (fact) => `Pas banget ${name} kalau ${fact}.`,
+      extras: { intent: "SOCIAL" },
+    },
     { topic: "micro_tip", mode: "DEMO", build: (fact) => `${greet()}tips pakai ${name}: ${fact}.` },
-    { topic: "closing_loop", mode: "CLOSING", build: (fact) => `Udah jelas kan? ${name} — ${fact}. ${price}.`, extras: { ctaType: "SOFT" } },
+    {
+      topic: "closing_loop",
+      mode: "CLOSING",
+      build: (fact) => `Udah jelas kan? ${name} — ${fact}. ${price}.`,
+      extras: { ctaType: "SOFT" },
+    },
   ];
 
   const drafts: HostResponse[] = [];
@@ -928,9 +975,7 @@ export function commentNeedsLlm(intent: HostIntent, text: string): boolean {
 
 /** Baris bank yang belum mirip ucapan terakhir — indikator variasi masih ada. */
 export function countFreshScriptLines(bank: ScriptBankState, recent: string[] = []): number {
-  return bank.lines.filter(
-    (item) => !similarToAny(item.speech, recent) && !sharesOpening(item.speech, recent),
-  ).length;
+  return bank.lines.filter((item) => !similarToAny(item.speech, recent) && !sharesOpening(item.speech, recent)).length;
 }
 
 function commentKeywordOverlap(commentText: string, corpus: string): number {
@@ -986,8 +1031,7 @@ export function shouldUseLlmForComment(
   if (commentNeedsLlm(intent, text)) return { needed: true, reason: "intent" };
 
   const openQuestion =
-    text.includes("?") ||
-    /\b(gimana|gmn|kenapa|kapan|bisa|apakah|berapa|mana|boleh|maksudnya)\b/i.test(text);
+    text.includes("?") || /\b(gimana|gmn|kenapa|kapan|bisa|apakah|berapa|mana|boleh|maksudnya)\b/i.test(text);
   if (openQuestion && (intent === "OTHER" || intent === "ANSWER")) {
     return { needed: true, reason: "open-question" };
   }
@@ -1152,15 +1196,9 @@ export function seedLocalScriptBank(
   catalog: Array<{ name: string; benefits?: string }>,
   options?: SeedScriptOptions,
 ): HostResponse[] {
-  const entryMode: ProductEntryMode =
-    options?.entryMode ||
-    options?.productMemory?.entryMode ||
-    "continuing";
+  const entryMode: ProductEntryMode = options?.entryMode || options?.productMemory?.entryMode || "continuing";
   const cycleId = options?.cycleId ?? 0;
-  const name =
-    entryMode === "first_intro"
-      ? ref(product, entryMode, true)
-      : ref(product, entryMode);
+  const name = entryMode === "first_intro" ? ref(product, entryMode, true) : ref(product, entryMode);
   const price = product.price || "harga live";
   const category = product.category || "kebutuhan sehari-hari";
   const merged = mergeProductKnowledge(product.description, {
@@ -1182,19 +1220,15 @@ export function seedLocalScriptBank(
 
   const audienceLines: HostResponse[] = audience.length
     ? audience.map((fact) =>
-        line(
-          `${greet()}${name} cocok buat yang ${fact}.`,
-          "buyer_fit",
-          "ENGAGE",
-          { behavior: "audience_engagement", cycleId },
-        ),
+        line(`${greet()}${name} cocok buat yang ${fact}.`, "buyer_fit", "ENGAGE", {
+          behavior: "audience_engagement",
+          cycleId,
+        }),
       )
     : [];
 
   const copywritingLines: HostResponse[] = copyLines.length
-    ? copyLines.map((fact) =>
-        line(`${greet()}${fact}`, "benefit", "SELL", { behavior: "clarification", cycleId }),
-      )
+    ? copyLines.map((fact) => line(`${greet()}${fact}`, "benefit", "SELL", { behavior: "clarification", cycleId }))
     : [];
 
   const reEntryLead: HostResponse[] =
@@ -1206,12 +1240,10 @@ export function seedLocalScriptBank(
             "ENGAGE",
             { behavior: "transition", cycleId },
           ),
-          line(
-            `Balik lagi ke ${name} — angle-nya beda dari sebelumnya ya.`,
-            "reframe",
-            "ENGAGE",
-            { behavior: "transition", cycleId },
-          ),
+          line(`Balik lagi ke ${name} — angle-nya beda dari sebelumnya ya.`, "reframe", "ENGAGE", {
+            behavior: "transition",
+            cycleId,
+          }),
         ]
       : [];
 
@@ -1243,18 +1275,14 @@ export function seedLocalScriptBank(
       "ENGAGE",
       { behavior: "audience_engagement", cycleId },
     ),
-    line(
-      `Masih ragu? Wajar banget. Yang sering ditanya: ${pickFact(faq, anyFact)}.`,
-      "objection",
-      "OBJECTION",
-      { behavior: "thinking", cycleId },
-    ),
-    line(
-      `Soal value, ukur ${pickFact(benefits, anyFact)} versus harga live ${price}.`,
-      "value",
-      "SELL",
-      { behavior: "comparison", cycleId },
-    ),
+    line(`Masih ragu? Wajar banget. Yang sering ditanya: ${pickFact(faq, anyFact)}.`, "objection", "OBJECTION", {
+      behavior: "thinking",
+      cycleId,
+    }),
+    line(`Soal value, ukur ${pickFact(benefits, anyFact)} versus harga live ${price}.`, "value", "SELL", {
+      behavior: "comparison",
+      cycleId,
+    }),
     ...audienceLines,
     ...copywritingLines,
     ...promoPitchLines(product, entryMode),
@@ -1270,6 +1298,7 @@ export function seedLocalScriptBank(
     ...combinatorialLines(product, catalog, entryMode),
   ].map((item) => ({
     ...item,
+    speech: clampSpeech(item.speech, SCRIPT_BANK_MAX_WORDS),
     cycleId: item.cycleId ?? cycleId,
     semanticKey: item.semanticKey || inferSemanticKey(item.speech, item.topic),
   }));
@@ -1369,15 +1398,14 @@ export function takeScriptLine(
 
   const now = options.now ?? Date.now();
   const cycleId = options.cycleId ?? 0;
-  const avoidTopics = new Set(
-    (options.avoidTopics || []).map((t) => normalize(t)).filter(Boolean),
-  );
+  const avoidTopics = new Set((options.avoidTopics || []).map((t) => normalize(t)).filter(Boolean));
   const recentTopics = new Set(
-    (options.recentTopics || []).slice(-3).map((t) => normalize(t)).filter(Boolean),
+    (options.recentTopics || [])
+      .slice(-3)
+      .map((t) => normalize(t))
+      .filter(Boolean),
   );
-  const primaryTopic = options.preferTopic
-    ? normalize(String(options.preferTopic))
-    : "";
+  const primaryTopic = options.preferTopic ? normalize(String(options.preferTopic)) : "";
   let preferTopicsList = (options.preferTopics || [])
     .map((t) => normalize(String(t)))
     .filter((t) => Boolean(t) && t !== primaryTopic);
@@ -1442,10 +1470,7 @@ export function takeScriptLine(
   for (let i = 0; i < bank.lines.length; i++) {
     const item = bank.lines[i]!;
     // Hard reject exact content repeats (non-CTA).
-    if (
-      item.ctaType === "NONE" &&
-      recent.some((r) => isExactRepeat(item.speech, r))
-    ) {
+    if (item.ctaType === "NONE" && recent.some((r) => isExactRepeat(item.speech, r))) {
       continue;
     }
     const sales = salesRuleGuard({
@@ -1479,16 +1504,15 @@ export function takeScriptLine(
   return picked || null;
 }
 
-export function mergeScriptLines(
-  bank: ScriptBankState,
-  incoming: HostResponse[],
-  recent: string[],
-): number {
+export function mergeScriptLines(bank: ScriptBankState, incoming: HostResponse[], recent: string[]): number {
   const seen = new Set(bank.lines.map((item) => normalize(item.speech)));
   let added = 0;
   for (const item of incoming) {
     const isFiller = FILLER_TOPICS.has(item.topic || "");
-    const speech = clampSpeech(item.speech || "", isFiller ? 16 : 32);
+    const speech = clampSpeech(
+      item.speech || "",
+      Math.min(SCRIPT_BANK_MAX_WORDS, isFiller ? 16 : SCRIPT_BANK_MAX_WORDS),
+    );
     const key = normalize(speech);
     const minWords = isFiller ? 5 : 8;
     if (!key || seen.has(key) || similarToAny(speech, recent)) continue;
@@ -1497,9 +1521,10 @@ export function mergeScriptLines(
     bank.lines.push({
       ...item,
       speech,
-      action: normalizeLunaAction(item.action) !== "IDLE"
-        ? normalizeLunaAction(item.action)
-        : inferCtaPointAction(speech, item.topic),
+      action:
+        normalizeLunaAction(item.action) !== "IDLE"
+          ? normalizeLunaAction(item.action)
+          : inferCtaPointAction(speech, item.topic),
       mode: item.mode || mode,
       ctaType: item.ctaType || "NONE",
       target_product_id: item.target_product_id ?? null,
@@ -1514,24 +1539,23 @@ export function mergeScriptLines(
 
 function detectCommentBucket(text: string, intent: HostIntent): HostIntent | "USAGE" | "SHIPPING" {
   const t = normalize(text);
-  if (
-    /\b(brp|berapa|harga|price|pricelist|hrga|hrg|duit|cuan|promo|diskon|murah)\b/.test(t) ||
-    intent === "PRICE"
-  ) {
+  if (/\b(brp|berapa|harga|price|pricelist|hrga|hrg|duit|cuan|promo|diskon|murah)\b/.test(t) || intent === "PRICE") {
     return "PRICE";
   }
   if (
-    /\b(cara pakai|pemakaian|dipakai|pakai|pakainya|step|langkah|how to|aturan pakai|pakenya|dipake|cara pake)\b/.test(t)
+    /\b(cara pakai|pemakaian|dipakai|pakai|pakainya|step|langkah|how to|aturan pakai|pakenya|dipake|cara pake)\b/.test(
+      t,
+    )
   ) {
     return "USAGE";
   }
-  if (
-    /\b(kirim|ongkir|pengiriman|resi|cod|ekspedisi|shipping|antar|jne|jnt|sicepat|gratis ongkir)\b/.test(t)
-  ) {
+  if (/\b(kirim|ongkir|pengiriman|resi|cod|ekspedisi|shipping|antar|jne|jnt|sicepat|gratis ongkir)\b/.test(t)) {
     return "SHIPPING";
   }
   if (
-    /\b(bahan|isi|kandungan|manfaat|khasiat|ukuran|spesifikasi|detail|info|apa itu|bagus ga|bagus gak|kelebihan|fitur|material)\b/.test(t) ||
+    /\b(bahan|isi|kandungan|manfaat|khasiat|ukuran|spesifikasi|detail|info|apa itu|bagus ga|bagus gak|kelebihan|fitur|material)\b/.test(
+      t,
+    ) ||
     intent === "PRODUCT_INFO"
   ) {
     return "PRODUCT_INFO";
@@ -1548,10 +1572,7 @@ export function buildDefaultFaqPack(product: ScriptProductFacts): FaqPackEntry[]
     usage: product.usage,
     faq: product.faq,
   });
-  const benefit =
-    splitFacts(merged.benefits)[0] ||
-    splitFacts(product.description)[0] ||
-    `kelebihan ${name}`;
+  const benefit = splitFacts(merged.benefits)[0] || splitFacts(product.description)[0] || `kelebihan ${name}`;
   const benefit2 = splitFacts(merged.benefits)[1] || benefit;
   const usage = splitFacts(merged.usage)[0] || "ikuti petunjuk di info produk";
   const usage2 = splitFacts(merged.usage)[1] || usage;
@@ -1560,7 +1581,20 @@ export function buildDefaultFaqPack(product: ScriptProductFacts): FaqPackEntry[]
   return [
     {
       category: "harga",
-      triggers: ["brp", "berapa", "harga", "price", "pricelist", "hrg", "hrga", "duit", "cuan", "promo", "diskon", "murah"],
+      triggers: [
+        "brp",
+        "berapa",
+        "harga",
+        "price",
+        "pricelist",
+        "hrg",
+        "hrga",
+        "duit",
+        "cuan",
+        "promo",
+        "diskon",
+        "murah",
+      ],
       answers: [
         `${name} di live ini ${price}. Cek dulu cocok nggak sama kebutuhanmu.`,
         `Harganya ${price} ya. Ongkirnya biasanya keliatan di checkout.`,
@@ -1569,7 +1603,22 @@ export function buildDefaultFaqPack(product: ScriptProductFacts): FaqPackEntry[]
     },
     {
       category: "manfaat",
-      triggers: ["manfaat", "khasiat", "kelebihan", "bagus", "bagus ga", "bagus gak", "fitur", "bahan", "material", "detail", "info", "apa itu", "spesifikasi", "kandungan"],
+      triggers: [
+        "manfaat",
+        "khasiat",
+        "kelebihan",
+        "bagus",
+        "bagus ga",
+        "bagus gak",
+        "fitur",
+        "bahan",
+        "material",
+        "detail",
+        "info",
+        "apa itu",
+        "spesifikasi",
+        "kandungan",
+      ],
       answers: [
         `Plus ${name}: ${benefit}.`,
         `Yang menonjol: ${benefit2}.`,
@@ -1578,16 +1627,37 @@ export function buildDefaultFaqPack(product: ScriptProductFacts): FaqPackEntry[]
     },
     {
       category: "cara_pakai",
-      triggers: ["cara pakai", "pemakaian", "pakai", "pakenya", "dipakai", "dipake", "step", "langkah", "how to", "aturan pakai", "cara pake"],
-      answers: [
-        `Cara pakainya: ${usage}.`,
-        `Gampang kok — ${usage2}.`,
-        `Jangan dipersulit: ${usage}.`,
+      triggers: [
+        "cara pakai",
+        "pemakaian",
+        "pakai",
+        "pakenya",
+        "dipakai",
+        "dipake",
+        "step",
+        "langkah",
+        "how to",
+        "aturan pakai",
+        "cara pake",
       ],
+      answers: [`Cara pakainya: ${usage}.`, `Gampang kok — ${usage2}.`, `Jangan dipersulit: ${usage}.`],
     },
     {
       category: "pengiriman",
-      triggers: ["kirim", "ongkir", "pengiriman", "resi", "cod", "ekspedisi", "shipping", "antar", "jne", "jnt", "sicepat", "gratis ongkir"],
+      triggers: [
+        "kirim",
+        "ongkir",
+        "pengiriman",
+        "resi",
+        "cod",
+        "ekspedisi",
+        "shipping",
+        "antar",
+        "jne",
+        "jnt",
+        "sicepat",
+        "gratis ongkir",
+      ],
       answers: [
         `Ongkir sama ekspedisi cek di checkout setelah masuk keranjang ya.`,
         `Aku nggak nebak ongkir di sini — liat di halaman bayar platform.`,
@@ -1695,9 +1765,21 @@ export function buildLocalCommentResponse(
     }
   } else if (bucket === "PRICE") {
     variants.push(
-      line(`${address}${name} di live ini ${price}. Cek dulu cocok nggak.`, "comment-price", "QNA", { intent: "PRICE", ctaType: "PRICE", emotion: "neutral" }),
-      line(`${address}harganya ${price} ya. Ongkirnya cek di checkout.`, "comment-price", "QNA", { intent: "PRICE", ctaType: "NONE", emotion: "warm" }),
-      line(`${address}live ${price}. Worth-nya kalau kamu butuh ${benefit}.`, "comment-price", "QNA", { intent: "PRICE", ctaType: "SOFT", emotion: "excited" }),
+      line(`${address}${name} di live ini ${price}. Cek dulu cocok nggak.`, "comment-price", "QNA", {
+        intent: "PRICE",
+        ctaType: "PRICE",
+        emotion: "neutral",
+      }),
+      line(`${address}harganya ${price} ya. Ongkirnya cek di checkout.`, "comment-price", "QNA", {
+        intent: "PRICE",
+        ctaType: "NONE",
+        emotion: "warm",
+      }),
+      line(`${address}live ${price}. Worth-nya kalau kamu butuh ${benefit}.`, "comment-price", "QNA", {
+        intent: "PRICE",
+        ctaType: "SOFT",
+        emotion: "excited",
+      }),
     );
   } else if (bucket === "USAGE") {
     variants.push(
@@ -1707,47 +1789,105 @@ export function buildLocalCommentResponse(
     );
   } else if (bucket === "SHIPPING") {
     variants.push(
-      line(`${address}ongkir sama ekspedisi cek di checkout setelah masuk keranjang ya.`, "comment-ship", "QNA", { intent: "ANSWER", emotion: "neutral" }),
-      line(`${address}aku nggak nebak ongkir di sini — liat di halaman bayar.`, "comment-ship", "QNA", { intent: "ANSWER", emotion: "warm" }),
-      line(`${address}untuk COD/kirim ikut info platform. Kita fokus ${name} dulu.`, "comment-ship", "SOCIAL", { intent: "ANSWER", emotion: "neutral" }),
+      line(`${address}ongkir sama ekspedisi cek di checkout setelah masuk keranjang ya.`, "comment-ship", "QNA", {
+        intent: "ANSWER",
+        emotion: "neutral",
+      }),
+      line(`${address}aku nggak nebak ongkir di sini — liat di halaman bayar.`, "comment-ship", "QNA", {
+        intent: "ANSWER",
+        emotion: "warm",
+      }),
+      line(`${address}untuk COD/kirim ikut info platform. Kita fokus ${name} dulu.`, "comment-ship", "SOCIAL", {
+        intent: "ANSWER",
+        emotion: "neutral",
+      }),
     );
   } else if (bucket === "PRODUCT_INFO") {
     variants.push(
       line(`${address}plus-nya: ${benefit}.`, "comment-info", "QNA", { intent: "PRODUCT_INFO", emotion: "neutral" }),
-      line(`${address}yang menonjol juga ${benefit2}.`, "comment-info", "QNA", { intent: "PRODUCT_INFO", emotion: "warm" }),
+      line(`${address}yang menonjol juga ${benefit2}.`, "comment-info", "QNA", {
+        intent: "PRODUCT_INFO",
+        emotion: "warm",
+      }),
       line(`${address}cara pakainya ${usage}.`, "comment-info", "DEMO", { intent: "PRODUCT_INFO", emotion: "happy" }),
     );
   } else if (intent === "THANKS") {
     variants.push(
-      line(`${address}makasih ya. Santai aja, kita lanjut.`, "comment-thanks", "SOCIAL", { intent: "THANKS", emotion: "happy" }),
-      line(`${address}sama-sama. Mau nanya apa soal ${name}?`, "comment-thanks", "SOCIAL", { intent: "THANKS", emotion: "warm" }),
+      line(`${address}makasih ya. Santai aja, kita lanjut.`, "comment-thanks", "SOCIAL", {
+        intent: "THANKS",
+        emotion: "happy",
+      }),
+      line(`${address}sama-sama. Mau nanya apa soal ${name}?`, "comment-thanks", "SOCIAL", {
+        intent: "THANKS",
+        emotion: "warm",
+      }),
     );
   } else if (intent === "OBJECTION" || intent === "COMPLAINT") {
     variants.push(
-      line(`${address}ragu wajar. Yang aku pegang: ${benefit}.`, "comment-objection", "OBJECTION", { intent: "OBJECTION", emotion: "empathetic" }),
-      line(`${address}oke, kita pelan. Intinya ${benefit2}.`, "comment-objection", "OBJECTION", { intent: "OBJECTION", emotion: "warm" }),
-      line(`${address}nggak usah ribut — ${benefit}.`, "comment-objection", "OBJECTION", { intent: "OBJECTION", emotion: "neutral" }),
+      line(`${address}ragu wajar. Yang aku pegang: ${benefit}.`, "comment-objection", "OBJECTION", {
+        intent: "OBJECTION",
+        emotion: "empathetic",
+      }),
+      line(`${address}oke, kita pelan. Intinya ${benefit2}.`, "comment-objection", "OBJECTION", {
+        intent: "OBJECTION",
+        emotion: "warm",
+      }),
+      line(`${address}nggak usah ribut — ${benefit}.`, "comment-objection", "OBJECTION", {
+        intent: "OBJECTION",
+        emotion: "neutral",
+      }),
     );
   } else if (intent === "BUYING_INTENT") {
     variants.push(
-      line(`${address}${name} ${price}. Kalau ${benefit} emang kamu butuhin, boleh cek keranjang.`, "comment-buy", "SELL", { intent: "BUYING_INTENT", ctaType: "SOFT", emotion: "excited" }),
-      line(`${address}siap. Live ${price}. Pastikan cocok dulu ya.`, "comment-buy", "SELL", { intent: "BUYING_INTENT", ctaType: "SOFT", emotion: "happy" }),
-      line(`${address}mantap. Keranjang siap — tanpa dipaksa.`, "comment-buy", "SELL", { intent: "BUYING_INTENT", ctaType: "DIRECT", emotion: "excited" }),
+      line(
+        `${address}${name} ${price}. Kalau ${benefit} emang kamu butuhin, boleh cek keranjang.`,
+        "comment-buy",
+        "SELL",
+        { intent: "BUYING_INTENT", ctaType: "SOFT", emotion: "excited" },
+      ),
+      line(`${address}siap. Live ${price}. Pastikan cocok dulu ya.`, "comment-buy", "SELL", {
+        intent: "BUYING_INTENT",
+        ctaType: "SOFT",
+        emotion: "happy",
+      }),
+      line(`${address}mantap. Keranjang siap — tanpa dipaksa.`, "comment-buy", "SELL", {
+        intent: "BUYING_INTENT",
+        ctaType: "DIRECT",
+        emotion: "excited",
+      }),
     );
   } else if (intent === "ANSWER" || intent === "OTHER") {
     variants.push(
-      line(`${address}${benefit}. Kalau belum ketemu jawabannya, kasih detailnya ya.`, "comment-answer", "QNA", { intent: "ANSWER", emotion: "neutral" }),
+      line(`${address}${benefit}. Kalau belum ketemu jawabannya, kasih detailnya ya.`, "comment-answer", "QNA", {
+        intent: "ANSWER",
+        emotion: "neutral",
+      }),
       line(`${address}cara pakainya ${usage}.`, "comment-answer", "QNA", { intent: "PRODUCT_INFO", emotion: "warm" }),
-      line(`${address}kita balik ke ${name}: ${benefit2}.`, "comment-answer", "ENGAGE", { intent: "SOCIAL", emotion: "warm" }),
+      line(`${address}kita balik ke ${name}: ${benefit2}.`, "comment-answer", "ENGAGE", {
+        intent: "SOCIAL",
+        emotion: "warm",
+      }),
     );
   } else if (intent === "SPAM") {
     variants.push(...deflectionLines(product));
   } else {
     variants.push(
-      line(`${address}makasih udah nimbrung. Ada yang mau ditanyain soal ${name}?`, "comment-social", "SOCIAL", { intent: "SOCIAL", emotion: "warm" }),
-      line(`${address}sini aja, aku dengerin. Nggak harus langsung beli.`, "comment-social", "SOCIAL", { intent: "SOCIAL", emotion: "happy" }),
-      line(`Siap. Tanya spesifik aja biar jawabnya nyambung.`, "comment-social", "SOCIAL", { intent: "SOCIAL", emotion: "neutral" }),
-      line(`${address}mau bahas manfaat, cara pakai, atau harga ${name}?`, "comment-social", "ENGAGE", { intent: "SOCIAL", emotion: "excited" }),
+      line(`${address}makasih udah nimbrung. Ada yang mau ditanyain soal ${name}?`, "comment-social", "SOCIAL", {
+        intent: "SOCIAL",
+        emotion: "warm",
+      }),
+      line(`${address}sini aja, aku dengerin. Nggak harus langsung beli.`, "comment-social", "SOCIAL", {
+        intent: "SOCIAL",
+        emotion: "happy",
+      }),
+      line(`Siap. Tanya spesifik aja biar jawabnya nyambung.`, "comment-social", "SOCIAL", {
+        intent: "SOCIAL",
+        emotion: "neutral",
+      }),
+      line(`${address}mau bahas manfaat, cara pakai, atau harga ${name}?`, "comment-social", "ENGAGE", {
+        intent: "SOCIAL",
+        emotion: "excited",
+      }),
     );
   }
 

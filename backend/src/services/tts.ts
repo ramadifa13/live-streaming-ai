@@ -408,6 +408,17 @@ async function ensureWav16kMono(input: Buffer): Promise<Buffer> {
   });
 }
 
+export function wavDurationSeconds(input: Buffer): number | undefined {
+  if (input.length < 44 || input.toString("ascii", 0, 4) !== "RIFF") return undefined;
+  const sampleRate = input.readUInt32LE(24);
+  const channels = input.readUInt16LE(22);
+  const bitsPerSample = input.readUInt16LE(34);
+  const dataBytes = input.readUInt32LE(40);
+  const bytesPerSecond = sampleRate * channels * (bitsPerSample / 8);
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return undefined;
+  return dataBytes / bytesPerSecond;
+}
+
 /** Resolve legacy host slugs to a Pocket TTS voice profile. */
 export function resolveVoiceId(voiceOrHost?: string, avatarName?: string): string {
   const defaultVoice = (process.env.VOICE_ID || DEFAULT_VOICE_ID).trim() || DEFAULT_VOICE_ID;
@@ -469,7 +480,11 @@ async function synthesizeWithPocket(
   const audio = await synthesizeWithPocketTts(cleanText, voiceId);
   if (audio.length < 44) throw new Error("Pocket TTS WAV kosong/pendek");
   const buffer = await ensureWav16kMono(audio);
-  const metrics = { requestId: opts.requestId, latencyMs: Date.now() - t0 };
+  const metrics = {
+    requestId: opts.requestId,
+    latencyMs: Date.now() - t0,
+    audioDuration: wavDurationSeconds(buffer),
+  };
 
   console.log(`[TTS] pocket-tts ok voice_id=${voiceId} latency_ms=${metrics.latencyMs}`);
 

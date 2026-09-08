@@ -232,7 +232,7 @@ class AILiveWorker:
                         parsing_mode="jaw",
                         vae=vae,
                         fp=fp,
-                        default_fps=25,
+                        default_fps=int(os.environ.get("AI_WORKER_FPS", "30")),
                     )
                 except Exception as e:
                     print(f"[WARMUP WARNING] Pre-cache {f} notice: {e}")
@@ -448,6 +448,83 @@ class AILiveWorker:
             None, self._sync_lips, idle_video, audio_path, task_id
         )
 
+    @staticmethod
+    def _probe_media_duration(path: str) -> float:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        return max(0.0, float(result.stdout.strip()))
+
+    def _ensure_video_covers_audio(self, video_path: str, audio_path: str) -> str:
+        """Extend short MuseTalk output so its video clock never ends before audio."""
+        video_duration = self._probe_media_duration(video_path)
+        audio_duration = self._probe_media_duration(audio_path)
+        if video_duration + 0.05 >= audio_duration:
+            return video_path
+
+        padded_path = f"{video_path}.audio_padded.mp4"
+        fps = int(os.environ.get("AI_WORKER_FPS", "24"))
+        command = [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "error",
+            "-stream_loop",
+            "-1",
+            "-i",
+            video_path,
+            "-i",
+            audio_path,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-tune",
+            "zerolatency",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            str(fps),
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            "-shortest",
+            padded_path,
+        ]
+        try:
+            subprocess.run(command, check=True, capture_output=True, timeout=300)
+            os.replace(padded_path, video_path)
+            print(
+                f"[MuseTalk] Extended video {video_duration:.2f}s -> "
+                f"{audio_duration:.2f}s to preserve audio"
+            )
+            return video_path
+        finally:
+            if os.path.exists(padded_path):
+                os.remove(padded_path)
+
     def _sync_lips(self, idle_video, audio_path, task_id):
         with self._inference_lock:
             yaml_path = os.path.join(self.temp_dir, f"{task_id}.yaml")
@@ -553,7 +630,7 @@ class AILiveWorker:
                         # RENDER KE TEMP_DIR UNTUK MENGHINDARI RACE CONDITION DENGAN BROADCASTER
                         result_dir=self.temp_dir,
                         extra_margin=10,
-                        fps=25,
+                        fps=int(os.environ.get("AI_WORKER_FPS", "30")),
                         audio_padding_length_left=2,
                         audio_padding_length_right=2,
                         batch_size=self.batch_size,
@@ -599,6 +676,7 @@ class AILiveWorker:
                     )
 
                 latest_file = max(list_of_files, key=os.path.getctime)
+                self._ensure_video_covers_audio(latest_file, target_audio)
                 os.replace(latest_file, expected_output)
                 return expected_output
 
