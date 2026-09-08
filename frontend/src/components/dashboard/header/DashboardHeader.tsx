@@ -7,6 +7,7 @@ import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useProductStore } from "@/stores/useProductStore";
 import { LivioLogo } from "@/components/shared/LivioLogo";
+import { validateLiveStep } from "@/lib/live-validation";
 
 const STEPS = [
   { num: 1, label: "Data Produk" },
@@ -25,6 +26,43 @@ export const DashboardHeader: React.FC = () => {
   const isLiveActive = useLiveSessionStore((state) => state.isLiveActive);
   const activeFeaturedProduct = useProductStore((state) => state.activeFeaturedProduct);
   const fetchVideoScript = useAiHostStore((state) => state.fetchVideoScript);
+  const products = useProductStore((state) => state.products);
+  const selectedAvatar = useAiHostStore((state) => state.selectedAvatar);
+  const selectedVoice = useAiHostStore((state) => state.selectedVoice);
+  const selectedLang = useAiHostStore((state) => state.selectedLang);
+  const selectedBackground = useAiHostStore((state) => state.selectedBackground);
+  const selectedPlatform = useLiveSessionStore((state) => state.selectedPlatform);
+  const selectedDuration = useLiveSessionStore((state) => state.selectedDuration);
+  const showToast = useDashboardUIStore((state) => state.showToast);
+
+  const handleStepChange = (step: number) => {
+    if (step <= currentStep) {
+      setCurrentStep(step);
+      return;
+    }
+
+    const context = {
+      products,
+      activeProduct: activeFeaturedProduct,
+      avatar: selectedAvatar,
+      voice: selectedVoice,
+      language: selectedLang,
+      background: selectedBackground,
+      platform: selectedPlatform,
+      duration: selectedDuration,
+    };
+
+    for (const requiredStep of [1, 2, 3] as const) {
+      if (requiredStep >= step) break;
+      const result = validateLiveStep(requiredStep, context);
+      if (!result.valid) {
+        setCurrentStep(requiredStep);
+        showToast(result.message || "Lengkapi pengaturan live terlebih dahulu.", "warning");
+        return;
+      }
+    }
+    setCurrentStep(step);
+  };
 
   const handleSwitchToVideoGenerator = () => {
     setAppMode("VIDEO_GENERATOR");
@@ -73,7 +111,7 @@ export const DashboardHeader: React.FC = () => {
             <React.Fragment key={step.num}>
               <button
                 type="button"
-                onClick={() => setCurrentStep(step.num)}
+                onClick={() => handleStepChange(step.num)}
                 className="flex items-center gap-1 focus:outline-none transition group cursor-pointer"
               >
                 <span

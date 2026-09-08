@@ -15,6 +15,7 @@ import { copyToClipboard } from "@/utils/clipboard";
 import { LiveRuntimePanel } from "@/components/dashboard/live-studio/LiveRuntimePanel";
 import { isValidRtmpUrl, normalizeRtmpInput } from "@/utils/rtmp";
 import { ChatMessage } from "@/app/dashboard/types";
+import { validateLivePreparation } from "@/lib/live-validation";
 
 export const LiveControlBar: React.FC = () => {
   const currentStep = useDashboardUIStore((state) => state.currentStep);
@@ -106,12 +107,18 @@ export const LiveControlBar: React.FC = () => {
 
   const handleStartLive = async () => {
     if (useLiveSessionStore.getState().isConnectingLive) return;
-    if (!activeFeaturedProduct?.name || activeFeaturedProduct.id === "loading") {
-      showToast("Tambah produk dulu (minimal nama + deskripsi) sebelum Go Live.");
-      return;
-    }
-    if (!activeFeaturedProduct.description?.trim()) {
-      showToast("Isi deskripsi produk dulu. Manfaat/cara pakai/FAQ bisa dilengkapi AI saat simpan.");
+    const validation = validateLivePreparation({
+      products,
+      activeProduct: activeFeaturedProduct,
+      avatar: selectedAvatar,
+      voice: selectedVoice,
+      language: selectedLang,
+      background: selectedBackground,
+      platform: selectedPlatform,
+      duration: selectedDuration,
+    });
+    if (!validation.valid) {
+      showToast(validation.message || "Lengkapi pengaturan live terlebih dahulu.", "warning");
       return;
     }
 
