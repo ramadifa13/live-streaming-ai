@@ -122,15 +122,11 @@ class AILiveWorker:
                 os.symlink(target_path, link_path)
                 print(f"[INFO] Symlink: {link_path} -> {target_path}")
             except Exception as link_err:
-                print(
-                    f"[WARNING] Could not create symlink {link_path}: {link_err}"
-                )
                 print(f"[WARNING] Could not create symlink {link_path}: {link_err}")
 
     def _resolve_use_float16(self) -> bool:
         mode = (os.environ.get("BROADCAST_MODE") or "segment").strip().lower()
         warmup = (os.environ.get("MUSETALK_WARMUP_ON_START") or "0").strip().lower()
-        if mode in ("ai_worker", "ai-worker", "realtime", "visual_worker") and warmup not in (
         if mode in (
             "ai_worker",
             "ai-worker",
@@ -708,7 +704,6 @@ class AILiveWorker:
                 ffseg_candidates = []
                 for root, dirs, _files in os.walk(self.temp_dir):
                     for d in dirs:
-                        if d.endswith(".ffseg") and task_id in d and not d.endswith(".partial"):
                         if (
                             d.endswith(".ffseg")
                             and task_id in d
@@ -757,9 +752,6 @@ class AILiveWorker:
                         os.remove(yaml_path)
                     except Exception:
                         pass
-                if "norm_audio_path" in locals() and os.path.exists(
-                    norm_audio_path
-                ):
                 if "norm_audio_path" in locals() and os.path.exists(norm_audio_path):
                     try:
                         os.remove(norm_audio_path)

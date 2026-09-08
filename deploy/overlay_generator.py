@@ -11,7 +11,6 @@ from typing import Optional, Tuple
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 
-def download_or_decode_image(url_or_data: str, target_path: str, default_ext: str = ".png") -> Optional[str]:
 def download_or_decode_image(
     url_or_data: str, target_path: str, default_ext: str = ".png"
 ) -> Optional[str]:
@@ -34,15 +33,8 @@ def download_or_decode_image(
             req = urllib.request.Request(
                 src,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                },
             )
             with urllib.request.urlopen(req, timeout=15) as response, open(target_path, "wb") as out_file:
-            with (
-                urllib.request.urlopen(req, timeout=15) as response,
-                open(target_path, "wb") as out_file,
-            ):
                 out_file.write(response.read())
             return target_path
         except Exception as e:
@@ -67,9 +59,6 @@ def download_or_decode_image(
 
 
 def resolve_fonts() -> Tuple[ImageFont.ImageFont, ImageFont.ImageFont, ImageFont.ImageFont]:
-def resolve_fonts() -> Tuple[
-    ImageFont.ImageFont, ImageFont.ImageFont, ImageFont.ImageFont
-]:
     """Find and load suitable fonts for product card text."""
     font_name = None
     font_price = None
@@ -114,11 +103,6 @@ def render_pil_overlay(
 
     has_banner = bool(local_banner_img and os.path.exists(local_banner_img))
     has_product = bool(product_name or product_price or (local_product_img and os.path.exists(local_product_img)))
-    has_product = bool(
-        product_name
-        or product_price
-        or (local_product_img and os.path.exists(local_product_img))
-    )
 
     if not has_banner and not has_product:
         return None
@@ -135,9 +119,6 @@ def render_pil_overlay(
             shadow_banner = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
             sb_draw = ImageDraw.Draw(shadow_banner)
             sb_draw.rounded_rectangle((bx, by + 4, bx + bw, by + bh + 4), radius=20, fill=(0, 0, 0, 90))
-            sb_draw.rounded_rectangle(
-                (bx, by + 4, bx + bw, by + bh + 4), radius=20, fill=(0, 0, 0, 90)
-            )
             shadow_banner = shadow_banner.filter(ImageFilter.GaussianBlur(radius=8))
             overlay = Image.alpha_composite(overlay, shadow_banner)
 
@@ -147,9 +128,6 @@ def render_pil_overlay(
 
             overlay.paste(banner, (bx, by), b_mask)
             print(f"[OVERLAY] Banner diperbesar & ditempelkan di posisi ({bx}, {by}) ukuran {bw}x{bh}")
-            print(
-                f"[OVERLAY] Banner diperbesar & ditempelkan di posisi ({bx}, {by}) ukuran {bw}x{bh}"
-            )
         except Exception as e:
             print(f"[OVERLAY ERROR] Gagal merender banner: {e}")
 
@@ -193,9 +171,6 @@ def render_pil_overlay(
                 p_mask = Image.new("L", (thumb_size, thumb_size), 0)
                 pm_draw = ImageDraw.Draw(p_mask)
                 pm_draw.rounded_rectangle((0, 0, thumb_size, thumb_size), radius=16, fill=255)
-                pm_draw.rounded_rectangle(
-                    (0, 0, thumb_size, thumb_size), radius=16, fill=255
-                )
 
                 overlay.paste(p_img, (thumb_x, thumb_y), p_mask)
                 draw.rounded_rectangle(
@@ -213,12 +188,6 @@ def render_pil_overlay(
         if product_name:
             clean_name = product_name[:26]
             draw.text((text_x, card_y + 26), clean_name, font=font_name, fill=(15, 23, 42, 255))
-            draw.text(
-                (text_x, card_y + 26),
-                clean_name,
-                font=font_name,
-                fill=(15, 23, 42, 255),
-            )
 
         raw_price = 0
         if product_price:
@@ -232,12 +201,6 @@ def render_pil_overlay(
             strikethrough_str = f"Rp{auto_orig_price:,}".replace(",", ".")
 
             draw.text((text_x, card_y + 70), current_price_str, font=font_price, fill=(225, 29, 72, 255))
-            draw.text(
-                (text_x, card_y + 70),
-                current_price_str,
-                font=font_price,
-                fill=(225, 29, 72, 255),
-            )
 
             bbox = font_price.getbbox(current_price_str)
             price_w = bbox[2] - bbox[0] if bbox else 150
@@ -246,30 +209,13 @@ def render_pil_overlay(
             strike_y = card_y + 80
 
             draw.text((strike_x, strike_y), strikethrough_str, font=font_strike, fill=(148, 163, 184, 255))
-            draw.text(
-                (strike_x, strike_y),
-                strikethrough_str,
-                font=font_strike,
-                fill=(148, 163, 184, 255),
-            )
 
             s_bbox = font_strike.getbbox(strikethrough_str)
             strike_w = s_bbox[2] - s_bbox[0] if s_bbox else 80
             line_y = strike_y + 11
             draw.line((strike_x - 2, line_y, strike_x + strike_w + 2, line_y), fill=(148, 163, 184, 255), width=2)
-            draw.line(
-                (strike_x - 2, line_y, strike_x + strike_w + 2, line_y),
-                fill=(148, 163, 184, 255),
-                width=2,
-            )
         elif product_price:
             draw.text((text_x, card_y + 70), str(product_price), font=font_price, fill=(225, 29, 72, 255))
-            draw.text(
-                (text_x, card_y + 70),
-                str(product_price),
-                font=font_price,
-                fill=(225, 29, 72, 255),
-            )
 
     out_path = os.path.join(tmp_dir, "live_overlay.png")
     overlay.save(out_path, "PNG")
@@ -319,9 +265,6 @@ def prepare_overlay_files(
             "/workspace/ai_live_worker/assets/banner_atas_tengah.png",
             "/workspace/live-streaming-ai/frontend/public/banner_atas_tengah.png",
             os.path.join(os.path.dirname(__file__), "../frontend/public/banner_atas_tengah.png"),
-            os.path.join(
-                os.path.dirname(__file__), "../frontend/public/banner_atas_tengah.png"
-            ),
         ]:
             if os.path.isfile(candidate):
                 local_banner_img = candidate

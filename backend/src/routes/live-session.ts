@@ -360,7 +360,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         maxDurationMs: (managedSession.durationHours ?? 2) * 3600 * 1000,
         product: managedSession.product,
         catalog: managedSession.catalog,
-        backgroundImage: liveOverlayMedia(parsed.data.backgroundImage),
         backgroundImage: liveOverlayMedia(effectiveBg),
       });
     }
@@ -371,18 +370,12 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         : await startRunPodBroadcast(podId, {
             rtmpUrl,
             streamKey,
-            productName,
-            productPrice,
-            productImageUrl: liveOverlayMedia(productImageUrl),
-            bannerImageUrl: liveOverlayMedia(bannerImageUrl),
-            backgroundImage: liveOverlayMedia(parsed.data.backgroundImage),
             productName: effectiveProductName,
             productPrice: effectiveProductPrice,
             productImageUrl: liveOverlayMedia(effectiveProductImg),
             bannerImageUrl: liveOverlayMedia(effectiveBanner),
             backgroundImage: liveOverlayMedia(effectiveBg),
             platform,
-            stockCount,
             stockCount: stockCount ?? effectiveProduct?.stock,
             ctaLabel,
             hostName: parsed.data.avatarName?.trim() || managedSession?.avatarName || "namira",

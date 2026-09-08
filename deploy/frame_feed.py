@@ -592,7 +592,6 @@ class FrameFeedBroadcaster:
             return [p for p in self._queue_cache if p != last_spoken]
         items = []
         # Raw packs (prioritas) — tanpa decode H264
-        for path in glob.glob(os.path.join(self.output_folder, "**", "*.ffseg"), recursive=True):
         for path in glob.glob(
             os.path.join(self.output_folder, "**", "*.ffseg"), recursive=True
         ):
@@ -606,7 +605,6 @@ class FrameFeedBroadcaster:
                 continue
             items.append(path)
         # Fallback MP4 (segment / legacy)
-        for path in glob.glob(os.path.join(self.output_folder, "**", "*.mp4"), recursive=True):
         for path in glob.glob(
             os.path.join(self.output_folder, "**", "*.mp4"), recursive=True
         ):
@@ -718,7 +716,6 @@ class FrameFeedBroadcaster:
                 time.sleep(sleep_for)
         return None
 
-    def _feed_ai_clip(self, video_path: str, *, fade_in: bool = True, prefetched=None) -> bool:
     def _feed_ai_clip(
         self, video_path: str, *, fade_in: bool = True, prefetched=None
     ) -> bool:

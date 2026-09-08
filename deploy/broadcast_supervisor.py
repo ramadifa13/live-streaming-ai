@@ -1,4 +1,4 @@
-﻿"""Broadcast Supervisor: Process management, watchdog helpers, and queue cleanup."""
+"""Broadcast Supervisor: Process management, watchdog helpers, and queue cleanup."""
 
 from __future__ import annotations
 
