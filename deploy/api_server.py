@@ -67,7 +67,7 @@ except ImportError as e:
     get_visual_worker = None
     start_visual_broadcast = None
     stop_visual_broadcast = None
-    AI_WORKER_TARGET_FPS = 30
+    AI_WORKER_TARGET_FPS = 24
 
     def pause_visual_broadcast(output_folder: str = ""):
         return {}
@@ -689,7 +689,7 @@ async def get_queue_status():
     broadcast_mode = os.environ.get("BROADCAST_MODE", "ai_worker")
     if is_ai_worker_mode():
         fps = float(
-            os.environ.get("AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "30"))
+            os.environ.get("AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "24"))
         )
         playable_seconds = 0.0
         if bridge is not None and hasattr(bridge, "queued_audio_seconds"):

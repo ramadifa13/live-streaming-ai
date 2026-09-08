@@ -50,7 +50,7 @@ except ImportError:
         return NoopMetric()
 
 
-TARGET_FPS = 30
+TARGET_FPS = 24
 AUDIO_SAMPLE_RATE = 16000
 AUDIO_CHANNELS = 2
 BYTES_PER_AUDIO_FRAME = (

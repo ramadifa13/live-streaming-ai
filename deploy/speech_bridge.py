@@ -40,7 +40,7 @@ except ImportError:
         return _NoopTelemetry()
 
 
-TARGET_FPS = 30
+TARGET_FPS = 24
 # Keep the bridge contract identical to core_pipeline and MuseTalk input.
 SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))

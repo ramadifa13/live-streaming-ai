@@ -29,7 +29,7 @@ except ImportError:
     def fit_bgr(frame, width=CANVAS_W, height=CANVAS_H):
         return frame
 
-TARGET_FPS = 30
+TARGET_FPS = 24
 SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
 BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2
@@ -49,7 +49,7 @@ IDLE_FALLBACK_AFTER = 2
 # Hold talk antar-utterance: kalau tidak ada suara baru, segera balik ke idle.
 HOLD_TALK_MAX_SEC = 3.5
 # Pin talk clip panjang (continuous body timeline) — rotasi tiap 1-2 utterance agar bervariasi.
-TALK_STREAK_BEFORE_ROTATE = 2
+TALK_STREAK_BEFORE_ROTATE = 1
 
 # 0 = rotasi alami antar talk clips (talk_1, talk_2, talk_3). 1 = kunci ke 1 clip saja.
 PIN_TALK_SCENE = False
@@ -65,7 +65,7 @@ BROADCAST_SPEECH_WAIT_SEC = 10.0
 BROADCAST_SPEECH_GAP_WAIT_SEC = 0.25
 PENDING_MAX = RENDER_QUEUE_SIZE + BROADCAST_MAX_LAG
 SEAMLESS_THRESHOLD = 0.92
-MOUTH_STRENGTH = 0.85
+MOUTH_STRENGTH = 0.72
 MOUTH_TEMPORAL = 0.15
 MOUTH_MAX_DELTA = 0
 MOUTH_FRAME_DELTA = 0

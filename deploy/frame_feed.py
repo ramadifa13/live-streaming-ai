@@ -217,7 +217,7 @@ class FrameFeedBroadcaster:
 
         self.width = int(os.environ.get("FRAME_FEED_WIDTH", "720"))
         self.height = int(os.environ.get("FRAME_FEED_HEIGHT", "1280"))
-        self.fps = int(os.environ.get("FRAME_FEED_FPS", "25"))
+        self.fps = int(os.environ.get("FRAME_FEED_FPS", "24"))
         self.sample_rate = 44100
         self.samples_per_frame = int(round(self.sample_rate / float(self.fps)))
         self.bytes_per_audio_frame = self.samples_per_frame * 2 * 2
