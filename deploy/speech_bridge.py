@@ -166,27 +166,26 @@ def _extract_pcm_stereo(audio_path: str, sample_rate: int = SAMPLE_RATE) -> byte
 def _split_pcm_frames(
     pcm: bytes, bytes_per_frame: int = BYTES_PER_AUDIO_FRAME
 ) -> List[bytes]:
+    """Split PCM strictly by real audio length; no synthetic trailing silence.
+
+    Synthetic silence at the end was extending the effective utterance duration and
+    making the stream feel both clipped and overlong when synced to the worker.
+    """
     if not pcm:
         return []
-    frames = []
+    frames: List[bytes] = []
     bytes_per_sample = 2 * 2
     pos = 0
     frame_index = 0
     total = len(pcm)
     while pos < total:
-        frame_size = _samples_for_frame(frame_index) * bytes_per_sample
-        chunk = pcm[pos : pos + frame_size]
-        if len(chunk) < frame_size:
-            chunk = chunk + b"\x00" * (frame_size - len(chunk))
-        frames.append(chunk)
+        desired_frame_size = _samples_for_frame(frame_index) * bytes_per_sample
+        frame_size = min(desired_frame_size, total - pos)
+        if frame_size <= 0:
+            break
+        frames.append(pcm[pos : pos + frame_size])
         pos += frame_size
         frame_index += 1
-    if frames:
-        for _ in range(6):
-            tail_size = _samples_for_frame(frame_index) * bytes_per_sample
-            frames.append(b"\x00" * tail_size)
-            frame_index += 1
-
     return frames
 
 
@@ -216,9 +215,9 @@ class SpeechBridge:
     AI langsung bicara begitu stream dibuka. Set ke 1 atau 0 untuk disable gate.
     """
 
-    # Minimum utterances siap sebelum playback pertama dimulai.
-    # Set ke 1 agar AI langsung bicara pada kalimat pertama tanpa menunggu antrian kedua.
-    MIN_READY_UTTERANCES: int = 3
+    # Mulai langsung saat utterance pertama siap; ini menjaga host terasa natural
+    # dan tidak menahan kalimat pertama agar stream terlihat "terlambat".
+    MIN_READY_UTTERANCES: int = 1
     MAX_PENDING_UTTERANCES: int = 12
     PREP_WORKERS: int = 2
 
@@ -410,16 +409,11 @@ class SpeechBridge:
             traceback.print_exc()
             raise
 
-        # Sesuaikan panjang dengan PCM frames.
-        # Grace tail: izinkan whisper sedikit lebih panjang dari PCM (max +TAIL frames)
-        # agar suku kata terakhir tidak terpotong — lalu truncate sisanya.
-        GRACE_TAIL = 3
-        if chunks.shape[0] > num_frames + GRACE_TAIL:
-            # Truncate hanya jika jauh melebihi PCM — sisakan grace tail.
-            chunks = chunks[: num_frames + GRACE_TAIL]
-        elif chunks.shape[0] > num_frames:
-            # Dalam batas grace — biarkan lebih panjang, PCM akan di-pad silence.
-            pass
+        # Sesuaikan panjang dengan PCM frames tanpa menambah durasi buatan.
+        # Whisper boleh lebih dekat ke PCM, tetapi tidak diperbolehkan memanjang
+        # di luar panjang audio aktual.
+        if chunks.shape[0] > num_frames:
+            chunks = chunks[:num_frames]
         if chunks.shape[0] < num_frames and chunks.shape[0] > 0:
             pad_n = num_frames - chunks.shape[0]
             zeros = torch.zeros(
@@ -666,8 +660,9 @@ class SpeechBridge:
             self._frame_cursor += 1
             return pcm, True, idx
 
-        # PCM habis — cek apakah masih ada grace tail whisper frames.
-        grace_tail = 3
+        # Setelah PCM habis, jangan mengembalikan padding tersembunyi yang
+        # memperpanjang durasi utterance. Whisper tail yang "natural" tidak boleh
+        # menambah audio aktual di luar file asli.
         whisper_total = (
             int(self._current.whisper_chunks.shape[0])
             if self._current.whisper_chunks is not None
@@ -675,9 +670,8 @@ class SpeechBridge:
         )
         if (
             self._frame_cursor < whisper_total
-            and self._frame_cursor < self._current.num_frames + grace_tail
+            and self._frame_cursor < self._current.num_frames
         ):
-            # Kirim silence + whisper index agar mulut tutup secara natural.
             idx = self._frame_cursor
             self._frame_cursor += 1
             return b"\x00" * (_samples_for_frame(idx) * 2 * 2), False, idx

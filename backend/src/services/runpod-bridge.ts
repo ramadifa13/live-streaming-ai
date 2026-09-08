@@ -68,6 +68,27 @@ import { getWorkerUrl } from "./runpod-manager.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+export function normalizeBackgroundInput(input?: string | null, fallbackPath?: string): string | undefined {
+  const source = typeof input === "string" ? input.trim() : "";
+
+  if (!source) {
+    if (fallbackPath) {
+      return resolveMediaAsDataUrl(fallbackPath);
+    }
+    return undefined;
+  }
+
+  if (source.startsWith("data:image/") || source.startsWith("data:video/")) {
+    return source;
+  }
+
+  if (/^https?:\/\//i.test(source)) {
+    return source;
+  }
+
+  return resolveMediaAsDataUrl(source, fallbackPath);
+}
+
 export function resolveMediaAsDataUrl(url?: string | null, fallbackPath?: string): string | undefined {
   const tryResolve = (val?: string | null): string | undefined => {
     if (!val || typeof val !== "string") return undefined;
@@ -212,8 +233,8 @@ export async function startRunPodBroadcast(
   },
 ): Promise<RunPodBroadcastResult> {
   const hostSlug = (params.hostName || "namira").trim().toLowerCase() || "namira";
-  const resolvedBanner = resolveMediaAsDataUrl(params.bannerImageUrl, "/banner_atas_tengah.png");
-  const resolvedBackground = resolveMediaAsDataUrl(params.backgroundImage, "/banner_studio_live_streaming.jpg");
+  const resolvedBanner = normalizeBackgroundInput(params.bannerImageUrl, "/banner_atas_tengah.png");
+  const resolvedBackground = normalizeBackgroundInput(params.backgroundImage, "/banner_studio_live_streaming.jpg");
   const resolvedProduct = resolveMediaAsDataUrl(params.productImageUrl);
 
   const kickoff = (await workerRequestWithRetry(
@@ -320,9 +341,9 @@ export async function updateRunPodBroadcastProduct(
     backgroundImage?: string;
   },
 ): Promise<RunPodBroadcastResult> {
-  const resolvedBanner = resolveMediaAsDataUrl(params.bannerImageUrl, "/banner_atas_tengah.png");
+  const resolvedBanner = normalizeBackgroundInput(params.bannerImageUrl, "/banner_atas_tengah.png");
   const resolvedProduct = resolveMediaAsDataUrl(params.productImageUrl);
-  const resolvedBackground = resolveMediaAsDataUrl(params.backgroundImage, "/banner_studio_live_streaming.jpg");
+  const resolvedBackground = normalizeBackgroundInput(params.backgroundImage, "/banner_studio_live_streaming.jpg");
 
   return workerRequestWithRetry(podId, "/stream/update-product", {
     method: "POST",

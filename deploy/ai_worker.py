@@ -41,7 +41,7 @@ BBOX_SMOOTH_WINDOW = 7
 RAW_QUEUE_SIZE = 24
 RENDER_QUEUE_SIZE = 48
 RAW_QUEUE_BLOCK_SEC = 0.25
-MASK_FEATHER_PX = 3
+MASK_FEATHER_PX = 5
 AMBIENT_MIN_SEC = 4
 AMBIENT_MAX_SEC = 6
 
@@ -58,23 +58,26 @@ PIN_TALK_SCENE = False
 # Rest-gated begin: tunggu base/end max N ms sebelum soft-cut paksa.
 REST_GATE_MAX_MS = 400
 REST_GATE_NEAR_FRAMES = 12
-# Setelah audio habis, izinkan N frame silence sebelum complete (bukan full end_pose).
-UTTERANCE_TAIL_FRAMES = 3
+# Setelah audio habis, jangan menambah tail silence tambahan karena itu
+# memperpanjang durasi visual dan memberi efek audio terpotong/panjangan.
+UTTERANCE_TAIL_FRAMES = 0
 BROADCAST_MAX_LAG = 8
 BROADCAST_RENDER_WAIT_SEC = 0.10
 BROADCAST_SPEECH_WAIT_SEC = 10.0
 BROADCAST_SPEECH_GAP_WAIT_SEC = 0.25
 PENDING_MAX = RENDER_QUEUE_SIZE + BROADCAST_MAX_LAG
 SEAMLESS_THRESHOLD = 0.92
-MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.72"))
-MOUTH_TEMPORAL = 0.15
+# Keep the worker deterministic and environment-free for deploy/test invariants.
+MOUTH_STRENGTH = 0.65
+MOUTH_TEMPORAL = 0.22
 MOUTH_MAX_DELTA = 0
 MOUTH_FRAME_DELTA = 0
 LIPSYNC_PREROLL_FRAMES = 10
 LIPSYNC_WAIT_SEC = 0
-# SYNC_SHIFT negatif: audio dimajukan relatif terhadap mouth (kompensasi inference delay).
-# Default -2: mulut muncul ~2 frame lebih awal → terlihat lebih in-sync.
-LIPSYNC_SYNC_SHIFT = -2
+# Sync shift di-set ke 0 agar mulut mengikuti audio tanpa lead palsu.
+# Shift negatif membuat host terlihat seperti bicara lebih dulu dari audio,
+# yang terasa tidak natural saat live stream.
+LIPSYNC_SYNC_SHIFT = 0
 LIPSYNC_PREROLL_TIMEOUT_SEC = 4.0
 # 1 = jangan start audio sampai preroll mouths penuh (anti stutter awal kalimat).
 LIPSYNC_HARD_PREROLL = True

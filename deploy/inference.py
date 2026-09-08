@@ -66,9 +66,9 @@ def musetalk_visual_params():
     """Crop wajah untuk MuseTalk — proporsional ramping rahang & mulut Namira."""
     bbox_shift = -2
     bbox_shift_x = -5
-    extra_margin = 2
-    upper_boundary_ratio = 0.55
-    cheek_width = 45
+    extra_margin = 0
+    upper_boundary_ratio = 0.58
+    cheek_width = 38
     return {
         "bbox_shift": bbox_shift,
         "bbox_shift_x": bbox_shift_x,
