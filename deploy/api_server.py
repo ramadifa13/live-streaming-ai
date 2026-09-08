@@ -125,6 +125,7 @@ broadcaster_restarts = 0
 broadcaster_next_restart_at = 0.0
 _broadcast_boot_state = "idle"
 _broadcast_boot_task: Optional[asyncio.Task] = None
+_broadcast_boot_inflight = False
 _broadcast_boot_error = ""
 _broadcast_started_at = 0.0
 
@@ -912,6 +913,7 @@ async def resume_broadcast_soft():
 @app.post("/stream/start-broadcast")
 async def start_broadcast(req: BroadcastRequest):
     global _broadcast_boot_task, _broadcast_boot_state, _broadcast_boot_error
+    global _broadcast_boot_inflight
 
     final_rtmp_url = (req.rtmp_url or req.rtmpUrl or "").strip()
     final_stream_key = (
@@ -974,6 +976,9 @@ async def start_broadcast(req: BroadcastRequest):
                 "pid": broadcaster_process.pid,
             }
 
+    if _broadcast_boot_inflight:
+        return {"success": True, "status": "starting", "async": True}
+
     if _broadcast_boot_task and not _broadcast_boot_task.done():
         if _broadcast_boot_state == "starting":
             return {"success": True, "status": "starting", "async": True}
@@ -986,11 +991,20 @@ async def start_broadcast(req: BroadcastRequest):
     print(f"[AI-Worker] start-broadcast diterima (async) rtmp={final_rtmp_url[:60]}...")
     _broadcast_boot_state = "starting"
     _broadcast_boot_error = ""
+    _broadcast_boot_inflight = True
 
     async def _boot() -> None:
         global _broadcast_boot_state, _broadcast_boot_error, visual_worker
         try:
-            await asyncio.to_thread(_start_broadcast_sync, req)
+
+            def run_boot_sync() -> Dict[str, Any]:
+                global _broadcast_boot_inflight
+                try:
+                    return _start_broadcast_sync(req)
+                finally:
+                    _broadcast_boot_inflight = False
+
+            await asyncio.to_thread(run_boot_sync)
             _broadcast_boot_state = "running"
         except asyncio.CancelledError:
             _broadcast_boot_state = "idle"
