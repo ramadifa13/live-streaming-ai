@@ -7,13 +7,11 @@ import {
   startRunPodBroadcast,
   updateRunPodBroadcastProduct,
   stopRunPodBroadcast,
-  warmupWorker,
   ensureWorkerReachable,
   pauseRunPodBroadcast,
   resumeRunPodBroadcast,
 } from "../services/runpod-bridge.js";
 import { livePlatformConnector } from "../services/live-platform-connector.js";
-import { setLiveSessionActive, stopPod } from "../services/runpod-manager.js";
 import { liveSessionManager } from "../services/live-session-manager.js";
 import {
   liveHostOrchestrator,
@@ -94,7 +92,6 @@ const broadcastSchema = z.object({
   productImageUrl: z.string().optional(),
   bannerImageUrl: z.string().optional(),
   backgroundImage: z.string().optional(),
-  // Preview-sync fields — used to replicate Step 4 overlay in FFmpeg
   platform: z.string().optional(),
   stockCount: z.number().optional(),
   ctaLabel: z.string().optional(),
@@ -102,7 +99,6 @@ const broadcastSchema = z.object({
 });
 
 export async function liveSessionRoutes(server: FastifyInstance) {
-  // GET /api/live-session
   server.get("/api/live-session", async () => {
     const session = await prisma.liveSession.findFirst({
       orderBy: { createdAt: "desc" },
@@ -191,7 +187,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         catalog,
       });
 
-      // Balas segera — boot GPU RunPod berjalan async di background.
       reply.code(201);
       return {
         success: true,
@@ -214,7 +209,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
   });
 
-  // POST /api/live-session/preferences
   server.post("/api/live-session/preferences", async (request, reply) => {
     const bodySchema = z.object({
       voice: z.string().min(1).optional(),
@@ -234,7 +228,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  // POST /api/live-session/stop — single end path (stop worker + summary).
   server.post("/api/live-session/stop", async (request, reply) => {
     const parsed = liveStopSchema.safeParse(request.body);
 
@@ -246,7 +239,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     const sessionId = parsed.data.sessionId || "";
     if (sessionId) liveHostOrchestrator.stop(sessionId);
     const sessionObj = liveSessionManager.getSession(sessionId);
-    // Fire-and-forget worker stop agar UI tidak menunggu join thread.
     void stopRunPodBroadcast(sessionObj?.podId).catch(() => {});
     stopBroadcast();
     const result = await liveSessionManager.stopSession(sessionId, {
@@ -264,10 +256,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  // POST /api/live-stream/broadcast
-  // Tahap 1: Kirim stream RTMP ke platform + mulai pipeline generate V1, V2, dst di background.
-  // AI host BELUM bicara — worker masih putar idle video.
-  // User harus klik "Go Live"/"Mulai Siaran" di Instagram, lalu konfirmasi di dashboard.
   server.post("/api/live-stream/broadcast", async (request, reply) => {
     const parsed = broadcastSchema.safeParse(request.body);
 
@@ -279,8 +267,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     const {
       rtmpUrl: rawRtmpUrl,
       streamKey: rawStreamKey,
-      avatarImage,
-      avatarVideo,
       sessionId,
       productName,
       productPrice,
@@ -341,7 +327,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       };
     }
 
-    // Verifikasi cepat — bootstrap sudah menunggu health penuh di startPodAndWait
     if (podId) {
       try {
         await ensureWorkerReachable(podId, 60);
@@ -353,8 +338,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         };
       }
     }
-
-    // http(s) atau data:image base64 (hasil upload studio). Worker sudah support decode.
     const liveOverlayMedia = (url?: string) => {
       const u = (url || "").trim();
       if (!u) return undefined;
@@ -363,7 +346,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return undefined;
     };
 
-    // Daftarkan orchestrator dulu agar pipeline-status bisa poll saat MuseTalk boot.
     if (managedSession && liveSession && parsed.data.sessionId) {
       liveHostOrchestrator.startPipelineBackground({
         productId: liveSession.productId,
@@ -385,7 +367,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       });
     }
 
-    // Kickoff RTMP — worker boot MuseTalk async; frontend poll pipeline-status.
     const result = await startRunPodBroadcast(podId, {
       rtmpUrl,
       streamKey,
@@ -418,8 +399,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       }
       return { success: false, data: result };
     }
-
-    // Update DB ke "pending" — menunggu konfirmasi Go Live
     if (parsed.data.sessionId) {
       await prisma.liveSession
         .updateMany({
@@ -444,9 +423,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  // POST /api/live-stream/go-live-confirm
-  // Tahap 2: Dipanggil setelah user klik "Go Live" di platform dan kembali ke dashboard.
-  // Menunggu V1+V2 siap → flush ke GPU queue → AI host mulai bicara.
   server.post("/api/live-stream/go-live-confirm", async (request, reply) => {
     const schema = z.object({
       sessionId: z.string().min(1),
@@ -471,7 +447,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     try {
-      // Pastikan RTMP + minimal satu ucapan benar-benar siap sebelum playback.
       const pipelineStatus = await liveHostOrchestrator.getPipelineStatus(sessionId);
       const realtime = /ai_worker|ai-worker|realtime|visual_worker/i.test(String(pipelineStatus.broadcastMode || ""));
       const minUtt = Number(pipelineStatus.goLiveMinUtterances || 1);
@@ -487,7 +462,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         };
       }
 
-      // markBroadcastLive handles worker playback + startLivePipeline + DB update
       await liveSessionManager.markBroadcastLive(sessionId);
 
       console.log(`[GoLiveConfirm] ✅ Session ${sessionId}: AI Host aktif! Live streaming dimulai.`);
@@ -509,8 +483,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
   });
 
-  // GET /api/live-stream/pipeline-status?sessionId=xxx
-  // Polling endpoint untuk frontend: cek apakah RTMP aktif dan 2 video sudah selesai dirender di GPU.
   server.get("/api/live-stream/pipeline-status", async (request) => {
     const { sessionId } = request.query as { sessionId?: string };
     if (!sessionId) {
@@ -589,8 +561,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  // POST /api/live-stream/stop-broadcast — stop pipeline only (no session/GPU).
-  // Prefer /api/live-session/stop for full end-live; this is for cancel/teardown mid-connect.
   server.post("/api/live-stream/stop-broadcast", async (request, reply) => {
     const parsed = liveStopSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -608,7 +578,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  // POST /api/live-stream/pause — local FFmpeg ATAU soft-pause AI worker.
   server.post("/api/live-stream/pause", async (request) => {
     const body = (request.body || {}) as { sessionId?: string };
     const managed = body.sessionId
@@ -645,7 +614,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  // POST /api/live-stream/resume
   server.post("/api/live-stream/resume", async (request) => {
     const body = (request.body || {}) as { sessionId?: string };
     const managed = body.sessionId
@@ -682,7 +650,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  // POST /api/live-session/test-comment — prelive testing ATAU inject ke live orchestrator
   server.post("/api/live-session/test-comment", async (request, reply) => {
     const schema = z.object({
       comment: z.string().min(1),
@@ -725,7 +692,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       };
     }
 
-    // Prelive / studio testing — LLM; FE synth via backend Pocket TTS.
     const { generateLunaResponse } = await import("../services/groq-brain.js");
     const { resolveHostId } = await import("../services/tts.js");
     const luna = await generateLunaResponse(comment, managed?.product || null, avatarName, tone);
@@ -742,7 +708,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  // POST /api/live-session/switch-product
   server.post("/api/live-session/switch-product", async (request, reply) => {
     const bodySchema = z.object({
       productId: z.string().min(1),
@@ -806,7 +771,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  // POST /api/webhooks/platform-events
   server.post("/api/webhooks/platform-events", async (request, reply) => {
     const sessionId = (request.query as any).sessionId;
     if (!sessionId) {
@@ -842,7 +806,6 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  // GET /api/live-session/metrics
   server.get("/api/live-session/metrics", async (request) => {
     const querySessionId = (request.query as any).sessionId;
     const session = querySessionId

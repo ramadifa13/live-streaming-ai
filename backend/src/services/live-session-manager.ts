@@ -1,16 +1,7 @@
 import prisma from "../lib/prisma.js";
-import {
-  setLiveSessionActive,
-  startPodAndWait,
-  releaseGpuForJob,
-  isPodKeepWarm,
-  getStaticPodId,
-} from "./runpod-manager.js";
+import { setLiveSessionActive, startPodAndWait, releaseGpuForJob, isPodKeepWarm, getStaticPodId } from "./runpod-manager.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
-import {
-  liveHostOrchestrator,
-  type ProductSnapshot,
-} from "./live-host-orchestrator.js";
+import { liveHostOrchestrator, type ProductSnapshot } from "./live-host-orchestrator.js";
 import { triggerWorkerPlayback } from "./runpod-bridge.js";
 
 export type SessionState = "starting" | "pending" | "live" | "ended" | "error";
@@ -20,9 +11,7 @@ export interface ManagedSession {
   state: SessionState;
   platform: string;
   durationHours: number;
-  /** Waktu sesi dibuat (boot/pending). */
   startedAt: number;
-  /** Di-set ulang saat masuk live — basis sisa durasi paket. */
   liveStartedAt?: number;
   deadlineAt: number;
   avatarName: string;
@@ -45,15 +34,7 @@ export interface ManagedSession {
   catalog: ProductSnapshot[];
 }
 
-/**
- * Batas waktu sebuah sesi boleh menggantung di state "pending" (RTMP sudah
- * jalan, tetapi operator belum menekan Go Live). Tanpa batas ini pod terus
- * ditagih karena watchdog durasi hanya aktif setelah state "live".
- */
-const PENDING_TIMEOUT_MS = Math.max(
-  60_000,
-  Number(process.env.LIVE_PENDING_TIMEOUT_MS || "1800000"),
-);
+const PENDING_TIMEOUT_MS = Math.max(60_000, Number(process.env.LIVE_PENDING_TIMEOUT_MS || "1800000"));
 function pendingTimeoutFor(durationHours: number): number {
   const quarterOfPlan = durationHours * 3600 * 1000 * 0.25;
   return Math.max(5 * 60_000, Math.min(PENDING_TIMEOUT_MS, quarterOfPlan));
@@ -66,15 +47,8 @@ class LiveSessionManager {
   constructor() {
     liveHostOrchestrator.setSessionExpiredHandler((sessionId) => {
       if (!this.activeSessions.has(sessionId)) return;
-      console.log(
-        `[LiveSessionManager] Menghentikan sesi ${sessionId} & melepas GPU.`,
-      );
-      void this.stopSession(sessionId).catch((err) =>
-        console.error(
-          `[LiveSessionManager] Gagal menghentikan sesi ${sessionId}:`,
-          err,
-        ),
-      );
+      console.log(`[LiveSessionManager] Menghentikan sesi ${sessionId} & melepas GPU.`);
+      void this.stopSession(sessionId).catch((err) => console.error(`[LiveSessionManager] Gagal menghentikan sesi ${sessionId}:`, err));
     });
   }
 
@@ -104,14 +78,9 @@ class LiveSessionManager {
     const staticPodId = getStaticPodId();
     const keepGpu = Boolean(staticPodId);
     for (const id of previousIds) {
-      console.log(
-        `[LiveSessionManager] Mengganti sesi lama ${id} sebelum sesi baru (keepGpu=${keepGpu}).`,
-      );
+      console.log(`[LiveSessionManager] Mengganti sesi lama ${id} sebelum sesi baru (keepGpu=${keepGpu}).`);
       await this.stopSession(id, undefined, { keepGpu }).catch((err) =>
-        console.warn(
-          `[LiveSessionManager] Gagal menghentikan sesi lama ${id}:`,
-          err,
-        ),
+        console.warn(`[LiveSessionManager] Gagal menghentikan sesi lama ${id}:`, err),
       );
     }
 
@@ -133,15 +102,8 @@ class LiveSessionManager {
       },
     });
 
-    const catalog = params.catalog?.length
-      ? params.catalog
-      : params.product
-        ? [params.product]
-        : [];
-    const product =
-      params.product ||
-      catalog.find((item) => item.id === params.productId) ||
-      catalog[0];
+    const catalog = params.catalog?.length ? params.catalog : params.product ? [params.product] : [];
+    const product = params.product || catalog.find((item) => item.id === params.productId) || catalog[0];
 
     const managedSession: ManagedSession = {
       sessionId: session.id,
@@ -159,9 +121,7 @@ class LiveSessionManager {
       tone: params.tone || "Persuasif",
       podId: staticPodId || null,
       podBootStatus: "booting",
-      podBootMessage: staticPodId
-        ? `Menghubungkan ke pod statis ${staticPodId}...`
-        : "Mengalokasikan Cloud GPU (pod baru)...",
+      podBootMessage: staticPodId ? `Menghubungkan ke pod statis ${staticPodId}...` : "Mengalokasikan Cloud GPU (pod baru)...",
       liveDetectionAttempts: 0,
       onStateChange: undefined,
       product,
@@ -170,18 +130,14 @@ class LiveSessionManager {
 
     this.activeSessions.set(session.id, managedSession);
 
-    livePlatformConnector.setLiveDetectedCallback(
-      async (triggerSessionId?: string) => {
-        const sId = triggerSessionId || session.id;
-        const currentSession = this.activeSessions.get(sId);
-        if (currentSession?.state === "pending") {
-          console.log(
-            `[LiveSessionManager] Platform live detected for session ${sId}. Transitioning to live...`,
-          );
-          await this.transitionState("live", sId);
-        }
-      },
-    );
+    livePlatformConnector.setLiveDetectedCallback(async (triggerSessionId?: string) => {
+      const sId = triggerSessionId || session.id;
+      const currentSession = this.activeSessions.get(sId);
+      if (currentSession?.state === "pending") {
+        console.log(`[LiveSessionManager] Platform live detected for session ${sId}. Transitioning to live...`);
+        await this.transitionState("live", sId);
+      }
+    });
 
     void this.bootstrapPodForSession(session.id, {
       productId: params.productId,
@@ -220,9 +176,7 @@ class LiveSessionManager {
 
     try {
       managed.podBootStatus = "booting";
-      managed.podBootMessage = getStaticPodId()
-        ? `Menghubungkan ke pod statis ${getStaticPodId()}...`
-        : "Mengalokasikan Cloud GPU (pod baru)...";
+      managed.podBootMessage = getStaticPodId() ? `Menghubungkan ke pod statis ${getStaticPodId()}...` : "Mengalokasikan Cloud GPU (pod baru)...";
       const podIdStr = await startPodAndWait(360_000, {
         onProgress: (message) => {
           const current = this.activeSessions.get(sessionId);
@@ -234,37 +188,25 @@ class LiveSessionManager {
         },
         shouldAbort: () => {
           const current = this.activeSessions.get(sessionId);
-          return (
-            !current ||
-            current.bootstrapAbort === true ||
-            current.state === "ended"
-          );
+          return !current || current.bootstrapAbort === true || current.state === "ended";
         },
       });
       const podId = typeof podIdStr === "string" ? podIdStr.trim() : "";
       if (!this.activeSessions.has(sessionId)) {
         if (podId) {
           const staticId = getStaticPodId();
-          const reused = Array.from(this.activeSessions.values()).some(
-            (item) => item.podId === podId,
-          );
+          const reused = Array.from(this.activeSessions.values()).some((item) => item.podId === podId);
           if (podId === staticId || reused) {
-            console.log(
-              `[LiveSessionManager] Pod ${podId} tetap dipakai sesi lain — tidak di-release.`,
-            );
+            console.log(`[LiveSessionManager] Pod ${podId} tetap dipakai sesi lain — tidak di-release.`);
           } else {
             await releaseGpuForJob(podId).catch((err) =>
-              console.error(
-                `[LiveSessionManager] Gagal terminate pod ${podId} setelah sesi dihapus:`,
-                err,
-              ),
+              console.error(`[LiveSessionManager] Gagal terminate pod ${podId} setelah sesi dihapus:`, err),
             );
           }
         }
         return;
       }
 
-      // Null pod = gagal, kecuali ada worker URL lokal eksplisit (dev).
       const localWorkerUrl = (process.env.RUNPOD_WORKER_URL || "").trim();
       if (!podId) {
         if (localWorkerUrl) {
@@ -274,8 +216,7 @@ class LiveSessionManager {
         } else {
           managed.podId = null;
           managed.podBootStatus = "failed";
-          managed.podBootMessage =
-            "GPU tidak tersedia (pod null). Cek RUNPOD_API_KEY / kuota GPU.";
+          managed.podBootMessage = "GPU tidak tersedia (pod null). Cek RUNPOD_API_KEY / kuota GPU.";
           await this.transitionState("error", sessionId);
           return;
         }
@@ -300,18 +241,11 @@ class LiveSessionManager {
       });
 
       await this.transitionState("pending", sessionId);
-      this.startPlatformLivePoll(
-        sessionId,
-        connectorParams.liveVideoId,
-        connectorParams.accessToken,
-      );
+      this.startPlatformLivePoll(sessionId, connectorParams.liveVideoId, connectorParams.accessToken);
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Gagal menghidupkan GPU RunPod";
+      const message = err instanceof Error ? err.message : "Gagal menghidupkan GPU RunPod";
       if (message.includes("dibatalkan")) {
-        console.log(
-          `[LiveSessionManager] Pod bootstrap dibatalkan (${sessionId})`,
-        );
+        console.log(`[LiveSessionManager] Pod bootstrap dibatalkan (${sessionId})`);
         return;
       }
       console.error(`[LiveSessionManager] Pod bootstrap gagal (${sessionId}):`, err);
@@ -337,27 +271,15 @@ class LiveSessionManager {
 
     const podFailed = session.podBootStatus === "failed";
     const hasLocalWorker = Boolean((process.env.RUNPOD_WORKER_URL || "").trim());
-    const podReady =
-      session.podBootStatus === "ready" &&
-      (Boolean(session.podId) || hasLocalWorker);
+    const podReady = session.podBootStatus === "ready" && (Boolean(session.podId) || hasLocalWorker);
     const podBooting =
-      !podFailed &&
-      !podReady &&
-      (session.podBootStatus === "booting" ||
-        session.podBootStatus === "pending" ||
-        session.state === "starting");
+      !podFailed && !podReady && (session.podBootStatus === "booting" || session.podBootStatus === "pending" || session.state === "starting");
 
     return {
       podReady,
       podBooting,
       podFailed,
-      stageText:
-        session.podBootMessage ||
-        (podBooting
-          ? "Memuat PyTorch CUDA ke GPU..."
-          : podReady
-            ? "GPU siap"
-            : "Menyiapkan sesi..."),
+      stageText: session.podBootMessage || (podBooting ? "Memuat PyTorch CUDA ke GPU..." : podReady ? "GPU siap" : "Menyiapkan sesi..."),
       podId: session.podId ?? null,
       state: session.state,
     };
@@ -386,9 +308,7 @@ class LiveSessionManager {
     session.bootstrapAbort = true;
     const staticPodId = getStaticPodId();
     const keepGpu = options?.keepGpu ?? isPodKeepWarm();
-    const podToTerminate = keepGpu
-      ? null
-      : session.podId || staticPodId || null;
+    const podToTerminate = keepGpu ? null : session.podId || staticPodId || null;
 
     this.clearTimers(sessionId);
     liveHostOrchestrator.stop(sessionId);
@@ -407,43 +327,27 @@ class LiveSessionManager {
     });
 
     if (podToTerminate) {
-      // Jangan block response end-live — pause/terminate pod di background.
       void releaseGpuForJob(podToTerminate)
         .then(() => {
-          console.log(
-            `[LiveSessionManager] Pod ${podToTerminate} terminate/stop diminta untuk sesi ${sessionId}`,
-          );
+          console.log(`[LiveSessionManager] Pod ${podToTerminate} terminate/stop diminta untuk sesi ${sessionId}`);
         })
         .catch((err) => {
           console.error("Failed to stop GPU Pod:", err);
         });
     }
 
-    const durationSeconds =
-      summary?.durationSeconds && summary.durationSeconds > 0
-        ? summary.durationSeconds
-        : metrics.durationSeconds;
+    const durationSeconds = summary?.durationSeconds && summary.durationSeconds > 0 ? summary.durationSeconds : metrics.durationSeconds;
 
-    const finalViewers = Math.max(
-      summary?.viewers || 0,
-      metrics.viewers,
-      metrics.peakViewers,
-    );
+    const finalViewers = Math.max(summary?.viewers || 0, metrics.viewers, metrics.peakViewers);
     const finalComments = Math.max(summary?.comments || 0, metrics.comments);
     const finalClicks = Math.max(summary?.clicks || 0, metrics.clicks);
     const finalSales = Math.max(summary?.sales || 0, metrics.sales);
-    const finalProductSold = Math.max(
-      summary?.productSold || 0,
-      metrics.orders,
-    );
+    const finalProductSold = Math.max(summary?.productSold || 0, metrics.orders);
 
     const durationHours = Math.max(0.1, durationSeconds / 3600);
     const estimatedGpuCost = Math.round(durationHours * 12500);
     const netProfit = Math.max(0, finalSales - estimatedGpuCost);
-    const roiPercentage =
-      estimatedGpuCost > 0
-        ? Math.round((netProfit / estimatedGpuCost) * 100)
-        : 0;
+    const roiPercentage = estimatedGpuCost > 0 ? Math.round((netProfit / estimatedGpuCost) * 100) : 0;
 
     this.activeSessions.delete(sessionId);
     if (this.activeSessions.size === 0) {
@@ -456,9 +360,9 @@ class LiveSessionManager {
         durationSeconds,
         durationFormatted: `${Math.floor(durationSeconds / 3600)}j ${Math.floor((durationSeconds % 3600) / 60)}m ${durationSeconds % 60}d`,
         totalViewers: finalViewers,
-          peakViewers: Math.max(metrics.peakViewers || 0, finalViewers),
-          totalComments: finalComments,
-          aiRepliesCount: metrics.aiReplies || 0,
+        peakViewers: Math.max(metrics.peakViewers || 0, finalViewers),
+        totalComments: finalComments,
+        aiRepliesCount: metrics.aiReplies || 0,
         totalClicks: finalClicks,
         totalProductSold: finalProductSold,
         grossRevenue: finalSales,
@@ -477,16 +381,9 @@ class LiveSessionManager {
     return this.activeSessions.get(sessionId) || null;
   }
 
-  /** Sesi aktif terbaru (live > pending > starting). */
   public getLatestActiveSession(): ManagedSession | null {
     const all = Array.from(this.activeSessions.values());
-    return (
-      all.find((s) => s.state === "live") ||
-      all.find((s) => s.state === "pending") ||
-      all.find((s) => s.state === "starting") ||
-      all[0] ||
-      null
-    );
+    return all.find((s) => s.state === "live") || all.find((s) => s.state === "pending") || all.find((s) => s.state === "starting") || all[0] || null;
   }
 
   public setPendingVoicePreference(voice: string | null) {
@@ -517,10 +414,7 @@ class LiveSessionManager {
     return Math.max(0, Math.floor((session.deadlineAt - Date.now()) / 1000));
   }
 
-  private async transitionState(
-    newState: SessionState,
-    sessionId: string,
-  ): Promise<void> {
+  private async transitionState(newState: SessionState, sessionId: string): Promise<void> {
     const session = this.activeSessions.get(sessionId);
     if (!session) return;
 
@@ -528,26 +422,17 @@ class LiveSessionManager {
     session.state = newState;
 
     if (newState === "live" && previousState !== "live") {
-      // Clock paket mulai saat benar-benar live (bukan saat boot/pending).
       session.liveStartedAt = Date.now();
-      session.deadlineAt =
-        session.liveStartedAt + session.durationHours * 3600 * 1000;
+      session.deadlineAt = session.liveStartedAt + session.durationHours * 3600 * 1000;
       this.startDurationWatchdog(sessionId);
       if (session.podId) {
         try {
           await triggerWorkerPlayback(session.podId);
         } catch (err) {
-          console.warn(
-            "[LiveSessionManager] triggerWorkerPlayback notice:",
-            err,
-          );
+          console.warn("[LiveSessionManager] triggerWorkerPlayback notice:", err);
         }
       }
-      liveHostOrchestrator
-        .startLivePipeline(sessionId)
-        .catch((err) =>
-          console.warn("[LiveSessionManager] startLivePipeline notice:", err),
-        );
+      liveHostOrchestrator.startLivePipeline(sessionId).catch((err) => console.warn("[LiveSessionManager] startLivePipeline notice:", err));
     }
 
     if (newState !== "live") {
@@ -569,10 +454,7 @@ class LiveSessionManager {
         data: { status: newState },
       });
     } catch (err) {
-      console.error(
-        `[LiveSessionManager] Failed to update session state to ${newState}:`,
-        err,
-      );
+      console.error(`[LiveSessionManager] Failed to update session state to ${newState}:`, err);
     }
 
     session.onStateChange?.(newState, sessionId);
@@ -590,9 +472,7 @@ class LiveSessionManager {
 
       const remaining = this.getRemainingDurationSeconds(sessionId);
       if (remaining <= 0) {
-        console.log(
-          `[LiveSessionManager] Duration exceeded for session ${s.sessionId}. Stopping...`,
-        );
+        console.log(`[LiveSessionManager] Duration exceeded for session ${s.sessionId}. Stopping...`);
         await this.stopSession(sessionId);
         return;
       }
@@ -603,9 +483,7 @@ class LiveSessionManager {
         const maxSeconds = s.durationHours * 3600;
 
         if (elapsedSeconds >= maxSeconds) {
-          console.log(
-            `[LiveSessionManager] Max live duration reached (${maxSeconds}s). Stopping...`,
-          );
+          console.log(`[LiveSessionManager] Max live duration reached (${maxSeconds}s). Stopping...`);
           await this.stopSession(sessionId);
         }
       }
@@ -626,12 +504,7 @@ class LiveSessionManager {
           `${Math.round(timeoutMs / 60_000)} menit tanpa Go Live. ` +
           `Menghentikan sesi agar GPU tidak terus ditagih.`,
       );
-      void this.stopSession(sessionId).catch((err) =>
-        console.error(
-          `[LiveSessionManager] Gagal menghentikan sesi pending ${sessionId}:`,
-          err,
-        ),
-      );
+      void this.stopSession(sessionId).catch((err) => console.error(`[LiveSessionManager] Gagal menghentikan sesi pending ${sessionId}:`, err));
     }, timeoutMs);
   }
 
@@ -665,11 +538,7 @@ class LiveSessionManager {
     this.clearPendingTimeout(sessionId);
   }
 
-  private startPlatformLivePoll(
-    sessionId: string,
-    liveVideoId?: string,
-    accessToken?: string,
-  ): void {
+  private startPlatformLivePoll(sessionId: string, liveVideoId?: string, accessToken?: string): void {
     this.clearLivePoll(sessionId);
     const session = this.activeSessions.get(sessionId);
     if (!session || !liveVideoId || !accessToken) return;
@@ -685,23 +554,15 @@ class LiveSessionManager {
       currentSession.liveDetectionAttempts += 1;
 
       if (currentSession.liveDetectionAttempts > 60) {
-        console.warn(
-          `[LiveSessionManager] Platform live poll timed out after 60 attempts for session ${sessionId}.`,
-        );
+        console.warn(`[LiveSessionManager] Platform live poll timed out after 60 attempts for session ${sessionId}.`);
         return;
       }
 
       try {
-        const isLive = await this.checkPlatformLiveStatus(
-          platform,
-          liveVideoId,
-          accessToken,
-        );
+        const isLive = await this.checkPlatformLiveStatus(platform, liveVideoId, accessToken);
 
         if (isLive) {
-          console.log(
-            `[LiveSessionManager] Platform confirmed live for session ${sessionId}. Starting AI...`,
-          );
+          console.log(`[LiveSessionManager] Platform confirmed live for session ${sessionId}. Starting AI...`);
           await this.transitionState("live", sessionId);
           return;
         }
@@ -718,11 +579,7 @@ class LiveSessionManager {
     session.livePollTimer = setTimeout(poll, 5000);
   }
 
-  private async checkPlatformLiveStatus(
-    platform: string,
-    liveVideoId: string,
-    accessToken: string,
-  ): Promise<boolean> {
+  private async checkPlatformLiveStatus(platform: string, liveVideoId: string, accessToken: string): Promise<boolean> {
     const lower = platform.toLowerCase();
 
     if (lower.includes("instagram")) {
@@ -741,9 +598,7 @@ class LiveSessionManager {
     }
 
     if (lower.includes("youtube")) {
-      const url = new URL(
-        "https://www.googleapis.com/youtube/v3/liveBroadcasts",
-      );
+      const url = new URL("https://www.googleapis.com/youtube/v3/liveBroadcasts");
       url.searchParams.set("part", "status");
       url.searchParams.set("broadcastStatus", "active");
       url.searchParams.set("mine", "true");

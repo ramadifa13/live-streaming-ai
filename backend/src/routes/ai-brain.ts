@@ -29,7 +29,6 @@ const videoScriptSchema = z.object({
 });
 
 export async function aiBrainRoutes(server: FastifyInstance) {
-  // GET /api/ai/models — status Groq/Gemini (bukan Ollama)
   server.get("/api/ai/models", async (_request, reply) => {
     try {
       const health = await checkGroqHealth();
@@ -51,7 +50,6 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     }
   });
 
-  // POST /api/ai/sales-response (Autonomous LLM Sales Brain with RAG & Conversational Pivot)
   server.post("/api/ai/sales-response", async (request, reply) => {
     const parsed = salesResponseSchema.safeParse(request.body);
 
@@ -61,7 +59,6 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     }
 
     let {
-      productId,
       productName = "Produk",
       productPrice = "Harga Spesial",
       userQuestion,
@@ -87,7 +84,6 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       productStock = p.stock || 50;
     }
 
-    // Call Autonomous LLM Sales Brain with RAG Knowledge
     try {
       const aiResult = await generateDynamicSalesResponseGroq({
         userQuestion,
@@ -126,7 +122,6 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     }
   });
 
-  // POST /api/ai/video-script (Autonomous Commercial Video Ads Generator)
   server.post("/api/ai/video-script", async (request, reply) => {
     const parsed = videoScriptSchema.safeParse(request.body);
 

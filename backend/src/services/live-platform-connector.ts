@@ -31,12 +31,7 @@ export interface PollerSessionConfig {
 }
 
 type LiveDetectedCallback = (sessionId?: string) => Promise<void> | void;
-type SpeechCallback = (
-  text: string,
-  sessionId?: string,
-  authorName?: string,
-  platformCommentId?: string,
-) => void;
+type SpeechCallback = (text: string, sessionId?: string, authorName?: string, platformCommentId?: string) => void;
 
 const COMMENT_ID_CAP = 5000;
 function rememberCommentId(set: Set<string>, commentId: string): boolean {
@@ -104,12 +99,7 @@ class LivePlatformConnector {
     this.sessions.set(config.sessionId, state);
 
     const platformLower = config.platform.toLowerCase();
-
-    // Start adaptive polling loop for pull-based platforms (YouTube / Instagram)
-    if (
-      platformLower.includes("youtube") ||
-      platformLower.includes("instagram")
-    ) {
+    if (platformLower.includes("youtube") || platformLower.includes("instagram")) {
       this.scheduleNextPoll(config.sessionId, 1000);
     }
   }
@@ -145,35 +135,22 @@ class LivePlatformConnector {
     }, wait);
   }
 
-  public async ingestEvent(
-    sessionId: string,
-    platform: string,
-    eventType: string,
-    data: Record<string, unknown>,
-  ) {
+  public async ingestEvent(sessionId: string, platform: string, eventType: string, data: Record<string, unknown>) {
     const state = this.sessions.get(sessionId);
     if (!state) return;
 
     if (eventType === "viewer_update") {
-      const v =
-        typeof data.viewers === "number"
-          ? data.viewers
-          : Number(data.viewers) || 0;
+      const v = typeof data.viewers === "number" ? data.viewers : Number(data.viewers) || 0;
       state.metrics.viewers = v;
       if (v > state.metrics.peakViewers) state.metrics.peakViewers = v;
     } else if (eventType === "cart_click") {
       state.metrics.clicks += 1;
     } else if (eventType === "order_paid") {
       state.metrics.orders += 1;
-      const amt =
-        typeof data.amount === "number"
-          ? data.amount
-          : Number(data.amount) || 0;
+      const amt = typeof data.amount === "number" ? data.amount : Number(data.amount) || 0;
       state.metrics.sales += amt;
     } else if (eventType === "comment") {
-      const sender = String(
-        data.sender || data.username || data.author || "Penonton",
-      );
+      const sender = String(data.sender || data.username || data.author || "Penonton");
       const text = String(data.text || data.message || data.comment || "");
       const commentId = String(data.id || data.commentId || Date.now());
 
@@ -195,40 +172,23 @@ class LivePlatformConnector {
         await this.pollYouTubeChat(sessionId, liveChatId, accessToken);
       } else if (p.includes("instagram") && liveVideoId && accessToken) {
         await this.pollInstagramComments(sessionId, liveVideoId, accessToken);
-        await this.checkInstagramLiveStatus(
-          sessionId,
-          liveVideoId,
-          accessToken,
-        );
+        await this.checkInstagramLiveStatus(sessionId, liveVideoId, accessToken);
       }
     } catch (err) {
       state.consecutiveErrors++;
-      state.pollDelayMs = Math.min(
-        30000,
-        2500 * Math.pow(1.5, state.consecutiveErrors),
-      );
-      console.warn(
-        `[LivePlatformConnector] Polling warning for ${platform} (Backoff: ${state.pollDelayMs}ms):`,
-        err,
-      );
+      state.pollDelayMs = Math.min(30000, 2500 * Math.pow(1.5, state.consecutiveErrors));
+      console.warn(`[LivePlatformConnector] Polling warning for ${platform} (Backoff: ${state.pollDelayMs}ms):`, err);
     }
   }
 
-  private async pollYouTubeChat(
-    sessionId: string,
-    liveChatId: string,
-    accessToken: string,
-  ) {
+  private async pollYouTubeChat(sessionId: string, liveChatId: string, accessToken: string) {
     const state = this.sessions.get(sessionId);
     if (!state) return;
 
-    const url = new URL(
-      "https://www.googleapis.com/youtube/v3/liveChatMessages",
-    );
+    const url = new URL("https://www.googleapis.com/youtube/v3/liveChatMessages");
     url.searchParams.set("liveChatId", liveChatId);
     url.searchParams.set("part", "id,snippet,authorDetails");
-    if (state.nextPageToken)
-      url.searchParams.set("pageToken", state.nextPageToken);
+    if (state.nextPageToken) url.searchParams.set("pageToken", state.nextPageToken);
 
     const res = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -236,18 +196,12 @@ class LivePlatformConnector {
 
     if (res.status === 429 || res.status === 403) {
       state.consecutiveErrors++;
-      state.pollDelayMs = Math.min(
-        30000,
-        2500 * Math.pow(2, state.consecutiveErrors),
-      );
-      console.warn(
-        `[YouTube Poller] Rate limited (Status ${res.status}). Backing off for ${state.pollDelayMs}ms`,
-      );
+      state.pollDelayMs = Math.min(30000, 2500 * Math.pow(2, state.consecutiveErrors));
+      console.warn(`[YouTube Poller] Rate limited (Status ${res.status}). Backing off for ${state.pollDelayMs}ms`);
       return;
     }
 
     if (res.ok) {
-      // Reset backoff on success
       state.consecutiveErrors = 0;
       state.pollDelayMs = 2500;
 
@@ -275,11 +229,7 @@ class LivePlatformConnector {
     }
   }
 
-  private async checkInstagramLiveStatus(
-    sessionId: string,
-    liveVideoId: string,
-    accessToken: string,
-  ): Promise<void> {
+  private async checkInstagramLiveStatus(sessionId: string, liveVideoId: string, accessToken: string): Promise<void> {
     const state = this.sessions.get(sessionId);
     if (!state || !state.isRunning) return;
 
@@ -300,23 +250,14 @@ class LivePlatformConnector {
           try {
             await this.globalLiveDetectedCallback(sessionId);
           } catch (err) {
-            console.error(
-              "[LivePlatformConnector] Live detected callback failed:",
-              err,
-            );
+            console.error("[LivePlatformConnector] Live detected callback failed:", err);
           }
         }
       }
-    } catch (err) {
-      // Ignore polling errors for live status check
-    }
+    } catch (err) {}
   }
 
-  private async pollInstagramComments(
-    sessionId: string,
-    liveVideoId: string,
-    accessToken: string,
-  ) {
+  private async pollInstagramComments(sessionId: string, liveVideoId: string, accessToken: string) {
     const state = this.sessions.get(sessionId);
     if (!state) return;
 
@@ -325,10 +266,7 @@ class LivePlatformConnector {
 
     if (res.status === 429 || res.status === 403) {
       state.consecutiveErrors++;
-      state.pollDelayMs = Math.min(
-        30000,
-        2500 * Math.pow(2, state.consecutiveErrors),
-      );
+      state.pollDelayMs = Math.min(30000, 2500 * Math.pow(2, state.consecutiveErrors));
       return;
     }
 
@@ -356,12 +294,7 @@ class LivePlatformConnector {
     }
   }
 
-  private async handleNewComment(
-    sessionId: string,
-    commentId: string,
-    sender: string,
-    text: string,
-  ) {
+  private async handleNewComment(sessionId: string, commentId: string, sender: string, text: string) {
     const state = this.sessions.get(sessionId);
     if (!state) return;
 
@@ -382,7 +315,6 @@ class LivePlatformConnector {
       state.metrics.recentComments.shift();
     }
 
-    // Single LLM path: orchestrator generates speech via enqueue callback.
     if (state.config.autoReply !== false && text.trim().length > 0) {
       this.globalSpeechCallback?.(text, sessionId, sender, commentId);
     }
@@ -413,10 +345,7 @@ class LivePlatformConnector {
       };
     }
 
-    const duration =
-      state.startedAtTimestamp > 0
-        ? Math.floor((Date.now() - state.startedAtTimestamp) / 1000)
-        : 0;
+    const duration = state.startedAtTimestamp > 0 ? Math.floor((Date.now() - state.startedAtTimestamp) / 1000) : 0;
 
     return {
       ...state.metrics,

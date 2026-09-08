@@ -100,9 +100,7 @@ export interface ScriptBankState {
   refillInFlight: boolean;
   llmRefillCount: number;
   lastLlmRefillAt: number;
-  /** Cursor ritme — dipertahankan antar refill agar topik tidak berulang di awal slot. */
   rhythmCursor: number;
-  /** Topik yang sudah dipakai di siklus terakhir — hindari loop berturut-turut. */
   usedTopics: string[];
 }
 
@@ -119,7 +117,6 @@ const USAGE_HINT =
 const FAQ_HINT =
   /\b(berapa|harga|ongkir|kirim|cod|garansi|bpom|halal|expired|ed|ukuran|ml|gram|isi|kemasan|varian|warna|size|sisa|stok|berapa lama|berapa kali)\b/i;
 
-/** Ekstrak benefits/usage/faq HANYA dari teks deskripsi — tanpa mengarang fakta baru. */
 export function extractProductKnowledgeFromDescription(description: string): ExtractedProductKnowledge {
   const sentences = splitFacts(description);
   const benefits: string[] = [];
@@ -134,7 +131,6 @@ export function extractProductKnowledgeFromDescription(description: string): Ext
     else neutral.push(sentence);
   }
 
-  // Kalimat netral dialokasikan ke benefits dulu (paling sering dipakai di live).
   if (benefits.length === 0 && neutral.length > 0) {
     const half = Math.ceil(neutral.length / 2);
     benefits.push(...neutral.splice(0, half));
@@ -156,7 +152,6 @@ export function extractProductKnowledgeFromDescription(description: string): Ext
   };
 }
 
-/** Gabungkan field opsional user + ekstraksi dari deskripsi (tanpa ngarang). */
 export function mergeProductKnowledge(
   description: string,
   existing: { benefits?: string; usage?: string; faq?: string },
@@ -169,8 +164,6 @@ export function mergeProductKnowledge(
   };
 }
 
-/** Ritme otonom: slot berurutan supaya CTA/harga tidak numpuk.
- *  Filler/energy_reset sengaja TIDAK masuk ritme — hanya cadangan saat buffer kritis. */
 export const RHYTHM_SLOTS: string[] = [
   "problem",
   "benefit",
@@ -194,7 +187,6 @@ export const RHYTHM_SLOTS: string[] = [
 
 export const FILLER_TOPICS = new Set(["filler", "energy_reset"]);
 
-/** Kapasitas bank lokal per produk — cukup untuk marathon 8–24 jam tanpa LLM live. */
 export const SCRIPT_BANK_CAP = Number(process.env.LIVE_SCRIPT_BANK_CAP || 900);
 const RECYCLE_BATCH = Number(process.env.LIVE_SCRIPT_BANK_RECYCLE_BATCH || 220);
 const RECYCLE_ROUNDS = Number(process.env.LIVE_SCRIPT_BANK_RECYCLE_ROUNDS || 3);
@@ -214,7 +206,6 @@ const PARAPHRASE_OPENERS = [
   "Yang perlu dicatat — ",
 ];
 
-/** Max fraction of recycle lines that may get a paraphrase opener (anti AI-template). */
 const PARAPHRASE_VARIANT_RATE = Number(process.env.LIVE_PARAPHRASE_VARIANT_RATE || 0.18);
 
 const LLM_COMMENT_INTENTS = new Set<HostIntent>(["OBJECTION", "BUYING_INTENT", "COMPLAINT", "ANSWER", "ANNOUNCEMENT"]);
@@ -245,7 +236,6 @@ const TOPIC_MODES: Record<string, HostMode[]> = {
   banner_callout: ["ENGAGE", "SELL"],
 };
 
-/** Sapaan jarang — dikelompokkan supaya "Halo"/"Hai" dihitung satu kelas. */
 export const GREETING_CLASSES: Array<{ id: string; pattern: RegExp }> = [
   { id: "halo", pattern: /^(halo|hai|hey|hi)\b/i },
   { id: "guys", pattern: /^(guys|gaste|gas)\b/i },
@@ -256,7 +246,6 @@ export const GREETING_CLASSES: Array<{ id: string; pattern: RegExp }> = [
 
 const RARE_GREETINGS = ["Kak, ", "Guys, "];
 
-/** Deteksi kelas sapaan di awal kalimat (untuk anti-repeat). */
 export function detectGreetingClass(speech: string): string | null {
   const head = String(speech || "")
     .replace(/^\s+/, "")
@@ -277,10 +266,7 @@ export function stripLeadingGreeting(speech: string): string {
   const raw = String(speech || "").trim();
   if (!raw) return raw;
   const stripped = raw
-    .replace(
-      /^(halo|hai|hey|hi|guys|kak|kakak|teman[- ]?teman|semuanya|semua|selamat\s+(datang|pagi|siang|sore|malam))[,!.\s]+/i,
-      "",
-    )
+    .replace(/^(halo|hai|hey|hi|guys|kak|kakak|teman[- ]?teman|semuanya|semua|selamat\s+(datang|pagi|siang|sore|malam))[,!.\s]+/i, "")
     .trim();
   if (!stripped) return raw;
   return stripped.charAt(0).toUpperCase() + stripped.slice(1);
@@ -303,7 +289,6 @@ function clampSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
   return fitScriptBankSpeech(text, Math.min(maxWords, SCRIPT_BANK_MAX_WORDS));
 }
 
-// 18-21 kata memberi ruang tail/transisi di dalam video talk 10 detik.
 export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 21);
 
 function splitFacts(text: string): string[] {
@@ -342,7 +327,6 @@ function sharesOpening(speech: string, recent: string[]): boolean {
   return hasRecentGreetingClass(speech, recent, 6);
 }
 
-/** Variasi pembuka terbatas — jangan jadi mekanisme naturalness utama. */
 function withParaphraseVariants(items: HostResponse[]): HostResponse[] {
   const out: HostResponse[] = [];
   let variantsAdded = 0;
@@ -354,7 +338,6 @@ function withParaphraseVariants(items: HostResponse[]): HostResponse[] {
     if (Math.random() > PARAPHRASE_VARIANT_RATE) continue;
     const speech = item.speech.trim();
     if (!speech || speech.split(" ").length < 8) continue;
-    // Skip jika sudah punya opener template.
     if (/^(nah|oke jadi|yang penting|intinya|biar jelas|singkatnya|jadi gini)\b/i.test(speech)) {
       continue;
     }
@@ -372,7 +355,6 @@ function withParaphraseVariants(items: HostResponse[]): HostResponse[] {
   return out;
 }
 
-/** Hook penjualan product-agnostic (intent-first) — cocok semua kategori. */
 function intentAgnosticHooks(product: ScriptProductFacts, entryMode: ProductEntryMode = "continuing"): HostResponse[] {
   const name = ref(product, entryMode);
   const price = product.price || "harga live";
@@ -441,7 +423,6 @@ function intentAgnosticHooks(product: ScriptProductFacts, entryMode: ProductEntr
   );
 }
 
-/** Hook kategori = bonus kecil, bukan sumber utama (product-agnostic first). */
 function categorySalesHooks(product: ScriptProductFacts): HostResponse[] {
   const name = product.name || "produk ini";
   const price = product.price || "harga live";
@@ -450,17 +431,11 @@ function categorySalesHooks(product: ScriptProductFacts): HostResponse[] {
   const templates: Array<{ match: RegExp; speeches: string[] }> = [
     {
       match: /skincare|beauty|makeup/,
-      speeches: [
-        `Yang fokus perawatan, ${name} relevan karena ${fact}.`,
-        `Rutinitas simple: ${name} — ${fact}. Live ${price}.`,
-      ],
+      speeches: [`Yang fokus perawatan, ${name} relevan karena ${fact}.`, `Rutinitas simple: ${name} — ${fact}. Live ${price}.`],
     },
     {
       match: /fashion|pakaian|hijab|sepatu|aksesoris/,
-      speeches: [
-        `Buat tampilan lebih rapi, ${name} — ${fact}. Live ${price}.`,
-        `Styling praktis pakai ${name}: ${fact}.`,
-      ],
+      speeches: [`Buat tampilan lebih rapi, ${name} — ${fact}. Live ${price}.`, `Styling praktis pakai ${name}: ${fact}.`],
     },
     {
       match: /makanan|minuman|fnb|kuliner/,
@@ -480,7 +455,6 @@ function categorySalesHooks(product: ScriptProductFacts): HostResponse[] {
   return matched.speeches.map((speech) => line(speech, "promo_pitch", "SELL", { ctaType: "SOFT" }));
 }
 
-/** Kombinasi 2 fakta → variasi ekstra tanpa LLM. */
 function crossFactLines(product: ScriptProductFacts): HostResponse[] {
   const name = product.name || "produk ini";
   const price = product.price || "harga live";
@@ -510,7 +484,6 @@ function shuffled<T>(items: T[]): T[] {
 }
 
 function greet(): string {
-  // ~5% saja pakai sapaan — sisanya langsung ke isi.
   if (Math.random() > 0.05) return "";
   return RARE_GREETINGS[Math.floor(Math.random() * RARE_GREETINGS.length)] || "";
 }
@@ -521,8 +494,7 @@ function line(speech: string, topic: string, mode: HostMode, extras?: Partial<Ho
   const clamped = clampSpeech(speech, maxWords);
   const semanticKey = extras?.semanticKey || inferSemanticKey(clamped, topic);
   const salesRule =
-    extras?.salesRule ||
-    (extras?.ctaType && extras.ctaType !== "NONE" ? inferSalesRule(topic, extras.ctaType) || undefined : undefined);
+    extras?.salesRule || (extras?.ctaType && extras.ctaType !== "NONE" ? inferSalesRule(topic, extras.ctaType) || undefined : undefined);
   return {
     speech: clamped,
     action: extras?.action ? normalizeLunaAction(extras.action) : inferCtaPointAction(speech, topic),
@@ -582,60 +554,40 @@ function factChunks(product: ScriptProductFacts): string[] {
 }
 
 function fillerLines(product: ScriptProductFacts): HostResponse[] {
-  // Cadangan pendek berbasis fakta produk — BUKAN stall "sebentar/pelan-pelan/halo".
   const name = product.name || "produk ini";
   const facts = factChunks(product).slice(0, 6);
   const drafts = facts.length
     ? facts.map((fact) => `Satu poin ${name}: ${fact}.`)
-    : [
-        `${name} ini yang lagi kita bahas di live.`,
-        `Fokus dulu di ${name} biar jelas.`,
-        `${name} siap dicek di etalase ya.`,
-      ];
-  return drafts.map((speech) =>
-    line(speech, "filler", "ENGAGE", { intent: "SOCIAL", emotion: "warm", ctaType: "NONE" }),
-  );
+    : [`${name} ini yang lagi kita bahas di live.`, `Fokus dulu di ${name} biar jelas.`, `${name} siap dicek di etalase ya.`];
+  return drafts.map((speech) => line(speech, "filler", "ENGAGE", { intent: "SOCIAL", emotion: "warm", ctaType: "NONE" }));
 }
 
 function promoPitchLines(product: ScriptProductFacts, entryMode: ProductEntryMode = "continuing"): HostResponse[] {
   const name = ref(product, entryMode);
   const price = product.price || "harga live";
-  const benefit = pickFact(
-    splitFacts(product.benefits),
-    pickFact(splitFacts(product.description), `kelebihan ${product.name || "produk ini"}`),
-  );
+  const benefit = pickFact(splitFacts(product.benefits), pickFact(splitFacts(product.description), `kelebihan ${product.name || "produk ini"}`));
   const usage = pickFact(splitFacts(product.usage), "ikutin cara pakai di kemasan");
   return [
-    line(
-      `${greet()}yang lagi dicari: ${name}. Plus-nya ${benefit}. Live price ${price} — cek keranjang kalau cocok.`,
-      "promo_pitch",
-      "SELL",
-      { ctaType: "SOFT", behavior: "soft_cta" },
-    ),
-    line(
-      `Hook singkat: ${name} fokus buat yang butuh ${benefit}. Harganya ${price}. Nggak dipaksa, cek dulu.`,
-      "promo_pitch",
-      "SELL",
-      { ctaType: "SOFT", behavior: "clarification" },
-    ),
-    line(
-      `${greet()}${name} — ${benefit}. Cara pakainya ${usage}. Live ${price}, keranjang siap kalau kamu yakin.`,
-      "promo_pitch",
-      "SELL",
-      { ctaType: "DIRECT", behavior: "direct_cta" },
-    ),
-    line(
-      `Kalau fokusnya ${benefit}, coba lihat ${name} di live ini ${price}. Soft aja: cek keranjangnya.`,
-      "promo_pitch",
-      "SELL",
-      { ctaType: "SOFT", behavior: "soft_cta" },
-    ),
-    line(
-      `${greet()}ringkas: ${name}, ${benefit}, harga ${price}. Kalau nyambung, baru klik keranjang.`,
-      "promo_pitch",
-      "SELL",
-      { ctaType: "SOFT", behavior: "soft_cta" },
-    ),
+    line(`${greet()}yang lagi dicari: ${name}. Plus-nya ${benefit}. Live price ${price} — cek keranjang kalau cocok.`, "promo_pitch", "SELL", {
+      ctaType: "SOFT",
+      behavior: "soft_cta",
+    }),
+    line(`Hook singkat: ${name} fokus buat yang butuh ${benefit}. Harganya ${price}. Nggak dipaksa, cek dulu.`, "promo_pitch", "SELL", {
+      ctaType: "SOFT",
+      behavior: "clarification",
+    }),
+    line(`${greet()}${name} — ${benefit}. Cara pakainya ${usage}. Live ${price}, keranjang siap kalau kamu yakin.`, "promo_pitch", "SELL", {
+      ctaType: "DIRECT",
+      behavior: "direct_cta",
+    }),
+    line(`Kalau fokusnya ${benefit}, coba lihat ${name} di live ini ${price}. Soft aja: cek keranjangnya.`, "promo_pitch", "SELL", {
+      ctaType: "SOFT",
+      behavior: "soft_cta",
+    }),
+    line(`${greet()}ringkas: ${name}, ${benefit}, harga ${price}. Kalau nyambung, baru klik keranjang.`, "promo_pitch", "SELL", {
+      ctaType: "SOFT",
+      behavior: "soft_cta",
+    }),
     line(`Yang nanya ${name} — ${benefit}, live ${price}.`, "promo_pitch", "SELL", {
       ctaType: "SOFT",
       behavior: "answer",
@@ -666,21 +618,9 @@ function bridgeLines(product: ScriptProductFacts, catalog: Array<{ name: string 
     ];
   }
   return [
-    line(
-      `${greet()}kalau ${name} belum pas, bisa cek ${other} juga — masih di etalase live ini.`,
-      "catalog_bridge",
-      "SELL",
-    ),
-    line(
-      `Bridge singkat: dari ${name} ke ${other}. Bukan hard sell, cuma opsi lain di etalase.`,
-      "catalog_bridge",
-      "ENGAGE",
-    ),
-    line(
-      `Yang masih ragu sama ${name} boleh stay. Yang mau banding, ${other} juga ada di live ini.`,
-      "catalog_bridge",
-      "SELL",
-    ),
+    line(`${greet()}kalau ${name} belum pas, bisa cek ${other} juga — masih di etalase live ini.`, "catalog_bridge", "SELL"),
+    line(`Bridge singkat: dari ${name} ke ${other}. Bukan hard sell, cuma opsi lain di etalase.`, "catalog_bridge", "ENGAGE"),
+    line(`Yang masih ragu sama ${name} boleh stay. Yang mau banding, ${other} juga ada di live ini.`, "catalog_bridge", "SELL"),
   ];
 }
 
@@ -698,27 +638,20 @@ function stockLines(product: ScriptProductFacts, catalog: Array<{ name: string }
         "SELL",
         { intent: "ANNOUNCEMENT", ctaType: other ? "SOFT" : "NONE" },
       ),
-      line(
-        `Sold out dulu buat ${name}. ${other ? `Yang masih ada: ${other}.` : "Stay di live, jangan buru-buru."}`,
-        "sold_out",
-        "ENGAGE",
-        { intent: "ANNOUNCEMENT" },
-      ),
-      line(
-        `${name} habis ya. Aku nggak maksa. ${other ? `Geser ke ${other} kalau mau.` : "Tanya produk lain aja."}`,
-        "sold_out",
-        "SELL",
-        { intent: "ANNOUNCEMENT", ctaType: "NONE" },
-      ),
+      line(`Sold out dulu buat ${name}. ${other ? `Yang masih ada: ${other}.` : "Stay di live, jangan buru-buru."}`, "sold_out", "ENGAGE", {
+        intent: "ANNOUNCEMENT",
+      }),
+      line(`${name} habis ya. Aku nggak maksa. ${other ? `Geser ke ${other} kalau mau.` : "Tanya produk lain aja."}`, "sold_out", "SELL", {
+        intent: "ANNOUNCEMENT",
+        ctaType: "NONE",
+      }),
     );
   } else if (Number.isFinite(stock) && stock > 0 && stock <= 5) {
     lines.push(
-      line(
-        `${greet()}stok ${name} di live ini tinggal ${stock}. Cek dulu cocok nggak, jangan FOMO palsu.`,
-        "price_context",
-        "SELL",
-        { intent: "ANNOUNCEMENT", ctaType: "SOFT" },
-      ),
+      line(`${greet()}stok ${name} di live ini tinggal ${stock}. Cek dulu cocok nggak, jangan FOMO palsu.`, "price_context", "SELL", {
+        intent: "ANNOUNCEMENT",
+        ctaType: "SOFT",
+      }),
       line(`Info stok: ${name} sisa ${stock}. Itu angka etalase saat ini.`, "value", "ENGAGE", {
         intent: "ANNOUNCEMENT",
       }),
@@ -887,8 +820,7 @@ function combinatorialLines(
     {
       topic: "comparison",
       mode: "QNA",
-      build: (fact) =>
-        other ? `${name} soal ${fact}. Kalau mau opsi lain, ada ${other} di etalase.` : `Fokus ${name} dulu: ${fact}.`,
+      build: (fact) => (other ? `${name} soal ${fact}. Kalau mau opsi lain, ada ${other} di etalase.` : `Fokus ${name} dulu: ${fact}.`),
     },
     {
       topic: "promo_pitch",
@@ -974,7 +906,6 @@ export function commentNeedsLlm(intent: HostIntent, text: string): boolean {
   return false;
 }
 
-/** Baris bank yang belum mirip ucapan terakhir — indikator variasi masih ada. */
 export function countFreshScriptLines(bank: ScriptBankState, recent: string[] = []): number {
   return bank.lines.filter((item) => !similarToAny(item.speech, recent) && !sharesOpening(item.speech, recent)).length;
 }
@@ -990,15 +921,7 @@ function commentKeywordOverlap(commentText: string, corpus: string): number {
   return hits;
 }
 
-/**
- * LLM untuk komentar hanya bila bank/FAQ lokal belum cukup — bukan tiap komentar.
- * Tetap hemat: harga/ongkir/cara pakai/FAQ pack tetap lokal.
- */
-export function shouldUseLlmForComment(
-  product: ScriptProductFacts,
-  commentText: string,
-  intent: HostIntent,
-): { needed: boolean; reason: string } {
+export function shouldUseLlmForComment(product: ScriptProductFacts, commentText: string, intent: HostIntent): { needed: boolean; reason: string } {
   const text = commentText.trim();
   if (!text) return { needed: false, reason: "empty" };
   if (intent === "SPAM") return { needed: false, reason: "spam" };
@@ -1022,17 +945,14 @@ export function shouldUseLlmForComment(
     faq: product.faq,
   });
   const factOverlap =
-    commentKeywordOverlap(text, merged.faq) +
-    commentKeywordOverlap(text, merged.benefits) +
-    commentKeywordOverlap(text, merged.usage);
+    commentKeywordOverlap(text, merged.faq) + commentKeywordOverlap(text, merged.benefits) + commentKeywordOverlap(text, merged.usage);
   if (factOverlap >= 3 && bucket === "PRODUCT_INFO") {
     return { needed: false, reason: "product-facts" };
   }
 
   if (commentNeedsLlm(intent, text)) return { needed: true, reason: "intent" };
 
-  const openQuestion =
-    text.includes("?") || /\b(gimana|gmn|kenapa|kapan|bisa|apakah|berapa|mana|boleh|maksudnya)\b/i.test(text);
+  const openQuestion = text.includes("?") || /\b(gimana|gmn|kenapa|kapan|bisa|apakah|berapa|mana|boleh|maksudnya)\b/i.test(text);
   if (openQuestion && (intent === "OTHER" || intent === "ANSWER")) {
     return { needed: true, reason: "open-question" };
   }
@@ -1048,12 +968,7 @@ export function shouldUseLlmForComment(
   return { needed: false, reason: "local-default" };
 }
 
-/** Cari baris QNA/FAQ di bank yang relevan dengan komentar. */
-export function pickScriptBankCommentLine(
-  bank: ScriptBankState,
-  commentText: string,
-  recent: string[] = [],
-): HostResponse | null {
+export function pickScriptBankCommentLine(bank: ScriptBankState, commentText: string, recent: string[] = []): HostResponse | null {
   const words = normalize(commentText)
     .split(" ")
     .filter((w) => w.length >= 4);
@@ -1064,12 +979,7 @@ export function pickScriptBankCommentLine(
   for (const item of bank.lines) {
     const topic = normalize(item.topic || "");
     const mode = item.mode || "";
-    const isQna =
-      mode === "QNA" ||
-      topic === "faq" ||
-      item.intent === "PRODUCT_INFO" ||
-      item.intent === "PRICE" ||
-      item.intent === "ANSWER";
+    const isQna = mode === "QNA" || topic === "faq" || item.intent === "PRODUCT_INFO" || item.intent === "PRICE" || item.intent === "ANSWER";
     if (!isQna) continue;
     if (similarToAny(item.speech, recent) || sharesOpening(item.speech, recent)) continue;
     const speechNorm = normalize(item.speech);
@@ -1083,7 +993,6 @@ export function pickScriptBankCommentLine(
   return bestScore >= 2 ? best : null;
 }
 
-/** Preferensi topik berdasarkan fase sesi (menit) + offset cycle marathon. */
 export function phasePreferTopics(elapsedMinutes: number, cycleId?: number): string[] {
   const cycle = cycleId ?? marathonCycleId(elapsedMinutes);
   const cycleTopics = preferredAnglesForCycle(cycle).map((angle) => {
@@ -1235,12 +1144,10 @@ export function seedLocalScriptBank(
   const reEntryLead: HostResponse[] =
     entryMode === "re_entry"
       ? [
-          line(
-            `Tadi kita sempat bahas ${name}. Sekarang aku mau lihat dari sisi yang belum sempat dibahas.`,
-            "reframe",
-            "ENGAGE",
-            { behavior: "transition", cycleId },
-          ),
+          line(`Tadi kita sempat bahas ${name}. Sekarang aku mau lihat dari sisi yang belum sempat dibahas.`, "reframe", "ENGAGE", {
+            behavior: "transition",
+            cycleId,
+          }),
           line(`Balik lagi ke ${name} — angle-nya beda dari sebelumnya ya.`, "reframe", "ENGAGE", {
             behavior: "transition",
             cycleId,
@@ -1258,24 +1165,18 @@ export function seedLocalScriptBank(
       "ENGAGE",
       { behavior: entryMode === "re_entry" ? "transition" : "observation", cycleId },
     ),
-    line(
-      `Yang paling kepakai dari ${name}: ${pickFact(benefits, anyFact)}. Pilih yang ketemu kebutuhanmu.`,
-      "benefit",
-      "SELL",
-      { behavior: "clarification", cycleId },
-    ),
-    line(
-      `Cara pakainya jangan dibikin ribet: ${pickFact(usage, "ikutin petunjuk di kemasan aja")}.`,
-      "how_to_use",
-      "DEMO",
-      { behavior: "product_demo", cycleId },
-    ),
-    line(
-      `${name} lebih nyambung buat yang cari solusi ${category}, bukan yang cuma ikut ramai.`,
-      "buyer_fit",
-      "ENGAGE",
-      { behavior: "audience_engagement", cycleId },
-    ),
+    line(`Yang paling kepakai dari ${name}: ${pickFact(benefits, anyFact)}. Pilih yang ketemu kebutuhanmu.`, "benefit", "SELL", {
+      behavior: "clarification",
+      cycleId,
+    }),
+    line(`Cara pakainya jangan dibikin ribet: ${pickFact(usage, "ikutin petunjuk di kemasan aja")}.`, "how_to_use", "DEMO", {
+      behavior: "product_demo",
+      cycleId,
+    }),
+    line(`${name} lebih nyambung buat yang cari solusi ${category}, bukan yang cuma ikut ramai.`, "buyer_fit", "ENGAGE", {
+      behavior: "audience_engagement",
+      cycleId,
+    }),
     line(`Masih ragu? Wajar banget. Yang sering ditanya: ${pickFact(faq, anyFact)}.`, "objection", "OBJECTION", {
       behavior: "thinking",
       cycleId,
@@ -1322,7 +1223,6 @@ export function seedLocalScriptBank(
     unique.push(item);
     if (unique.length >= SCRIPT_BANK_CAP) break;
   }
-  // Isi sisa kapasitas dengan deferred (angle lama) hanya jika perlu.
   for (const item of deferred) {
     if (unique.length >= SCRIPT_BANK_CAP) break;
     const key = normalize(item.speech);
@@ -1333,7 +1233,6 @@ export function seedLocalScriptBank(
   return unique;
 }
 
-/** Isi ulang lokal tanpa LLM — multi-round shuffle + parafrase terbatas, memory-aware. */
 export function recycleLocalScriptBank(
   product: ScriptProductFacts,
   catalog: Array<{ name: string; benefits?: string }>,
@@ -1393,9 +1292,7 @@ export function takeScriptLine(
   if (!bank.lines.length) return null;
 
   const options: TakeScriptOptions =
-    typeof preferModeOrOptions === "object" && preferModeOrOptions !== null
-      ? preferModeOrOptions
-      : { preferMode: preferModeOrOptions, preferTopic };
+    typeof preferModeOrOptions === "object" && preferModeOrOptions !== null ? preferModeOrOptions : { preferMode: preferModeOrOptions, preferTopic };
 
   const now = options.now ?? Date.now();
   const cycleId = options.cycleId ?? 0;
@@ -1407,15 +1304,9 @@ export function takeScriptLine(
       .filter(Boolean),
   );
   const primaryTopic = options.preferTopic ? normalize(String(options.preferTopic)) : "";
-  let preferTopicsList = (options.preferTopics || [])
-    .map((t) => normalize(String(t)))
-    .filter((t) => Boolean(t) && t !== primaryTopic);
+  let preferTopicsList = (options.preferTopics || []).map((t) => normalize(String(t))).filter((t) => Boolean(t) && t !== primaryTopic);
   if (options.preferUnusedAngles && options.productMemory) {
-    preferTopicsList = preferFreshTopics(
-      preferTopicsList.length ? preferTopicsList : RHYTHM_SLOTS.slice(),
-      options.productMemory,
-      cycleId,
-    );
+    preferTopicsList = preferFreshTopics(preferTopicsList.length ? preferTopicsList : RHYTHM_SLOTS.slice(), options.productMemory, cycleId);
   }
   const preferTopics = new Set(preferTopicsList);
   const cycleAngles = new Set(preferredAnglesForCycle(cycleId));
@@ -1470,7 +1361,6 @@ export function takeScriptLine(
   let bestScore = -Infinity;
   for (let i = 0; i < bank.lines.length; i++) {
     const item = bank.lines[i]!;
-    // Hard reject exact content repeats (non-CTA).
     if (item.ctaType === "NONE" && recent.some((r) => isExactRepeat(item.speech, r))) {
       continue;
     }
@@ -1491,7 +1381,6 @@ export function takeScriptLine(
   }
 
   if (bestIndex < 0) {
-    // Fallback: allow any non-exact line.
     for (let i = 0; i < bank.lines.length; i++) {
       const item = bank.lines[i]!;
       if (recent.some((r) => isExactRepeat(item.speech, r))) continue;
@@ -1510,10 +1399,7 @@ export function mergeScriptLines(bank: ScriptBankState, incoming: HostResponse[]
   let added = 0;
   for (const item of incoming) {
     const isFiller = FILLER_TOPICS.has(item.topic || "");
-    const speech = clampSpeech(
-      item.speech || "",
-      Math.min(SCRIPT_BANK_MAX_WORDS, isFiller ? 22 : SCRIPT_BANK_MAX_WORDS),
-    );
+    const speech = clampSpeech(item.speech || "", Math.min(SCRIPT_BANK_MAX_WORDS, isFiller ? 22 : SCRIPT_BANK_MAX_WORDS));
     const key = normalize(speech);
     const minWords = isFiller ? 5 : 8;
     if (!key || seen.has(key) || similarToAny(speech, recent)) continue;
@@ -1522,10 +1408,7 @@ export function mergeScriptLines(bank: ScriptBankState, incoming: HostResponse[]
     bank.lines.push({
       ...item,
       speech,
-      action:
-        normalizeLunaAction(item.action) !== "IDLE"
-          ? normalizeLunaAction(item.action)
-          : inferCtaPointAction(speech, item.topic),
+      action: normalizeLunaAction(item.action) !== "IDLE" ? normalizeLunaAction(item.action) : inferCtaPointAction(speech, item.topic),
       mode: item.mode || mode,
       ctaType: item.ctaType || "NONE",
       target_product_id: item.target_product_id ?? null,
@@ -1543,20 +1426,14 @@ function detectCommentBucket(text: string, intent: HostIntent): HostIntent | "US
   if (/\b(brp|berapa|harga|price|pricelist|hrga|hrg|duit|cuan|promo|diskon|murah)\b/.test(t) || intent === "PRICE") {
     return "PRICE";
   }
-  if (
-    /\b(cara pakai|pemakaian|dipakai|pakai|pakainya|step|langkah|how to|aturan pakai|pakenya|dipake|cara pake)\b/.test(
-      t,
-    )
-  ) {
+  if (/\b(cara pakai|pemakaian|dipakai|pakai|pakainya|step|langkah|how to|aturan pakai|pakenya|dipake|cara pake)\b/.test(t)) {
     return "USAGE";
   }
   if (/\b(kirim|ongkir|pengiriman|resi|cod|ekspedisi|shipping|antar|jne|jnt|sicepat|gratis ongkir)\b/.test(t)) {
     return "SHIPPING";
   }
   if (
-    /\b(bahan|isi|kandungan|manfaat|khasiat|ukuran|spesifikasi|detail|info|apa itu|bagus ga|bagus gak|kelebihan|fitur|material)\b/.test(
-      t,
-    ) ||
+    /\b(bahan|isi|kandungan|manfaat|khasiat|ukuran|spesifikasi|detail|info|apa itu|bagus ga|bagus gak|kelebihan|fitur|material)\b/.test(t) ||
     intent === "PRODUCT_INFO"
   ) {
     return "PRODUCT_INFO";
@@ -1564,7 +1441,6 @@ function detectCommentBucket(text: string, intent: HostIntent): HostIntent | "US
   return intent;
 }
 
-/** FAQ pack + 7–10 trigger sinonim per kategori. */
 export function buildDefaultFaqPack(product: ScriptProductFacts): FaqPackEntry[] {
   const name = product.name || "produk ini";
   const price = product.price || "harga live";
@@ -1582,20 +1458,7 @@ export function buildDefaultFaqPack(product: ScriptProductFacts): FaqPackEntry[]
   return [
     {
       category: "harga",
-      triggers: [
-        "brp",
-        "berapa",
-        "harga",
-        "price",
-        "pricelist",
-        "hrg",
-        "hrga",
-        "duit",
-        "cuan",
-        "promo",
-        "diskon",
-        "murah",
-      ],
+      triggers: ["brp", "berapa", "harga", "price", "pricelist", "hrg", "hrga", "duit", "cuan", "promo", "diskon", "murah"],
       answers: [
         `${name} di live ini ${price}. Cek dulu cocok nggak sama kebutuhanmu.`,
         `Harganya ${price} ya. Ongkirnya biasanya keliatan di checkout.`,
@@ -1628,37 +1491,12 @@ export function buildDefaultFaqPack(product: ScriptProductFacts): FaqPackEntry[]
     },
     {
       category: "cara_pakai",
-      triggers: [
-        "cara pakai",
-        "pemakaian",
-        "pakai",
-        "pakenya",
-        "dipakai",
-        "dipake",
-        "step",
-        "langkah",
-        "how to",
-        "aturan pakai",
-        "cara pake",
-      ],
+      triggers: ["cara pakai", "pemakaian", "pakai", "pakenya", "dipakai", "dipake", "step", "langkah", "how to", "aturan pakai", "cara pake"],
       answers: [`Cara pakainya: ${usage}.`, `Gampang kok — ${usage2}.`, `Jangan dipersulit: ${usage}.`],
     },
     {
       category: "pengiriman",
-      triggers: [
-        "kirim",
-        "ongkir",
-        "pengiriman",
-        "resi",
-        "cod",
-        "ekspedisi",
-        "shipping",
-        "antar",
-        "jne",
-        "jnt",
-        "sicepat",
-        "gratis ongkir",
-      ],
+      triggers: ["kirim", "ongkir", "pengiriman", "resi", "cod", "ekspedisi", "shipping", "antar", "jne", "jnt", "sicepat", "gratis ongkir"],
       answers: [
         `Ongkir sama ekspedisi cek di checkout setelah masuk keranjang ya.`,
         `Aku nggak nebak ongkir di sini — liat di halaman bayar platform.`,
@@ -1840,12 +1678,11 @@ export function buildLocalCommentResponse(
     );
   } else if (intent === "BUYING_INTENT") {
     variants.push(
-      line(
-        `${address}${name} ${price}. Kalau ${benefit} emang kamu butuhin, boleh cek keranjang.`,
-        "comment-buy",
-        "SELL",
-        { intent: "BUYING_INTENT", ctaType: "SOFT", emotion: "excited" },
-      ),
+      line(`${address}${name} ${price}. Kalau ${benefit} emang kamu butuhin, boleh cek keranjang.`, "comment-buy", "SELL", {
+        intent: "BUYING_INTENT",
+        ctaType: "SOFT",
+        emotion: "excited",
+      }),
       line(`${address}siap. Live ${price}. Pastikan cocok dulu ya.`, "comment-buy", "SELL", {
         intent: "BUYING_INTENT",
         ctaType: "SOFT",

@@ -1,8 +1,3 @@
-/**
- * Marathon Host memory + repetition guards.
- * Content anti-repeat ketat; CTA/sales rule repeatable dengan cooldown.
- */
-
 export type ProductEntryMode = "first_intro" | "continuing" | "re_entry" | "new_viewer";
 
 export type SalesRule =
@@ -56,13 +51,11 @@ export type ContentAngle =
   | "discovery"
   | "cta"
   | "other";
-
 export interface UsageRecord {
   count: number;
   lastUsedAt: number;
   cycleIds: number[];
 }
-
 export interface ProductMemory {
   productId: string;
   visitCount: number;
@@ -110,16 +103,10 @@ export interface RepeatScore {
 export const RECENT_SPEECH_LIMIT = Number(process.env.LIVE_RECENT_SPEECH_LIMIT || 48);
 export const SEMANTIC_MEMORY_LIMIT = Number(process.env.LIVE_SEMANTIC_MEMORY_LIMIT || 64);
 export const CTA_COOLDOWN_MS = Number(process.env.LIVE_CTA_COOLDOWN_MS || 45_000);
-export const BANNER_CTA_COOLDOWN_MS = Number(
-  process.env.LIVE_BANNER_CTA_COOLDOWN_MS || 90_000,
-);
-export const PRICE_MENTION_COOLDOWN_MS = Number(
-  process.env.LIVE_PRICE_MENTION_COOLDOWN_MS || 60_000,
-);
+export const BANNER_CTA_COOLDOWN_MS = Number(process.env.LIVE_BANNER_CTA_COOLDOWN_MS || 90_000);
+export const PRICE_MENTION_COOLDOWN_MS = Number(process.env.LIVE_PRICE_MENTION_COOLDOWN_MS || 60_000);
 export const MAX_CYCLE_MINUTES = Number(process.env.LIVE_MAX_CYCLE_MINUTES || 45);
-export const SEMANTIC_DECAY_MS = Number(
-  process.env.LIVE_SEMANTIC_DECAY_MS || 20 * 60_000,
-);
+export const SEMANTIC_DECAY_MS = Number(process.env.LIVE_SEMANTIC_DECAY_MS || 20 * 60_000);
 export const REPEAT_OVERALL_REJECT = Number(process.env.LIVE_REPEAT_REJECT_SCORE || 0.72);
 
 const CYCLE_ANGLE_ROTATION: ContentAngle[][] = [
@@ -184,7 +171,6 @@ export function getOrCreateProductMemory(
   return store[productId]!;
 }
 
-/** Panggil saat produk menjadi aktif (switch / pertama kali). */
 export function touchProductVisit(memory: ProductMemory, now = Date.now()): ProductMemory {
   const wasVisited = memory.visitCount > 0;
   memory.visitCount += 1;
@@ -325,7 +311,6 @@ export function inferContentAngle(speech: string, topic?: string): ContentAngle 
   return "other";
 }
 
-/** Compact semantic identity — dua kalimat berbeda bisa share key yang sama. */
 export function inferSemanticKey(speech: string, topic?: string): string {
   const angle = inferContentAngle(speech, topic);
   const norm = normalizeSpeechText(speech);
@@ -367,7 +352,6 @@ export function isSemanticRepeat(
   const rec = productMemory.angleUsage[key];
   if (!rec) return false;
   if (now - rec.lastUsedAt > decayMs) return false;
-  // Hot jika baru dipakai atau dipakai berkali-kali dalam cycle dekat.
   return now - rec.lastUsedAt < decayMs && rec.count >= 1;
 }
 
@@ -379,8 +363,7 @@ export function scoreRepeat(input: {
   productMemory?: ProductMemory;
   now?: number;
 }): RepeatScore {
-  const { speech, topic, recentSpeeches, recentTopics = [], productMemory, now = Date.now() } =
-    input;
+  const { speech, topic, recentSpeeches, recentTopics = [], productMemory, now = Date.now() } = input;
   let exact = 0;
   let lexical = 0;
   let opening = 0;
@@ -392,20 +375,11 @@ export function scoreRepeat(input: {
     if (open && openingPhrase(prev) === open) opening = Math.max(opening, 1);
   }
 
-  const semantic =
-    productMemory && isSemanticRepeat(speech, topic, productMemory, now) ? 0.9 : 0;
+  const semantic = productMemory && isSemanticRepeat(speech, topic, productMemory, now) ? 0.9 : 0;
   const topicNorm = normalizeSpeechText(topic || "");
-  const topicScore =
-    topicNorm && recentTopics.slice(-3).some((t) => normalizeSpeechText(t) === topicNorm)
-      ? 0.55
-      : 0;
+  const topicScore = topicNorm && recentTopics.slice(-3).some((t) => normalizeSpeechText(t) === topicNorm) ? 0.55 : 0;
 
-  const overall =
-    exact * 1 +
-    lexical * 0.55 +
-    semantic * 0.7 +
-    opening * 0.35 +
-    topicScore * 0.25;
+  const overall = exact * 1 + lexical * 0.55 + semantic * 0.7 + opening * 0.35 + topicScore * 0.25;
 
   return {
     exact,
@@ -429,7 +403,6 @@ export function contentRepeatGuard(input: {
   rejectThreshold?: number;
 }): { blocked: boolean; score: RepeatScore; reason?: string } {
   const cta = input.ctaType || "NONE";
-  // CTA / sales lines: jangan blokir lewat content guard (salesRuleGuard yang urus).
   if (cta !== "NONE") {
     const score = scoreRepeat({
       speech: input.speech,
@@ -439,7 +412,6 @@ export function contentRepeatGuard(input: {
       productMemory: input.productMemory,
       now: input.now,
     });
-    // Exact full-sentence CTA terlalu dekat tetap diblok.
     if (score.exact >= 1) {
       return { blocked: true, score, reason: "exact-cta" };
     }
@@ -488,8 +460,7 @@ export function salesRuleGuard(input: {
   const cta = (input.ctaType || "NONE").toUpperCase();
   if (cta === "NONE" && !input.salesRule) return { blocked: false };
 
-  const rule =
-    input.salesRule || inferSalesRule(input.topic, input.ctaType) || ("soft_cta" as SalesRule);
+  const rule = input.salesRule || inferSalesRule(input.topic, input.ctaType) || ("soft_cta" as SalesRule);
   const ctaCd = input.ctaCooldownMs ?? CTA_COOLDOWN_MS;
   const bannerCd = input.bannerCooldownMs ?? BANNER_CTA_COOLDOWN_MS;
   const priceCd = input.priceCooldownMs ?? PRICE_MENTION_COOLDOWN_MS;
@@ -531,13 +502,7 @@ function pushBounded(list: string[], value: string, limit: number): void {
   if (list.length > limit) list.splice(0, list.length - limit);
 }
 
-function bumpUsage(
-  map: Record<string, UsageRecord>,
-  key: string,
-  cycleId: number,
-  now: number,
-  limit: number,
-): void {
+function bumpUsage(map: Record<string, UsageRecord>, key: string, cycleId: number, now: number, limit: number): void {
   const existing = map[key];
   if (existing) {
     existing.count += 1;
@@ -613,33 +578,13 @@ export function productReference(
 
   const pools: Record<ProductEntryMode, string[]> = {
     first_intro: [name, name, "yang ini", "produk ini", "yang lagi aku tunjukin"],
-    continuing: [
-      "produk ini",
-      "yang ini",
-      "yang lagi kita bahas",
-      "barang ini",
-      "yang satu ini",
-      name,
-    ],
-    re_entry: [
-      "yang tadi",
-      "yang ini lagi",
-      "produk ini",
-      "yang sempat kita bahas",
-      name,
-    ],
-    new_viewer: [
-      "yang lagi aku bahas ini",
-      "produk di etalase ini",
-      name,
-      "yang tampil sekarang",
-    ],
+    continuing: ["produk ini", "yang ini", "yang lagi kita bahas", "barang ini", "yang satu ini", name],
+    re_entry: ["yang tadi", "yang ini lagi", "produk ini", "yang sempat kita bahas", name],
+    new_viewer: ["yang lagi aku bahas ini", "produk di etalase ini", name, "yang tampil sekarang"],
   };
   const pool = pools[context] || pools.continuing;
   const idx =
-    typeof opts?.index === "number"
-      ? Math.abs(opts.index) % pool.length
-      : Math.floor(Math.random() * pool.length);
+    typeof opts?.index === "number" ? Math.abs(opts.index) % pool.length : Math.floor(Math.random() * pool.length);
   return pool[idx] || name;
 }
 
@@ -664,9 +609,7 @@ export function preferFreshTopics(
 ): string[] {
   if (!productMemory) return candidates;
   const preferredAngles = new Set(preferredAnglesForCycle(cycleId));
-  const recentTopics = new Set(
-    productMemory.usedTopics.slice(-6).map((t) => normalizeSpeechText(t)),
-  );
+  const recentTopics = new Set(productMemory.usedTopics.slice(-6).map((t) => normalizeSpeechText(t)));
   return candidates.slice().sort((a, b) => {
     const aNorm = normalizeSpeechText(a);
     const bNorm = normalizeSpeechText(b);

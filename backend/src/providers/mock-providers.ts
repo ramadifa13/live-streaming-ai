@@ -1,10 +1,4 @@
-import type {
-  AvatarProvider,
-  GPUProvider,
-  LLMProvider,
-  ProviderHealth,
-  TTSProvider,
-} from "./types.js";
+import type { AvatarProvider, GPUProvider, LLMProvider, ProviderHealth, TTSProvider } from "./types.js";
 
 export class MockLLMProvider implements LLMProvider {
   readonly name = "mock-llm";
@@ -44,11 +38,7 @@ export class MockLLMProvider implements LLMProvider {
 export class MockTTSProvider implements TTSProvider {
   readonly name = "mock-tts";
 
-  async synthesize(input: {
-    text: string;
-    voice: string;
-    language: string;
-  }): Promise<{
+  async synthesize(input: { text: string; voice: string; language: string }): Promise<{
     audioUrl: string;
     voice: string;
     language: string;
@@ -142,10 +132,7 @@ export class MockAvatarProvider implements AvatarProvider {
 export class MockGPUProvider implements GPUProvider {
   readonly name = "mock-gpu";
 
-  private allocations = new Map<
-    string,
-    { jobName: string; gpuType: string; costPerMinute: number }
-  >();
+  private allocations = new Map<string, { jobName: string; gpuType: string; costPerMinute: number }>();
 
   async acquire(jobName: string): Promise<{
     jobName: string;

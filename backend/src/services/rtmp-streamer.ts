@@ -1,8 +1,6 @@
 import { spawn, ChildProcess } from "child_process";
 import fs from "fs";
 import path from "path";
-import https from "https";
-import http from "http";
 import { URL } from "url";
 
 let activeStreamProcess: ChildProcess | null = null;
@@ -43,12 +41,7 @@ let activeStreamInfo: {
  * FFmpeg drawtext uses : and ' as special chars; we also strip newlines.
  */
 function escapeDrawtext(str: string): string {
-  return str
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
-    .replace(/:/g, "\\:")
-    .replace(/\n/g, " ")
-    .trim();
+  return str.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/:/g, "\\:").replace(/\n/g, " ").trim();
 }
 
 /**
@@ -98,9 +91,7 @@ function getPlatformStyle(platform: string): {
 
 const downloadedTempFiles: string[] = [];
 
-async function downloadImageToTemp(
-  imageUrl: string,
-): Promise<string | undefined> {
+async function downloadImageToTemp(imageUrl: string): Promise<string | undefined> {
   try {
     if (imageUrl.startsWith("data:image/")) {
       const ext = imageUrl.startsWith("data:image/png") ? ".png" : ".jpg";
@@ -116,9 +107,7 @@ async function downloadImageToTemp(
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) {
-      console.error(
-        `[RTMP Streamer] Failed to download image: ${res.status} ${imageUrl}`,
-      );
+      console.error(`[RTMP Streamer] Failed to download image: ${res.status} ${imageUrl}`);
       return undefined;
     }
     const arrayBuffer = await res.arrayBuffer();
@@ -172,26 +161,16 @@ export async function startInstagramBroadcast(
   };
 
   const normalizedBaseUrl = rtmpBaseUrl.replace(/\/+$/, "");
-  const fullTargetUrl = normalizedBaseUrl.endsWith(`/${streamKey}`)
-    ? normalizedBaseUrl
-    : `${normalizedBaseUrl}/${streamKey}`;
+  const fullTargetUrl = normalizedBaseUrl.endsWith(`/${streamKey}`) ? normalizedBaseUrl : `${normalizedBaseUrl}/${streamKey}`;
 
   const publicRoot = path.resolve(process.cwd(), "../frontend/public");
   const resolvePublicAsset = (assetPath: string | undefined) => {
-    if (
-      !assetPath ||
-      assetPath.startsWith("http://") ||
-      assetPath.startsWith("https://")
-    )
-      return undefined;
+    if (!assetPath || assetPath.startsWith("http://") || assetPath.startsWith("https://")) return undefined;
     const relativePath = assetPath.replace(/^[/\\]+/, "");
     return path.resolve(publicRoot, relativePath);
   };
   const defaultVideo = path.resolve(publicRoot, "avatars/namira_idle.mp4");
-  const mediaToUse =
-    resolvePublicAsset(avatarVideoPath) ||
-    resolvePublicAsset(avatarImagePath) ||
-    defaultVideo;
+  const mediaToUse = resolvePublicAsset(avatarVideoPath) || resolvePublicAsset(avatarImagePath) || defaultVideo;
 
   if (!fs.existsSync(mediaToUse)) {
     activeStreamInfo = {
@@ -209,14 +188,9 @@ export async function startInstagramBroadcast(
     };
   }
 
-  console.log(
-    `[RTMP Streamer] Starting Live Stream to: ${fullTargetUrl.substring(0, 50)}...`,
-  );
+  console.log(`[RTMP Streamer] Starting Live Stream to: ${fullTargetUrl.substring(0, 50)}...`);
   console.log(`[RTMP Streamer] Using presenter media: ${mediaToUse}`);
-  if (productName)
-    console.log(
-      `[RTMP Streamer] Product: ${productName} — Rp${productPrice} | Platform: ${platform || "default"}`,
-    );
+  if (productName) console.log(`[RTMP Streamer] Product: ${productName} — Rp${productPrice} | Platform: ${platform || "default"}`);
 
   activeStreamInfo = {
     rtmpUrl: fullTargetUrl,
@@ -233,11 +207,7 @@ export async function startInstagramBroadcast(
   // Resolve product image and banner image — supports remote URLs and base64
   let productImagePath: string | undefined;
   if (productImageUrl) {
-    if (
-      !productImageUrl.startsWith("http://") &&
-      !productImageUrl.startsWith("https://") &&
-      !productImageUrl.startsWith("data:image/")
-    ) {
+    if (!productImageUrl.startsWith("http://") && !productImageUrl.startsWith("https://") && !productImageUrl.startsWith("data:image/")) {
       const resolved = resolvePublicAsset(productImageUrl);
       if (resolved && fs.existsSync(resolved)) {
         productImagePath = resolved;
@@ -252,11 +222,7 @@ export async function startInstagramBroadcast(
 
   let bannerImagePath: string | undefined;
   if (bannerImageUrl) {
-    if (
-      !bannerImageUrl.startsWith("http://") &&
-      !bannerImageUrl.startsWith("https://") &&
-      !bannerImageUrl.startsWith("data:image/")
-    ) {
+    if (!bannerImageUrl.startsWith("http://") && !bannerImageUrl.startsWith("https://") && !bannerImageUrl.startsWith("data:image/")) {
       const resolved = resolvePublicAsset(bannerImageUrl);
       if (resolved && fs.existsSync(resolved)) {
         bannerImagePath = resolved;
@@ -271,32 +237,19 @@ export async function startInstagramBroadcast(
 
   // ── Font path ─────────────────────────────────────────────────────────────
   // FFmpeg on Windows needs escaped colon in drive letter
-  const fontFile =
-    process.platform === "win32"
-      ? "C\\\\:/Windows/Fonts/arial.ttf"
-      : "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+  const fontFile = process.platform === "win32" ? "C\\\\:/Windows/Fonts/arial.ttf" : "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
 
-  const fontFileBold =
-    process.platform === "win32"
-      ? "C\\\\:/Windows/Fonts/arialbd.ttf"
-      : "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
+  const fontFileBold = process.platform === "win32" ? "C\\\\:/Windows/Fonts/arialbd.ttf" : "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 
   // ── Text values & Auto Strikethrough Price ────────────────────────────────
   const safeName = escapeDrawtext((productName || "").substring(0, 24));
-  const rawPrice =
-    typeof productPrice === "string"
-      ? parseInt(productPrice.replace(/[^0-9]/g, ""), 10) || 0
-      : Number(productPrice) || 0;
+  const rawPrice = typeof productPrice === "string" ? parseInt(productPrice.replace(/[^0-9]/g, ""), 10) || 0 : Number(productPrice) || 0;
   const priceText = rawPrice ? `Rp${rawPrice.toLocaleString("id-ID")}` : "";
   const safePriceText = escapeDrawtext(priceText);
 
   // Auto Strikethrough Price: ~35% higher rounded to nearest thousand
-  const autoOriginalPrice =
-    rawPrice > 0 ? Math.ceil((rawPrice * 1.35) / 5000) * 5000 : 0;
-  const strikeText =
-    autoOriginalPrice > 0
-      ? `Rp${autoOriginalPrice.toLocaleString("id-ID")}`
-      : "";
+  const autoOriginalPrice = rawPrice > 0 ? Math.ceil((rawPrice * 1.35) / 5000) * 5000 : 0;
+  const strikeText = autoOriginalPrice > 0 ? `Rp${autoOriginalPrice.toLocaleString("id-ID")}` : "";
   const safeStrikeText = escapeDrawtext(strikeText);
 
   // ── Canvas dimensions (9:16 portrait) ───────────────────────────────────
@@ -325,12 +278,7 @@ export async function startInstagramBroadcast(
   const filterStages: string[] = [videoScaleFilter];
 
   let nextInputIdx = 1;
-  const inputsBeforeAudio = [
-    "-re",
-    ...(isVideo ? ["-stream_loop", "-1"] : ["-loop", "1"]),
-    "-i",
-    mediaToUse,
-  ];
+  const inputsBeforeAudio = ["-re", ...(isVideo ? ["-stream_loop", "-1"] : ["-loop", "1"]), "-i", mediaToUse];
 
   // 1. Top Center Banner Overlay — matches Step 4 preview proportions
   if (bannerImagePath) {
@@ -453,9 +401,7 @@ export async function startInstagramBroadcast(
 
   try {
     console.log("[RTMP Streamer] FFmpeg filter_complex:");
-    console.log(
-      filterChain.substring(0, 500) + (filterChain.length > 500 ? "..." : ""),
-    );
+    console.log(filterChain.substring(0, 500) + (filterChain.length > 500 ? "..." : ""));
 
     activeStreamProcess = spawn("ffmpeg", ffmpegArgs, {
       stdio: ["ignore", "pipe", "pipe"],
@@ -472,19 +418,13 @@ export async function startInstagramBroadcast(
     activeStreamProcess.stderr?.on("data", (data) => {
       const msg = data.toString();
       // Log all FFmpeg output for debugging
-      if (
-        msg.includes("error") ||
-        msg.includes("Error") ||
-        msg.includes("failed")
-      ) {
+      if (msg.includes("error") || msg.includes("Error") || msg.includes("failed")) {
         console.error(`[FFmpeg ERROR]: ${msg.trim()}`);
       }
       if (msg.includes("frame=") || msg.includes("fps=")) {
         activeStreamInfo.status = "streaming";
         activeStreamInfo.handshakeVerified = true;
-        process.stdout.write(
-          `\r[FFmpeg Streaming] ${msg.trim().split("\n")[0]}`,
-        );
+        process.stdout.write(`\r[FFmpeg Streaming] ${msg.trim().split("\n")[0]}`);
       }
     });
 
@@ -515,10 +455,7 @@ export async function startInstagramBroadcast(
     });
 
     const startedAt = Date.now();
-    while (
-      activeStreamInfo.status === "connecting" &&
-      Date.now() - startedAt < 10000
-    ) {
+    while (activeStreamInfo.status === "connecting" && Date.now() - startedAt < 10000) {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
 
@@ -528,8 +465,7 @@ export async function startInstagramBroadcast(
         success: false,
         status: activeStreamInfo.status,
         handshakeVerified: false,
-        error:
-          activeStreamInfo.error || "RTMP belum terverifikasi dalam 10 detik.",
+        error: activeStreamInfo.error || "RTMP belum terverifikasi dalam 10 detik.",
         target: fullTargetUrl,
       };
     }

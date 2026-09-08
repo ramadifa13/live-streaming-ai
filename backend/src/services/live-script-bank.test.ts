@@ -1,6 +1,3 @@
-/**
- * Marathon Host Engine tests — run: npx tsx --test src/services/live-script-bank.test.ts
- */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
@@ -33,8 +30,7 @@ function sampleProduct(id: string, name: string): ScriptProductFacts {
     price: "99.000",
     category: "skincare",
     benefits: "Teksturnya ringan. Membantu melembapkan kulit. Formula lembut untuk pemula.",
-    description:
-      "Serum harian dengan tekstur ringan. Cocok untuk kulit kering. Cara pakai oleskan pagi dan malam. Ukuran 30ml.",
+    description: "Serum harian dengan tekstur ringan. Cocok untuk kulit kering. Cara pakai oleskan pagi dan malam. Ukuran 30ml.",
     usage: "Oleskan pagi dan malam setelah cleanser. Tunggu kering sebelum sunscreen.",
     faq: "Apakah cocok untuk pemula? Ya, teksturnya ringan. Ada berapa ml? 30ml.",
     hasBanner: true,
@@ -208,10 +204,7 @@ describe("cycle + product reference", () => {
   it("varies product references by context", () => {
     const name = "Serum Glow";
     assert.ok(productReference(name, "first_intro", { index: 0 }).length > 0);
-    assert.notEqual(
-      productReference(name, "continuing", { index: 0 }),
-      productReference(name, "re_entry", { index: 0 }),
-    );
+    assert.notEqual(productReference(name, "continuing", { index: 0 }), productReference(name, "re_entry", { index: 0 }));
   });
 });
 

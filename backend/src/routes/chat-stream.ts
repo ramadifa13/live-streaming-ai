@@ -34,8 +34,6 @@ export async function chatStreamRoutes(server: FastifyInstance) {
       }
 
       const host = resolveHostId(voice, avatarName);
-
-      // Pra-live / studio chat: FE putar via backend Pocket TTS.
       return {
         success: true,
         data: {

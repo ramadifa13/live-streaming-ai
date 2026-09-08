@@ -30,10 +30,7 @@ export async function avatarsRoutes(server: FastifyInstance) {
       return { error: "name and type are required" };
     }
 
-    const hostSlug = (body.voice || body.name || "namira")
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, "_");
+    const hostSlug = (body.voice || body.name || "namira").trim().toLowerCase().replace(/\s+/g, "_");
 
     const avatar = await prisma.avatar.create({
       data: {
@@ -52,7 +49,6 @@ export async function avatarsRoutes(server: FastifyInstance) {
     };
   });
 
-  // POST /api/avatars/generate-from-photo (AI Photo to 2D/3D Avatar Engine)
   server.post("/api/avatars/generate-from-photo", async (request, reply) => {
     const body = request.body as {
       name: string;

@@ -11,10 +11,12 @@ let processHandle: ChildProcess | null = null;
 let startPromise: Promise<void> | null = null;
 
 function pythonCommand(): string {
-  return process.env.POCKET_TTS_PYTHON ||
+  return (
+    process.env.POCKET_TTS_PYTHON ||
     (process.platform === "win32"
       ? path.join(backendRoot, "pocket_tts", "env", "Scripts", "python.exe")
-      : path.join(backendRoot, "pocket_tts", "env", "bin", "python"));
+      : path.join(backendRoot, "pocket_tts", "env", "bin", "python"))
+  );
 }
 
 async function health(): Promise<boolean> {

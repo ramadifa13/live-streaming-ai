@@ -57,7 +57,6 @@ const DEPRECATED_GROQ_MODELS: Record<string, string> = {
   "qwen/qwen3-32b": "openai/gpt-oss-120b",
 };
 
-/** Model aktif Groq (developer tier). Primary cepat; fallback lebih kuat. */
 const GROQ_MODEL_FALLBACKS = ["openai/gpt-oss-20b", "openai/gpt-oss-120b"] as const;
 
 function resolveGroqModel(requested = GROQ_MODEL_RAW): string {
@@ -112,12 +111,10 @@ const brainSemaphore = new BrainSemaphore(MAX_INFLIGHT);
 
 function liveBrainProvider(): string {
   const raw = (process.env.LIVE_BRAIN_PROVIDER || "auto").toLowerCase();
-  // Legacy self-host flags dinonaktifkan — stack hanya Groq + Gemini.
   if (raw === "ollama" || raw === "vllm" || raw === "local") return "auto";
   return raw;
 }
 
-/** Tetap diexport untuk kompatibilitas; selalu false setelah Ollama/vLLM dibersihkan. */
 export function isSelfHostedBrain(): boolean {
   return false;
 }
@@ -172,7 +169,6 @@ function canValidationRetry(sessionId?: string): boolean {
 interface BrainCallOptions {
   sessionId?: string;
   maxTokens?: number;
-  /** Jangan fallback ke Gemini (mis. prepare-product — local bank sudah cukup). */
   groqOnly?: boolean;
 }
 
@@ -210,7 +206,6 @@ export type HostIntent =
 export const LunaActionEnum = z.enum(["IDLE"]);
 export type LunaAction = z.infer<typeof LunaActionEnum>;
 
-/** Semua action → IDLE hint. Body = idle/talk* di worker. */
 export function normalizeLunaAction(_action: unknown): LunaAction {
   return "IDLE";
 }
@@ -263,17 +258,12 @@ export const HostResponseSchema = z.object({
 });
 export type HostResponse = z.infer<typeof HostResponseSchema>;
 
-/** Point/gesture off — selalu IDLE. Worker memilih idle/talk*. */
 export function inferCtaPointAction(_speech: string, _topic?: string): LunaAction {
   return "IDLE";
 }
 
 export type SpeechGestureSegment = { text: string; action: LunaAction };
 
-/**
- * Saat point off: selalu 1 segmen IDLE.
- * (API tetap ada supaya orchestrator tidak pecah saat CTA diaktifkan lagi.)
- */
 export function splitSpeechIntoGestureSegments(speech: string, _action: unknown): SpeechGestureSegment[] {
   const clean = String(speech || "")
     .replace(/^\s*\[[A-Z_]+\]\s*/i, "")
@@ -474,7 +464,6 @@ function buildCatalogContext(allProducts: SalesBrainInput["allProducts"]): strin
 
 function buildHostSystemPrompt(input: SalesBrainInput): string {
   const host = input.avatarName || "Namira";
-  const tone = input.tone || "Persuasif namun hangat";
   const mode = input.requestedMode || input.mode || "ENGAGE";
   const plan = input.plan || "2H";
   const elapsed = Math.max(0, Math.round(input.elapsedMinutes || 0));
@@ -587,7 +576,6 @@ function buildGeminiGenerationConfig(model: string) {
     responseMimeType: "application/json",
     maxOutputTokens: Number(process.env.LIVE_BRAIN_MAX_TOKENS || 320),
   };
-  // Gemini 3.x: temperature/top_p deprecated — pakai JSON schema saja
   if (!isGemini3FamilyModel(model)) {
     config.temperature = Number(process.env.LIVE_BRAIN_TEMPERATURE || 0.85);
   }
@@ -780,7 +768,6 @@ async function callBrain(prompt: string, options: BrainCallOptions = {}): Promis
     if (provider === "gemini") return callGemini(prompt, options);
     if (provider === "groq") return callGroq(prompt, options);
 
-    // auto: Groq dulu, Gemini cadangan (kecuali groqOnly)
     if (GROQ_API_KEY && Date.now() >= groqBlockedUntil) {
       try {
         return await callGroq(prompt, options);
@@ -869,7 +856,6 @@ function selectSafeParsedResponse(parsed: unknown, input: SalesBrainInput): Host
   if (!validated.success) return null;
 
   const response = validated.data;
-  // Point CTA off — action selalu IDLE (normalize sudah memaksa).
   response.action = "IDLE";
   const knownProductIds = new Set([...(input.allProducts || []).map((p) => String(p.id))]);
   if (response.target_product_id && knownProductIds.size > 0 && !knownProductIds.has(response.target_product_id)) {
@@ -936,9 +922,6 @@ async function generateValidatedHostResponse(
   return selectSafeParsedResponse(retryParsed, hostInput);
 }
 
-/**
- * Main live response generator. Backward-compatible with old callers.
- */
 export async function generateHostResponse(input: SalesBrainInput): Promise<HostResponse> {
   const hostInput: SalesBrainInput = {
     ...input,
@@ -1051,7 +1034,6 @@ export function liveBrainDuringLive(): boolean {
   return process.env.LIVE_BRAIN_DURING_LIVE === "1";
 }
 
-/** LLM untuk komentar yang belum bisa dijawab bank/FAQ lokal (default on). */
 export function liveBrainCommentWhenNeeded(): boolean {
   return process.env.LIVE_BRAIN_COMMENT_WHEN_NEEDED !== "0";
 }
@@ -1060,7 +1042,6 @@ export function liveBrainRefillWhenLow(): boolean {
   return process.env.LIVE_BRAIN_REFILL_WHEN_LOW !== "0";
 }
 
-/** LLM isi ulang bank saat variasi habis, bukan hanya saat count rendah (default on). */
 export function liveBrainRefillOnExhaust(): boolean {
   return process.env.LIVE_BRAIN_REFILL_ON_EXHAUST !== "0";
 }
@@ -1335,7 +1316,6 @@ ${factsBase.hasBanner ? 'Sertakan 1 baris topic "banner_callout".' : "Jangan seb
         });
       }
 
-      // Pass kedua: variasi tambahan agar bank prep cukup untuk marathon tanpa LLM live.
       if (PREP_EXTRA_PASS && llmLines.length >= 10) {
         const existingTopics = [...new Set(llmLines.map((l) => l.topic).filter(Boolean))].join(", ");
         const extraPrompt = `${systemRules}
@@ -1476,10 +1456,8 @@ export async function checkGroqHealth(): Promise<{
   }
 }
 
-/** @deprecated gunakan checkGroqHealth — Ollama sudah dihapus. */
 export const checkOllamaHealth = checkGroqHealth;
 
-// Deprecated compatibility API. Jangan gunakan untuk request baru.
 export function getGroqClient() {
   if (!GEMINI_API_KEY) {
     console.warn(

@@ -1,16 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import {
-  avatarProvider,
-  gpuProvider,
-  llmProvider,
-  ttsProvider,
-} from "../providers/mock-providers.js";
-import {
-  getGpuControlStatus,
-  startPodAndWait,
-  stopPod,
-} from "../services/runpod-manager.js";
+import { avatarProvider, gpuProvider, llmProvider, ttsProvider } from "../providers/mock-providers.js";
+import { getGpuControlStatus, startPodAndWait, stopPod } from "../services/runpod-manager.js";
 
 const orchestrationSchema = z.object({
   prompt: z.string().min(1),
@@ -108,9 +99,7 @@ export async function providersRoutes(server: FastifyInstance) {
     };
 
     const ttsResponse = await ttsProvider.synthesize(voiceConfig);
-    const gpuAllocation = await gpuProvider.acquire(
-      `${parsed.data.platform ?? "TikTok Live"}-session`,
-    );
+    const gpuAllocation = await gpuProvider.acquire(`${parsed.data.platform ?? "TikTok Live"}-session`);
 
     return {
       success: true,
@@ -121,8 +110,7 @@ export async function providersRoutes(server: FastifyInstance) {
         audio: ttsResponse,
         avatar,
         gpu: gpuAllocation,
-        estimatedCost:
-          llmResponse.cost + ttsResponse.cost + gpuAllocation.costPerMinute * 2,
+        estimatedCost: llmResponse.cost + ttsResponse.cost + gpuAllocation.costPerMinute * 2,
         etaSeconds: 45,
       },
     };

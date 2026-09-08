@@ -9,11 +9,7 @@ export interface ProviderHealth {
 
 export interface LLMProvider {
   readonly name: string;
-  generateResponse(input: {
-    prompt: string;
-    productName?: string;
-    sellerContext?: string;
-  }): Promise<{
+  generateResponse(input: { prompt: string; productName?: string; sellerContext?: string }): Promise<{
     text: string;
     tokens: number;
     model: string;
@@ -24,11 +20,7 @@ export interface LLMProvider {
 
 export interface TTSProvider {
   readonly name: string;
-  synthesize(input: {
-    text: string;
-    voice: string;
-    language: string;
-  }): Promise<{
+  synthesize(input: { text: string; voice: string; language: string }): Promise<{
     audioUrl: string;
     voice: string;
     language: string;

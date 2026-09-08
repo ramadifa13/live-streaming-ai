@@ -13,9 +13,7 @@ model Avatar {
   type           String
   style          String?
   language       String?
-  /// VoxCPM2 voice_id (contoh: default_host).
   voice          String?
-  /// Optional sample URL (biasanya null — preview via VoxCPM2).
   sampleAudioUrl String?
   isActive       Boolean  @default(true)
   description    String?
