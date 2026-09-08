@@ -19,8 +19,8 @@ from PIL import Image
 try:
     from video_canvas import CANVAS_H, CANVAS_W, fit_bgr
 except ImportError:
-    CANVAS_W = int(os.environ.get("FRAME_FEED_WIDTH", "720"))
-    CANVAS_H = int(os.environ.get("FRAME_FEED_HEIGHT", "1280"))
+    CANVAS_W = 720
+    CANVAS_H = 1280
 
 try:
     from worker_telemetry import get_telemetry
@@ -50,7 +50,7 @@ except ImportError:
         return NoopMetric()
 
 
-TARGET_FPS = int(os.environ.get("AI_WORKER_FPS", "30"))
+TARGET_FPS = 30
 AUDIO_SAMPLE_RATE = 16000
 AUDIO_CHANNELS = 2
 BYTES_PER_AUDIO_FRAME = (
@@ -428,12 +428,7 @@ class StreamBroadcaster(threading.Thread):
         v_in = f"/proc/self/fd/{video_r}"
         a_in = f"/proc/self/fd/{audio_r}"
 
-        force_ipv4 = os.environ.get("RTMP_FORCE_IPV4", "1").strip().lower() not in (
-            "0",
-            "false",
-            "no",
-            "off",
-        )
+        force_ipv4 = True
         ipv4_ok = force_ipv4 and self._ffmpeg_ipv4_flag_supported()
         attempts = [ipv4_ok, False] if ipv4_ok else [False]
 
@@ -718,14 +713,12 @@ class StreamBroadcaster(threading.Thread):
 
 class NewAIVisualWorker:
     def __init__(self, output_folder: str = ""):
-        self.output_folder = output_folder or os.environ.get(
-            "OUTPUT_FOLDER", "/workspace/ai_live_worker/output"
-        )
+        self.output_folder = output_folder or "/workspace/ai_live_worker/output"
         self.rtmp_url = None
         self.host = "namira"
         self.assets_dir = None
-        self.background_path = os.environ.get("CUSTOM_BACKGROUND_PATH", "")
-        self.overlay_path = os.environ.get("CUSTOM_OVERLAY_PATH", "")
+        self.background_path = ""
+        self.overlay_path = ""
 
         self.bank = None
         self.sm = None
@@ -744,7 +737,7 @@ class NewAIVisualWorker:
         from inference import _load_models_cached, musetalk_visual_params
 
         vparams = musetalk_visual_params()
-        models_root = os.environ.get("MODELS_DIR", "./models")
+        models_root = "./models"
         dummy_args = Namespace(
             gpu_id=0,
             use_float16=True,
@@ -755,12 +748,12 @@ class NewAIVisualWorker:
             unet_config=os.path.join(models_root, "musetalkV15", "musetalk.json"),
             whisper_dir=os.path.join(models_root, "whisper"),
             vae_type="sd-vae-ft-mse",
-            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "8")),
+            batch_size=8,
         )
         models = _load_models_cached(dummy_args)
 
         if not self.assets_dir or not os.path.exists(self.assets_dir):
-            base_worker = os.environ.get("WORKER_ROOT", "/workspace/ai_live_worker")
+            base_worker = "/workspace/ai_live_worker"
             candidate = os.path.join(base_worker, "assets", "3d")
             if os.path.isdir(candidate):
                 self.assets_dir = candidate
@@ -778,7 +771,7 @@ class NewAIVisualWorker:
         self.engine = LipSyncEngine(
             models,
             self.bank,
-            batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "8")),
+            batch_size=8,
             face_registry=self.sm._face_registry
             if hasattr(self.sm, "_face_registry")
             else None,
@@ -919,7 +912,7 @@ class NewAIVisualWorker:
             t.start()
 
         if wait_rtmp:
-            timeout_sec = float(os.environ.get("RTMP_CONNECT_TIMEOUT_SEC", "15.0"))
+            timeout_sec = 15.0
             deadline = time.monotonic() + timeout_sec
             print(
                 f"[NewAIVisualWorker] Menunggu handshake RTMP ({timeout_sec:.1f}s)..."

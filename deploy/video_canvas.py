@@ -7,8 +7,8 @@ from typing import Tuple
 
 import numpy as np
 
-CANVAS_W = int(os.environ.get("FRAME_FEED_WIDTH", os.environ.get("LIVE_CANVAS_WIDTH", "720")))
-CANVAS_H = int(os.environ.get("FRAME_FEED_HEIGHT", os.environ.get("LIVE_CANVAS_HEIGHT", "1280")))
+CANVAS_W = 720
+CANVAS_H = 1280
 
 
 def canvas_size() -> Tuple[int, int]:

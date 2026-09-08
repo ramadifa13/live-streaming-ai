@@ -40,14 +40,7 @@ except ImportError:
         return _NoopTelemetry()
 
 
-TARGET_FPS = int(
-    os.environ.get(
-        "AI_WORKER_FPS",
-        "30"
-        if (os.environ.get("BROADCAST_MODE") or "").strip().lower() == "ai_worker"
-        else os.environ.get("FRAME_FEED_FPS", "30"),
-    )
-)
+TARGET_FPS = 30
 # Keep the bridge contract identical to core_pipeline and MuseTalk input.
 SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
@@ -225,14 +218,12 @@ class SpeechBridge:
 
     # Minimum utterances siap sebelum playback pertama dimulai.
     # Set ke 1 agar AI langsung bicara pada kalimat pertama tanpa menunggu antrian kedua.
-    MIN_READY_UTTERANCES: int = int(os.environ.get("SPEECH_BRIDGE_MIN_READY", "3"))
-    MAX_PENDING_UTTERANCES: int = int(os.environ.get("SPEECH_BRIDGE_MAX_PENDING", "12"))
-    PREP_WORKERS: int = max(1, int(os.environ.get("SPEECH_BRIDGE_PREP_WORKERS", "2")))
+    MIN_READY_UTTERANCES: int = 3
+    MAX_PENDING_UTTERANCES: int = 12
+    PREP_WORKERS: int = 2
 
     def __init__(self, output_folder: str = ""):
-        self.output_folder = output_folder or os.environ.get(
-            "OUTPUT_FOLDER", "/workspace/ai_live_worker/output"
-        )
+        self.output_folder = output_folder or "/workspace/ai_live_worker/output"
         self._pending: Deque[UtteranceJob] = deque()
         self._current: Optional[UtteranceJob] = None
         self._frame_cursor = 0
@@ -327,7 +318,7 @@ class SpeechBridge:
             job.num_frames = len(job.pcm_frames)
 
             if job.num_frames > 0 and not self._models:
-                wait_sec = float(os.environ.get("SPEECH_BRIDGE_MODEL_WAIT_SEC", "300"))
+                wait_sec = 300.0
                 deadline = time.monotonic() + wait_sec
                 while not self._models and time.monotonic() < deadline:
                     time.sleep(0.25)
@@ -422,7 +413,7 @@ class SpeechBridge:
         # Sesuaikan panjang dengan PCM frames.
         # Grace tail: izinkan whisper sedikit lebih panjang dari PCM (max +TAIL frames)
         # agar suku kata terakhir tidak terpotong — lalu truncate sisanya.
-        GRACE_TAIL = int(os.environ.get("MUSETALK_WHISPER_GRACE_TAIL", "3"))
+        GRACE_TAIL = 3
         if chunks.shape[0] > num_frames + GRACE_TAIL:
             # Truncate hanya jika jauh melebihi PCM — sisakan grace tail.
             chunks = chunks[: num_frames + GRACE_TAIL]
@@ -461,7 +452,7 @@ class SpeechBridge:
             )
             self._prequeue_gate_active = False
 
-        preroll_timeout = float(os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "4.0"))
+        preroll_timeout = 4.0
         candidate = None
         with self._lock:
             while self._pending:
@@ -501,12 +492,8 @@ class SpeechBridge:
 
         if not candidate.lipsync_ready.is_set():
             waited = time.monotonic() - (candidate.primed_at or candidate.created_at)
-            hard_preroll = (
-                os.environ.get("MUSETALK_HARD_PREROLL") or "1"
-            ).strip().lower() in ("1", "true", "yes", "on")
-            preroll_timeout = float(
-                os.environ.get("MUSETALK_PREROLL_TIMEOUT_SEC", "2.5")
-            )
+            hard_preroll = True
+            preroll_timeout = 2.5
             # Hard preroll avoids a partial mouth, but never blocks audio forever.
             if hard_preroll:
                 # The worker has an absolute deadline; the bridge keeps retrying
@@ -537,10 +524,7 @@ class SpeechBridge:
             self._awaiting_visual_tail = False
             candidate.started_at = time.monotonic()
             duration = max(1.0, candidate.num_frames / float(TARGET_FPS))
-            tail = max(
-                1.0,
-                float(os.environ.get("MUSETALK_WHISPER_GRACE_TAIL", "3")) / TARGET_FPS,
-            )
+            tail = max(1.0, 3.0 / TARGET_FPS)
             self._active_deadline = candidate.started_at + duration + tail + 30.0
             # Gate selamanya off setelah utterance pertama mulai.
             self._ever_started = True
@@ -565,10 +549,7 @@ class SpeechBridge:
             except Exception as err:
                 print(f"[SpeechBridge] on_end notice: {err}")
         if finished:
-            temp_dir = os.environ.get(
-                "WORKER_TEMP",
-                os.path.join(os.path.dirname(self.output_folder or ""), "temp"),
-            )
+            temp_dir = os.path.join(os.path.dirname(self.output_folder or ""), "temp")
             if (
                 finished.audio_path
                 and temp_dir
@@ -622,7 +603,7 @@ class SpeechBridge:
         if self._frame_cursor < self._current.num_frames:
             return True, self._frame_cursor
         # Dalam grace tail whisper — masih ada viseme untuk dirender.
-        grace_tail = int(os.environ.get("MUSETALK_WHISPER_GRACE_TAIL", "3"))
+        grace_tail = 3
         whisper_total = (
             int(self._current.whisper_chunks.shape[0])
             if self._current.whisper_chunks is not None
@@ -686,7 +667,7 @@ class SpeechBridge:
             return pcm, True, idx
 
         # PCM habis — cek apakah masih ada grace tail whisper frames.
-        grace_tail = int(os.environ.get("MUSETALK_WHISPER_GRACE_TAIL", "3"))
+        grace_tail = 3
         whisper_total = (
             int(self._current.whisper_chunks.shape[0])
             if self._current.whisper_chunks is not None

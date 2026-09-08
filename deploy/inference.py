@@ -64,19 +64,18 @@ def _env_flag(name: str, default: str = "1") -> bool:
 
 def musetalk_visual_params():
     """Crop wajah untuk MuseTalk — proporsional ramping rahang & mulut Namira."""
-    bbox_shift = int(os.environ.get("MUSETALK_BBOX_SHIFT", "-2"))
-    bbox_shift_x = int(os.environ.get("MUSETALK_BBOX_SHIFT_X", "-5"))
-    extra_margin = int(os.environ.get("MUSETALK_EXTRA_MARGIN", "2"))
-    upper_boundary_ratio = float(os.environ.get("MUSETALK_UPPER_BOUNDARY", "0.55"))
-    cheek_width = int(os.environ.get("MUSETALK_CHEEK_WIDTH", "45"))
+    bbox_shift = -2
+    bbox_shift_x = -5
+    extra_margin = 4
+    upper_boundary_ratio = 0.54
+    cheek_width = 60
     return {
         "bbox_shift": bbox_shift,
         "bbox_shift_x": bbox_shift_x,
         "extra_margin": extra_margin,
-        "parsing_mode": (os.environ.get("MUSETALK_PARSING_MODE") or "jaw").strip()
-        or "jaw",
+        "parsing_mode": "jaw",
         "upper_boundary_ratio": upper_boundary_ratio,
-        "square_pad": _env_flag("MUSETALK_SQUARE_PAD", "1"),
+        "square_pad": True,
         "left_cheek_width": cheek_width,
         "right_cheek_width": cheek_width,
     }

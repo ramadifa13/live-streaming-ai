@@ -265,7 +265,7 @@ app = FastAPI(title="LiveStreamer AI Worker", lifespan=lifespan)
 
 
 def _default_voice_id() -> str:
-    return (os.environ.get("VOICE_ID") or "girl_cute_kids").strip() or "girl_cute_kids"
+    return "girl_cute_kids"
 
 
 def _resolve_voice_id(*candidates: Optional[str]) -> str:
@@ -308,7 +308,7 @@ def _synthesize_voxcpm2_wav(
     wav_bytes, headers = voxcpm2_bridge.synthesize(
         text=text,
         voice_id=_resolve_voice_id(voice_id) if voice_id else _default_voice_id(),
-        language=(language or os.environ.get("TTS_LANGUAGE") or "id").strip() or "id",
+        language=(language or "id").strip() or "id",
         style=style,
         emotion=emotion,
         request_id=request_id,
@@ -1154,7 +1154,11 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     background_path = _materialize_background(
         req.background_image or req.backgroundImage or "", output_dir
     )
-    resolved_idle = req.idle_video or req.idleVideo or ""
+    resolved_idle = (
+        req.idle_video
+        or req.idleVideo
+        or "/workspace/ai_live_worker/assets/3d/namira_idle.mp4"
+    )
     if not resolved_idle or not os.path.exists(resolved_idle):
         for candidate in [
             "/workspace/ai_live_worker/assets/3d/namira_idle.mp4",
@@ -1539,7 +1543,7 @@ async def get_job_status(job_id: str):
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "8000"))
+    port = 8000
     try:
         uvicorn.run(app, host="0.0.0.0", port=port)
     except OSError as exc:

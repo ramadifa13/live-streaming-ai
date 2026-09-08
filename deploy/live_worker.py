@@ -18,7 +18,7 @@ class AILiveWorker:
             if os.path.exists("/workspace/ai_live_worker")
             else os.path.dirname(os.path.abspath(__file__))
         )
-        self.base_dir = os.environ.get("WORKER_ROOT", default_base)
+        self.base_dir = default_base
         self.assets_2d = os.path.join(self.base_dir, "assets", "2d")
         self.assets_3d = os.path.join(self.base_dir, "assets", "3d")
         self.temp_dir = os.path.join(self.base_dir, "temp")
@@ -30,7 +30,7 @@ class AILiveWorker:
         self.musetalk_checkpoint = paths["unet_config"]
 
         # Batch size untuk inferensi UNet (Default 16 untuk RTX 3090/4090/A100)
-        self.batch_size = int(os.environ.get("MUSETALK_BATCH_SIZE", "16"))
+        self.batch_size = 16
         self.use_float16 = self._resolve_use_float16()
 
         # Lock untuk serialisasi inferensi GPU intra-process
@@ -46,10 +46,7 @@ class AILiveWorker:
 
         # Warmup berat (load model ke VRAM & pre-cache avatar) — jangan blokir HTTP startup.
         self._warmed_up = False
-        warmup_flag = (os.environ.get("MUSETALK_WARMUP_ON_START") or "0").strip().lower()
-        warmup_flag = (
-            (os.environ.get("MUSETALK_WARMUP_ON_START") or "0").strip().lower()
-        )
+        warmup_flag = "0"
         marker_path = os.path.join(self.base_dir, ".musetalk_warmed_up")
         if os.path.exists(marker_path):
             print("[WARMUP] MuseTalk already warmed up – skipping")
@@ -126,8 +123,8 @@ class AILiveWorker:
                 print(f"[WARNING] Could not create symlink {link_path}: {link_err}")
 
     def _resolve_use_float16(self) -> bool:
-        mode = (os.environ.get("BROADCAST_MODE") or "segment").strip().lower()
-        warmup = (os.environ.get("MUSETALK_WARMUP_ON_START") or "0").strip().lower()
+        mode = "segment"
+        warmup = "0"
         if mode in (
             "ai_worker",
             "ai-worker",
@@ -248,7 +245,7 @@ class AILiveWorker:
                         parsing_mode="jaw",
                         vae=vae,
                         fp=fp,
-                        default_fps=int(os.environ.get("AI_WORKER_FPS", "30")),
+                        default_fps=30,
                     )
                 except Exception as e:
                     print(f"[WARMUP WARNING] Pre-cache {f} notice: {e}")
@@ -316,10 +313,6 @@ class AILiveWorker:
                         )
                     ):
                         return os.path.join(d, f)
-
-        env_idle = os.environ.get("IDLE_VIDEO")
-        if env_idle and os.path.exists(env_idle):
-            return env_idle
 
         for d in candidate_dirs:
             if not os.path.exists(d):
@@ -534,7 +527,7 @@ class AILiveWorker:
             return video_path
 
         padded_path = f"{video_path}.audio_padded.mp4"
-        fps = int(os.environ.get("AI_WORKER_FPS", "24"))
+        fps = 24
         command = [
             "ffmpeg",
             "-y",
@@ -675,9 +668,7 @@ class AILiveWorker:
                 os.chdir(musetalk_dir)
                 try:
                     # Pose continuity antar clip — indeks cycle disimpan di output_dir.
-                    os.environ["MUSETALK_CYCLE_STATE"] = os.path.join(
-                        self.output_dir, "cycle_state.json"
-                    )
+                    _cycle_state_path = os.path.join(self.output_dir, "cycle_state.json")
                     from scripts.inference import main as musetalk_main
 
                     args = Namespace(
@@ -692,7 +683,7 @@ class AILiveWorker:
                         # RENDER KE TEMP_DIR UNTUK MENGHINDARI RACE CONDITION DENGAN BROADCASTER
                         result_dir=self.temp_dir,
                         extra_margin=10,
-                        fps=int(os.environ.get("AI_WORKER_FPS", "30")),
+                        fps=30,
                         audio_padding_length_left=2,
                         audio_padding_length_right=2,
                         batch_size=self.batch_size,

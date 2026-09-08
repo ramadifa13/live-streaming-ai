@@ -19,8 +19,8 @@ try:
 except ImportError:
     torch = None  # type: ignore
 
-_WINDOW = int(os.environ.get("AI_WORKER_METRICS_WINDOW", "4096"))
-_LOG_INTERVAL_SEC = float(os.environ.get("AI_WORKER_METRICS_LOG_SEC", "0") or "0")
+_WINDOW = 4096
+_LOG_INTERVAL_SEC = 0.0
 
 
 def _percentile(sorted_vals: List[float], pct: float) -> float:
