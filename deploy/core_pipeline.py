@@ -801,7 +801,6 @@ class NewAIVisualWorker:
                 body = None
                 task_id = getattr(job, "task_id", None)
                 if self.sm:
-                    start_idx = self.sm.pin_talk_body()
                     start_idx = self.sm.pin_talk_body(task_id)
                     body = self.sm._talk_target or self.sm.current_name
                 if self.engine:
@@ -833,10 +832,6 @@ class NewAIVisualWorker:
                 ).start()
 
             def _on_utterance_start(job):
-                if self.engine and getattr(
-                    self.engine, "_utterance_id", None
-                ) != getattr(job, "task_id", None):
-                    start_idx = self.sm.pin_talk_body() if self.sm else 0
                 task_id = getattr(job, "task_id", None)
                 if (
                     self.engine

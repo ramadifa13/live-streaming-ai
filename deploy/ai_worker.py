@@ -66,7 +66,7 @@ BROADCAST_SPEECH_WAIT_SEC = 10.0
 BROADCAST_SPEECH_GAP_WAIT_SEC = 0.25
 PENDING_MAX = RENDER_QUEUE_SIZE + BROADCAST_MAX_LAG
 SEAMLESS_THRESHOLD = 0.92
-MOUTH_STRENGTH = 0.72
+MOUTH_STRENGTH = float(os.environ.get("MUSETALK_MOUTH_STRENGTH", "0.72"))
 MOUTH_TEMPORAL = 0.15
 MOUTH_MAX_DELTA = 0
 MOUTH_FRAME_DELTA = 0
@@ -3146,7 +3146,8 @@ class AIVisualWorker:
         start_idx = 0
         body = None
         if self._sm:
-            start_idx = self._sm.pin_talk_body()
+            task_id = getattr(job, "task_id", None)
+            start_idx = self._sm.pin_talk_body(task_id)
             body = self._sm._talk_target or self._sm.current_name
         if self._engine:
             self._engine.set_utterance(job, start_frame_idx=start_idx, body_clip=body)
@@ -3201,7 +3202,8 @@ class AIVisualWorker:
         if self._engine and getattr(self._engine, "_utterance_id", None) != getattr(
             job, "task_id", None
         ):
-            start_idx = self._sm.pin_talk_body() if self._sm else 0
+            task_id = getattr(job, "task_id", None)
+            start_idx = self._sm.pin_talk_body(task_id) if self._sm else 0
             body = (
                 (self._sm._talk_target or self._sm.current_name) if self._sm else None
             )

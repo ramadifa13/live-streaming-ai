@@ -275,7 +275,7 @@ class SpeechBridge:
 
     def playback_active(self) -> bool:
         flag = os.path.join(self.output_folder, "playback_active.flag")
-        return os.path.exists(flag)
+        return os.path.exists(flag) or self._ever_started or self._current is not None
 
     def enqueue(
         self,
@@ -647,7 +647,7 @@ class SpeechBridge:
             print("[SpeechBridge] Active utterance deadline reached; advancing queue")
             self._finish_current()
 
-        if not self.playback_active():
+        if not self.playback_active() and not self._ever_started and self._current is None:
             size = _samples_for_frame(self._silence_frame_index) * 2 * 2
             self._silence_frame_index += 1
             return b"\x00" * size, False, None

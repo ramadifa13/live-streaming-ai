@@ -311,7 +311,9 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
 
 const FALLBACK_SPEECH_SECONDS = 5;
 const IN_FLIGHT_RENDER_SECONDS = 10;
-const MIN_PLAYABLE_UTTERANCES = 2;
+const LIVE_CONTINUITY_BUFFER_SECONDS = 8;
+const LIVE_CONTINUITY_MIN_UTTERANCES = 3;
+const MIN_PLAYABLE_UTTERANCES = LIVE_CONTINUITY_MIN_UTTERANCES;
 
 function isAiWorkerBroadcastMode(mode: string): boolean {
   const m = (mode || "").trim().toLowerCase();
@@ -376,7 +378,7 @@ const COMMENT_SCAN_MS = 400;
 const WORKER_OFFLINE_FAIL_MS = 45_000;
 const WORKER_FAIL_STOP_MS = 120_000;
 const GENERATION_BACKOFF_MS = 800;
-export const MAX_ONAIR_IDLE_SECONDS = 5;
+export const MAX_ONAIR_IDLE_SECONDS = LIVE_CONTINUITY_BUFFER_SECONDS;
 const SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS = Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS || 90_000);
 const SCRIPT_BANK_LLM_REFILL_MAX = Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_MAX || 16);
 const SCRIPT_BANK_LOW = Number(process.env.LIVE_SCRIPT_BANK_LOW || 12);
@@ -978,7 +980,10 @@ class LiveHostOrchestrator {
         const playableQueueDepth = isAiWorkerBroadcastMode(s.lastQueue.broadcastMode)
           ? s.lastQueue.readyUtteranceCount || 0
           : s.lastQueue.queuedVideos || 0;
-        const queueNeedsContinuity = playableQueueDepth < MIN_PLAYABLE_UTTERANCES || s.lastQueue.bufferSeconds <= MAX_ONAIR_IDLE_SECONDS;
+        const queueNeedsContinuity =
+          playableQueueDepth < MIN_PLAYABLE_UTTERANCES ||
+          s.lastQueue.bufferSeconds <= MAX_ONAIR_IDLE_SECONDS ||
+          (s.isLive && s.lastQueue.bufferSeconds < LIVE_CONTINUITY_BUFFER_SECONDS && playableQueueDepth < LIVE_CONTINUITY_MIN_UTTERANCES + 1);
 
         if (queueNeedsContinuity) {
           await this.generateAndQueueNext(sessionId, "live");
@@ -1284,7 +1289,7 @@ class LiveHostOrchestrator {
     const avoidCta = recentCtas.filter((c) => c && c !== "NONE").length >= 1;
     const bufferCritical =
       state.lastQueue.queuedVideos === 0 ||
-      (state.lastQueue.bufferSeconds > 0 && state.lastQueue.bufferSeconds <= 4) ||
+      (state.lastQueue.bufferSeconds > 0 && state.lastQueue.bufferSeconds <= LIVE_CONTINUITY_BUFFER_SECONDS) ||
       state.lastQueue.bufferSeconds < policy.minBufferSeconds;
     const preferFiller = bufferCritical;
 

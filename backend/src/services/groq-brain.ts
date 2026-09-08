@@ -538,7 +538,7 @@ Kembalikan SATU JSON murni, tanpa markdown, dengan schema:
   "claims": []
 }
 
-Panjang speech: WAJIB 14–20 kata (durasi 6.5–9.0 detik, SELALU DI BAWAH 10 DETIK agar pas dalam 1 siklus video host 10 detik). Komentar balasan 10–16 kata. Kalimat harus utuh, tuntas, padat, alami, dan bertenaga. DILARANG membuat kalimat lebih dari 20 kata agar tidak memicu over-looping dan tidak ada space kosong/idle. Jangan menambahkan salam pembuka robotik.`;
+Panjang speech: WAJIB 12–16 kata (durasi 5.5–8.0 detik, SELALU DI BAWAH 9 DETIK agar pas dalam 1 siklus video host 10 detik). Komentar balasan 9–14 kata. Kalimat harus utuh, tuntas, padat, alami, dan bertenaga. DILARANG membuat kalimat lebih dari 16 kata agar tidak memicu over-looping dan tidak ada space kosong/idle. Jangan menambahkan salam pembuka robotik.`;
 }
 
 function isGemini3FamilyModel(model: string): boolean {

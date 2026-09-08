@@ -280,8 +280,9 @@ const DURATION_FILLERS = [
 ];
 
 export function fitScriptBankSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
+  const cappedMaxWords = Math.max(8, Math.min(Number(maxWords) || SCRIPT_BANK_MAX_WORDS, SCRIPT_BANK_MAX_WORDS));
   const normalized = sanitizeForLiveTTS(text).replace(/\s+/g, " ").trim();
-  const targetMinWords = Math.min(SCRIPT_BANK_MIN_WORDS, maxWords);
+  const targetMinWords = Math.min(SCRIPT_BANK_MIN_WORDS, cappedMaxWords);
   let words = normalized.split(" ").filter(Boolean);
   if (words.length < targetMinWords) {
     let fillerIndex = 0;
@@ -290,13 +291,13 @@ export function fitScriptBankSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WOR
       fillerIndex++;
     }
   }
-  if (words.length <= maxWords)
+  if (words.length <= cappedMaxWords)
     return `${words
       .join(" ")
       .replace(/[,;:!?-]+$/g, "")
       .replace(/[.!?]+$/g, "")}.`;
 
-  const clipped = words.slice(0, maxWords).join(" ");
+  const clipped = words.slice(0, cappedMaxWords).join(" ");
   const sentenceEnd = Math.max(clipped.lastIndexOf("."), clipped.lastIndexOf("!"), clipped.lastIndexOf("?"));
   if (sentenceEnd >= Math.floor(clipped.length * 0.55)) {
     const sentence = clipped.slice(0, sentenceEnd + 1).trim();
@@ -309,8 +310,8 @@ function clampSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
   return fitScriptBankSpeech(text, Math.min(maxWords, SCRIPT_BANK_MAX_WORDS));
 }
 
-export const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 16);
-export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 20);
+export const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 12);
+export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 16);
 
 function splitFacts(text: string): string[] {
   if (!text?.trim()) return [];

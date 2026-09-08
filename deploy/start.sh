@@ -143,17 +143,25 @@ stop_supervisor() {
 }
 
 cleanup_worker_stack() {
-	stop_supervisor
-	echo "[INFO] Membersihkan proses worker (api_server, broadcaster, ffmpeg RTMP) ..."
+	echo "[INFO] Membersihkan AI Worker API, ffmpeg rtmp, dan membebaskan port ${WORKER_PORT}..."
+	# Hapus cache data sebelumnya
+	echo "[INFO] Menghapus cache data sebelumnya (coords pkl, tmp_assets)..."
+	rm -f "$WORKER_DIR/assets/"*_coords.pkl 2>/dev/null || true
+	rm -rf "$WORKER_DIR/output/tmp_assets/"* 2>/dev/null || true
+
+	# Kill Python HTTP API & worker processes
 	pkill -9 -f "[a]pi_server.py" 2>/dev/null || true
-	pkill -9 -f "[b]roadcaster.py" 2>/dev/null || true
+	pkill -9 -f "[a]i_worker.py" 2>/dev/null || true
 	pkill -9 -f "[f]rame_feed.py" 2>/dev/null || true
 	pkill -9 -f "ffmpeg.*rtmp" 2>/dev/null || true
+	pkill -9 -f "python.*api_server.py" 2>/dev/null || true
+	pkill -9 -f "python.*ai_worker.py" 2>/dev/null || true
 	if command -v fuser >/dev/null 2>&1; then
 		fuser -k "${WORKER_PORT}/tcp" 2>/dev/null || true
 	elif command -v lsof >/dev/null 2>&1; then
 		lsof -ti:"${WORKER_PORT}" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
 	fi
+	stop_supervisor
 	sleep 2
 	if command -v nvidia-smi >/dev/null 2>&1; then
 		echo "[INFO] GPU setelah cleanup:"
