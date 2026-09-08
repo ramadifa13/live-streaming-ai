@@ -5,10 +5,7 @@ function isHttpUrl(value?: string): boolean {
 }
 
 /** Snapshot untuk RAM backend: fakta + script bank. Foto data-URL hanya untuk produk aktif. */
-export function toLiveProductSnapshot(
-  product: Product,
-  options: boolean | { includeMedia?: boolean; includeScriptBank?: boolean } = false,
-) {
+export function toLiveProductSnapshot(product: Product, options: boolean | { includeMedia?: boolean; includeScriptBank?: boolean } = false) {
   const opts =
     typeof options === "boolean"
       ? { includeMedia: options, includeScriptBank: options }
@@ -34,8 +31,7 @@ export function toLiveProductSnapshot(
     scriptBank: opts.includeScriptBank ? product.scriptBank : undefined,
     faqPack: opts.includeScriptBank ? product.faqPack : undefined,
     image: opts.includeMedia || isHttpUrl(product.image) ? product.image : undefined,
-    bannerImage:
-      opts.includeMedia || isHttpUrl(product.bannerImage) ? product.bannerImage : undefined,
+    bannerImage: opts.includeMedia || isHttpUrl(product.bannerImage) ? product.bannerImage : undefined,
   };
 }
 
@@ -112,16 +108,10 @@ export const liveSessionService = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       if (res.status === 409 && err.podBooting) {
-        throw new Error(
-          err.stageText ||
-            "GPU masih booting. Tunggu sebentar lalu coba hubungkan lagi.",
-        );
+        throw new Error(err.stageText || "GPU masih booting. Tunggu sebentar lalu coba hubungkan lagi.");
       }
       if (res.status === 504 || res.status === 502) {
-        throw new Error(
-          err.error ||
-            "Server timeout saat menghubungkan RTMP. Pastikan GPU RunPod sudah siap.",
-        );
+        throw new Error(err.error || "Server timeout saat menghubungkan RTMP. Pastikan GPU RunPod sudah siap.");
       }
       throw new Error(err.error || "Gagal broadcast stream");
     }
@@ -174,9 +164,7 @@ export const liveSessionService = {
     });
     const json = await res.json();
     if (!res.ok || !json.success) {
-      throw new Error(
-        json.data?.error || json.data?.message || json.error || "Pause stream gagal",
-      );
+      throw new Error(json.data?.error || json.data?.message || json.error || "Pause stream gagal");
     }
     return true;
   },
@@ -189,9 +177,7 @@ export const liveSessionService = {
     });
     const json = await res.json();
     if (!res.ok || !json.success) {
-      throw new Error(
-        json.data?.error || json.data?.message || json.error || "Resume stream gagal",
-      );
+      throw new Error(json.data?.error || json.data?.message || json.error || "Resume stream gagal");
     }
     return true;
   },
@@ -225,9 +211,7 @@ export const liveSessionService = {
   },
 
   async fetchMetrics(sessionId?: string | null) {
-    const query = sessionId
-      ? `?sessionId=${encodeURIComponent(sessionId)}`
-      : "";
+    const query = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
     const res = await fetch(`/api/live-session/metrics${query}`);
     if (!res.ok) {
       return null;
@@ -236,13 +220,18 @@ export const liveSessionService = {
   },
 
   async fetchPipelineStatus(sessionId: string) {
-    const res = await fetch(
-      `/api/live-stream/pipeline-status?sessionId=${encodeURIComponent(sessionId)}`,
-    );
-    if (!res.ok) {
+    try {
+      const res = await fetch(`/api/live-stream/pipeline-status?sessionId=${encodeURIComponent(sessionId)}`);
+      if (!res.ok) {
+        return null;
+      }
+      return await res.json();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return null;
+      }
       return null;
     }
-    return await res.json();
   },
 
   async waitForRtmpConnected(
@@ -263,29 +252,22 @@ export const liveSessionService = {
       }
 
       const status = await this.fetchPipelineStatus(sessionId);
-      const progressText =
-        status?.stageText || status?.rtmpHint || status?.rtmpError;
+      const progressText = status?.stageText || status?.rtmpHint || status?.rtmpError;
       if (progressText && options?.onProgress) {
         options.onProgress(String(progressText));
       }
       if (status?.isRtmpConnected) return;
 
       // Soft connecting hints bukan gagal — overlay tetap menunggu.
-      const fatal =
-        status?.rtmpFatal === true ||
-        (status?.rtmpState === "failed" && Boolean(status?.rtmpError));
+      const fatal = status?.rtmpFatal === true || (status?.rtmpState === "failed" && Boolean(status?.rtmpError));
       if (fatal) {
-        throw new Error(
-          String(status?.rtmpError || "Siaran gagal tersambung. Coba Stream Key baru."),
-        );
+        throw new Error(String(status?.rtmpError || "Siaran gagal tersambung. Coba Stream Key baru."));
       }
 
       await new Promise((r) => setTimeout(r, 2000));
     }
 
-    throw new Error(
-      "Masih menyiapkan siaran. Tunggu lebih lama atau coba Connect lagi tanpa tutup halaman terlalu cepat.",
-    );
+    throw new Error("Masih menyiapkan siaran. Tunggu lebih lama atau coba Connect lagi tanpa tutup halaman terlalu cepat.");
   },
 
   async waitForPodReady(
@@ -316,9 +298,7 @@ export const liveSessionService = {
       await new Promise((r) => setTimeout(r, 2500));
     }
 
-    throw new Error(
-      "Cloud AI belum siap setelah menunggu lama. Coba Connect lagi, atau pastikan koneksi internet stabil.",
-    );
+    throw new Error("Cloud AI belum siap setelah menunggu lama. Coba Connect lagi, atau pastikan koneksi internet stabil.");
   },
 
   async confirmGoLive(sessionId: string) {

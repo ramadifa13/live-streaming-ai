@@ -34,42 +34,32 @@ export const ConnectingOverlay: React.FC = () => {
   const deferredPlatform = isDeferredGoLivePlatform(selectedPlatform);
   const stageIndex = pipelineStatus?.stageIndex ?? connectingStageIndex;
   const isRealtimeWorker =
-    pipelineStatus?.broadcastMode === "ai_worker" ||
-    pipelineStatus?.broadcastMode === "ai-worker" ||
-    pipelineStatus?.visualWorkerRunning === true;
+    pipelineStatus?.broadcastMode === "ai_worker" || pipelineStatus?.broadcastMode === "ai-worker" || pipelineStatus?.visualWorkerRunning === true;
   const minUtterances = pipelineStatus?.goLiveMinUtterances ?? 1;
-  const bufferCount = isRealtimeWorker
-    ? (pipelineStatus?.readyUtteranceCount ?? 0)
-    : (pipelineStatus?.videosQueued ?? 0);
+  const bufferCount = isRealtimeWorker ? (pipelineStatus?.readyUtteranceCount ?? 0) : (pipelineStatus?.videosQueued ?? 0);
   const videosReady = bufferCount >= minUtterances;
   const rtmpConnected = pipelineStatus?.isRtmpConnected === true;
   const podBooting = pipelineStatus?.podBooting === true;
-  const initializing =
-    pipelineStatus?.visualWorkerInitializing === true || pipelineStatus?.broadcastBootState === "starting";
-  const rtmpFailed =
-    pipelineStatus?.rtmpFatal === true ||
-    (pipelineStatus?.rtmpState === "failed" && Boolean(pipelineStatus?.rtmpError));
-  const workerFailed = Boolean(pipelineStatus?.workerError);
+  const initializing = pipelineStatus?.visualWorkerInitializing === true || pipelineStatus?.broadcastBootState === "starting";
+  const rtmpFailed = pipelineStatus?.rtmpFatal === true || (pipelineStatus?.rtmpState === "failed" && Boolean(pipelineStatus?.rtmpError));
+  const workerFailed =
+    Boolean(pipelineStatus?.workerError) || (pipelineStatus?.broadcastBootState === "error" && pipelineStatus?.visualWorkerRunning !== true);
   const connectionFailed = rtmpFailed || workerFailed;
   const canGoLive =
-    !connectionFailed &&
-    !podBooting &&
-    pipelineStatus?.podReady !== false &&
-    rtmpConnected &&
-    videosReady &&
-    pipelineStatus?.ready === true;
+    !connectionFailed && !podBooting && pipelineStatus?.podReady !== false && rtmpConnected && videosReady && pipelineStatus?.ready === true;
 
   const activeStep = Math.min(4, Math.max(0, canGoLive ? 4 : stageIndex));
   const progressPct = canGoLive ? 100 : Math.min(95, Math.max(8, ((activeStep + 1) / PREP_STEPS.length) * 100));
 
-  const rawStatusLine =
-    connectingStageText ||
-    pipelineStatus?.rtmpHint ||
-    (canGoLive
-      ? deferredPlatform
-        ? "Semua sudah siap. Mulai siaran dari aplikasi pilihan Anda."
-        : "Siaran terhubung. Host AI akan mulai menyapa pembeli Anda."
-      : "Kami sedang menyiapkan siaran Anda…");
+  const rawStatusLine = connectionFailed
+    ? pipelineStatus?.workerError || pipelineStatus?.rtmpError || "Host AI gagal tersambung. Hentikan sesi lalu coba mulai lagi."
+    : connectingStageText ||
+      pipelineStatus?.rtmpHint ||
+      (canGoLive
+        ? deferredPlatform
+          ? "Semua sudah siap. Mulai siaran dari aplikasi pilihan Anda."
+          : "Siaran terhubung. Host AI akan mulai menyapa pembeli Anda."
+        : "Kami sedang menyiapkan siaran Anda…");
   const statusLine = rawStatusLine
     .replace(/cloud\s+gpu\s+l40s?/gi, "studio AI")
     .replace(/cloud\s+ai/gi, "studio AI")
@@ -190,11 +180,7 @@ export const ConnectingOverlay: React.FC = () => {
           <div className="w-full bg-[#1e293b] rounded-full h-2 overflow-hidden mb-2">
             <div
               className={`h-full transition-all duration-700 ${
-                connectionFailed
-                  ? "bg-red-500"
-                  : canGoLive
-                    ? "bg-emerald-500"
-                    : "bg-gradient-to-r from-blue-500 to-indigo-500"
+                connectionFailed ? "bg-red-500" : canGoLive ? "bg-emerald-500" : "bg-gradient-to-r from-blue-500 to-indigo-500"
               }`}
               style={{ width: `${progressPct}%` }}
             />
@@ -217,19 +203,9 @@ export const ConnectingOverlay: React.FC = () => {
                             : "border-white/10 bg-white/5 text-slate-500"
                       }`}
                     >
-                      {done ? (
-                        <Check className="w-3 h-3" />
-                      ) : current ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        step.id + 1
-                      )}
+                      {done ? <Check className="w-3 h-3" /> : current ? <Loader2 className="w-3 h-3 animate-spin" /> : step.id + 1}
                     </span>
-                    <span
-                      className={`truncate max-w-full ${
-                        done ? "text-emerald-200/90" : current ? "text-white font-semibold" : "text-slate-500"
-                      }`}
-                    >
+                    <span className={`truncate max-w-full ${done ? "text-emerald-200/90" : current ? "text-white font-semibold" : "text-slate-500"}`}>
                       {step.label}
                     </span>
                   </div>
@@ -241,29 +217,13 @@ export const ConnectingOverlay: React.FC = () => {
           <div className="mb-3 grid grid-cols-3 gap-2 text-[10px]">
             <div className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-left">
               <p className="text-slate-500 mb-0.5">Host Anda</p>
-              <p
-                className={
-                  workerFailed
-                    ? "text-red-300 font-semibold"
-                    : initializing
-                      ? "text-amber-300"
-                      : "text-emerald-300 font-semibold"
-                }
-              >
+              <p className={workerFailed ? "text-red-300 font-semibold" : initializing ? "text-amber-300" : "text-emerald-300 font-semibold"}>
                 {workerFailed ? "Gangguan" : initializing ? "Menyiapkan…" : "Siap"}
               </p>
             </div>
             <div className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-left">
               <p className="text-slate-500 mb-0.5">Platform live</p>
-              <p
-                className={
-                  rtmpFailed
-                    ? "text-red-300 font-semibold"
-                    : rtmpConnected
-                      ? "text-emerald-300 font-semibold"
-                      : "text-amber-300"
-                }
-              >
+              <p className={rtmpFailed ? "text-red-300 font-semibold" : rtmpConnected ? "text-emerald-300 font-semibold" : "text-amber-300"}>
                 {rtmpFailed ? "Gagal" : rtmpConnected ? "Terhubung" : "Menyambung…"}
               </p>
             </div>
@@ -338,9 +298,7 @@ export const ConnectingOverlay: React.FC = () => {
                 {canGoLive && !deferredPlatform ? "Mengaktifkan host…" : "Mohon tunggu…"}
               </div>
               <p className="mt-1.5 text-[10px] text-slate-400 leading-snug">
-                {rtmpConnected
-                  ? "Hampir selesai. Menyiapkan sapaan untuk pembeli Anda."
-                  : "Persiapan akan berlanjut otomatis."}
+                {rtmpConnected ? "Hampir selesai. Menyiapkan sapaan untuk pembeli Anda." : "Persiapan akan berlanjut otomatis."}
               </p>
             </div>
           )}

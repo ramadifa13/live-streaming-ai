@@ -13,11 +13,7 @@ import {
 } from "../services/runpod-bridge.js";
 import { livePlatformConnector } from "../services/live-platform-connector.js";
 import { liveSessionManager } from "../services/live-session-manager.js";
-import {
-  liveHostOrchestrator,
-  durationHoursToPlan,
-  normalizeClientProduct,
-} from "../services/live-host-orchestrator.js";
+import { liveHostOrchestrator, durationHoursToPlan, normalizeClientProduct } from "../services/live-host-orchestrator.js";
 import { assertRtmpCredentials } from "../utils/rtmp.js";
 
 const productSnapshotSchema = z.object({
@@ -129,8 +125,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
 
     const avatarId = parsed.data.avatarId.trim();
     const avatarName = parsed.data.avatarName?.trim();
-    const slugName =
-      avatarId && avatarId !== "1" ? avatarId.charAt(0).toUpperCase() + avatarId.slice(1).toLowerCase() : "";
+    const slugName = avatarId && avatarId !== "1" ? avatarId.charAt(0).toUpperCase() + avatarId.slice(1).toLowerCase() : "";
 
     const avatarById = await prisma.avatar.findUnique({
       where: { id: avatarId },
@@ -159,10 +154,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       const catalog = (parsed.data.products || [])
         .map((item) => normalizeClientProduct(item))
         .filter((item): item is NonNullable<typeof item> => Boolean(item));
-      const product =
-        normalizeClientProduct(parsed.data.product) ||
-        catalog.find((item) => item.id === parsed.data.productId) ||
-        catalog[0];
+      const product = normalizeClientProduct(parsed.data.product) || catalog.find((item) => item.id === parsed.data.productId) || catalog[0];
 
       const result = await liveSessionManager.startSession({
         productId: parsed.data.productId,
@@ -367,20 +359,23 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       });
     }
 
-    const result = await startRunPodBroadcast(podId, {
-      rtmpUrl,
-      streamKey,
-      productName,
-      productPrice,
-      productImageUrl: liveOverlayMedia(productImageUrl),
-      bannerImageUrl: liveOverlayMedia(bannerImageUrl),
-      backgroundImage: liveOverlayMedia(parsed.data.backgroundImage),
-      platform,
-      stockCount,
-      ctaLabel,
-      hostName: parsed.data.avatarName?.trim() || managedSession?.avatarName || "namira",
-      waitForReady: false,
-    });
+    const result =
+      managedSession && liveSession && parsed.data.sessionId
+        ? { success: true, status: "starting", async: true }
+        : await startRunPodBroadcast(podId, {
+            rtmpUrl,
+            streamKey,
+            productName,
+            productPrice,
+            productImageUrl: liveOverlayMedia(productImageUrl),
+            bannerImageUrl: liveOverlayMedia(bannerImageUrl),
+            backgroundImage: liveOverlayMedia(parsed.data.backgroundImage),
+            platform,
+            stockCount,
+            ctaLabel,
+            hostName: parsed.data.avatarName?.trim() || managedSession?.avatarName || "namira",
+            waitForReady: false,
+          });
 
     if (!result.success) {
       reply.code(502);
@@ -415,7 +410,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       success: true,
       waitingForGoLive: true,
       message:
-        "RTMP aktif — idle video berjalan. Pipeline sedang generate V1+V2 di background. " +
+        "Permintaan siaran diterima — RTMP dan host AI sedang disiapkan. " +
+        "Pipeline sedang generate V1+V2 di background. " +
         "Silakan klik 'Siarkan Langsung' / 'Go Live' di " +
         (platform || "platform") +
         ", lalu konfirmasi di dashboard.",
@@ -450,9 +446,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       const pipelineStatus = await liveHostOrchestrator.getPipelineStatus(sessionId);
       const realtime = /ai_worker|ai-worker|realtime|visual_worker/i.test(String(pipelineStatus.broadcastMode || ""));
       const minUtt = Number(pipelineStatus.goLiveMinUtterances || 1);
-      const playable = realtime
-        ? Number(pipelineStatus.readyUtteranceCount || 0)
-        : Number(pipelineStatus.videosQueued || 0);
+      const playable = realtime ? Number(pipelineStatus.readyUtteranceCount || 0) : Number(pipelineStatus.videosQueued || 0);
       if (!pipelineStatus.ready || playable < minUtt) {
         reply.code(409);
         const bufferLabel = realtime ? `ucapan siap ${playable}/${minUtt}` : `video ${playable}/${minUtt}`;
@@ -545,9 +539,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         workerOffline: false,
         stageIndex: 1,
         stageText:
-          boot?.podReady === false
-            ? boot.stageText || "Menghubungkan ke Cloud GPU..."
-            : "Memulai broadcast RTMP — memuat model MuseTalk ke GPU...",
+          boot?.podReady === false ? boot.stageText || "Menghubungkan ke Cloud GPU..." : "Memulai broadcast RTMP — memuat model MuseTalk ke GPU...",
         podReady: boot?.podReady ?? true,
         podBooting: boot?.podBooting ?? false,
         podFailed: boot?.podFailed ?? false,
@@ -580,9 +572,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
 
   server.post("/api/live-stream/pause", async (request) => {
     const body = (request.body || {}) as { sessionId?: string };
-    const managed = body.sessionId
-      ? liveSessionManager.getSession(body.sessionId)
-      : liveSessionManager.getLatestActiveSession();
+    const managed = body.sessionId ? liveSessionManager.getSession(body.sessionId) : liveSessionManager.getLatestActiveSession();
 
     const local = getStreamStatus();
     if (local.status === "streaming" || local.status === "connecting") {
@@ -616,9 +606,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
 
   server.post("/api/live-stream/resume", async (request) => {
     const body = (request.body || {}) as { sessionId?: string };
-    const managed = body.sessionId
-      ? liveSessionManager.getSession(body.sessionId)
-      : liveSessionManager.getLatestActiveSession();
+    const managed = body.sessionId ? liveSessionManager.getSession(body.sessionId) : liveSessionManager.getLatestActiveSession();
 
     const local = getStreamStatus();
     if (local.paused || local.status === "streaming") {
@@ -635,9 +623,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       }
       return {
         success: result.success,
-        data: result.success
-          ? { success: true, message: "AI worker resumed." }
-          : { success: false, error: result.error || "Resume worker gagal" },
+        data: result.success ? { success: true, message: "AI worker resumed." } : { success: false, error: result.error || "Resume worker gagal" },
       };
     }
 
@@ -666,9 +652,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     const { comment, sender, avatarName, tone, voice } = parsed.data;
-    const managed = parsed.data.sessionId
-      ? liveSessionManager.getSession(parsed.data.sessionId)
-      : liveSessionManager.getLatestActiveSession();
+    const managed = parsed.data.sessionId ? liveSessionManager.getSession(parsed.data.sessionId) : liveSessionManager.getLatestActiveSession();
     const sessionId = managed?.sessionId || parsed.data.sessionId || "";
     const isLive = managed?.state === "live";
 

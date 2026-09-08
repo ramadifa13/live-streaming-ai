@@ -721,7 +721,7 @@ async def get_queue_status():
     rtmp_state = "disconnected"
     if read_rtmp_status is not None:
         rtmp_state, rtmp_error = read_rtmp_status(output_dir)
-        rtmp_connected = rtmp_state == "connected"
+        rtmp_connected = is_broadcasting and rtmp_state == "connected"
     else:
         status_file = os.path.join(output_dir, "rtmp_status.txt")
         if os.path.exists(status_file):
@@ -1464,7 +1464,7 @@ async def broadcast_status():
     rtmp_error = ""
     if read_rtmp_status is not None:
         rtmp_state, rtmp_error = read_rtmp_status(output_dir)
-        rtmp_connected = rtmp_state == "connected"
+        rtmp_connected = running and rtmp_state == "connected"
     if _broadcast_boot_state == "error" and _broadcast_boot_error:
         return {
             "success": False,

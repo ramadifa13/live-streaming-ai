@@ -98,6 +98,7 @@ class StreamBroadcaster(threading.Thread):
         self.a_fh = None
         self.progress_seen = False
         self.last_error = ""
+        self.stderr_tail = ""
 
         # Smooth fallback player (mencegah patah jumping saat transisi rest pose)
         self.fallback_player = _IdleFallbackPlayer(bank)
@@ -299,6 +300,17 @@ class StreamBroadcaster(threading.Thread):
                 if proc.poll() is None:
                     self.proc = proc
                     break
+                try:
+                    stderr_bytes = proc.communicate(timeout=1)[1] or b""
+                    stderr_text = stderr_bytes.decode("utf-8", errors="ignore")
+                    self.stderr_tail = stderr_text[-12000:]
+                    if summarize_ffmpeg_stderr:
+                        self.last_error = summarize_ffmpeg_stderr(
+                            self.stderr_tail,
+                            "FFmpeg RTMP berhenti saat handshake — periksa stream key / server URL.",
+                        )
+                except Exception:
+                    pass
             except Exception as e:
                 self.last_error = str(e)
                 continue
@@ -358,6 +370,7 @@ class StreamBroadcaster(threading.Thread):
                             if not chunk:
                                 break
                             text = chunk.decode("utf-8", errors="ignore")
+                            self.stderr_tail = (self.stderr_tail + text)[-12000:]
                             log_fh.write(text)
                             log_fh.flush()
                             if watcher:
@@ -393,7 +406,13 @@ class StreamBroadcaster(threading.Thread):
         while not self.stop_event.is_set():
             try:
                 if self.proc and self.proc.poll() is not None:
-                    self.last_error = "FFmpeg RTMP berhenti saat siaran berjalan"
+                    if summarize_ffmpeg_stderr:
+                        self.last_error = summarize_ffmpeg_stderr(
+                            self.stderr_tail,
+                            "FFmpeg RTMP berhenti saat siaran berjalan",
+                        )
+                    else:
+                        self.last_error = "FFmpeg RTMP berhenti saat siaran berjalan"
                     failed = True
                     print(f"[StreamBroadcaster] {self.last_error}")
                     if self.output_folder and write_rtmp_status:
