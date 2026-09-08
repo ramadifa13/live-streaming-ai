@@ -25,22 +25,37 @@ except ImportError:
 try:
     from worker_telemetry import get_telemetry
 except ImportError:
+
     def get_telemetry():
         class NoopMetric:
-            def inc(self, *args, **kwargs): pass
-            def record_latency(self, *args, **kwargs): pass
-            def set_gauge(self, *args, **kwargs): pass
+            def inc(self, *args, **kwargs):
+                pass
+
+            def record_latency(self, *args, **kwargs):
+                pass
+
+            def set_gauge(self, *args, **kwargs):
+                pass
+
             def measure(self, *args, **kwargs):
                 class NoopContextManager:
-                    def __enter__(self): pass
-                    def __exit__(self, exc_type, exc_val, exc_tb): pass
+                    def __enter__(self):
+                        pass
+
+                    def __exit__(self, exc_type, exc_val, exc_tb):
+                        pass
+
                 return NoopContextManager()
+
         return NoopMetric()
+
 
 TARGET_FPS = int(os.environ.get("AI_WORKER_FPS", "30"))
 AUDIO_SAMPLE_RATE = 16000
 AUDIO_CHANNELS = 2
-BYTES_PER_AUDIO_FRAME = int(round(AUDIO_SAMPLE_RATE / float(TARGET_FPS))) * 2 * AUDIO_CHANNELS
+BYTES_PER_AUDIO_FRAME = (
+    int(round(AUDIO_SAMPLE_RATE / float(TARGET_FPS))) * 2 * AUDIO_CHANNELS
+)
 
 
 def _silence_bytes_for_frame(frame_index: int) -> bytes:
@@ -48,8 +63,15 @@ def _silence_bytes_for_frame(frame_index: int) -> bytes:
     end = int((frame_index + 1) * AUDIO_SAMPLE_RATE / TARGET_FPS)
     return b"\x00" * (max(1, end - start) * 2 * AUDIO_CHANNELS)
 
+
 # === Refactored Components === #
-from ai_worker import AssetBank, LipSyncEngine, VideoStateMachine, RawFramePacket, RenderedPacket
+from ai_worker import (
+    AssetBank,
+    LipSyncEngine,
+    VideoStateMachine,
+    RawFramePacket,
+    RenderedPacket,
+)
 from ai_worker import frame_fetcher_loop, lipsync_worker_loop, _IdleFallbackPlayer
 import cv2
 
@@ -151,9 +173,13 @@ class StreamBroadcaster(threading.Thread):
         if cls._ffmpeg_ipv4_supported is not None:
             return cls._ffmpeg_ipv4_supported
         try:
-            p = subprocess.run(["ffmpeg", "-hide_banner", "-4", "-version"], capture_output=True, timeout=8)
+            p = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-4", "-version"],
+                capture_output=True,
+                timeout=8,
+            )
             err = (p.stderr or p.stdout or b"").decode("utf-8", errors="ignore").lower()
-            cls._ffmpeg_ipv4_supported = (p.returncode == 0 and "unrecognized" not in err)
+            cls._ffmpeg_ipv4_supported = p.returncode == 0 and "unrecognized" not in err
         except Exception:
             cls._ffmpeg_ipv4_supported = False
         return cls._ffmpeg_ipv4_supported
@@ -165,7 +191,9 @@ class StreamBroadcaster(threading.Thread):
         out = base * (1.0 - self._ov_alpha) + self._ov_rgb * self._ov_alpha
         return out.astype(np.uint8)
 
-    def _source_foreground_mask(self, clip_name: str, frame_idx: int, frame: np.ndarray) -> np.ndarray:
+    def _source_foreground_mask(
+        self, clip_name: str, frame_idx: int, frame: np.ndarray
+    ) -> np.ndarray:
         key = (clip_name or "idle", int(frame_idx))
         cached = self._foreground_masks.get(key)
         if cached is not None:
@@ -173,17 +201,21 @@ class StreamBroadcaster(threading.Thread):
 
         small_width = 360
         small_height = 640
-        source = cv2.resize(frame, (small_width, small_height), interpolation=cv2.INTER_AREA)
+        source = cv2.resize(
+            frame, (small_width, small_height), interpolation=cv2.INTER_AREA
+        )
         mask = np.full((small_height, small_width), cv2.GC_PR_BGD, dtype=np.uint8)
         mask[8:-8, 35:-35] = cv2.GC_PR_FGD
-        mask[70:small_height - 12, 100:260] = cv2.GC_FGD
+        mask[70 : small_height - 12, 100:260] = cv2.GC_FGD
         bgd = np.zeros((1, 65), np.float64)
         fgd = np.zeros((1, 65), np.float64)
         cv2.grabCut(source, mask, None, bgd, fgd, 2, cv2.GC_INIT_WITH_MASK)
         foreground = np.where(
             (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0
         ).astype(np.uint8)
-        foreground = cv2.morphologyEx(foreground, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        foreground = cv2.morphologyEx(
+            foreground, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8)
+        )
         foreground = cv2.GaussianBlur(foreground, (7, 7), 0)
         self._foreground_masks[key] = foreground
         if len(self._foreground_masks) > 240:
@@ -203,14 +235,19 @@ class StreamBroadcaster(threading.Thread):
             clip = self.bank.get_clip(clip_name)
             if clip is not None and clip.frames:
                 source = clip.frames[max(0, min(int(frame_idx), len(clip.frames) - 1))]
-        alpha = cv2.resize(
-            self._source_foreground_mask(clip_name, frame_idx, source),
-            (frame.shape[1], frame.shape[0]),
-            interpolation=cv2.INTER_LINEAR,
-        ).astype(np.float32)[:, :, None] / 255.0
+        alpha = (
+            cv2.resize(
+                self._source_foreground_mask(clip_name, frame_idx, source),
+                (frame.shape[1], frame.shape[0]),
+                interpolation=cv2.INTER_LINEAR,
+            ).astype(np.float32)[:, :, None]
+            / 255.0
+        )
         foreground = frame.astype(np.float32)
         background = self._bg_bgr.astype(np.float32)
-        return np.clip(foreground * alpha + background * (1.0 - alpha), 0, 255).astype(np.uint8)
+        return np.clip(foreground * alpha + background * (1.0 - alpha), 0, 255).astype(
+            np.uint8
+        )
 
     @staticmethod
     def _write_all(fh, data: bytes) -> None:
@@ -225,35 +262,92 @@ class StreamBroadcaster(threading.Thread):
 
     def _build_cmd(self, v_in: str, a_in: str, *, use_ipv4: bool) -> list:
         gop = TARGET_FPS * 2
-        cmd = [
-            "ffmpeg", "-y", "-hide_banner", "-loglevel", "info"
-        ]
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "info"]
         if use_ipv4:
             cmd.append("-4")
 
-        cmd.extend([
-            "-fflags", "+nobuffer+genpts",
-            "-thread_queue_size", "1024",
-            "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{CANVAS_W}x{CANVAS_H}", "-r", str(TARGET_FPS),
-            "-probesize", "32", "-analyzeduration", "0",
-            "-i", v_in,
-            "-thread_queue_size", "1024",
-            "-f", "s16le", "-ar", str(AUDIO_SAMPLE_RATE), "-ac", str(AUDIO_CHANNELS),
-            "-probesize", "32", "-analyzeduration", "0",
-            "-i", a_in,
-            "-map", "0:v", "-map", "1:a",
-            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-            "-pix_fmt", "yuv420p", "-profile:v", "baseline", "-level", "3.1",
-            "-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0",
-            "-b:v", "2500k", "-maxrate", "2500k", "-bufsize", "2500k",
-            "-vsync", "cfr",
-            "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-            "-flvflags", "no_duration_filesize",
-            "-f", "flv",
-            "-rtmp_live", "live",
-            "-stimeout", "30000000",
-            "-rw_timeout", "30000000",
-        ])
+        cmd.extend(
+            [
+                "-fflags",
+                "+nobuffer+genpts",
+                "-thread_queue_size",
+                "1024",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "bgr24",
+                "-s",
+                f"{CANVAS_W}x{CANVAS_H}",
+                "-r",
+                str(TARGET_FPS),
+                "-probesize",
+                "32",
+                "-analyzeduration",
+                "0",
+                "-i",
+                v_in,
+                "-thread_queue_size",
+                "1024",
+                "-f",
+                "s16le",
+                "-ar",
+                str(AUDIO_SAMPLE_RATE),
+                "-ac",
+                str(AUDIO_CHANNELS),
+                "-probesize",
+                "32",
+                "-analyzeduration",
+                "0",
+                "-i",
+                a_in,
+                "-map",
+                "0:v",
+                "-map",
+                "1:a",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-tune",
+                "zerolatency",
+                "-pix_fmt",
+                "yuv420p",
+                "-profile:v",
+                "baseline",
+                "-level",
+                "3.1",
+                "-g",
+                str(gop),
+                "-keyint_min",
+                str(gop),
+                "-sc_threshold",
+                "0",
+                "-b:v",
+                "2500k",
+                "-maxrate",
+                "2500k",
+                "-bufsize",
+                "2500k",
+                "-vsync",
+                "cfr",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-ar",
+                "44100",
+                "-flvflags",
+                "no_duration_filesize",
+                "-f",
+                "flv",
+                "-rtmp_live",
+                "live",
+                "-stimeout",
+                "30000000",
+                "-rw_timeout",
+                "30000000",
+            ]
+        )
 
         if self.rtmp_url.lower().startswith("rtmps://"):
             cmd.extend(["-tls_verify", "0"])
@@ -268,7 +362,9 @@ class StreamBroadcaster(threading.Thread):
             print(f"[StreamBroadcaster] Preflight checking RTMP host...")
             preflight_rtmp_publish(self.rtmp_url)
 
-        print(f"[StreamBroadcaster] Starting FFmpeg to {self.rtmp_url.split('?')[0]}?***")
+        print(
+            f"[StreamBroadcaster] Starting FFmpeg to {self.rtmp_url.split('?')[0]}?***"
+        )
         video_r, video_w = os.pipe()
         audio_r, audio_w = os.pipe()
         os.set_inheritable(video_r, True)
@@ -279,7 +375,12 @@ class StreamBroadcaster(threading.Thread):
         v_in = f"/proc/self/fd/{video_r}"
         a_in = f"/proc/self/fd/{audio_r}"
 
-        force_ipv4 = os.environ.get("RTMP_FORCE_IPV4", "1").strip().lower() not in ("0", "false", "no", "off")
+        force_ipv4 = os.environ.get("RTMP_FORCE_IPV4", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
         ipv4_ok = force_ipv4 and self._ffmpeg_ipv4_flag_supported()
         attempts = [ipv4_ok, False] if ipv4_ok else [False]
 
@@ -318,9 +419,15 @@ class StreamBroadcaster(threading.Thread):
         if self.proc is None or self.proc.poll() is not None:
             os.close(video_r)
             os.close(audio_r)
-            try: os.close(video_w); os.close(audio_w)
-            except Exception: pass
-            hint = self.last_error or "FFmpeg RTMP gagal start (proses keluar saat inisialisasi)"
+            try:
+                os.close(video_w)
+                os.close(audio_w)
+            except Exception:
+                pass
+            hint = (
+                self.last_error
+                or "FFmpeg RTMP gagal start (proses keluar saat inisialisasi)"
+            )
             if write_rtmp_status and self.output_folder:
                 write_rtmp_status(self.output_folder, "failed", hint)
             raise RuntimeError(hint)
@@ -334,7 +441,11 @@ class StreamBroadcaster(threading.Thread):
         try:
             init_frame = self.fallback_player.next_frame()
             init_frame = fit_bgr(init_frame, CANVAS_W, CANVAS_H)
-            init_frame = self._replace_video_background(init_frame, self.bank.idle_clip.name, self.bank.idle_clip.base_pose_frame)
+            init_frame = self._replace_video_background(
+                init_frame,
+                self.bank.idle_clip.name,
+                self.bank.idle_clip.base_pose_frame,
+            )
             init_buf = np.ascontiguousarray(init_frame, dtype=np.uint8).tobytes()
             init_pcm = self.silence_pcm
             for _ in range(5):
@@ -346,6 +457,7 @@ class StreamBroadcaster(threading.Thread):
         out_dir = self.output_folder
         if out_dir:
             try:
+
                 def _on_progress():
                     self.progress_seen = True
                     if write_rtmp_status:
@@ -356,10 +468,14 @@ class StreamBroadcaster(threading.Thread):
                     if write_rtmp_status:
                         write_rtmp_status(out_dir, "failed", hint)
 
-                watcher = FfmpegLogWatcher(
-                    on_fatal=_on_fatal,
-                    on_progress=_on_progress,
-                ) if FfmpegLogWatcher else None
+                watcher = (
+                    FfmpegLogWatcher(
+                        on_fatal=_on_fatal,
+                        on_progress=_on_progress,
+                    )
+                    if FfmpegLogWatcher
+                    else None
+                )
                 log_path = os.path.join(out_dir, "ai_worker_rtmp.log")
                 log_fh = open(log_path, "a", encoding="utf-8")
 
@@ -378,8 +494,10 @@ class StreamBroadcaster(threading.Thread):
                     except Exception:
                         pass
                     finally:
-                        try: log_fh.close()
-                        except Exception: pass
+                        try:
+                            log_fh.close()
+                        except Exception:
+                            pass
 
                 threading.Thread(target=_drain_stderr, daemon=True).start()
             except Exception as e:
@@ -391,8 +509,10 @@ class StreamBroadcaster(threading.Thread):
         except Exception as e:
             print(f"[StreamBroadcaster] Failed to start FFmpeg: {e}")
             if self.output_folder and write_rtmp_status:
-                try: write_rtmp_status(self.output_folder, "failed", str(e)[:200])
-                except Exception: pass
+                try:
+                    write_rtmp_status(self.output_folder, "failed", str(e)[:200])
+                except Exception:
+                    pass
             return
 
         frame_duration = 1.0 / TARGET_FPS
@@ -426,7 +546,10 @@ class StreamBroadcaster(threading.Thread):
                     pcm = pkt.audio_pcm
                     clip_name = getattr(pkt, "clip_name", "") or "idle"
                     frame_idx = int(getattr(pkt, "frame_idx", 0) or 0)
-                    if getattr(pkt, "clip_name", None) and getattr(pkt, "frame_idx", None) is not None:
+                    if (
+                        getattr(pkt, "clip_name", None)
+                        and getattr(pkt, "frame_idx", None) is not None
+                    ):
                         self.fallback_player.sync(pkt.clip_name, pkt.frame_idx)
                 except queue.Empty:
                     if self.bridge is not None and self.bridge.is_utterance_active():
@@ -438,14 +561,18 @@ class StreamBroadcaster(threading.Thread):
                             frame_idx = int(getattr(pkt, "frame_idx", 0) or 0)
                             self.fallback_player.sync(clip_name, frame_idx)
                         except queue.Empty:
-                            self.last_error = "Render packet speech timeout; audio/video pair hilang"
+                            self.last_error = (
+                                "Render packet speech timeout; audio/video pair hilang"
+                            )
                             failed = True
                             self.stop_event.set()
                             if self.output_folder and write_rtmp_status:
-                                write_rtmp_status(self.output_folder, "failed", self.last_error)
+                                write_rtmp_status(
+                                    self.output_folder, "failed", self.last_error
+                                )
                             break
                     else:
-                    # ZERO-LATENCY FALLBACK (Mencegah patah/loncat dengan ping-pong continuous player)
+                        # ZERO-LATENCY FALLBACK (Mencegah patah/loncat dengan ping-pong continuous player)
                         metrics.inc("broadcast_idle_fallback")
                         frame = self.fallback_player.next_frame()
                         pcm = _silence_bytes_for_frame(self._audio_frame_index)
@@ -494,25 +621,36 @@ class StreamBroadcaster(threading.Thread):
 
         if self.proc:
             self.proc.terminate()
-            try: self.proc.wait(timeout=2)
-            except: self.proc.kill()
+            try:
+                self.proc.wait(timeout=2)
+            except:
+                self.proc.kill()
         if self.v_fh:
-            try: self.v_fh.close()
-            except Exception: pass
+            try:
+                self.v_fh.close()
+            except Exception:
+                pass
         if self.a_fh:
-            try: self.a_fh.close()
-            except Exception: pass
+            try:
+                self.a_fh.close()
+            except Exception:
+                pass
         if self.output_folder and write_rtmp_status and not failed:
-            try: write_rtmp_status(self.output_folder, "disconnected")
-            except Exception: pass
+            try:
+                write_rtmp_status(self.output_folder, "disconnected")
+            except Exception:
+                pass
         print("[StreamBroadcaster] Stopped.")
+
 
 # Kita bisa menggunakan fungsi fetcher/lipsync worker asli
 
 
 class NewAIVisualWorker:
     def __init__(self, output_folder: str = ""):
-        self.output_folder = output_folder or os.environ.get("OUTPUT_FOLDER", "/workspace/ai_live_worker/output")
+        self.output_folder = output_folder or os.environ.get(
+            "OUTPUT_FOLDER", "/workspace/ai_live_worker/output"
+        )
         self.rtmp_url = None
         self.host = "namira"
         self.assets_dir = None
@@ -534,6 +672,7 @@ class NewAIVisualWorker:
         print("[NewAIVisualWorker] Initializing assets and models...")
         from argparse import Namespace
         from inference import _load_models_cached
+
         models_root = os.environ.get("MODELS_DIR", "./models")
         dummy_args = Namespace(
             gpu_id=0,
@@ -555,7 +694,9 @@ class NewAIVisualWorker:
             if os.path.isdir(candidate):
                 self.assets_dir = candidate
             else:
-                self.assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "3d")
+                self.assets_dir = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), "assets", "3d"
+                )
 
         # Load asset bank asli
         self.bank = AssetBank(self.assets_dir, host=self.host, models_bundle=models)
@@ -567,11 +708,14 @@ class NewAIVisualWorker:
             models,
             self.bank,
             batch_size=int(os.environ.get("MUSETALK_BATCH_SIZE", "8")),
-            face_registry=self.sm._face_registry if hasattr(self.sm, '_face_registry') else None,
+            face_registry=self.sm._face_registry
+            if hasattr(self.sm, "_face_registry")
+            else None,
         )
 
     def start(self, *, wait_rtmp=True):
-        if self._is_running: return
+        if self._is_running:
+            return
 
         if not self.bank:
             self.initialize()
@@ -580,6 +724,7 @@ class NewAIVisualWorker:
 
         try:
             from speech_bridge import get_speech_bridge
+
             self._bridge = get_speech_bridge(self.output_folder)
         except ImportError:
             self._bridge = None
@@ -594,7 +739,9 @@ class NewAIVisualWorker:
                     start_idx = self.sm.pin_talk_body()
                     body = self.sm._talk_target or self.sm.current_name
                 if self.engine:
-                    self.engine.set_utterance(job, start_frame_idx=start_idx, body_clip=body)
+                    self.engine.set_utterance(
+                        job, start_frame_idx=start_idx, body_clip=body
+                    )
 
                 def _mark_ready():
                     ok = False
@@ -613,13 +760,25 @@ class NewAIVisualWorker:
                         if ready is not None:
                             ready.set()
 
-                threading.Thread(target=_mark_ready, name=f"Preroll-{getattr(job, 'task_id', '')[:16]}", daemon=True).start()
+                threading.Thread(
+                    target=_mark_ready,
+                    name=f"Preroll-{getattr(job, 'task_id', '')[:16]}",
+                    daemon=True,
+                ).start()
 
             def _on_utterance_start(job):
-                if self.engine and getattr(self.engine, "_utterance_id", None) != getattr(job, "task_id", None):
+                if self.engine and getattr(
+                    self.engine, "_utterance_id", None
+                ) != getattr(job, "task_id", None):
                     start_idx = self.sm.pin_talk_body() if self.sm else 0
-                    body = (self.sm._talk_target or self.sm.current_name) if self.sm else None
-                    self.engine.set_utterance(job, start_frame_idx=start_idx, body_clip=body)
+                    body = (
+                        (self.sm._talk_target or self.sm.current_name)
+                        if self.sm
+                        else None
+                    )
+                    self.engine.set_utterance(
+                        job, start_frame_idx=start_idx, body_clip=body
+                    )
                 if self.sm:
                     self.sm.begin_utterance()
                     if getattr(job, "action", None):
@@ -638,18 +797,29 @@ class NewAIVisualWorker:
         audio_fn_ext = self._bridge.get_audio_chunk if self._bridge else None
         action_fn = self._bridge.make_action_hook() if self._bridge else None
 
-        def dummy_audio(): return b"\x00" * BYTES_PER_AUDIO_FRAME, False
+        def dummy_audio():
+            return b"\x00" * BYTES_PER_AUDIO_FRAME, False
 
         # Gunakan thread asli
         fetcher_t = threading.Thread(
             target=frame_fetcher_loop,
-            args=(self.sm, self.in_q, self.stop_event, dummy_audio, action_fn, audio_fn_ext, self._bridge),
-            name="FrameFetcher", daemon=True
+            args=(
+                self.sm,
+                self.in_q,
+                self.stop_event,
+                dummy_audio,
+                action_fn,
+                audio_fn_ext,
+                self._bridge,
+            ),
+            name="FrameFetcher",
+            daemon=True,
         )
         lipsync_t = threading.Thread(
             target=lipsync_worker_loop,
             args=(self.bank, self.engine, self.in_q, self.render_q, self.stop_event),
-            name="LipSyncWorker", daemon=True
+            name="LipSyncWorker",
+            daemon=True,
         )
         broadcaster_t = StreamBroadcaster(
             self.rtmp_url,
@@ -670,26 +840,36 @@ class NewAIVisualWorker:
         if wait_rtmp:
             timeout_sec = float(os.environ.get("RTMP_CONNECT_TIMEOUT_SEC", "15.0"))
             deadline = time.monotonic() + timeout_sec
-            print(f"[NewAIVisualWorker] Menunggu handshake RTMP ({timeout_sec:.1f}s)...")
+            print(
+                f"[NewAIVisualWorker] Menunggu handshake RTMP ({timeout_sec:.1f}s)..."
+            )
             while time.monotonic() < deadline:
                 if not broadcaster_t.is_alive():
-                    err_msg = broadcaster_t.last_error or "FFmpeg RTMP berhenti saat handshake — periksa stream key / server URL."
+                    err_msg = (
+                        broadcaster_t.last_error
+                        or "FFmpeg RTMP berhenti saat handshake — periksa stream key / server URL."
+                    )
                     raise RuntimeError(f"FFmpeg RTMP gagal: {err_msg}")
                 if broadcaster_t.progress_seen:
-                    print("[NewAIVisualWorker] RTMP terhubung & frame pertama terkirim!")
+                    print(
+                        "[NewAIVisualWorker] RTMP terhubung & frame pertama terkirim!"
+                    )
                     break
                 time.sleep(0.15)
             else:
                 if not broadcaster_t.is_alive():
                     err_msg = broadcaster_t.last_error or "FFmpeg RTMP gagal terhubung."
                     raise RuntimeError(f"FFmpeg RTMP gagal: {err_msg}")
-                print("[NewAIVisualWorker] Warning: RTMP wait timeout, melanjutkan streaming di background...")
+                print(
+                    "[NewAIVisualWorker] Warning: RTMP wait timeout, melanjutkan streaming di background..."
+                )
 
         self._is_running = True
         print("[NewAIVisualWorker] Pipeline started.")
 
     def stop(self, *, clear_queue=True):
-        if not self._is_running: return
+        if not self._is_running:
+            return
         self.stop_event.set()
 
         if self.engine:
@@ -699,9 +879,12 @@ class NewAIVisualWorker:
             t.join(timeout=3)
 
         if clear_queue:
-            while not self.in_q.empty(): self.in_q.get_nowait()
-            while not self.render_q.empty(): self.render_q.get_nowait()
-            if self._bridge: self._bridge.clear_pending()
+            while not self.in_q.empty():
+                self.in_q.get_nowait()
+            while not self.render_q.empty():
+                self.render_q.get_nowait()
+            if self._bridge:
+                self._bridge.clear_pending()
 
         self._is_running = False
         print("[NewAIVisualWorker] Pipeline stopped.")
@@ -714,12 +897,23 @@ class NewAIVisualWorker:
     def is_pipeline_active(self):
         return self._is_running
 
-    def enqueue_utterance(self, audio_path: str, *, task_id: str, action: str = None, priority: bool = False):
+    def enqueue_utterance(
+        self,
+        audio_path: str,
+        *,
+        task_id: str,
+        action: str = None,
+        priority: bool = False,
+    ):
         if self._bridge:
-            return self._bridge.enqueue(audio_path, task_id=task_id, action=action, priority=priority)
+            return self._bridge.enqueue(
+                audio_path, task_id=task_id, action=action, priority=priority
+            )
         return False
 
+
 _visual_worker_singleton = None
+
 
 def get_visual_worker(output_folder: str = "") -> NewAIVisualWorker:
     global _visual_worker_singleton
@@ -728,6 +922,7 @@ def get_visual_worker(output_folder: str = "") -> NewAIVisualWorker:
     elif output_folder:
         _visual_worker_singleton.output_folder = output_folder
     return _visual_worker_singleton
+
 
 def start_visual_broadcast(
     rtmp_url: str,
@@ -751,6 +946,7 @@ def start_visual_broadcast(
     vw.start(wait_rtmp=True)
     return vw
 
+
 def stop_visual_broadcast(*, destroy: bool = True) -> None:
     global _visual_worker_singleton
     if _visual_worker_singleton:
@@ -758,8 +954,10 @@ def stop_visual_broadcast(*, destroy: bool = True) -> None:
         if destroy:
             _visual_worker_singleton = None
 
+
 def pause_visual_broadcast(output_folder: str = "") -> dict:
     return {"success": True, "message": "Paused"}
+
 
 def resume_visual_broadcast(output_folder: str = "") -> dict:
     return {"success": True, "message": "Resumed"}
