@@ -144,7 +144,6 @@ class StreamBroadcaster(threading.Thread):
 
     def _reload_background(self):
         bg_path = self.background_path
-        if not bg_path and self.output_folder:
         if (not bg_path or not os.path.exists(bg_path)) and self.output_folder:
             for ext in (".jpg", ".png", ".jpeg", ".webp"):
                 cand = os.path.join(self.output_folder, f"custom_background{ext}")
@@ -188,7 +187,6 @@ class StreamBroadcaster(threading.Thread):
 
     def _reload_overlay(self):
         cand = self._ov_candidate
-        if not cand and self.output_folder:
         if (not cand or not os.path.exists(cand)) and self.output_folder:
             for c in (
                 os.path.join(self.output_folder, "overlay_live.png"),

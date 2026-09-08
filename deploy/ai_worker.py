@@ -556,20 +556,20 @@ class AssetBank:
             narrowed = [c for c in pool if c != exclude]
             if narrowed:
                 pool = narrowed
-        if prefer in pool and prefer != avoid_repeat:
+
         disallowed = set()
         if avoid_repeat:
             disallowed.add(avoid_repeat)
         if exclude:
             disallowed.add(exclude)
+
         candidates = [c for c in pool if c not in disallowed]
         if not candidates and disallowed:
             candidates = [c for c in pool if c != avoid_repeat] or pool
         if not candidates:
             return pool[0]
-        if prefer and prefer in candidates:
+        if prefer and prefer in candidates and prefer not in disallowed:
             return prefer
-        return random.choice(pool)
         return random.choice(candidates)
 
     def talk_clip_name(self) -> str:
@@ -1135,7 +1135,6 @@ class VideoStateMachine:
             else:
                 self.pending_action = target
 
-    def pin_talk_body(self) -> int:
     def pin_talk_body(self, task_id: Optional[str] = None) -> int:
         """Siapkan clip bicara untuk infer — tubuh tetap bergerak (tanpa freeze).
 
@@ -1153,9 +1152,7 @@ class VideoStateMachine:
                 and self.bank.clip_has_musetalk(self._talk_target)
             ):
                 return int(self.frame_idx)
-            # Reuse target jika sudah di-pin (hindari double-pick di on_start).
-            if self._talk_target and self.bank.clip_has_musetalk(self._talk_target):
-            # Reuse target jika sudah di-pin untuk task yang sama (hindari double-pick di on_start).
+
             if (
                 task_id is not None
                 and getattr(self, "_pinned_task_id", None) == task_id
@@ -1170,10 +1167,10 @@ class VideoStateMachine:
                 self._talk_target = target
                 if task_id is not None:
                     self._pinned_task_id = task_id
+
             talk_clip = self.bank.get_clip(target)
             if talk_clip is None:
                 return int(self.frame_idx)
-            # Sudah di talk clip (hold antar-utterance): lanjut dari frame sekarang.
             if self.current_name == target and self.state == PlayState.TALK:
                 return int(self.frame_idx)
             print(f"[StateMachine] Pin talk → {target} (playthrough, no freeze)")
