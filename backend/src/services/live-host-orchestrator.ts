@@ -1567,6 +1567,7 @@ class LiveHostOrchestrator {
           podId: state.config.podId || process.env.RUNPOD_POD_ID || null,
           sessionId,
           allowOfflineSynth: true,
+          targetDurationSeconds: 9.0,
         });
         if (ttsResult.success && ttsResult.audioBuffer) {
           audioBase64 = ttsResult.audioBuffer.toString("base64");

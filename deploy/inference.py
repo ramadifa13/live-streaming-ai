@@ -66,15 +66,13 @@ def musetalk_visual_params():
     """Crop wajah untuk MuseTalk — proporsional pas dengan rahang & mulut video asli."""
     # bbox_shift: -3 sedikit menaikkan box agar proporsional menutup dagu dan rahang bawah secara tepat
     bbox_shift = int(os.environ.get("MUSETALK_BBOX_SHIFT", "-3"))
-    # bbox_shift_x: -10 memperbaiki posisi mulut yang sebelumnya condong/geser ke kanan
-    bbox_shift_x = int(os.environ.get("MUSETALK_BBOX_SHIFT_X", "-10"))
+    # bbox_shift_x = 0 agar crop wajah tetap terpusat, tidak bergeser ke samping.
+    bbox_shift_x = int(os.environ.get("MUSETALK_BBOX_SHIFT_X", "0"))
     extra_margin = 0
-    # upper_boundary_ratio: 0.46 (turun dari 0.52) — mengecilkan area crop mulut agar tidak terlalu
-    # besar dan tidak membuat avatar terlihat bergetar saat bibir bergerak.
-    # Nilai lebih rendah = area replace mulut lebih kecil = lebih alami & minim jitter.
-    upper_boundary_ratio = float(os.environ.get("MUSETALK_UPPER_BOUNDARY_RATIO", "0.46"))
-    # cheek_width: 10 (turun dari 16) mempersempit sudut bibir lateral agar tidak melebar
-    cheek_width = int(os.environ.get("MUSETALK_CHEEK_WIDTH", "10"))
+    # upper_boundary_ratio lebih ketat untuk menjaga bibir tidak terlalu besar / terlalu lebar.
+    upper_boundary_ratio = float(os.environ.get("MUSETALK_UPPER_BOUNDARY_RATIO", "0.32"))
+    # cheek_width kecil agar sudut mulut tidak melebar ke samping.
+    cheek_width = int(os.environ.get("MUSETALK_CHEEK_WIDTH", "4"))
     # bbox_smooth_window: jumlah frame untuk temporal smoothing koordinat bbox.
     # Semakin besar = gerakan lebih halus tapi sedikit lag. Default 7 frame sudah
     # cukup untuk menghilangkan jitter tanpa delay terlihat di 24fps.
@@ -148,9 +146,9 @@ def _extract_landmarks_from_frames(frames, bbox_shift=0, bbox_shift_x=None):
     """
     if bbox_shift_x is None:
         try:
-            bbox_shift_x = int(os.environ.get("MUSETALK_BBOX_SHIFT_X", "-5"))
+            bbox_shift_x = int(os.environ.get("MUSETALK_BBOX_SHIFT_X", "0"))
         except Exception:
-            bbox_shift_x = -5
+            bbox_shift_x = 0
     try:
         from musetalk.utils.preprocessing import (
             model as dwpose_model,
@@ -569,6 +567,7 @@ def _get_avatar_materials(
         parsing_mode,
         round(float(upper_boundary_ratio), 3),
         bool(square_pad),
+        int(os.environ.get("MUSETALK_BBOX_SMOOTH_WINDOW", "7")),
         CANVAS_W,
         CANVAS_H,
     )
@@ -606,7 +605,7 @@ def _get_avatar_materials(
 
         frame_h, frame_w = frame_list[0].shape[:2]
         cache_signature = {
-            "format": 5,
+            "format": 6,
             "frames": len(frame_list),
             "width": frame_w,
             "height": frame_h,
@@ -615,6 +614,7 @@ def _get_avatar_materials(
             "extra_margin": extra_margin,
             "upper_boundary_ratio": round(float(upper_boundary_ratio), 3),
             "square_pad": bool(square_pad),
+            "bbox_smooth_window": int(os.environ.get("MUSETALK_BBOX_SMOOTH_WINDOW", "7")),
         }
 
         # Cache landmark disimpan sebagai koordinat piksel absolut, jadi cache

@@ -86,16 +86,21 @@ SEAMLESS_THRESHOLD = 0.92
 
 # ====== MOUTH/LIP-SYNC PARAMETERS (untuk smooth lip-sync) ======
 # Keep the worker deterministic and environment-free for deploy/test invariants.
-MOUTH_STRENGTH = 1.0
+# Mulut harus natural, tidak terlalu terbuka dan tidak geser ke samping.
+# Redam 0.72 menjaga buka bibir tetap wajar pada pengucapan normal.
+MOUTH_STRENGTH = 0.72
 
-# MOUTH_TEMPORAL: temporal smoothing untuk mouth movement (0.0-1.0)
-# Default 0.12 = terlalu jerky. Raise ke 0.25-0.35 untuk smooth mouth
-# Set via env: AI_WORKER_MOUTH_TEMPORAL=0.3
-_mouth_temp = float(os.environ.get("AI_WORKER_MOUTH_TEMPORAL", "0.25"))
+# MOUTH_TEMPORAL: temporal smoothing agar gerakan bibir halus tanpa lag atau overshoot.
+_mouth_temp = float(os.environ.get("AI_WORKER_MOUTH_TEMPORAL", "0.30"))
 MOUTH_TEMPORAL = max(0.0, min(1.0, _mouth_temp))
 
-MOUTH_MAX_DELTA = 0
-MOUTH_FRAME_DELTA = 0
+# Batas per-frame dibuat lebih ketat agar mulut tidak membesar / melebar.
+MOUTH_MAX_DELTA = 8.0
+MOUTH_FRAME_DELTA = 2.5
+
+# Saat MuseTalk pertama kali masuk, bbox face bisa bergetar karena perubahan
+# landmark per-frame. Batasi pergeseran bbox agar transisi awal stabil.
+FACE_JITTER_MAX_DELTA = 8
 LIPSYNC_PREROLL_FRAMES = 2
 LIPSYNC_WAIT_SEC = 0
 # Sync shift 0 memastikan viseme tepat waktu dengan audio stream
@@ -448,16 +453,59 @@ def _talk_body_index(
 
 
 class FaceCoordRegistry:
-    """Ambil mask/bbox milik frame yang sedang tampil. Tanpa lock lintas-pose."""
+    """Ambil mask/bbox milik frame yang sedang tampil dan stabilkan transisi awal."""
 
     def __init__(self, window: int = BBOX_SMOOTH_WINDOW):
         self._window = max(1, window)
+        self._history: Dict[str, deque] = {}
+        self._locked: Dict[str, tuple] = {}
+
+    def _smooth_face_box(self, key: str, face_box: Tuple[int, int, int, int]) -> Tuple[int, int, int, int]:
+        if face_box is None:
+            return face_box
+        box = tuple(int(v) for v in face_box)
+        hist = self._history.setdefault(key, deque(maxlen=max(2, self._window)))
+        hist.append(box)
+        if len(hist) == 1:
+            self._locked[key] = box
+            return box
+
+        recent = np.asarray(list(hist), dtype=np.float32)
+        smoothed = tuple(np.round(np.mean(recent, axis=0)).astype(int))
+        prev = self._locked.get(key)
+        if prev is not None:
+            drift = max(
+                abs(smoothed[0] - prev[0]),
+                abs(smoothed[1] - prev[1]),
+                abs(smoothed[2] - prev[2]),
+                abs(smoothed[3] - prev[3]),
+            )
+            if drift > FACE_JITTER_MAX_DELTA:
+                smoothed = (
+                    prev[0] + int(np.clip(smoothed[0] - prev[0], -FACE_JITTER_MAX_DELTA, FACE_JITTER_MAX_DELTA)),
+                    prev[1] + int(np.clip(smoothed[1] - prev[1], -FACE_JITTER_MAX_DELTA, FACE_JITTER_MAX_DELTA)),
+                    prev[2] + int(np.clip(smoothed[2] - prev[2], -FACE_JITTER_MAX_DELTA, FACE_JITTER_MAX_DELTA)),
+                    prev[3] + int(np.clip(smoothed[3] - prev[3], -FACE_JITTER_MAX_DELTA, FACE_JITTER_MAX_DELTA)),
+                )
+        self._locked[key] = smoothed
+        return smoothed
 
     def lock_from_clip(self, clip: ClipAsset, frame_idx: int) -> None:
-        return
+        if clip is None or not clip.mask_materials_cycle:
+            return
+        key = clip.name
+        idx = max(0, min(int(frame_idx), len(clip.mask_materials_cycle) - 1))
+        mat = clip.mask_materials_cycle[idx]
+        if not mat:
+            return
+        _, _, face_box = mat
+        self._locked[key] = tuple(int(v) for v in face_box)
+        self._history.setdefault(key, deque(maxlen=max(2, self._window))).clear()
+        self._history[key].append(self._locked[key])
 
     def release_lock(self) -> None:
-        return
+        self._locked.clear()
+        self._history.clear()
 
     def get_material(self, clip: ClipAsset, cidx: int) -> Optional[Tuple]:
         if not clip.mask_materials_cycle:
@@ -466,7 +514,8 @@ class FaceCoordRegistry:
         if not mat:
             return None
         mask_array, crop_box, face_box = mat
-        return feather_mask(mask_array), crop_box, tuple(int(v) for v in face_box)
+        stabilized = self._smooth_face_box(clip.name, tuple(int(v) for v in face_box))
+        return feather_mask(mask_array), crop_box, stabilized
 
 
 @dataclass
@@ -937,6 +986,7 @@ class VideoStateMachine:
         self._pending_begin_utterance = False
         self._begin_wait_since: Optional[float] = None
         self._talk_direction = 1  # +1 forward / -1 ping-pong reverse
+        self._transition_guard = 0
         self._schedule_next_ambient()
 
     def _schedule_next_ambient(self) -> None:
@@ -1465,6 +1515,14 @@ class VideoStateMachine:
             f"end→base ({len(pairs)}f)"
         )
 
+    def _transition_guard(self, from_clip: Optional[ClipAsset], to_clip: ClipAsset, from_idx: int, to_idx: int) -> bool:
+        """Blokir transisi hard-cut raksasa yang memicu jump jarak besar."""
+        if from_clip is None:
+            return False
+        span = max(1, from_clip.end_pose - from_clip.base_pose_frame + 1)
+        jump = abs(int(to_idx) - int(from_idx))
+        return jump > max(8, span // 4)
+
     def _cut_to_clip(
         self,
         to_name: str,
@@ -1492,6 +1550,10 @@ class VideoStateMachine:
         want_soft = (
             soft and from_clip is not None and (from_name != to_name or jump_same)
         )
+        target_idx = to_clip.base_pose_frame
+        if self._transition_guard(from_clip, to_clip, from_idx, target_idx):
+            soft = True
+            want_soft = True
         if want_soft:
             n = self._dynamic_overlap_n(from_clip, from_idx, to_clip)
             try:

@@ -62,9 +62,9 @@ def _sequence_key(task_id: str):
     return (2, 0, task_id)
 
 
-TARGET_MIN_SEC = 8.5
-TARGET_MAX_SEC = 9.5
-TARGET_WPM = 150.0
+TARGET_MIN_SEC = 8.8
+TARGET_MAX_SEC = 9.2
+TARGET_WPM = 140.0
 FILLER_PATTERNS = [
     "yang sebenarnya",
     "pada dasarnya",
@@ -74,9 +74,9 @@ FILLER_PATTERNS = [
     "sekadar",
 ]
 EXPANDERS = [
-    " Jadi, ini penting untuk dipahami dengan baik.",
-    " Secara sederhana, ini yang paling relevan.",
-    " Yang perlu diingat, konsistensi lebih penting daripada sekadar ambisi.",
+    ", jadi ini sangat penting untuk diperhatikan.",
+    ", secara sederhana, ini yang paling bermanfaat.",
+    ", yang pasti, kualitas dan kenyamanan tetap nomor satu.",
 ]
 
 
@@ -137,14 +137,14 @@ def expand_script(text: str) -> str:
         return ""
 
     for extra in EXPANDERS:
-        trial = cleaned + extra
+        trial = cleaned.rstrip(" .!?,;") + extra
         if TARGET_MIN_SEC <= estimate_duration_seconds(trial) <= TARGET_MAX_SEC:
             return trial
-    return cleaned + " Jadi, ini penting untuk dipahami dengan baik."
+    return cleaned.rstrip(" .!?,;") + ", jadi ini sangat penting untuk diperhatikan."
 
 
 def fit_script_to_target(text: str) -> str:
-    """Pastikan script tetap natural di rentang 8,5–9,5 detik tanpa memotong audio."""
+    """Pastikan script tetap natural di rentang ~9 detik tanpa memotong audio."""
     cleaned = normalize_script(text)
     if not cleaned:
         return ""
@@ -405,6 +405,7 @@ class SpeechBridge:
         self._silence_frame_index = 0
         self._audio_exhausted = False
         self._awaiting_visual_tail = False
+        self._visual_complete_signaled = False
         self._active_deadline = 0.0
         self._prep_executor = ThreadPoolExecutor(
             max_workers=self.PREP_WORKERS,
@@ -706,6 +707,7 @@ class SpeechBridge:
         self._frame_cursor = 0
         self._audio_exhausted = False
         self._awaiting_visual_tail = False
+        self._visual_complete_signaled = False
         self._active_deadline = 0.0
         if finished and self._on_utterance_end:
             try:
@@ -733,6 +735,7 @@ class SpeechBridge:
             self._frame_cursor = 0
             self._audio_exhausted = False
             self._awaiting_visual_tail = False
+            self._visual_complete_signaled = False
             self._active_deadline = 0.0
             # Reset gate untuk sesi Go Live berikutnya.
             self._ever_started = False
@@ -743,8 +746,13 @@ class SpeechBridge:
         with self._lock:
             if self._current is None:
                 return
-        # Jangan gate on _audio_exhausted — SM sudah konfirmasi visual selesai.
-        # Cek _audio_exhausted saja bisa bikin _current stuck → utterance #2+ tidak pernah play.
+            # Proteksi agar audio tidak dipotong: jika PCM audio masih belum habis dimainkan,
+            # tandai visual selesai tapi jangan finish dulu sampai seluruh frame audio tuntas dialirkan.
+            if self._frame_cursor < self._current.num_frames:
+                self._visual_complete_signaled = True
+                self._awaiting_visual_tail = True
+                return
+            self._visual_complete_signaled = False
         self._finish_current()
 
     def is_utterance_active(self) -> bool:
@@ -851,6 +859,9 @@ class SpeechBridge:
         if not self._audio_exhausted:
             self._audio_exhausted = True
             self._awaiting_visual_tail = True
+        if self._visual_complete_signaled:
+            self._visual_complete_signaled = False
+            self._finish_current()
         size = _samples_for_frame(self._silence_frame_index) * 2 * 2
         self._silence_frame_index += 1
         return b"\x00" * size, False, None

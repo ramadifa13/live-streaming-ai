@@ -581,6 +581,9 @@ class AILiveWorker:
             yaml_path = os.path.join(self.temp_dir, f"{task_id}.yaml")
             try:
                 import yaml
+                from inference import musetalk_visual_params
+
+                vis = musetalk_visual_params()
 
                 # Fast check: if audio is already 16kHz WAV, use directly without ffmpeg re-encode
                 target_audio = audio_path
@@ -630,7 +633,10 @@ class AILiveWorker:
                     "task_0": {
                         "video_path": idle_video,
                         "audio_path": target_audio,
-                        "bbox_shift": 0,
+                        "bbox_shift": int(vis.get("bbox_shift", 0)),
+                        "bbox_shift_x": int(vis.get("bbox_shift_x", 0)),
+                        "upper_boundary_ratio": float(vis.get("upper_boundary_ratio", 0.32)),
+                        "square_pad": bool(vis.get("square_pad", True)),
                     }
                 }
 
@@ -679,10 +685,13 @@ class AILiveWorker:
                         unet_model_path=unet_model_path,
                         whisper_dir=whisper_dir,
                         inference_config=yaml_path,
-                        bbox_shift=0,
+                        bbox_shift=int(vis.get("bbox_shift", 0)),
+                        bbox_shift_x=int(vis.get("bbox_shift_x", 0)),
+                        upper_boundary_ratio=float(vis.get("upper_boundary_ratio", 0.32)),
+                        square_pad=bool(vis.get("square_pad", True)),
                         # RENDER KE TEMP_DIR UNTUK MENGHINDARI RACE CONDITION DENGAN BROADCASTER
                         result_dir=self.temp_dir,
-                        extra_margin=10,
+                        extra_margin=int(vis.get("extra_margin", 0)),
                         fps=30,
                         audio_padding_length_left=2,
                         audio_padding_length_right=2,
@@ -692,8 +701,8 @@ class AILiveWorker:
                         saved_coord=True,
                         use_float16=self.use_float16,
                         parsing_mode="jaw",
-                        left_cheek_width=90,
-                        right_cheek_width=90,
+                        left_cheek_width=int(vis.get("left_cheek_width", 10)),
+                        right_cheek_width=int(vis.get("right_cheek_width", 10)),
                         version="v15",
                     )
 

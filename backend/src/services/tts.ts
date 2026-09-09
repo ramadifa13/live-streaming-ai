@@ -155,6 +155,7 @@ export interface SynthesizeRequest {
   podId?: string | null;
   sessionId?: string;
   requestId?: string;
+  targetDurationSeconds?: number;
 
   allowOfflineSynth?: boolean;
 }
@@ -196,16 +197,49 @@ export function sanitizeForLiveTTS(text: string): string {
   out = normalizeConversationalTerms(out);
   out = normalizeAbbreviations(out);
 
-  return out
+  out = out
     .replace(/&/g, " dan ")
     .replace(/</g, "")
     .replace(/>/g, "")
-    .replace(/['"]/g, "")
-    .replace(/\b(yuk|nah|khusus hari ini|mumpung lagi promo|jangan sampai kehabisan)\b/gi, ", $1")
+    .replace(/['"]/g, "");
+
+  // Sisipkan jeda nafas koma sebelum kata transisi agar intonasi rileks dan tidak terburu-buru
+  const pauseMarkers = [
+    "nah",
+    "jadi",
+    "selain itu",
+    "menariknya",
+    "buat kamu",
+    "makanya",
+    "karena",
+    "sehingga",
+    "supaya",
+    "kebetulan",
+    "tentunya",
+    "apalagi",
+    "khusus hari ini",
+    "mumpung lagi promo",
+    "jangan sampai kehabisan",
+    "yuk",
+    "langsung saja",
+  ];
+
+  for (const marker of pauseMarkers) {
+    const regex = new RegExp(`([^,!?.\\s;—])\\s+(${marker}\\b)`, "gi");
+    out = out.replace(regex, "$1, $2");
+  }
+
+  return out
     .replace(/[!]{2,}/g, "!")
     .replace(/[?]{2,}/g, "?")
     .replace(/[.]{4,}/g, "...")
-    .replace(/,{2,}/g, ",")
+    .replace(/\s*,\s*,+/g, ",")
+    .replace(/\s*,\s*\./g, ".")
+    .replace(/\s*,\s*\?/g, "?")
+    .replace(/\s*,\s*!/g, "!")
+    .replace(/,\s*,/g, ", ")
+    .replace(/\s+([,.!?])/g, "$1")
+    .replace(/([,.!?])([a-zA-Z0-9])/g, "$1 $2")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -455,6 +489,97 @@ export function getHostSampleUrl(_hostId: string): string {
   return "";
 }
 
+export async function calibrateAudioDuration(
+  inputWav: Buffer,
+  targetSeconds = 9.0,
+  options?: { minDurationForCalibration?: number },
+): Promise<Buffer> {
+  const dur = wavDurationSeconds(inputWav);
+  if (!dur || dur <= 0) return inputWav;
+
+  // Jika durasi sudah dalam toleransi presisi (8.85s – 9.15s), langsung kembalikan
+  if (dur >= targetSeconds - 0.15 && dur <= targetSeconds + 0.15) {
+    return inputWav;
+  }
+
+  // Jika audio sangat pendek (< 3.5s untuk ping/warmup singkat), jangan stretch
+  const minThreshold = options?.minDurationForCalibration ?? 3.5;
+  if (dur < minThreshold) {
+    return inputWav;
+  }
+
+  return new Promise<Buffer>((resolve) => {
+    const inFile = path.join(tmpdir(), `tts_calib_in_${randomBytes(4).toString("hex")}.wav`);
+    const outFile = path.join(tmpdir(), `tts_calib_out_${randomBytes(4).toString("hex")}.wav`);
+    fs.writeFileSync(inFile, inputWav);
+
+    // Hitung faktor tempo (tempo = dur / targetSeconds)
+    // Audio kepanjangan (misal 10.8s) -> tempo dipercepat (1.20) agar muat dalam video 10s tanpa kepotong
+    // Audio kependekan (misal 7.2s) -> tempo diperlambat (0.80) agar lebih rileks dan pas 9s
+    const rawTempo = dur / targetSeconds;
+    const tempo = Math.min(1.22, Math.max(0.78, rawTempo));
+    const filter = `atempo=${tempo.toFixed(4)},apad=whole_dur=${targetSeconds.toFixed(2)}`;
+
+    const proc = spawn(FFMPEG_BIN, [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      inFile,
+      "-filter:a",
+      filter,
+      "-t",
+      targetSeconds.toFixed(2),
+      "-ar",
+      "16000",
+      "-ac",
+      "1",
+      "-c:a",
+      "pcm_s16le",
+      "-y",
+      outFile,
+    ]);
+
+    proc.on("error", (err) => {
+      try {
+        if (fs.existsSync(inFile)) fs.unlinkSync(inFile);
+      } catch {}
+      console.warn(`[TTS] FFmpeg calibrate spawn error: ${err.message}`);
+      resolve(inputWav);
+    });
+
+    proc.on("close", (code) => {
+      try {
+        if (fs.existsSync(inFile)) fs.unlinkSync(inFile);
+      } catch {}
+      if (code !== 0) {
+        try {
+          if (fs.existsSync(outFile)) fs.unlinkSync(outFile);
+        } catch {}
+        console.warn(`[TTS] FFmpeg calibrate exited with code ${code}`);
+        resolve(inputWav);
+        return;
+      }
+      try {
+        const out = fs.readFileSync(outFile);
+        fs.unlinkSync(outFile);
+        if (out.length >= 44) {
+          const newDur = wavDurationSeconds(out);
+          console.log(
+            `[TTS] Audio duration calibrated for 10s video: ${dur.toFixed(2)}s -> ${(newDur || 0).toFixed(2)}s (tempo=${tempo.toFixed(2)})`,
+          );
+          resolve(out);
+        } else {
+          resolve(inputWav);
+        }
+      } catch (err) {
+        console.warn(`[TTS] Read calibrated audio error: ${err}`);
+        resolve(inputWav);
+      }
+    });
+  });
+}
+
 async function synthesizeWithPocket(
   text: string,
   voiceId: string,
@@ -466,6 +591,7 @@ async function synthesizeWithPocket(
     podId?: string | null;
     sessionId?: string;
     requestId?: string;
+    targetDurationSeconds?: number;
   },
 ): Promise<{ buffer: Buffer; metrics: SynthesizeResponse["metrics"] }> {
   const cleanText = sanitizeForLiveTTS(text);
@@ -474,20 +600,22 @@ async function synthesizeWithPocket(
   const t0 = Date.now();
   const audio = await synthesizeWithPocketTts(cleanText, voiceId);
   if (audio.length < 44) throw new Error("Pocket TTS WAV kosong/pendek");
-  const buffer = await ensureWav16kMono(audio);
+  const monoBuffer = await ensureWav16kMono(audio);
+  const targetDur = opts.targetDurationSeconds ?? 9.0;
+  const buffer = await calibrateAudioDuration(monoBuffer, targetDur);
   const metrics = {
     requestId: opts.requestId,
     latencyMs: Date.now() - t0,
     audioDuration: wavDurationSeconds(buffer),
   };
 
-  console.log(`[TTS] pocket-tts ok voice_id=${voiceId} latency_ms=${metrics.latencyMs}`);
+  console.log(`[TTS] pocket-tts ok voice_id=${voiceId} latency_ms=${metrics.latencyMs} duration=${(metrics.audioDuration || 0).toFixed(2)}s`);
 
   return { buffer, metrics };
 }
 
 export async function synthesizeSpeech(req: SynthesizeRequest): Promise<SynthesizeResponse> {
-  const { text, avatarName = "Namira", speed = 1.0, tone, emotion, style, lang } = req;
+  const { text, avatarName = "Namira", speed = 1.0, tone, emotion, style, lang, targetDurationSeconds } = req;
   const voiceId = resolveVoiceId(req.voiceId || req.host || req.voice, avatarName || req.avatarName);
 
   const wordCount = text.trim().split(/\s+/).length;
@@ -502,6 +630,7 @@ export async function synthesizeSpeech(req: SynthesizeRequest): Promise<Synthesi
       podId: req.podId,
       sessionId: req.sessionId,
       requestId: req.requestId,
+      targetDurationSeconds: targetDurationSeconds ?? 9.0,
     });
 
     return {

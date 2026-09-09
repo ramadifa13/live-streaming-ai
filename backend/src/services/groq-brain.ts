@@ -460,9 +460,10 @@ TUJUAN:
 - Jangan mengulang ide, opening, CTA, benefit, atau klaim yang baru saja digunakan.
 
 GAYA:
-- Bahasa Indonesia percakapan, natural, lisan, pendek-padat.
+- Bahasa Indonesia percakapan, natural, lisan, santai tapi meyakinkan.
+- TANDA BACA & JEDA NAFAS: WAJIB gunakan 2–3 tanda koma (,) di jeda klausa agar ucapan host terdengar tenang, berirama, dan TIDAK TERBURU-BURU.
 - Gunakan "aku", "kamu", "kita", partikel seperlunya.
-- Variasikan panjang kalimat dan ritme.
+- Variasikan ritme kalimat, jangan satu nafas panjang tanpa tanda baca.
 - Jangan terdengar seperti membaca brosur.
 - Jangan membuka dengan "Halo kak", "Halo kakak", "Halo semuanya", "Selamat datang di live", kecuali mode memang RECOVERY dan sangat perlu.
 - Jangan memakai filler berulang seperti "nah", "nih", "jadi", "oke", "yuk" pada setiap respons.
@@ -538,7 +539,7 @@ Kembalikan SATU JSON murni, tanpa markdown, dengan schema:
   "claims": []
 }
 
-Panjang speech: WAJIB 20–24 kata (durasi ideal 8.5–9.5 detik pada TTS normal agar tidak terlalu cepat dan tetap natural untuk alur live tanpa idle). Komentar balasan 9–14 kata. Kalimat harus utuh, tuntas, padat, alami, dan bertenaga. Jangan membuat kalimat lebih pendek dari 20 kata atau terlalu panjang dari 24 kata agar ritme host stabil. Jangan menambahkan salam pembuka robotik.`;
+Panjang speech: WAJIB 19–23 kata dengan 2–3 tanda koma (,) agar ritme pas ~9 detik dan tidak terburu-buru untuk klip video 10 detik (audio tidak terpotong dan host tidak ada idle). Komentar balasan 9–14 kata. Kalimat harus utuh, tuntas, ada jeda artikulasi, dan alami. Jangan membuat kalimat tanpa tanda koma atau terlalu panjang/pendek. Jangan menambahkan salam pembuka robotik.`;
 }
 
 function isGemini3FamilyModel(model: string): boolean {
