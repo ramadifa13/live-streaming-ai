@@ -816,6 +816,29 @@ class AssetBank:
         clip.latent_list_cycle = mats["input_latent_list_cycle"]
         clip.mask_materials_cycle = mats["mask_materials_cycle"]
 
+        # Critical alignment check: body frames, latents, and masks must refer
+        # to the same forward span. A mismatch can produce a plausible-looking
+        # but effectively static mouth.
+        print(
+            f"[AssetBank][DIAG] {clip.name}: "
+            f"frames={len(clip.frame_list_cycle)} "
+            f"latents={len(clip.latent_list_cycle)} "
+            f"masks={len(clip.mask_materials_cycle)} "
+            f"coords={len(clip.coord_list_cycle)} "
+            f"body_span={max(1, clip.end_pose - clip.base_pose_frame + 1)}"
+        )
+        if not (
+            len(clip.frame_list_cycle)
+            == len(clip.latent_list_cycle)
+            == len(clip.mask_materials_cycle)
+        ):
+            print(
+                f"[AssetBank][WARNING] MuseTalk cycle length mismatch for {clip.name}: "
+                f"frames={len(clip.frame_list_cycle)}, "
+                f"latents={len(clip.latent_list_cycle)}, "
+                f"masks={len(clip.mask_materials_cycle)}"
+            )
+
         # Check for None values in critical arrays
         none_latents = sum(1 for l in clip.latent_list_cycle if l is None)
         none_masks = sum(1 for m in clip.mask_materials_cycle if m is None)
@@ -1967,6 +1990,13 @@ class LipSyncEngine:
             f"(mouth_wait={MOUTH_WAIT_SEC:.3f}s, stale_max={MOUTH_MAX_STALE_FRAMES})"
         )
         batch_count = 0
+        # Deep diagnostics: compare the actual signal at every stage.
+        # These values let us distinguish:
+        #   audio/Whisper frozen -> PE frozen -> MuseTalk output frozen
+        #   MuseTalk output moving -> compositing/mask broken
+        prev_whisper = None
+        prev_pe = None
+        prev_recon = None
         while not self._infer_stop.is_set():
             with self._lock:
                 chunks = self._whisper_chunks
@@ -2006,6 +2036,46 @@ class LipSyncEngine:
                         encoder_hidden_states=audio_feature_batch,
                     ).sample
                     recon = vae.decode_latents(pred)
+
+                    # Stage diagnostics: compare first decoded frame of this
+                    # batch against the previous batch, plus Whisper/PE.
+                    try:
+                        w0 = whisper_batch[0].detach().float()
+                        p0 = audio_feature_batch[0].detach().float()
+                        if torch.is_tensor(recon):
+                            r0 = recon[0].detach().float()
+                        else:
+                            r0 = torch.as_tensor(recon[0]).float()
+                        w_delta = (
+                            float(torch.mean(torch.abs(w0 - prev_whisper)).item())
+                            if prev_whisper is not None and prev_whisper.shape == w0.shape
+                            else -1.0
+                        )
+                        p_delta = (
+                            float(torch.mean(torch.abs(p0 - prev_pe)).item())
+                            if prev_pe is not None and prev_pe.shape == p0.shape
+                            else -1.0
+                        )
+                        r_delta = (
+                            float(torch.mean(torch.abs(r0 - prev_recon)).item())
+                            if prev_recon is not None and prev_recon.shape == r0.shape
+                            else -1.0
+                        )
+                        if cursor % 25 == 0:
+                            print(
+                                f"[LipSync][DIAG] stage idx={cursor} "
+                                f"whisper_delta={w_delta:.4f} "
+                                f"pe_delta={p_delta:.4f} "
+                                f"recon_delta={r_delta:.4f} "
+                                f"whisper_shape={tuple(whisper_batch.shape)} "
+                                f"pe_shape={tuple(audio_feature_batch.shape)}"
+                            )
+                        prev_whisper = w0.clone()
+                        prev_pe = p0.clone()
+                        prev_recon = r0.clone()
+                    except Exception as diag_err:
+                        if cursor % 25 == 0:
+                            print(f"[LipSync][DIAG] stage diagnostic failed: {diag_err}")
             except Exception as err:
                 import traceback
 
@@ -2025,10 +2095,17 @@ class LipSyncEngine:
                     prev = np.asarray(recon[local_i - 1], dtype=np.int16)
                     cur = mouth_256.astype(np.int16)
                     mean_delta = float(np.mean(np.abs(cur - prev)))
-                    if mean_delta < 0.35 and frame_idx % 30 == 0:
+                    if frame_idx % 25 == 0:
+                        print(
+                            f"[LipSync][DIAG] recon consecutive idx={frame_idx} "
+                            f"mean_delta={mean_delta:.4f} "
+                            f"min={int(mouth_256.min())} max={int(mouth_256.max())} "
+                            f"mean={float(mouth_256.mean()):.2f}"
+                        )
+                    if mean_delta < 0.35 and frame_idx % 25 == 0:
                         print(
                             f"[LipSync] WARNING: mouth output hampir statis "
-                            f"idx={frame_idx}, mean_delta={mean_delta:.3f}"
+                            f"idx={frame_idx}, mean_delta={mean_delta:.4f}"
                         )
 
                 with self._lock:
@@ -2225,6 +2302,26 @@ class LipSyncEngine:
             blended = get_image_blending(
                 body, damped_256, list(face_box), mask_array, crop_box
             )
+
+            # Composite diagnostic: if MuseTalk output changes but the final
+            # bbox barely changes, the problem is mask/crop/blending.
+            if whisper_idx is not None and int(whisper_idx) % 25 == 0:
+                try:
+                    bx1, by1, bx2, by2 = face_box
+                    before_roi = body[by1:by2, bx1:bx2].astype(np.float32)
+                    after_roi = blended[by1:by2, bx1:bx2].astype(np.float32)
+                    composite_delta = float(np.mean(np.abs(after_roi - before_roi)))
+                    m = np.asarray(mask_array)
+                    print(
+                        f"[LipSync][DIAG] compose idx={whisper_idx} "
+                        f"composite_delta={composite_delta:.4f} "
+                        f"mask_shape={m.shape} mask_dtype={m.dtype} "
+                        f"mask_min={float(m.min()):.2f} mask_max={float(m.max()):.2f} "
+                        f"mask_mean={float(m.mean()):.2f} crop={crop_box}"
+                    )
+                except Exception as diag_err:
+                    print(f"[LipSync][DIAG] compose diagnostic failed: {diag_err}")
+
             return blended
         except Exception as err:
             import traceback
