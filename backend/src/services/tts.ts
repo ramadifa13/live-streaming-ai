@@ -491,7 +491,7 @@ export function getHostSampleUrl(_hostId: string): string {
 
 export async function calibrateAudioDuration(
   inputWav: Buffer,
-  targetSeconds = 9.0,
+  targetSeconds = 8.8,
   options?: { minDurationForCalibration?: number },
 ): Promise<Buffer> {
   const dur = wavDurationSeconds(inputWav);
@@ -601,7 +601,7 @@ async function synthesizeWithPocket(
   const audio = await synthesizeWithPocketTts(cleanText, voiceId);
   if (audio.length < 44) throw new Error("Pocket TTS WAV kosong/pendek");
   const monoBuffer = await ensureWav16kMono(audio);
-  const targetDur = opts.targetDurationSeconds ?? 9.0;
+  const targetDur = opts.targetDurationSeconds ?? 8.8;
   const buffer = await calibrateAudioDuration(monoBuffer, targetDur);
   const metrics = {
     requestId: opts.requestId,
@@ -630,7 +630,7 @@ export async function synthesizeSpeech(req: SynthesizeRequest): Promise<Synthesi
       podId: req.podId,
       sessionId: req.sessionId,
       requestId: req.requestId,
-      targetDurationSeconds: targetDurationSeconds ?? 9.0,
+      targetDurationSeconds: targetDurationSeconds ?? 8.8,
     });
 
     return {

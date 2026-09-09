@@ -81,16 +81,16 @@ SEAMLESS_THRESHOLD = 0.92
 # Keep the worker deterministic and environment-free for deploy/test invariants.
 # Mulut harus natural, tidak terlalu terbuka dan tidak geser ke samping.
 # Redam 0.72 menjaga buka bibir tetap wajar pada pengucapan normal.
-MOUTH_STRENGTH = 0.72
+MOUTH_STRENGTH = 1.0  # MuseTalk output penuh; jangan campur dengan crop original
 
 # MOUTH_TEMPORAL: temporal smoothing agar gerakan bibir halus tanpa lag atau overshoot.
-_mouth_temp = float(os.environ.get("AI_WORKER_MOUTH_TEMPORAL", "0.30"))
+_mouth_temp = float(os.environ.get("AI_WORKER_MOUTH_TEMPORAL", "0.0"))
 MOUTH_TEMPORAL = max(0.0, min(1.0, _mouth_temp))
 
 # Batas per-frame: nilai lebih besar agar mulut bisa bergerak natural.
 # Nilai 2.5 terlalu ketat sehingga mulut tidak bergerak sama sekali.
-MOUTH_MAX_DELTA = 8.0
-MOUTH_FRAME_DELTA = 6.0
+MOUTH_MAX_DELTA = 0.0  # 0 = tidak clamp perubahan piksel antar-frame
+MOUTH_FRAME_DELTA = 0.0  # 0 = tidak membatasi perubahan per-frame
 
 # Saat MuseTalk pertama kali masuk, bbox face bisa bergetar karena perubahan
 # landmark per-frame. Batasi pergeseran bbox agar transisi awal stabil.
@@ -2020,6 +2020,7 @@ class LipSyncEngine:
             for local_i, res_frame in enumerate(recon):
                 frame_idx = cursor + local_i
                 mouth_256 = np.ascontiguousarray(res_frame.astype(np.uint8))
+                # Keep raw MuseTalk output. Do not smooth/dampen here.
                 with self._lock:
                     self._mouths[frame_idx] = mouth_256
                     self._last_mouth_256 = mouth_256
