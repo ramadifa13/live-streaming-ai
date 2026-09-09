@@ -101,11 +101,7 @@ MOUTH_MAX_STALE_FRAMES = int(os.environ.get("AI_WORKER_MOUTH_MAX_STALE_FRAMES", 
 
 # Saat MuseTalk pertama kali masuk, bbox face bisa bergetar karena perubahan
 # landmark per-frame. Batasi pergeseran bbox agar transisi awal stabil.
-# MuseTalk entry stabilization:
-# smaller bbox movement prevents a visible one-frame face/mouth jump.
 FACE_JITTER_MAX_DELTA = 2
-# Freeze the face bbox for the first few MuseTalk frames after activation.
-# This prevents the detector history from causing a small initial shake.
 LIPSYNC_BBOX_LOCK_FRAMES = 4
 LIPSYNC_PREROLL_FRAMES = 2
 LIPSYNC_WAIT_SEC = 0.12
@@ -475,15 +471,10 @@ class FaceCoordRegistry:
             return face_box
         box = tuple(int(v) for v in face_box)
         hist = self._history.setdefault(key, deque(maxlen=max(2, self._window)))
-
-        # When MuseTalk has just entered a clip, keep the exact bbox that was
-        # locked at the transition for a few frames. This removes the small
-        # detector/history jump that can look like a facial "shake".
         if self._entry_lock_remaining.get(key, 0) > 0:
             self._entry_lock_remaining[key] -= 1
             hist.append(box)
             return self._locked.get(key, box)
-
         hist.append(box)
         if len(hist) == 1:
             self._locked[key] = box
@@ -1026,6 +1017,8 @@ class VideoStateMachine:
         self._talk_pinned = False
         self._hold_pose_for_infer = False
         self._talk_target: Optional[str] = None
+        self._talk_sequence: List[str] = []
+        self._talk_sequence_pos: int = 0
         self._hold_talk_since: Optional[float] = None
         self._talk_streak_name: Optional[str] = None
         self._talk_streak_count = 0
@@ -1140,6 +1133,40 @@ class VideoStateMachine:
         self.pending_action = tag
         print(f"[StateMachine] Ambient gesture → {tag}")
 
+    def _ensure_talk_sequence(self, first: Optional[str] = None) -> List[str]:
+        """Build a deterministic talk sequence for one continuous utterance.
+
+        The visual timeline rotates talk clips at clip boundaries while the
+        utterance and MuseTalk timeline remain continuous.
+        """
+        ready = self.bank.talk_clips_ready()
+        if not ready:
+            return [self.bank.crash_fallback_name()]
+        first = first if first in ready else (self.current_name if self.current_name in ready else ready[0])
+        seq = [first]
+        pool = [c for c in ready if c != first]
+        # Deterministic rotation avoids random changes between state machine and
+        # MuseTalk inference. Repeat the pool cyclically for arbitrarily long audio.
+        seq.extend(pool)
+        if not seq:
+            seq = [first]
+        return seq
+
+    def _next_talk_clip_for_wrap(self, current: str) -> str:
+        """Return next TALK clip; never enter IDLE during an active utterance."""
+        ready = self.bank.talk_clips_ready()
+        if len(ready) <= 1:
+            return current
+        if not self._talk_sequence:
+            self._talk_sequence = self._ensure_talk_sequence(current)
+        try:
+            pos = self._talk_sequence.index(current)
+        except ValueError:
+            pos = self._talk_sequence_pos % len(self._talk_sequence)
+        nxt = self._talk_sequence[(pos + 1) % len(self._talk_sequence)]
+        self._talk_sequence_pos = (pos + 1) % len(self._talk_sequence)
+        return nxt
+
     def reset_after_stop(self) -> None:
         """Reset state setelah pause/stop — hindari utterance stuck di Go Live berikutnya."""
         with self._lock:
@@ -1152,6 +1179,8 @@ class VideoStateMachine:
             self._talk_pinned = False
             self._hold_pose_for_infer = False
             self._talk_target = None
+            self._talk_sequence = []
+            self._talk_sequence_pos = 0
             self._overlap = None
             self._talk_loop_count = 0
             self.pending_action = None
@@ -1207,6 +1236,8 @@ class VideoStateMachine:
             self.pending_action = None
             if self._utterance_active:
                 self._talk_target = self.current_name
+                if not self._talk_sequence:
+                    self._talk_sequence = self._ensure_talk_sequence(self.current_name)
             if (
                 self._utterance_active
                 and self._talk_target
@@ -1226,6 +1257,8 @@ class VideoStateMachine:
                 if not self.bank.clip_has_musetalk(target):
                     target = self.bank.crash_fallback_name()
                 self._talk_target = target
+                self._talk_sequence = self._ensure_talk_sequence(target)
+                self._talk_sequence_pos = 0
                 if task_id is not None:
                     self._pinned_task_id = task_id
 
@@ -1249,6 +1282,9 @@ class VideoStateMachine:
             if not self.bank.clip_has_musetalk(target):
                 target = self.bank.crash_fallback_name()
             self._talk_target = target
+            if not self._talk_sequence:
+                self._talk_sequence = self._ensure_talk_sequence(target)
+                self._talk_sequence_pos = 0
 
             was_hold_talk = (
                 self.state == PlayState.TALK
@@ -1518,44 +1554,73 @@ class VideoStateMachine:
         return pairs, target_cycles
 
     def _start_talk_loop_wrap(self, clip: ClipAsset) -> None:
-        """Loop mid-speech: soft wrap bila seamless; else ping-pong (no morph)."""
+        """Advance continuous TALK to the next bank clip without ending utterance.
+
+        For seamless talk banks, the boundary is treated as a visual clip
+        rotation, not as a new speech utterance. MuseTalk state is preserved.
+        If only one talk clip exists, it still loops seamlessly as before.
+        """
         metrics = get_telemetry()
-        if not clip.is_seamless_loop:
-            # Non-seamless: reverse direction instead of end→base morph.
-            self._talk_direction = -1
-            self.frame_idx = max(clip.base_pose_frame, clip.end_pose - 1)
-            self._talk_loop_count += 1
-            metrics.inc("talk_ping_pong")
-            print(
-                f"[StateMachine] Ping-pong reverse {clip.name} "
-                f"(seamless={clip.seamless_score:.3f})"
+        next_name = self._next_talk_clip_for_wrap(clip.name)
+
+        # Only one ready TALK clip: preserve the existing seamless loop.
+        if next_name == clip.name:
+            if not clip.is_seamless_loop:
+                self._talk_direction = -1
+                self.frame_idx = max(clip.base_pose_frame, clip.end_pose - 1)
+                self._talk_loop_count += 1
+                metrics.inc("talk_ping_pong")
+                return
+            n = max(3, min(int(self.overlap_frames), OVERLAP_FRAMES_MAX))
+            try:
+                pairs, target_cycles = self._build_overlap_pairs(clip, clip.end_pose, clip, n)
+            except Exception as err:
+                print(f"[StateMachine] Loop wrap notice: {err}")
+                return
+            if not pairs:
+                return
+            resume = clip.base_pose_frame + len(pairs)
+            if resume > clip.end_pose:
+                resume = clip.base_pose_frame
+            self._overlap = _OverlapTransition(
+                pairs=pairs, step=0, resume_frame_idx=resume, target_cycle_indices=target_cycles
             )
+            self._talk_loop_count += 1
+            metrics.inc("soft_loop_wrap")
+            print(f"[StateMachine] Soft loop wrap {clip.name} end→base ({len(pairs)}f)")
             return
 
+        to_clip = self.bank.get_clip(next_name)
+        if to_clip is None:
+            return
+        # The bank is designed as start=end seamless motion. Use a short visual
+        # overlap, but NEVER change state or end the active utterance.
         n = max(3, min(int(self.overlap_frames), OVERLAP_FRAMES_MAX))
         try:
-            pairs, target_cycles = self._build_overlap_pairs(
-                clip, clip.end_pose, clip, n
-            )
+            pairs, target_cycles = self._build_overlap_pairs(clip, clip.end_pose, to_clip, n)
         except Exception as err:
-            print(f"[StateMachine] Loop wrap notice: {err}")
+            print(f"[StateMachine] Talk rotation notice: {err}")
             return
         if not pairs:
             return
-        resume = clip.base_pose_frame + len(pairs)
-        if resume > clip.end_pose:
-            resume = clip.base_pose_frame
+        resume = to_clip.base_pose_frame + len(pairs)
+        if resume > to_clip.end_pose:
+            resume = to_clip.base_pose_frame
         self._overlap = _OverlapTransition(
-            pairs=pairs,
-            step=0,
-            resume_frame_idx=resume,
-            target_cycle_indices=target_cycles,
+            pairs=pairs, step=0, resume_frame_idx=resume, target_cycle_indices=target_cycles
         )
+        self.current_name = next_name
+        self.frame_idx = resume
+        self.state = PlayState.TALK
+        self._talk_direction = 1
+        self._talk_target = next_name
         self._talk_loop_count += 1
-        metrics.inc("soft_loop_wrap")
+        metrics.inc("talk_clip_rotate_continuous")
+        if self._face_registry:
+            self._face_registry.lock_from_clip(to_clip, to_clip.base_pose_frame)
         print(
-            f"[StateMachine] Soft loop wrap {self.current_name} "
-            f"end→base ({len(pairs)}f)"
+            f"[StateMachine] Continuous TALK rotation {clip.name} → {next_name} "
+            f"({len(pairs)}f, utterance_active={self._utterance_active})"
         )
 
     def _transition_guard(self, from_clip: Optional[ClipAsset], to_clip: ClipAsset, from_idx: int, to_idx: int) -> bool:
@@ -1892,6 +1957,7 @@ class LipSyncEngine:
         self._infer_stop = threading.Event()
         self._infer_thread: Optional[threading.Thread] = None
         self._talk_clip_name = "talk_1"
+        self._talk_sequence: List[str] = []
         self._start_frame_idx = 0
         self._last_mouth_256: Optional[np.ndarray] = None
         self._last_mouth_frame = None
@@ -1906,7 +1972,7 @@ class LipSyncEngine:
             pass
 
     def set_utterance(
-        self, job, start_frame_idx: int = 0, body_clip: Optional[str] = None
+        self, job, start_frame_idx: int = 0, body_clip: Optional[str] = None, talk_sequence: Optional[List[str]] = None
     ) -> None:
         """Mulai batch-ahead inference untuk satu utterance."""
         if job is not None and self._utterance_id == getattr(job, "task_id", None):
@@ -1923,11 +1989,15 @@ class LipSyncEngine:
             talk = self.bank.crash_fallback_name()
         if talk in self.bank.clips:
             self._talk_clip_name = talk
+        seq = [c for c in (talk_sequence or [talk]) if c in self.bank.clips and self.bank.clip_has_musetalk(c)]
+        if not seq:
+            seq = [talk] if talk in self.bank.clips else [self.bank.talk_clip_name()]
         start_idx = int(start_frame_idx)
         with self._lock:
             self._utterance_id = job.task_id
             self._whisper_chunks = job.whisper_chunks
             self._start_frame_idx = start_idx
+            self._talk_sequence = list(seq)
             self._mouths = {}
             self._infer_cursor = 0
             self._last_mouth_256 = None
@@ -1987,6 +2057,7 @@ class LipSyncEngine:
             self._mouths = {}
             self._infer_cursor = 0
             self._start_frame_idx = 0
+            self._talk_sequence = []
             self._last_mouth_256 = None
             self._prev_composed = None
         self._infer_thread = None
@@ -2009,14 +2080,19 @@ class LipSyncEngine:
         unet = self.models["unet"]
         pe = self.models["pe"]
         timesteps = self.models["timesteps"]
-        clip = self.bank.get_clip(self._talk_clip_name) or self.bank.idle_clip
-        if not clip.latent_list_cycle:
-            print(f"[LipSync] ERROR: No latents for {clip.name} — lip-sync disabled")
+        default_clip = self.bank.get_clip(self._talk_clip_name) or self.bank.idle_clip
+        with self._lock:
+            sequence = list(self._talk_sequence)
+        sequence_clips = [self.bank.get_clip(n) for n in sequence] if sequence else [default_clip]
+        sequence_clips = [c for c in sequence_clips if c is not None and c.latent_list_cycle]
+        if not sequence_clips:
+            print(f"[LipSync] ERROR: No latents for TALK sequence — lip-sync disabled")
             return
 
         print(
-            f"[LipSync] Starting batch inference for {clip.name}, {len(clip.latent_list_cycle)} latents "
-            f"(mouth_wait={MOUTH_WAIT_SEC:.3f}s, stale_max={MOUTH_MAX_STALE_FRAMES})"
+            f"[LipSync] Starting batch inference for {default_clip.name}, "
+            f"{len(default_clip.latent_list_cycle)} default latents "
+            f"(mouth_wait={MOUTH_WAIT_SEC:.3f}s, stale_max={MOUTH_MAX_STALE_FRAMES}, sequence={sequence})"
         )
         batch_count = 0
         # Deep diagnostics: compare the actual signal at every stage.
@@ -2041,11 +2117,25 @@ class LipSyncEngine:
             )
             latent_list = []
             for i in range(cursor, end):
-                body_idx = _talk_body_index(clip, i, start_idx)
-                lat_idx = self._latent_index(clip, body_idx)
-                lat = clip.latent_list_cycle[lat_idx]
+                # Map one continuous Whisper timeline onto consecutive 10s-ish
+                # TALK clips. The same mapping is used by the visual state machine.
+                remaining = int(i)
+                spans = [max(1, c.end_pose - c.base_pose_frame + 1) for c in sequence_clips]
+                total_span = max(1, sum(spans))
+                remaining %= total_span
+                selected = sequence_clips[0]
+                local_idx = 0
+                for candidate, span in zip(sequence_clips, spans):
+                    if remaining < span:
+                        selected = candidate
+                        local_idx = remaining
+                        break
+                    remaining -= span
+                body_idx = selected.base_pose_frame + (local_idx % max(1, selected.end_pose - selected.base_pose_frame + 1))
+                lat_idx = self._latent_index(selected, body_idx)
+                lat = selected.latent_list_cycle[lat_idx]
                 if lat is None:
-                    lat = clip.latent_list_cycle[0]
+                    lat = selected.latent_list_cycle[0]
                 latent_list.append(lat.unsqueeze(0) if lat.dim() == 3 else lat)
 
             if not latent_list:
@@ -3588,8 +3678,11 @@ class AIVisualWorker:
             task_id = getattr(job, "task_id", None)
             start_idx = self._sm.pin_talk_body(task_id)
             body = self._sm._talk_target or self._sm.current_name
+            talk_sequence = list(self._sm._talk_sequence)
+        else:
+            talk_sequence = [body] if body else None
         if self._engine:
-            self._engine.set_utterance(job, start_frame_idx=start_idx, body_clip=body)
+            self._engine.set_utterance(job, start_frame_idx=start_idx, body_clip=body, talk_sequence=talk_sequence)
 
         def _mark_ready() -> None:
             ok = False
@@ -3646,7 +3739,8 @@ class AIVisualWorker:
             body = (
                 (self._sm._talk_target or self._sm.current_name) if self._sm else None
             )
-            self._engine.set_utterance(job, start_frame_idx=start_idx, body_clip=body)
+            talk_sequence = list(self._sm._talk_sequence) if self._sm else ([body] if body else None)
+            self._engine.set_utterance(job, start_frame_idx=start_idx, body_clip=body, talk_sequence=talk_sequence)
         if self._sm:
             # Body hint talk_1|idle|talk_N — resolve ke clip.
             action = (
