@@ -80,30 +80,37 @@ SEAMLESS_THRESHOLD = 0.92
 # ====== MOUTH/LIP-SYNC PARAMETERS (untuk smooth lip-sync) ======
 # Keep the worker deterministic and environment-free for deploy/test invariants.
 # Mulut harus natural, tidak terlalu terbuka dan tidak geser ke samping.
-# Redam 0.72 menjaga buka bibir tetap wajar pada pengucapan normal.
-MOUTH_STRENGTH = 1.0  # MuseTalk output penuh; jangan campur dengan crop original
+# MuseTalk output dipakai penuh. Filtering terlalu agresif bisa membuat
+# viseme kecil (i/e/u) hilang dan mulut terlihat diam.
+MOUTH_STRENGTH = 1.0
 
-# MOUTH_TEMPORAL: temporal smoothing agar gerakan bibir halus tanpa lag atau overshoot.
+# Smoothing dilakukan oleh model + frame rate. Jangan blur temporal output
+# MuseTalk karena itu menahan perubahan viseme antar-frame.
 _mouth_temp = float(os.environ.get("AI_WORKER_MOUTH_TEMPORAL", "0.0"))
 MOUTH_TEMPORAL = max(0.0, min(1.0, _mouth_temp))
 
-# Batas per-frame: nilai lebih besar agar mulut bisa bergerak natural.
-# Nilai 2.5 terlalu ketat sehingga mulut tidak bergerak sama sekali.
-MOUTH_MAX_DELTA = 0.0  # 0 = tidak clamp perubahan piksel antar-frame
-MOUTH_FRAME_DELTA = 0.0  # 0 = tidak membatasi perubahan per-frame
+# 0 = tidak membatasi perubahan pixel per frame.
+MOUTH_MAX_DELTA = 0.0
+MOUTH_FRAME_DELTA = 0.0
+
+# Jika inference tertinggal sedikit dari renderer, tunggu sebentar agar
+# mouth frame yang benar masuk. 0 detik membuat race condition menjadi
+# body-only dan hasilnya terlihat seperti MuseTalk tidak bekerja.
+MOUTH_WAIT_SEC = float(os.environ.get("AI_WORKER_MOUTH_WAIT_SEC", "0.080"))
+MOUTH_MAX_STALE_FRAMES = int(os.environ.get("AI_WORKER_MOUTH_MAX_STALE_FRAMES", "2"))
 
 # Saat MuseTalk pertama kali masuk, bbox face bisa bergetar karena perubahan
 # landmark per-frame. Batasi pergeseran bbox agar transisi awal stabil.
 FACE_JITTER_MAX_DELTA = 8
 LIPSYNC_PREROLL_FRAMES = 2
-LIPSYNC_WAIT_SEC = 0
+LIPSYNC_WAIT_SEC = 0.12
 # Sync shift 0 memastikan viseme tepat waktu dengan audio stream
 LIPSYNC_SYNC_SHIFT = 0
 LIPSYNC_PREROLL_TIMEOUT_SEC = 4.0
 # 0 = mulai audio saat mouth 1-2 frame siap (hilangkan delay 400ms/utterance).
 LIPSYNC_HARD_PREROLL = False
 # 1 = mouth miss → body-only (bukan sticky last mouth).
-MOUTH_MISS_BODY_ONLY = True
+MOUTH_MISS_BODY_ONLY = False
 
 
 ALLOWED_GESTURES: frozenset = frozenset()
@@ -357,19 +364,9 @@ def feather_mask(mask_array: np.ndarray, kernel: int = MASK_FEATHER_PX) -> np.nd
     k = max(3, kernel | 1)
     blurred = cv2.GaussianBlur(arr, (k, k), 0)
     
-    # Redam ujung lateral (15% kiri & 15% kanan) dengan taper halus agar sudut bibir
-    # tidak terdistorsi melebar seperti Joker/seram dan pas menyatu dengan video asli.
-    h, w = blurred.shape
-    if w > 20:
-        margin_x = max(4, int(w * 0.15))
-        ramp = np.linspace(0.0, 1.0, margin_x, dtype=np.float32)
-        # Cosine ramp untuk transisi transparan yang sangat lembut di sudut bibir
-        ramp = 0.5 - 0.5 * np.cos(np.pi * ramp)
-        weight_x = np.ones(w, dtype=np.float32)
-        weight_x[:margin_x] = ramp
-        weight_x[-margin_x:] = ramp[::-1]
-        blurred = np.clip(blurred.astype(np.float32) * weight_x[None, :], 0, 255).astype(np.uint8)
-
+    # Jangan melakukan taper lateral tambahan. Mask MuseTalk hasil parsing
+    # sudah menentukan area yang boleh berubah; taper 15% sebelumnya dapat
+    # mematikan perubahan di sudut bibir.
     return blurred
 
 
@@ -1966,7 +1963,8 @@ class LipSyncEngine:
             return
 
         print(
-            f"[LipSync] Starting batch inference for {clip.name}, {len(clip.latent_list_cycle)} latents"
+            f"[LipSync] Starting batch inference for {clip.name}, {len(clip.latent_list_cycle)} latents "
+            f"(mouth_wait={MOUTH_WAIT_SEC:.3f}s, stale_max={MOUTH_MAX_STALE_FRAMES})"
         )
         batch_count = 0
         while not self._infer_stop.is_set():
@@ -2020,7 +2018,19 @@ class LipSyncEngine:
             for local_i, res_frame in enumerate(recon):
                 frame_idx = cursor + local_i
                 mouth_256 = np.ascontiguousarray(res_frame.astype(np.uint8))
-                # Keep raw MuseTalk output. Do not smooth/dampen here.
+
+                # Diagnostics ringan: kalau output MuseTalk identik terus,
+                # masalah ada di PE/UNet/VAE/Whisper, bukan compositing.
+                if local_i > 0:
+                    prev = np.asarray(recon[local_i - 1], dtype=np.int16)
+                    cur = mouth_256.astype(np.int16)
+                    mean_delta = float(np.mean(np.abs(cur - prev)))
+                    if mean_delta < 0.35 and frame_idx % 30 == 0:
+                        print(
+                            f"[LipSync] WARNING: mouth output hampir statis "
+                            f"idx={frame_idx}, mean_delta={mean_delta:.3f}"
+                        )
+
                 with self._lock:
                     self._mouths[frame_idx] = mouth_256
                     self._last_mouth_256 = mouth_256
@@ -2038,35 +2048,54 @@ class LipSyncEngine:
         )
 
     def _wait_mouth(
-        self, idx: int, timeout: float = LIPSYNC_WAIT_SEC
+        self, idx: int, timeout: float = MOUTH_WAIT_SEC
     ) -> Optional[np.ndarray]:
-        """Tunggu mouth crop. Default: jangan sticky last-mouth (body-only lebih baik)."""
-        deadline = time.perf_counter() + max(0.0, timeout)
-        attempt = 0
+        """Ambil mouth frame yang paling dekat tanpa membiarkan renderer menang
+        terlalu jauh dari thread MuseTalk inference.
+
+        Prioritas:
+        1. exact idx;
+        2. tunggu sebentar jika inference belum sampai idx;
+        3. jika inference sudah melewati idx, gunakan frame terdekat yang
+           maksimal MOUTH_MAX_STALE_FRAMES frame sebelumnya.
+
+        Ini menghindari kondisi lama: timeout=0 + cache miss -> body-only,
+        yang secara visual terlihat seperti mulut tidak bergerak sama sekali.
+        """
+        deadline = time.perf_counter() + max(0.0, float(timeout))
         metrics = get_telemetry()
+
         while True:
             with self._lock:
-                cached = self._mouths.get(idx)
-                last = self._last_mouth_256
-                cursor = self._infer_cursor
+                cached = self._mouths.get(int(idx))
+                cursor = int(self._infer_cursor)
+                keys = [k for k in self._mouths.keys() if k <= int(idx)]
+                nearest = max(keys) if keys else None
+                nearest_frame = self._mouths.get(nearest) if nearest is not None else None
+
             if cached is not None:
                 self._last_mouth_frame = cached
                 return cached
-            if not MOUTH_MISS_BODY_ONLY and cursor > idx and last is not None:
-                if attempt == 0:
-                    print(
-                        f"[LipSync] WARNING: Using last mouth for idx={idx} "
-                        f"(cursor={cursor})"
-                    )
-                    metrics.inc("mouth_fallback_last")
-                self._last_mouth_frame = last
-                return last
+
+            # Inference belum menghasilkan idx: tunggu sampai deadline.
+            if cursor <= int(idx) and time.perf_counter() < deadline:
+                time.sleep(0.004)
+                continue
+
+            # Inference sudah lewat idx. Pakai frame sebelumnya hanya jika
+            # sangat dekat; jangan hold mouth lama karena itu terlihat sticky.
+            if nearest is not None and nearest_frame is not None:
+                stale = int(idx) - int(nearest)
+                if stale <= max(0, MOUTH_MAX_STALE_FRAMES):
+                    self._last_mouth_frame = nearest_frame
+                    metrics.inc("mouth_nearest_fallback")
+                    return nearest_frame
+
             if time.perf_counter() >= deadline:
-                if MOUTH_MISS_BODY_ONLY:
-                    return None
-                return last
+                metrics.inc("mouth_cache_miss")
+                return None
+
             time.sleep(0.004)
-            attempt += 1
 
     def _material_for(self, clip: ClipAsset, cidx: int) -> Optional[Tuple]:
         n = len(clip.mask_materials_cycle) if clip.mask_materials_cycle else 0
@@ -2075,21 +2104,21 @@ class LipSyncEngine:
         cached = self._feather_cache.get(key)
         if cached is not None:
             return cached
-        mat = None
-        if self._face_registry is not None:
-            mat = self._face_registry.get_material(clip, cidx)
-        if mat is None and clip.mask_materials_cycle:
+        # IMPORTANT: mask, crop_box, dan face_box berasal dari frame/material
+        # yang sama. Jangan mengambil face_box yang sudah di-smooth dari frame
+        # lain karena koordinatnya bisa tidak lagi cocok dengan crop/mask.
+        if clip.mask_materials_cycle:
             raw = clip.mask_materials_cycle[cidx % len(clip.mask_materials_cycle)]
             if raw:
                 mask_array, crop_box, face_box = raw
                 mat = (
                     feather_mask(mask_array),
-                    crop_box,
+                    tuple(int(v) for v in crop_box),
                     tuple(int(v) for v in face_box),
                 )
-        if mat is not None:
-            self._feather_cache[key] = mat
-        return mat
+                self._feather_cache[key] = mat
+                return mat
+        return None
 
     def _compose_mouth(
         self,
@@ -2169,7 +2198,30 @@ class LipSyncEngine:
                 
             self._prev_composed = damped_256
 
-            # Meneruskan image berukuran 256x256 ke get_image_blending
+            # CRITICAL MuseTalk FIX:
+            # VAE menghasilkan 256x256, tetapi get_image_blending() expects
+            # the generated face patch to already match the detected bbox size.
+            # Official MuseTalk realtime inference does exactly this resize
+            # before blending. Tanpa ini, patch 256x256 tidak aligned dengan
+            # face bbox dan hasil bisa terlihat seperti mulut tidak berubah.
+            bw = max(1, int(face_box[2] - face_box[0]))
+            bh = max(1, int(face_box[3] - face_box[1]))
+            if damped_256.shape[1] != bw or damped_256.shape[0] != bh:
+                damped_256 = cv2.resize(
+                    damped_256,
+                    (bw, bh),
+                    interpolation=cv2.INTER_LANCZOS4,
+                )
+
+            damped_256 = np.ascontiguousarray(damped_256, dtype=np.uint8)
+
+            if whisper_idx is not None and int(whisper_idx) % 25 == 0:
+                print(
+                    f"[LipSync] COMPOSE idx={whisper_idx} "
+                    f"mouth={mouth_256.shape} bbox={face_box} "
+                    f"render={damped_256.shape}"
+                )
+
             blended = get_image_blending(
                 body, damped_256, list(face_box), mask_array, crop_box
             )
@@ -2236,7 +2288,7 @@ class LipSyncEngine:
         if total > 0:
             mouth_idx = max(0, min(mouth_idx, total - 1))
 
-        mouth = self._wait_mouth(mouth_idx)
+        mouth = self._wait_mouth(mouth_idx, timeout=MOUTH_WAIT_SEC)
         if mouth is None:
             if MOUTH_MISS_BODY_ONLY:
                 metrics.inc("mouth_miss_body_only")
