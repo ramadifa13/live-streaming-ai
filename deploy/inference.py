@@ -69,10 +69,16 @@ def musetalk_visual_params():
     # bbox_shift_x: -10 memperbaiki posisi mulut yang sebelumnya condong/geser ke kanan
     bbox_shift_x = int(os.environ.get("MUSETALK_BBOX_SHIFT_X", "-10"))
     extra_margin = 0
-    # upper_boundary_ratio: 0.52 (turun dari 0.58) mengecilkan ukuran mulut agar pas alami dengan video asli
-    upper_boundary_ratio = float(os.environ.get("MUSETALK_UPPER_BOUNDARY_RATIO", "0.52"))
-    # cheek_width: 16 (turun dari 26) merampingkan sudut bibir lateral agar tidak melebar seperti Joker
-    cheek_width = int(os.environ.get("MUSETALK_CHEEK_WIDTH", "16"))
+    # upper_boundary_ratio: 0.46 (turun dari 0.52) — mengecilkan area crop mulut agar tidak terlalu
+    # besar dan tidak membuat avatar terlihat bergetar saat bibir bergerak.
+    # Nilai lebih rendah = area replace mulut lebih kecil = lebih alami & minim jitter.
+    upper_boundary_ratio = float(os.environ.get("MUSETALK_UPPER_BOUNDARY_RATIO", "0.46"))
+    # cheek_width: 10 (turun dari 16) mempersempit sudut bibir lateral agar tidak melebar
+    cheek_width = int(os.environ.get("MUSETALK_CHEEK_WIDTH", "10"))
+    # bbox_smooth_window: jumlah frame untuk temporal smoothing koordinat bbox.
+    # Semakin besar = gerakan lebih halus tapi sedikit lag. Default 7 frame sudah
+    # cukup untuk menghilangkan jitter tanpa delay terlihat di 24fps.
+    bbox_smooth_window = int(os.environ.get("MUSETALK_BBOX_SMOOTH_WINDOW", "7"))
     return {
         "bbox_shift": bbox_shift,
         "bbox_shift_x": bbox_shift_x,
@@ -82,6 +88,7 @@ def musetalk_visual_params():
         "square_pad": True,
         "left_cheek_width": cheek_width,
         "right_cheek_width": cheek_width,
+        "bbox_smooth_window": bbox_smooth_window,
     }
 
 
@@ -236,6 +243,64 @@ def _extract_landmarks_from_frames(frames, bbox_shift=0, bbox_shift_x=None):
             min(h, cy + fh // 2),
         )
         return [fallback_bbox] * len(frames)
+
+
+def _smooth_coords(
+    coord_list: list,
+    window: int = 7,
+) -> list:
+    """
+    Temporal smoothing pada koordinat bounding box untuk mengurangi jitter/getaran avatar.
+
+    Menggunakan moving-average kausal (hanya melihat frame sebelumnya + frame saat ini)
+    agar tidak ada look-ahead delay. Hanya koordinat numerik valid yang dirata-rata;
+    coord_placeholder tetap melewati tanpa smoothing.
+
+    Args:
+        coord_list: list of (x1, y1, x2, y2) atau coord_placeholder
+        window: jumlah frame untuk rata-rata (default 7 = ~0.3 detik di 24fps)
+
+    Returns:
+        list of (x1, y1, x2, y2) yang telah dihaluskan
+    """
+    if window <= 1 or not coord_list:
+        return coord_list
+
+    smoothed = []
+    # Buffer hanya frame valid (bukan placeholder)
+    buf_x1, buf_y1, buf_x2, buf_y2 = [], [], [], []
+
+    for coord in coord_list:
+        if coord == coord_placeholder or not isinstance(coord, (tuple, list)) or len(coord) != 4:
+            # Pass-through placeholder tanpa memengaruhi buffer
+            smoothed.append(coord)
+            continue
+
+        x1, y1, x2, y2 = [float(v) for v in coord]
+        buf_x1.append(x1)
+        buf_y1.append(y1)
+        buf_x2.append(x2)
+        buf_y2.append(y2)
+
+        # Potong buffer ke window size (causal — hanya masa lalu)
+        if len(buf_x1) > window:
+            buf_x1.pop(0)
+            buf_y1.pop(0)
+            buf_x2.pop(0)
+            buf_y2.pop(0)
+
+        sx1 = int(round(sum(buf_x1) / len(buf_x1)))
+        sy1 = int(round(sum(buf_y1) / len(buf_y1)))
+        sx2 = int(round(sum(buf_x2) / len(buf_x2)))
+        sy2 = int(round(sum(buf_y2) / len(buf_y2)))
+
+        # Pastikan bbox tidak degenerasi setelah smoothing
+        sx2 = max(sx1 + 1, sx2)
+        sy2 = max(sy1 + 1, sy2)
+
+        smoothed.append((sx1, sy1, sx2, sy2))
+
+    return smoothed
 
 
 # Enable cuDNN benchmark for faster convolutions on fixed-size tensors
@@ -584,6 +649,17 @@ def _get_avatar_materials(
                     pickle.dump({"signature": cache_signature, "coords": coord_list}, f)
             except Exception:
                 pass
+
+        # Temporal smoothing: haluskan koordinat bbox antar frame agar mulut tidak getar.
+        # Cache pkl menyimpan raw coords; smoothing dilakukan di-memori saja agar
+        # parameter window dapat diubah tanpa re-cache landmark.
+        _smooth_win = vis.get("bbox_smooth_window", 7)
+        if _smooth_win > 1:
+            coord_list = _smooth_coords(coord_list, window=_smooth_win)
+            print(
+                f"[AvatarCache] 📐 Bbox smoothing applied: window={_smooth_win} "
+                f"({len(coord_list)} frames)"
+            )
 
         # 3. Calculate VAE latents for cropped face frames
         input_latent_list = []

@@ -11,6 +11,13 @@ seen = set()
 updates = {
     "MUSETALK_BATCH_SIZE": "16",
     "MUSETALK_USE_FLOAT16": "1",
+    # Perbaikan mulut terlalu besar & getaran avatar:
+    # upper_boundary_ratio kecil = area blending mulut lebih kecil = lebih natural
+    "MUSETALK_UPPER_BOUNDARY_RATIO": "0.46",
+    # cheek_width kecil = sudut bibir tidak melebar keluar
+    "MUSETALK_CHEEK_WIDTH": "10",
+    # bbox_smooth_window = temporal smoothing frame → kurangi goyang/jitter
+    "MUSETALK_BBOX_SMOOTH_WINDOW": "7",
 }
 for line in text.splitlines():
     if not line.strip() or line.lstrip().startswith("#") or "=" not in line:
