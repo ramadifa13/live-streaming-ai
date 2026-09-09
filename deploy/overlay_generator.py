@@ -37,17 +37,39 @@ def download_or_decode_image(
         except Exception as e:
             print(f"[OVERLAY ERROR] Gagal decode raw base64: {e}")
     elif src.startswith("http://") or src.startswith("https://"):
+        # Jika URL kebetulan localhost/127.0.0.1, jangan download via http karena pod tidak bisa tembus
+        is_local_url = "localhost" in src or "127.0.0.1" in src
+        if not is_local_url:
+            try:
+                req = urllib.request.Request(
+                    src,
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+                )
+                with urllib.request.urlopen(req, timeout=15) as response, open(target_path, "wb") as out_file:
+                    out_file.write(response.read())
+                return target_path
+            except Exception as e:
+                print(f"[OVERLAY ERROR] Gagal download dari {src}: {e}")
+
+        # Fallback jika URL gagal atau localhost: coba cari file aslinya dari pathname
         try:
-            req = urllib.request.Request(
-                src,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            )
-            with urllib.request.urlopen(req, timeout=15) as response, open(target_path, "wb") as out_file:
-                out_file.write(response.read())
-            return target_path
-        except Exception as e:
-            print(f"[OVERLAY ERROR] Gagal download dari {src}: {e}")
-            return None
+            from urllib.parse import urlparse
+            path_part = urlparse(src).path.lstrip("/\\")
+            if path_part:
+                clean_url = path_part
+                for cand in [
+                    os.path.join("/workspace/live-streaming-ai/frontend/public", clean_url),
+                    os.path.join(os.path.dirname(__file__), "../frontend/public", clean_url),
+                    os.path.join("/workspace/ai_live_worker/assets", clean_url),
+                    os.path.join(os.path.dirname(__file__), "assets", clean_url),
+                    os.path.join(os.path.dirname(target_path), clean_url),
+                    os.path.join(os.path.dirname(target_path), "..", clean_url),
+                ]:
+                    if os.path.isfile(cand):
+                        return cand
+        except Exception:
+            pass
+
     elif os.path.exists(src):
         return src
 

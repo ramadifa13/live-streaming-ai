@@ -231,10 +231,19 @@ export const LiveControlBar: React.FC = () => {
       const liveOverlayMedia = (url?: string) => {
         const u = (url || "").trim();
         if (!u) return undefined;
-        if (/^https?:\/\//i.test(u)) return u;
+        // Biarkan path relatif (seperti /banner_atas_tengah.png) tetap relatif
+        // agar backend mengubahnya jadi base64 Data URL yang bisa dibaca worker remote RunPod
+        if (u.startsWith("/")) return u;
         if (/^data:image\//i.test(u)) return u;
-        if (u.startsWith("/")) {
-          return typeof window !== "undefined" ? `${window.location.origin}${u}` : u;
+        if (/^https?:\/\//i.test(u)) {
+          // Jika mengarah ke localhost browser saat dev, kirim path-nya saja
+          try {
+            const parsed = new URL(u);
+            if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
+              return parsed.pathname;
+            }
+          } catch {}
+          return u;
         }
         return u;
       };

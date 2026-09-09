@@ -106,19 +106,22 @@ export const LivePreviewBoard: React.FC = () => {
               className="w-full h-full object-cover"
             />
 
-            {activeFeaturedProduct?.bannerImage && (
-              <div className="absolute top-1 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[75%] flex justify-center animate-in fade-in slide-in-from-top-2 duration-300">
-                <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/40 bg-black/60 backdrop-blur-md p-0.5 w-full relative h-20">
-                  <Image
-                    src={activeFeaturedProduct.bannerImage}
-                    alt="Banner Promosi"
-                    fill
-                    unoptimized
-                    className="object-cover rounded-xl shadow-sm"
-                  />
+            {(() => {
+              const bannerSrc = activeFeaturedProduct?.bannerImage || "/banner_atas_tengah.png";
+              return (
+                <div className="absolute top-1 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[75%] flex justify-center animate-in fade-in slide-in-from-top-2 duration-300">
+                  <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/40 bg-black/60 backdrop-blur-md p-0.5 w-full relative h-20">
+                    <Image
+                      src={bannerSrc}
+                      alt="Banner Promosi"
+                      fill
+                      unoptimized
+                      className="object-cover rounded-xl shadow-sm"
+                    />
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {activeFeaturedProduct?.name && activeFeaturedProduct.name !== "Memuat Produk..." && (
               <div className="absolute bottom-[5%] left-1/2 -translate-x-1/2 z-20 pointer-events-none w-[92%] max-w-[218px] flex justify-center animate-in fade-in slide-in-from-bottom-2 duration-300">

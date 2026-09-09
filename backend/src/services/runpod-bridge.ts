@@ -98,9 +98,16 @@ export function resolveMediaAsDataUrl(url?: string | null, fallbackPath?: string
       return trimmed;
     }
     if (/^https?:\/\//i.test(trimmed)) {
-      return trimmed;
+      // Jika URL mengarah ke localhost / 127.0.0.1 (dari browser frontend), ubah jadi path lokal
+      // agar pod remote GPU menerima data:image base64 alih-alih mencoba fetch ke localhost yang unreachable.
+      const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i.exec(trimmed);
+      if (isLocalhost && isLocalhost[3]) {
+        val = isLocalhost[3];
+      } else {
+        return trimmed;
+      }
     }
-    const clean = trimmed.replace(/^\/+/, "");
+    const clean = (typeof val === "string" ? val.trim() : "").replace(/^\/+/, "");
     const candidates = [
       path.resolve(__dirname, "../../../frontend/public", clean),
       path.resolve(__dirname, "../../frontend/public", clean),

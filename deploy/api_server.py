@@ -1269,13 +1269,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     current_broadcast_env = env
 
     try:
-        from broadcaster import prepare_overlay_files
         from overlay_generator import prepare_overlay_files
-
-        try:
-            from overlay_generator import prepare_overlay_files
-        except ImportError:
-            from broadcaster import prepare_overlay_files
 
         prepare_overlay_files(
             output_dir,
@@ -1448,13 +1442,7 @@ async def update_stream_product(req: UpdateProductRequest):
             print(f"[AI-Worker] update-product background notice: {bg_err}")
     # Render overlay dulu (support http + data:image), baru signal hot-reload.
     try:
-        from broadcaster import prepare_overlay_files
         from overlay_generator import prepare_overlay_files
-
-        try:
-            from overlay_generator import prepare_overlay_files
-        except ImportError:
-            from broadcaster import prepare_overlay_files
 
         prepare_overlay_files(
             output_dir,

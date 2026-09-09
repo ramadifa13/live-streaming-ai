@@ -2936,7 +2936,6 @@ def broadcaster_loop(
                     try:
                         with open(update_file, "r", encoding="utf-8") as uf:
                             upd = json.load(uf)
-                        from broadcaster import prepare_overlay_files
                         from overlay_generator import prepare_overlay_files
 
                         prepare_overlay_files(
