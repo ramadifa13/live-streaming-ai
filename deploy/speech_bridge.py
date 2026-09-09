@@ -333,26 +333,29 @@ def _extract_pcm_stereo(audio_path: str, sample_rate: int = SAMPLE_RATE) -> byte
 def _split_pcm_frames(
     pcm: bytes, bytes_per_frame: int = BYTES_PER_AUDIO_FRAME
 ) -> List[bytes]:
-    """Split PCM strictly by real audio length; no synthetic trailing silence.
-
-    Synthetic silence at the end was extending the effective utterance duration and
-    making the stream feel both clipped and overlong when synced to the worker.
-    """
+    """Split PCM by exact sample count per frame — no drift, no synthetic tail."""
     if not pcm:
         return []
     frames: List[bytes] = []
-    bytes_per_sample = 2 * 2
+    bytes_per_sample = 2 * 2  # stereo s16le
+    total_samples = len(pcm) // bytes_per_sample
     pos = 0
-    frame_index = 0
-    total = len(pcm)
-    while pos < total:
-        desired_frame_size = _samples_for_frame(frame_index) * bytes_per_sample
-        frame_size = min(desired_frame_size, total - pos)
-        if frame_size <= 0:
+    for frame_index in range(100000):  # safety cap
+        start = int(frame_index * SAMPLE_RATE / TARGET_FPS)
+        end = int((frame_index + 1) * SAMPLE_RATE / TARGET_FPS)
+        frame_samples = max(1, end - start)
+        frame_bytes = frame_samples * bytes_per_sample
+        if pos >= len(pcm):
             break
-        frames.append(pcm[pos : pos + frame_size])
-        pos += frame_size
-        frame_index += 1
+        chunk = pcm[pos : pos + frame_bytes]
+        if len(chunk) < frame_bytes:
+            # Last frame: pad only if we have substantial data
+            if len(chunk) >= frame_bytes // 2:
+                chunk += b"\x00" * (frame_bytes - len(chunk))
+            else:
+                break
+        frames.append(chunk)
+        pos += frame_bytes
     return frames
 
 
