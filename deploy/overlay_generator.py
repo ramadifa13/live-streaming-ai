@@ -37,7 +37,6 @@ def download_or_decode_image(
         except Exception as e:
             print(f"[OVERLAY ERROR] Gagal decode raw base64: {e}")
     elif src.startswith("http://") or src.startswith("https://"):
-        # Jika URL kebetulan localhost/127.0.0.1, jangan download via http karena pod tidak bisa tembus
         is_local_url = "localhost" in src or "127.0.0.1" in src
         if not is_local_url:
             try:
@@ -51,7 +50,6 @@ def download_or_decode_image(
             except Exception as e:
                 print(f"[OVERLAY ERROR] Gagal download dari {src}: {e}")
 
-        # Fallback jika URL gagal atau localhost: coba cari file aslinya dari pathname
         try:
             from urllib.parse import urlparse
             path_part = urlparse(src).path.lstrip("/\\")
@@ -139,39 +137,52 @@ def render_pil_overlay(
 
     if has_banner and local_banner_img:
         try:
-            banner_max_w, banner_max_h, banner_y = 540, 200, 16
-            banner = Image.open(local_banner_img).convert("RGBA")
-            banner.thumbnail((banner_max_w, banner_max_h), Image.Resampling.LANCZOS)
-            bw, bh = banner.size
+            # Banner box design matching frontend: width 540, height 140, top margin 24
+            bw, bh = 540, 140
             bx = (canvas_w - bw) // 2
-            by = banner_y
+            by = 24
 
-            # Shadow effect
+            raw_banner = Image.open(local_banner_img).convert("RGBA")
+            rw, rh = raw_banner.size
+
+            # Object-cover calculation (crop center & scale)
+            scale = max(bw / rw, bh / rh)
+            new_w = int(rw * scale)
+            new_h = int(rh * scale)
+            resized_banner = raw_banner.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+            # Crop ke ukuran tepat bw x bh (center crop)
+            crop_x = (new_w - bw) // 2
+            crop_y = (new_h - bh) // 2
+            banner = resized_banner.crop((crop_x, crop_y, crop_x + bw, crop_y + bh))
+
+            # Shadow effect di belakang banner
             shadow_banner = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
             sb_draw = ImageDraw.Draw(shadow_banner)
-            sb_draw.rounded_rectangle((bx, by + 4, bx + bw, by + bh + 4), radius=20, fill=(0, 0, 0, 120))
-            shadow_banner = shadow_banner.filter(ImageFilter.GaussianBlur(radius=8))
+            sb_draw.rounded_rectangle((bx, by + 4, bx + bw, by + bh + 4), radius=22, fill=(0, 0, 0, 140))
+            shadow_banner = shadow_banner.filter(ImageFilter.GaussianBlur(radius=10))
             overlay = Image.alpha_composite(overlay, shadow_banner)
 
-            # Rounded banner mask with clean border
+            # Mask rounded corner untuk banner
             b_mask = Image.new("L", (bw, bh), 0)
             b_draw = ImageDraw.Draw(b_mask)
             b_draw.rounded_rectangle((0, 0, bw, bh), radius=20, fill=255)
 
             overlay.paste(banner, (bx, by), b_mask)
+
+            # Border halus semi-transparan
             draw_banner_border = ImageDraw.Draw(overlay)
             draw_banner_border.rounded_rectangle(
                 (bx, by, bx + bw, by + bh),
                 radius=20,
-                outline=(255, 255, 255, 140),
+                outline=(255, 255, 255, 180),
                 width=2,
             )
-            print(f"[OVERLAY] Top banner rendered: pos=({bx}, {by}), size={bw}x{bh}")
+            print(f"[OVERLAY] Top banner rendered (cover crop): pos=({bx}, {by}), size={bw}x{bh}")
         except Exception as e:
             print(f"[OVERLAY ERROR] Gagal merender banner: {e}")
 
     if has_product:
-        # Card rounded design matching Step 4 (w=630, h=138, y=1080)
         card_w, card_h = 630, 138
         card_x = (canvas_w - card_w) // 2
         card_y = canvas_h - card_h - 150

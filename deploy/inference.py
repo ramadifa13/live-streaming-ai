@@ -63,13 +63,16 @@ def _env_flag(name: str, default: str = "1") -> bool:
 
 
 def musetalk_visual_params():
-    """Crop wajah untuk MuseTalk — proporsional ramping rahang & mulut Namira."""
-    bbox_shift = -2
-    bbox_shift_x = -5
+    """Crop wajah untuk MuseTalk — proporsional pas dengan rahang & mulut video asli."""
+    # bbox_shift: -3 sedikit menaikkan box agar proporsional menutup dagu dan rahang bawah secara tepat
+    bbox_shift = int(os.environ.get("MUSETALK_BBOX_SHIFT", "-3"))
+    # bbox_shift_x: -10 memperbaiki posisi mulut yang sebelumnya condong/geser ke kanan
+    bbox_shift_x = int(os.environ.get("MUSETALK_BBOX_SHIFT_X", "-10"))
     extra_margin = 0
-    upper_boundary_ratio = 0.58
-    # cheek_width 26 merampingkan sudut bibir lateral agar ujung kanan-kiri tidak melebar/seram
-    cheek_width = int(os.environ.get("MUSETALK_CHEEK_WIDTH", "26"))
+    # upper_boundary_ratio: 0.52 (turun dari 0.58) mengecilkan ukuran mulut agar pas alami dengan video asli
+    upper_boundary_ratio = float(os.environ.get("MUSETALK_UPPER_BOUNDARY_RATIO", "0.52"))
+    # cheek_width: 16 (turun dari 26) merampingkan sudut bibir lateral agar tidak melebar seperti Joker
+    cheek_width = int(os.environ.get("MUSETALK_CHEEK_WIDTH", "16"))
     return {
         "bbox_shift": bbox_shift,
         "bbox_shift_x": bbox_shift_x,
@@ -538,7 +541,7 @@ def _get_avatar_materials(
 
         frame_h, frame_w = frame_list[0].shape[:2]
         cache_signature = {
-            "format": 4,
+            "format": 5,
             "frames": len(frame_list),
             "width": frame_w,
             "height": frame_h,

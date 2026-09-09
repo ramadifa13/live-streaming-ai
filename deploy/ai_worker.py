@@ -357,12 +357,14 @@ def feather_mask(mask_array: np.ndarray, kernel: int = MASK_FEATHER_PX) -> np.nd
     k = max(3, kernel | 1)
     blurred = cv2.GaussianBlur(arr, (k, k), 0)
     
-    # Redam ujung lateral paling luar (5% kiri & 5% kanan) agar sudut bibir
-    # tidak terdistorsi melebar seperti Joker/seram saat ekspresi bicara.
+    # Redam ujung lateral (15% kiri & 15% kanan) dengan taper halus agar sudut bibir
+    # tidak terdistorsi melebar seperti Joker/seram dan pas menyatu dengan video asli.
     h, w = blurred.shape
     if w > 20:
-        margin_x = max(2, int(w * 0.08))
+        margin_x = max(4, int(w * 0.15))
         ramp = np.linspace(0.0, 1.0, margin_x, dtype=np.float32)
+        # Cosine ramp untuk transisi transparan yang sangat lembut di sudut bibir
+        ramp = 0.5 - 0.5 * np.cos(np.pi * ramp)
         weight_x = np.ones(w, dtype=np.float32)
         weight_x[:margin_x] = ramp
         weight_x[-margin_x:] = ramp[::-1]
