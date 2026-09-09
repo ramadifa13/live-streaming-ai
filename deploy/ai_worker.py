@@ -101,7 +101,12 @@ MOUTH_MAX_STALE_FRAMES = int(os.environ.get("AI_WORKER_MOUTH_MAX_STALE_FRAMES", 
 
 # Saat MuseTalk pertama kali masuk, bbox face bisa bergetar karena perubahan
 # landmark per-frame. Batasi pergeseran bbox agar transisi awal stabil.
-FACE_JITTER_MAX_DELTA = 8
+# MuseTalk entry stabilization:
+# smaller bbox movement prevents a visible one-frame face/mouth jump.
+FACE_JITTER_MAX_DELTA = 2
+# Freeze the face bbox for the first few MuseTalk frames after activation.
+# This prevents the detector history from causing a small initial shake.
+LIPSYNC_BBOX_LOCK_FRAMES = 4
 LIPSYNC_PREROLL_FRAMES = 2
 LIPSYNC_WAIT_SEC = 0.12
 # Sync shift 0 memastikan viseme tepat waktu dengan audio stream
@@ -463,12 +468,22 @@ class FaceCoordRegistry:
         self._window = max(1, window)
         self._history: Dict[str, deque] = {}
         self._locked: Dict[str, tuple] = {}
+        self._entry_lock_remaining: Dict[str, int] = {}
 
     def _smooth_face_box(self, key: str, face_box: Tuple[int, int, int, int]) -> Tuple[int, int, int, int]:
         if face_box is None:
             return face_box
         box = tuple(int(v) for v in face_box)
         hist = self._history.setdefault(key, deque(maxlen=max(2, self._window)))
+
+        # When MuseTalk has just entered a clip, keep the exact bbox that was
+        # locked at the transition for a few frames. This removes the small
+        # detector/history jump that can look like a facial "shake".
+        if self._entry_lock_remaining.get(key, 0) > 0:
+            self._entry_lock_remaining[key] -= 1
+            hist.append(box)
+            return self._locked.get(key, box)
+
         hist.append(box)
         if len(hist) == 1:
             self._locked[key] = box
@@ -506,10 +521,12 @@ class FaceCoordRegistry:
         self._locked[key] = tuple(int(v) for v in face_box)
         self._history.setdefault(key, deque(maxlen=max(2, self._window))).clear()
         self._history[key].append(self._locked[key])
+        self._entry_lock_remaining[key] = max(0, int(LIPSYNC_BBOX_LOCK_FRAMES))
 
     def release_lock(self) -> None:
         self._locked.clear()
         self._history.clear()
+        self._entry_lock_remaining.clear()
 
     def get_material(self, clip: ClipAsset, cidx: int) -> Optional[Tuple]:
         if not clip.mask_materials_cycle:
