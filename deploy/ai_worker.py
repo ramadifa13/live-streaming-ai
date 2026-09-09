@@ -117,10 +117,10 @@ MOUTH_MISS_BODY_ONLY = False
 # Gate it to a soft mouth region in the SAME crop coordinate system used by
 # get_image_blending(), while preserving the original MuseTalk mask.
 MOUTH_MASK_GATE = os.environ.get("AI_WORKER_MOUTH_MASK_GATE", "1") != "0"
-MOUTH_MASK_CENTER_Y = float(os.environ.get("AI_WORKER_MOUTH_MASK_CENTER_Y", "0.74"))
-MOUTH_MASK_RX = float(os.environ.get("AI_WORKER_MOUTH_MASK_RX", "0.42"))
-MOUTH_MASK_RY = float(os.environ.get("AI_WORKER_MOUTH_MASK_RY", "0.22"))
-MOUTH_MASK_FEATHER = float(os.environ.get("AI_WORKER_MOUTH_MASK_FEATHER", "0.18"))
+MOUTH_MASK_CENTER_Y = float(os.environ.get("AI_WORKER_MOUTH_MASK_CENTER_Y", "0.78"))
+MOUTH_MASK_RX = float(os.environ.get("AI_WORKER_MOUTH_MASK_RX", "0.34"))
+MOUTH_MASK_RY = float(os.environ.get("AI_WORKER_MOUTH_MASK_RY", "0.14"))
+MOUTH_MASK_FEATHER = float(os.environ.get("AI_WORKER_MOUTH_MASK_FEATHER", "0.35"))
 MUSE_DEBUG = os.environ.get("AI_WORKER_MUSE_DEBUG", "0") == "1"
 MUSE_DEBUG_DIR = os.environ.get("AI_WORKER_MUSE_DEBUG_DIR", "/tmp/musetalk_debug")
 
@@ -2232,12 +2232,26 @@ class LipSyncEngine:
         gate = np.clip(1.0 - d, 0.0, 1.0)
 
         # Smooth transition at the edge.
+        # Use a broad Gaussian blur so the gate does not leave a visible
+        # "mask/patch" boundary around the lips.
         if MOUTH_MASK_FEATHER > 0:
-            gate = np.power(gate, max(0.25, float(MOUTH_MASK_FEATHER)))
+            sigma = max(1.0, min(float(MOUTH_MASK_FEATHER) * 12.0, 8.0))
+            gate = cv2.GaussianBlur(
+                np.ascontiguousarray(gate.astype(np.float32)),
+                (0, 0),
+                sigmaX=sigma,
+                sigmaY=sigma,
+            )
+            gate = np.clip(gate, 0.0, 1.0)
 
-        return np.ascontiguousarray(
-            np.clip(m.astype(np.float32) * gate, 0, 255).astype(np.uint8)
-        )
+        out = m.astype(np.float32) * gate
+
+        # Very low alpha around the perimeter is visually detectable as a
+        # soft halo. Remove only the weakest tail, while preserving the
+        # natural MuseTalk feather inside the mouth region.
+        out[out < 18.0] = 0.0
+
+        return np.ascontiguousarray(np.clip(out, 0, 255).astype(np.uint8))
 
     def _save_muse_debug(self, body, mouth_256, mask_array, crop_box, face_box, idx):
         if not MUSE_DEBUG:
@@ -2310,6 +2324,11 @@ class LipSyncEngine:
             print(f"[LipSync] ERROR: No material for clip={clip.name} cidx={cidx}")
             return body
         mask_array, crop_box, face_box = mat
+        # IMPORTANT: use the gated mouth-only mask for actual compositing.
+        # This prevents MuseTalk's jaw/face parsing mask from replacing
+        # cheek/nose/under-eye pixels and creating a "face pasted on face"
+        # appearance.
+        mask_array = self._mouth_only_mask(mask_array, crop_box, face_box)
         x1, y1, x2, y2 = [int(v) for v in face_box]
         if x2 <= x1 or y2 <= y1:
             print(f"[LipSync] ERROR: Invalid face_box {face_box}")
