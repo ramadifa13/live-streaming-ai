@@ -1817,7 +1817,7 @@ class VideoStateMachine:
                 needs_lipsync=needs_lipsync,
                 audio_pcm=audio_pcm,
                 is_speech=is_speech,
-                whisper_idx=None,
+                whisper_idx=whisper_idx,
             )
             self._seq += 1
             return pkt
