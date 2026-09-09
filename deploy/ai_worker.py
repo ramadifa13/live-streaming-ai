@@ -29,7 +29,8 @@ except ImportError:
     def fit_bgr(frame, width=CANVAS_W, height=CANVAS_H):
         return frame
 
-TARGET_FPS = 24
+BROADCAST_MODE = os.environ.get("BROADCAST_MODE", "1")
+TARGET_FPS = int(os.environ.get("AI_WORKER_FPS", "24"))
 SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
 BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2
