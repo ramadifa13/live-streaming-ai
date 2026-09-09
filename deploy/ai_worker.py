@@ -34,10 +34,26 @@ TARGET_FPS = 24
 SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
 BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2
-CROSSFADE_FRAMES = 4
-OVERLAP_FRAMES = 4
-OVERLAP_FRAMES_MAX = 6
-BBOX_SMOOTH_WINDOW = 7
+
+# ====== SMOOTHING PARAMETERS (untuk natural gerakan) ======
+# CROSSFADE_FRAMES: frame untuk smooth transition antar video clip
+# Default 4 = terlalu cepat/patah-patah. Raise ke 8-12 untuk lebih smooth
+# Set via env: AI_WORKER_CROSSFADE_FRAMES=12
+_cf_frames = int(os.environ.get("AI_WORKER_CROSSFADE_FRAMES", "8"))
+CROSSFADE_FRAMES = max(2, _cf_frames)
+
+# OVERLAP_FRAMES: frame untuk body pose blending antar clip
+# Default 4 = cepat. Raise ke 6-8 untuk smoother body motion
+_ov_frames = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "6"))
+OVERLAP_FRAMES = max(2, _ov_frames)
+
+OVERLAP_FRAMES_MAX = max(OVERLAP_FRAMES, 6)
+
+# BBOX_SMOOTH_WINDOW: window size untuk smoothing face detection bounding box
+# Default 7 = jerky. Raise ke 12-15 untuk smoother face tracking
+_bbox_smooth = int(os.environ.get("AI_WORKER_BBOX_SMOOTH_WINDOW", "12"))
+BBOX_SMOOTH_WINDOW = max(3, _bbox_smooth)
+
 RAW_QUEUE_SIZE = 120
 RENDER_QUEUE_SIZE = 240
 RAW_QUEUE_BLOCK_SEC = 0.25
@@ -67,9 +83,17 @@ BROADCAST_SPEECH_WAIT_SEC = 10.0
 BROADCAST_SPEECH_GAP_WAIT_SEC = 0.25
 PENDING_MAX = RENDER_QUEUE_SIZE + BROADCAST_MAX_LAG
 SEAMLESS_THRESHOLD = 0.92
+
+# ====== MOUTH/LIP-SYNC PARAMETERS (untuk smooth lip-sync) ======
 # Keep the worker deterministic and environment-free for deploy/test invariants.
 MOUTH_STRENGTH = 1.0
-MOUTH_TEMPORAL = 0.12
+
+# MOUTH_TEMPORAL: temporal smoothing untuk mouth movement (0.0-1.0)
+# Default 0.12 = terlalu jerky. Raise ke 0.25-0.35 untuk smooth mouth
+# Set via env: AI_WORKER_MOUTH_TEMPORAL=0.3
+_mouth_temp = float(os.environ.get("AI_WORKER_MOUTH_TEMPORAL", "0.25"))
+MOUTH_TEMPORAL = max(0.0, min(1.0, _mouth_temp))
+
 MOUTH_MAX_DELTA = 0
 MOUTH_FRAME_DELTA = 0
 LIPSYNC_PREROLL_FRAMES = 2
