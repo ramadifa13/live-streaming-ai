@@ -1789,16 +1789,19 @@ class VideoStateMachine:
                 frame = body.copy()
 
             talk_target = self._talk_target or self.bank.talk_clip_name()
-            # Lipsync tetap ON saat soft overlap jika sudah bicara — cegah mulut tertutup.
+            # Lipsync aktif selama utterance aktif ATAU is_speech, dan clip punya musetalk materials.
+            # FIX: Sebelumnya hanya aktif saat is_speech=True — ini menyebabkan frame pertama
+            # (dan frame saat jeda antar kata) tidak mendapatkan lipsync.
+            _has_musetalk = (
+                self.current_name == talk_target
+                or self.bank.clip_has_musetalk(self.current_name)
+                or self._overlap is not None
+            )
             needs_lipsync = (
-                is_speech
-                and self.state == PlayState.TALK
+                self.state == PlayState.TALK
                 and (self._utterance_active or self._talk_pinned)
-                and (
-                    self.current_name == talk_target
-                    or self.bank.clip_has_musetalk(self.current_name)
-                    or self._overlap is not None
-                )
+                and _has_musetalk
+                and (is_speech or (self._utterance_active and whisper_idx is not None))
             )
 
             pkt = RawFramePacket(
@@ -2185,13 +2188,31 @@ class LipSyncEngine:
     @torch.no_grad()
     def process(self, pkt: RawFramePacket, clip: ClipAsset) -> np.ndarray:
         metrics = get_telemetry()
-        if pkt.whisper_idx is None or not pkt.needs_lipsync:
-            if pkt.whisper_idx is None:
-                metrics.inc("lipsync_skipped_no_whisper_idx")
-            else:
-                metrics.inc("lipsync_skipped_no_needs_lipsync")
+        # FIX KRITIS: Jangan skip berdasarkan whisper_idx saja.
+        # needs_lipsync adalah gate utama. whisper_idx None ditangani di bawah
+        # dengan fallback ke last valid index.
+        if not pkt.needs_lipsync:
+            metrics.inc("lipsync_skipped_no_needs_lipsync")
             self._prev_composed = None
             return pkt.frame
+        if pkt.whisper_idx is None:
+            # Coba gunakan index terakhir yang valid (frame jeda antar kata)
+            with self._lock:
+                last_cursor = max(0, self._infer_cursor - 1)
+                total = 0 if self._whisper_chunks is None else int(self._whisper_chunks.shape[0])
+            if total == 0 or last_cursor >= total:
+                metrics.inc("lipsync_skipped_no_whisper_idx")
+                self._prev_composed = None
+                return pkt.frame
+            # Gunakan frame terakhir yang valid sebagai proxy (bibir tetap natural)
+            pkt = RawFramePacket(
+                seq=pkt.seq, frame=pkt.frame, clip_name=pkt.clip_name,
+                frame_idx=pkt.frame_idx, cycle_idx=pkt.cycle_idx,
+                state=pkt.state, needs_lipsync=pkt.needs_lipsync,
+                audio_pcm=pkt.audio_pcm, is_speech=pkt.is_speech,
+                whisper_idx=last_cursor,
+            )
+            metrics.inc("lipsync_whisper_idx_fallback")
 
         if not pkt.clip_name:
             metrics.inc("lipsync_skipped_wrong_clip")
@@ -2406,16 +2427,17 @@ def frame_fetcher_loop(
         pkt = sm.next_packet(pcm, is_speech, llm_action=action, whisper_idx=whisper_idx)
         pkt.whisper_idx = whisper_idx
 
-        # FIX: needs_lipsync harus aktif selama utterance aktif + clip punya materials.
-        # Sebelumnya hanya diset saat whisper_idx is not None — ini menyebabkan frame
-        # pertama (saat whisper_idx bisa None sesaat) tidak mendapatkan lipsync.
+        # FIX: needs_lipsync aktif selama utterance aktif DAN clip punya materials.
+        # Override agar pkt.needs_lipsync dari state machine tidak bisa False
+        # saat utterance berjalan dan whisper_idx tersedia.
         if sm.bank.clip_has_musetalk(pkt.clip_name):
-            if whisper_idx is not None:
+            if whisper_idx is not None and (utterance_active or sm._utterance_active):
+                # Selama utterance aktif dan whisper data ada → paksa True
                 pkt.needs_lipsync = True
-            elif utterance_active and sm._utterance_active:
-                # Pertahankan needs_lipsync=True selama utterance aktif meski
-                # whisper_idx sesaat None (transisi antar chunk).
-                pkt.needs_lipsync = pkt.needs_lipsync or (is_speech and sm._utterance_active)
+            elif not utterance_active and not sm._utterance_active:
+                # Utterance benar-benar selesai → reset
+                pkt.needs_lipsync = False
+            # else: pertahankan nilai dari state machine (transisi)
         else:
             pkt.needs_lipsync = False
         metrics.set_gauge("raw_queue_depth", float(raw_q.qsize()))

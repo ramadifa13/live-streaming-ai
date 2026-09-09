@@ -841,9 +841,9 @@ class SpeechBridge:
             self._frame_cursor += 1
             return pcm, True, idx
 
-        # Setelah PCM habis, jangan mengembalikan padding tersembunyi yang
-        # memperpanjang durasi utterance. Whisper tail yang "natural" tidak boleh
-        # menambah audio aktual di luar file asli.
+        # Grace tail: setelah PCM habis, izinkan beberapa frame silence dengan
+        # whisper index untuk merender suku kata akhir.
+        # FIX: Kondisi lama memeriksa num_frames lagi (selalu False setelah PCM habis).
         whisper_total = (
             int(self._current.whisper_chunks.shape[0])
             if self._current.whisper_chunks is not None
@@ -851,7 +851,6 @@ class SpeechBridge:
         )
         if (
             self._frame_cursor < whisper_total
-            and self._frame_cursor < self._current.num_frames
         ):
             idx = self._frame_cursor
             self._frame_cursor += 1
