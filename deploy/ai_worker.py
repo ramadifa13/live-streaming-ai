@@ -985,7 +985,6 @@ class VideoStateMachine:
         self._pending_begin_utterance = False
         self._begin_wait_since: Optional[float] = None
         self._talk_direction = 1  # +1 forward / -1 ping-pong reverse
-        self._transition_guard = 0
         self._schedule_next_ambient()
 
     def _schedule_next_ambient(self) -> None:
