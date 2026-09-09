@@ -116,8 +116,9 @@ ALLOWED_GESTURES: frozenset = frozenset()
 
 # Body clips mengikuti nama file langsung dari sample.
 TRUE_IDLE_NAMES = frozenset({"idle"})
+# PENTING: idle TIDAK boleh masuk TALK_CLIP_NAMES karena idle tidak punya
+# MuseTalk latents — memasukkannya menyebabkan lip-sync selalu skip.
 TALK_CLIP_NAMES = frozenset({"talk_1", "talk_2", "talk_3"})
-TALK_CLIP_NAMES = frozenset({"idle", "talk_1", "talk_2", "talk_3"})
 BODY_CLIP_NAMES = TRUE_IDLE_NAMES | TALK_CLIP_NAMES
 
 
@@ -537,18 +538,23 @@ class AssetBank:
             return CRASH_FALLBACK_CLIP
         return self._idle_name
 
+    _musetalk_warn_logged: set = set()
+
     def clip_has_musetalk(self, name: Optional[str]) -> bool:
         if not name:
             return False
         clip = self.clips.get(name)
         if clip is None:
             return False
-        # Detailed logging for missing MuseTalk materials
-        if not clip.latent_list_cycle:
-            print(f"[AssetBank] clip_has_musetalk FALSE: latents missing for {name}")
-        if not clip.mask_materials_cycle:
-            print(f"[AssetBank] clip_has_musetalk FALSE: masks missing for {name}")
-        return bool(clip.latent_list_cycle and clip.mask_materials_cycle)
+        has = bool(clip.latent_list_cycle and clip.mask_materials_cycle)
+        # Log hanya sekali per clip yang hilang — tidak per frame (log spam).
+        if not has and name not in AssetBank._musetalk_warn_logged:
+            AssetBank._musetalk_warn_logged.add(name)
+            if not clip.latent_list_cycle:
+                print(f"[AssetBank] clip_has_musetalk FALSE: latents missing for '{name}'")
+            if not clip.mask_materials_cycle:
+                print(f"[AssetBank] clip_has_musetalk FALSE: masks missing for '{name}'")
+        return has
 
     def talk_clip_pool(self) -> List[str]:
         out: List[str] = []
@@ -766,10 +772,9 @@ class AssetBank:
         return clip
 
     def _precache_clip_names(self) -> List[str]:
-        """MuseTalk untuk semua talk* + idle cadangan."""
-        default = ",".join(self.talk_clip_pool() or [TALK_CLIP_DEFAULT])
-        fb = self.crash_fallback_name()
-        names = [*self.talk_clip_pool(), fb]
+        """MuseTalk untuk semua talk*."""
+        names = [*self.talk_clip_pool()]
+        # fb (idle) tidak perlu di-precache MuseTalk karena bukan clip bicara.
         return [n for n in names if n in self.clips]
 
     def ensure_musetalk_materials(self, name: str) -> bool:
@@ -1010,12 +1015,10 @@ class VideoStateMachine:
             return random.choice(variants)
         return None
 
-    def _pick_next_talk_clip(self) -> str:
-        """Pin talk clip (continuous body) — rotasi sangat jarang."""
     def _pick_next_talk_clip(self, avoid: Optional[str] = None) -> str:
-        """Pilih clip bicara berikutnya: RANDOM dari pool, dan TIDAK SAMA dengan clip sebelumnya."""
+        """Pilih clip bicara berikutnya: RANDOM dari pool, TIDAK SAMA dengan clip sebelumnya."""
         metrics = get_telemetry()
-        # Single body timeline: selalu AI_WORKER_TALK_CLIP jika ready.
+        # Single body timeline: selalu clip yang dikonfigurasi jika ready.
         if PIN_TALK_SCENE:
             pinned = self.bank.talk_clip_name()
             if self.bank.clip_has_musetalk(pinned):
@@ -1029,11 +1032,12 @@ class VideoStateMachine:
         if not ready:
             return self.bank.crash_fallback_name()
 
-        # Sudah di talk clip yang valid: reuse (hold antar kalimat).
+        # Sudah di talk clip yang valid dengan MuseTalk: reuse (hold antar kalimat).
         if (
             self.state == PlayState.TALK
             and self.current_name
             and self.bank.clip_has_musetalk(self.current_name)
+            and self.current_name in TALK_CLIP_NAMES
         ):
             if self._talk_streak_name == self.current_name:
                 self._talk_streak_count += 1
@@ -1042,22 +1046,22 @@ class VideoStateMachine:
                 self._talk_streak_count = 1
             if self._talk_streak_count < max(2, TALK_STREAK_BEFORE_ROTATE):
                 return self.current_name
-        # Hindari clip yang baru saja dipakai agar tidak berulang / berurutan sama
+
+        # Tentukan clip yang akan dihindari (jangan ulang clip yang sama).
         avoid_clip = (
             avoid
             or self._last_talk_clip
             or (self.current_name if self.state == PlayState.TALK else None)
         )
-        choice = self.bank.pick_talk_clip(avoid_repeat=avoid_clip)
-
-        avoid = None
+        # Jika streak terlalu panjang, paksa rotasi ke clip berbeda.
         if (
             self._talk_streak_name
             and self._talk_streak_count >= max(2, TALK_STREAK_BEFORE_ROTATE)
             and self._talk_streak_name in self.bank.talk_clips_ready()
         ):
-            avoid = self._talk_streak_name
-        choice = self.bank.pick_talk_clip(avoid_repeat=avoid)
+            avoid_clip = self._talk_streak_name
+
+        choice = self.bank.pick_talk_clip(avoid_repeat=avoid_clip)
         if choice == self._talk_streak_name:
             self._talk_streak_count += 1
         else:
@@ -1065,11 +1069,8 @@ class VideoStateMachine:
             self._talk_streak_count = 1
             metrics.inc("talk_clip_rotate")
         self._last_talk_clip = choice
-        self._talk_streak_name = choice
-        self._talk_streak_count = 1
-        metrics.inc("talk_clip_rotate")
         print(
-            f"[StateMachine] Random talk clip selected: {choice} (avoided: {avoid_clip})"
+            f"[StateMachine] Talk clip selected: {choice} (avoided: {avoid_clip})"
         )
         return choice
 
@@ -2052,11 +2053,8 @@ class LipSyncEngine:
                 last = self._last_mouth_256
                 cursor = self._infer_cursor
             if cached is not None:
+                self._last_mouth_frame = cached
                 return cached
-                result = cached
-                if result is not None:
-                    self._last_mouth_frame = result
-                return result
             if not MOUTH_MISS_BODY_ONLY and cursor > idx and last is not None:
                 if attempt == 0:
                     print(
@@ -2064,19 +2062,12 @@ class LipSyncEngine:
                         f"(cursor={cursor})"
                     )
                     metrics.inc("mouth_fallback_last")
+                self._last_mouth_frame = last
                 return last
-                result = last
-                if result is not None:
-                    self._last_mouth_frame = result
-                return result
             if time.perf_counter() >= deadline:
                 if MOUTH_MISS_BODY_ONLY:
                     return None
                 return last
-                mouth = self._last_mouth_frame
-                if mouth is not None:
-                    return mouth
-                return None
             time.sleep(0.004)
             attempt += 1
 
