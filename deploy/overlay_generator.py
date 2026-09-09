@@ -138,7 +138,7 @@ def render_pil_overlay(
     if has_banner and local_banner_img:
         try:
             # Banner box design matching frontend: width 540, height 140, top margin 24
-            bw, bh = 540, 140
+            bw, bh = 540, 200
             bx = (canvas_w - bw) // 2
             by = 24
 
