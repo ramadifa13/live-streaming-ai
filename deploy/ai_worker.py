@@ -112,6 +112,18 @@ LIPSYNC_HARD_PREROLL = False
 # 1 = mouth miss → body-only (bukan sticky last mouth).
 MOUTH_MISS_BODY_ONLY = False
 
+# ====== MUSE TALK COMPOSITE FIX ======
+# MuseTalk's jaw/lower-face mask can make the reconstructed face look pasted on.
+# Gate it to a soft mouth region in the SAME crop coordinate system used by
+# get_image_blending(), while preserving the original MuseTalk mask.
+MOUTH_MASK_GATE = os.environ.get("AI_WORKER_MOUTH_MASK_GATE", "1") != "0"
+MOUTH_MASK_CENTER_Y = float(os.environ.get("AI_WORKER_MOUTH_MASK_CENTER_Y", "0.74"))
+MOUTH_MASK_RX = float(os.environ.get("AI_WORKER_MOUTH_MASK_RX", "0.42"))
+MOUTH_MASK_RY = float(os.environ.get("AI_WORKER_MOUTH_MASK_RY", "0.22"))
+MOUTH_MASK_FEATHER = float(os.environ.get("AI_WORKER_MOUTH_MASK_FEATHER", "0.18"))
+MUSE_DEBUG = os.environ.get("AI_WORKER_MUSE_DEBUG", "0") == "1"
+MUSE_DEBUG_DIR = os.environ.get("AI_WORKER_MUSE_DEBUG_DIR", "/tmp/musetalk_debug")
+
 
 ALLOWED_GESTURES: frozenset = frozenset()
 
@@ -2197,6 +2209,90 @@ class LipSyncEngine:
                 return mat
         return None
 
+    def _mouth_only_mask(self, mask_array, crop_box, face_box):
+        """Restrict MuseTalk's jaw mask to a soft mouth-region gate."""
+        m = np.ascontiguousarray(np.asarray(mask_array), dtype=np.uint8)
+        if not MOUTH_MASK_GATE or m.ndim < 2:
+            return m
+
+        mh, mw = m.shape[:2]
+        cx1, cy1, _, _ = [int(v) for v in crop_box]
+        fx1, fy1, fx2, fy2 = [float(v) for v in face_box]
+        fw = max(1.0, fx2 - fx1)
+        fh = max(1.0, fy2 - fy1)
+
+        # Face coordinates -> crop coordinates.
+        center_x = ((fx1 + fx2) * 0.5) - cx1
+        center_y = (fy1 - cy1) + fh * MOUTH_MASK_CENTER_Y
+        rx = max(4.0, fw * MOUTH_MASK_RX)
+        ry = max(4.0, fh * MOUTH_MASK_RY)
+
+        yy, xx = np.ogrid[:mh, :mw]
+        d = ((xx - center_x) / rx) ** 2 + ((yy - center_y) / ry) ** 2
+        gate = np.clip(1.0 - d, 0.0, 1.0)
+
+        # Smooth transition at the edge.
+        if MOUTH_MASK_FEATHER > 0:
+            gate = np.power(gate, max(0.25, float(MOUTH_MASK_FEATHER)))
+
+        return np.ascontiguousarray(
+            np.clip(m.astype(np.float32) * gate, 0, 255).astype(np.uint8)
+        )
+
+    def _save_muse_debug(self, body, mouth_256, mask_array, crop_box, face_box, idx):
+        if not MUSE_DEBUG:
+            return
+        try:
+            os.makedirs(MUSE_DEBUG_DIR, exist_ok=True)
+            stamp = f"{int(idx):04d}"
+
+            cv2.imwrite(
+                os.path.join(MUSE_DEBUG_DIR, f"{stamp}_original.jpg"),
+                body,
+            )
+
+            fx1, fy1, fx2, fy2 = [int(v) for v in face_box]
+            gen = cv2.resize(
+                np.ascontiguousarray(mouth_256),
+                (max(1, fx2 - fx1), max(1, fy2 - fy1)),
+                interpolation=cv2.INTER_LANCZOS4,
+            )
+            cv2.imwrite(
+                os.path.join(MUSE_DEBUG_DIR, f"{stamp}_generated_bbox.jpg"),
+                gen,
+            )
+
+            m = np.ascontiguousarray(np.asarray(mask_array), dtype=np.uint8)
+            cv2.imwrite(
+                os.path.join(MUSE_DEBUG_DIR, f"{stamp}_mask_crop.jpg"),
+                m,
+            )
+
+            overlay = body.copy()
+            cx1, cy1, cx2, cy2 = [int(v) for v in crop_box]
+            ox1, oy1 = max(0, cx1), max(0, cy1)
+            ox2, oy2 = min(overlay.shape[1], cx2), min(overlay.shape[0], cy2)
+            roi = overlay[oy1:oy2, ox1:ox2]
+            if roi.size:
+                mask_small = cv2.resize(
+                    m, (roi.shape[1], roi.shape[0]), interpolation=cv2.INTER_LINEAR
+                )
+                red = np.zeros_like(roi)
+                red[..., 2] = 255
+                alpha = (mask_small.astype(np.float32) / 255.0 * 0.70)[..., None]
+                roi[:] = (
+                    roi.astype(np.float32) * (1.0 - alpha)
+                    + red.astype(np.float32) * alpha
+                ).astype(np.uint8)
+
+            cv2.rectangle(overlay, (fx1, fy1), (fx2, fy2), (255, 255, 255), 2)
+            cv2.imwrite(
+                os.path.join(MUSE_DEBUG_DIR, f"{stamp}_mask_overlay.jpg"),
+                overlay,
+            )
+        except Exception as e:
+            print(f"[LipSync][DEBUG] image save failed: {e}")
+
     def _compose_mouth(
         self,
         body: np.ndarray,
@@ -2292,6 +2388,10 @@ class LipSyncEngine:
 
             damped_256 = np.ascontiguousarray(damped_256, dtype=np.uint8)
 
+            # FINAL FIX: do not blend the full jaw/face reconstruction.
+            # Keep only a soft mouth-region gate.
+            blend_mask = self._mouth_only_mask(mask_array, crop_box, face_box)
+
             if whisper_idx is not None and int(whisper_idx) % 25 == 0:
                 print(
                     f"[LipSync] COMPOSE idx={whisper_idx} "
@@ -2300,124 +2400,12 @@ class LipSyncEngine:
                 )
 
             blended = get_image_blending(
-                body, damped_256, list(face_box), mask_array, crop_box
+                body, damped_256, list(face_box), blend_mask, crop_box
             )
-
-            # ================================================================
-            # MUSE TALK MASK / SPATIAL DIAGNOSTIC
-            # ================================================================
-            # This is intentionally diagnostic-only. It does NOT alter the
-            # production composite. It tells us whether MuseTalk's parsing
-            # mask is actually concentrated around the mouth/jaw or is
-            # covering too much of the face.
             if whisper_idx is not None and int(whisper_idx) % 25 == 0:
-                try:
-                    m = np.asarray(mask_array, dtype=np.uint8)
-                    active = m > 32
-                    ys, xs = np.where(active)
-                    active_area = int(active.sum())
-                    total_area = int(active.size)
-                    area_ratio = (active_area / total_area) if total_area else 0.0
-
-                    if len(xs):
-                        mx1, mx2 = int(xs.min()), int(xs.max())
-                        my1, my2 = int(ys.min()), int(ys.max())
-                        centroid_x = float(xs.mean())
-                        centroid_y = float(ys.mean())
-                    else:
-                        mx1 = mx2 = my1 = my2 = -1
-                        centroid_x = centroid_y = -1.0
-
-                    print(
-                        f"[LipSync][MASK] idx={whisper_idx} "
-                        f"active={active_area}/{total_area} ({area_ratio*100:.2f}%) "
-                        f"active_bbox=({mx1},{my1},{mx2},{my2}) "
-                        f"centroid=({centroid_x:.1f},{centroid_y:.1f}) "
-                        f"mask_shape={m.shape} crop={crop_box} face={face_box}"
-                    )
-
-                    # Optional visual dump. Enable with:
-                    #   AI_WORKER_MUSE_DEBUG=1
-                    # Files are written to AI_WORKER_MUSE_DEBUG_DIR.
-                    if os.environ.get("AI_WORKER_MUSE_DEBUG", "0") == "1":
-                        debug_dir = os.environ.get(
-                            "AI_WORKER_MUSE_DEBUG_DIR", "/tmp/musetalk_debug"
-                        )
-                        os.makedirs(debug_dir, exist_ok=True)
-                        tag = f"{clip.name}_idx{int(whisper_idx):05d}"
-
-                        # Original frame.
-                        cv2.imwrite(
-                            os.path.join(debug_dir, f"{tag}_01_original.jpg"),
-                            body,
-                        )
-
-                        # Generated MuseTalk face exactly as used for blending.
-                        cv2.imwrite(
-                            os.path.join(debug_dir, f"{tag}_02_generated_bbox.jpg"),
-                            damped_256,
-                        )
-
-                        # Mask visualized in crop coordinates. White = active.
-                        crop_w = max(1, int(crop_box[2] - crop_box[0]))
-                        crop_h = max(1, int(crop_box[3] - crop_box[1]))
-                        mask_crop = cv2.resize(
-                            m, (crop_w, crop_h), interpolation=cv2.INTER_NEAREST
-                        )
-                        mask_bgr = cv2.cvtColor(mask_crop, cv2.COLOR_GRAY2BGR)
-                        cv2.imwrite(
-                            os.path.join(debug_dir, f"{tag}_03_mask_crop.jpg"),
-                            mask_bgr,
-                        )
-
-                        # Red mask overlay on the ORIGINAL frame.
-                        overlay = body.copy()
-                        rx1, ry1 = int(crop_box[0]), int(crop_box[1])
-                        rx2, ry2 = int(crop_box[2]), int(crop_box[3])
-                        rx1 = max(0, min(rx1, overlay.shape[1]))
-                        rx2 = max(rx1, min(rx2, overlay.shape[1]))
-                        ry1 = max(0, min(ry1, overlay.shape[0]))
-                        ry2 = max(ry1, min(ry2, overlay.shape[0]))
-                        if rx2 > rx1 and ry2 > ry1:
-                            local_mask = mask_crop[: ry2-ry1, : rx2-rx1]
-                            # Resize again in case clipping changed dimensions.
-                            if local_mask.shape[:2] != (ry2-ry1, rx2-rx1):
-                                local_mask = cv2.resize(
-                                    m,
-                                    (rx2-rx1, ry2-ry1),
-                                    interpolation=cv2.INTER_NEAREST,
-                                )
-                            red = np.zeros_like(overlay[ry1:ry2, rx1:rx2])
-                            red[:, :, 2] = local_mask
-                            alpha = (local_mask.astype(np.float32) / 255.0) * 0.55
-                            base = overlay[ry1:ry2, rx1:rx2].astype(np.float32)
-                            overlay[ry1:ry2, rx1:rx2] = (
-                                base * (1.0 - alpha[..., None])
-                                + red.astype(np.float32) * alpha[..., None]
-                            ).astype(np.uint8)
-
-                        # Draw bbox around the exact generated face region.
-                        cv2.rectangle(
-                            overlay,
-                            (x1, y1),
-                            (x2 - 1, y2 - 1),
-                            (255, 255, 255),
-                            2,
-                        )
-                        cv2.imwrite(
-                            os.path.join(debug_dir, f"{tag}_04_mask_overlay.jpg"),
-                            overlay,
-                        )
-
-                        # Final output.
-                        cv2.imwrite(
-                            os.path.join(debug_dir, f"{tag}_05_final.jpg"),
-                            blended,
-                        )
-                except Exception as mask_diag_err:
-                    print(
-                        f"[LipSync][MASK] diagnostic failed: {mask_diag_err}"
-                    )
+                self._save_muse_debug(
+                    body, mouth_256, blend_mask, crop_box, face_box, int(whisper_idx)
+                )
 
             # Composite diagnostic: if MuseTalk output changes but the final
             # bbox barely changes, the problem is mask/crop/blending.
@@ -2427,13 +2415,14 @@ class LipSyncEngine:
                     before_roi = body[by1:by2, bx1:bx2].astype(np.float32)
                     after_roi = blended[by1:by2, bx1:bx2].astype(np.float32)
                     composite_delta = float(np.mean(np.abs(after_roi - before_roi)))
-                    m = np.asarray(mask_array)
+                    m = np.asarray(blend_mask)
                     print(
                         f"[LipSync][DIAG] compose idx={whisper_idx} "
                         f"composite_delta={composite_delta:.4f} "
                         f"mask_shape={m.shape} mask_dtype={m.dtype} "
                         f"mask_min={float(m.min()):.2f} mask_max={float(m.max()):.2f} "
-                        f"mask_mean={float(m.mean()):.2f} crop={crop_box}"
+                        f"mask_mean={float(m.mean()):.2f} crop={crop_box} "
+                        f"mouth_gate={int(MOUTH_MASK_GATE)} center_y={MOUTH_MASK_CENTER_Y:.2f} rx={MOUTH_MASK_RX:.2f} ry={MOUTH_MASK_RY:.2f}"
                     )
                 except Exception as diag_err:
                     print(f"[LipSync][DIAG] compose diagnostic failed: {diag_err}")
