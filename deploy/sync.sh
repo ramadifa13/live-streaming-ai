@@ -100,26 +100,13 @@ purge_legacy_tts() {
 		"${WORKER_DIR:-}/supertonic_tts" \
 		2>/dev/null || true
 
-	_strip_legacy_tts_env() {
-		local envf="$1"
-		[ -f "$envf" ] || return 0
-		if grep -qE '^(export[[:space:]]+)?(PIPER_|TTS_PIPER|PIPER_TTS|SUPERTONIC_|TTS_ENGINE=supertonic)' "$envf" 2>/dev/null; then
-			grep -vE '^(export[[:space:]]+)?(PIPER_|TTS_PIPER|PIPER_TTS|SUPERTONIC_|TTS_ENGINE=supertonic)' "$envf" > "${envf}.notts" || true
-			if [ -s "${envf}.notts" ] || [ -f "${envf}.notts" ]; then
-				mv -f "${envf}.notts" "$envf"
-				echo "[TTS] Variabel Piper/Supertonic dihapus dari $envf"
-			fi
-		fi
-	}
-	_strip_legacy_tts_env "${WORKER_DIR:-}/.env"
-	_strip_legacy_tts_env "${DEPLOY_DIR:-}/.env"
 	echo "[TTS] Sisa Piper/Supertonic dihapus. Worker hanya menerima audio backend."
 }
 
 cleanup_legacy_env() {
-	echo "[ENV] Membersihkan sisa file .env lama untuk zero-config..."
-	rm -f "$WORKER_DIR/.env" "$DEPLOY_DIR/.env" "$DEPLOY_DIR/.env.example" "$DEPLOY_DIR/env.local" 2>/dev/null || true
-	echo "[ENV] Zero-config aktif — worker menggunakan code defaults optimal."
+	echo "[ENV] Membersihkan sisa konfigurasi lama untuk zero-config..."
+	true
+	echo "[ENV] Zero-config aktif — worker menggunakan defaults code optimal."
 }
 
 bootstrap_worker_env() {
@@ -253,9 +240,6 @@ sync_worker_files() {
 	fi
 
 	purge_legacy_tts
-	if [ -f "$DEPLOY_DIR/.env.example" ]; then
-		cp -f "$DEPLOY_DIR/.env.example" "$WORKER_DIR/.env.example" 2>/dev/null || true
-	fi
 
 	if [ -d "$WORKER_DIR/MuseTalk" ]; then
 		echo "[SYNC] Menyalin patch MuseTalk (inference + preprocessing) ..."

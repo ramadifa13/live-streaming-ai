@@ -34,8 +34,7 @@ chmod +x *.sh scripts/*.sh 2>/dev/null || true
 echo "[BOOT] MuseTalk setup start $(date -Iseconds)"
 bash setup.sh
 
-echo "[BOOT] env + sync + restart $(date -Iseconds)"
-cp -n .env.example /workspace/ai_live_worker/.env || true
+echo "[BOOT] sync + restart $(date -Iseconds)"
 
 FORCE_ASSETS=1 bash sync.sh --restart
 

@@ -43,9 +43,8 @@ cd "$REPO_DIR/deploy"
 echo "[*] MuseTalk setup (idempotent jika .setup_complete ada)"
 GIT_PULL=0 bash setup.sh
 
-echo "[*] Worker .env + restart API (TTS is owned by backend)"
+echo "[*] Restart API (TTS is owned by backend)"
 mkdir -p "$WORKER_DIR"
-cp -n .env.example "$WORKER_DIR/.env"
 
 FORCE_ASSETS=1 bash sync.sh --restart
 

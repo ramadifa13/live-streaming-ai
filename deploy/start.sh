@@ -82,8 +82,6 @@ if [ -f "$SYNC_SCRIPT" ]; then
 	purge_legacy_tts
 fi
 
-# Zero-config: hapus file .env lama jika ada
-rm -f "$WORKER_DIR/.env" 2>/dev/null || true
 export BROADCAST_MODE="${BROADCAST_MODE:-ai_worker}"
 export WORKER_PORT="${PORT:-${WORKER_PORT:-8000}}"
 echo "[INFO] BROADCAST_MODE=${BROADCAST_MODE}"

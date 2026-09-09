@@ -29,21 +29,13 @@ except ImportError:
     def fit_bgr(frame, width=CANVAS_W, height=CANVAS_H):
         return frame
 
-# BROADCAST_MODE=ai_worker / AI_WORKER_FPS lock
 TARGET_FPS = 24
 SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
 BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2
-
-# ====== SMOOTHING PARAMETERS (untuk natural gerakan) ======
-# CROSSFADE_FRAMES: frame untuk smooth transition antar video clip
-# Default 4 = terlalu cepat/patah-patah. Raise ke 8-12 untuk lebih smooth
-# Set via env: AI_WORKER_CROSSFADE_FRAMES=12
+    
 _cf_frames = int(os.environ.get("AI_WORKER_CROSSFADE_FRAMES", "8"))
 CROSSFADE_FRAMES = max(2, _cf_frames)
-
-# OVERLAP_FRAMES: frame untuk body pose blending antar clip
-# Default 4 = cepat. Raise ke 6-8 untuk smoother body motion
 _ov_frames = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "6"))
 OVERLAP_FRAMES = max(2, _ov_frames)
 
@@ -94,9 +86,10 @@ MOUTH_STRENGTH = 0.72
 _mouth_temp = float(os.environ.get("AI_WORKER_MOUTH_TEMPORAL", "0.30"))
 MOUTH_TEMPORAL = max(0.0, min(1.0, _mouth_temp))
 
-# Batas per-frame dibuat lebih ketat agar mulut tidak membesar / melebar.
+# Batas per-frame: nilai lebih besar agar mulut bisa bergerak natural.
+# Nilai 2.5 terlalu ketat sehingga mulut tidak bergerak sama sekali.
 MOUTH_MAX_DELTA = 8.0
-MOUTH_FRAME_DELTA = 2.5
+MOUTH_FRAME_DELTA = 6.0
 
 # Saat MuseTalk pertama kali masuk, bbox face bisa bergetar karena perubahan
 # landmark per-frame. Batasi pergeseran bbox agar transisi awal stabil.
@@ -2121,6 +2114,7 @@ class LipSyncEngine:
         y2 = max(y1 + 1, min(y2, body.shape[0]))
         face_box = (x1, y1, x2, y2)
         try:
+            # resize_generated_to_bbox menghasilkan crop berukuran bbox (bw x bh)
             mouth = resize_generated_to_bbox(
                 mouth_256, face_box, square_pad=self._square_pad
             )
@@ -2128,12 +2122,16 @@ class LipSyncEngine:
             if orig.size == 0:
                 print(f"[LipSync] ERROR: Empty orig crop for face_box={face_box}")
                 return body
-            # Jangan mix/unsharp: VAE 256 + lerp idle = bibir buram.
+
+            # Dampen: lerp antara mulut original dan mulut yang di-generate MuseTalk.
+            # Ini menjaga mulut terlihat natural tanpa terlalu "plastik".
             strength = _mouth_strength_for_pcm(pcm)
             if strength >= 0.999 and float(MOUTH_MAX_DELTA) <= 0:
                 damped = mouth
             else:
                 damped = _dampen_generated_mouth(orig, mouth, strength)
+
+            # Temporal smoothing antar frame agar gerakan halus
             if (
                 self._prev_composed is not None
                 and self._prev_composed.shape == damped.shape
@@ -2146,6 +2144,8 @@ class LipSyncEngine:
                     1.0 - float(MOUTH_TEMPORAL),
                     0,
                 )
+
+            # Per-frame delta clamp — hanya aktif jika MOUTH_FRAME_DELTA > 0
             jump = float(MOUTH_FRAME_DELTA)
             if (
                 jump > 0
@@ -2160,6 +2160,16 @@ class LipSyncEngine:
                     255,
                 ).astype(np.uint8)
             self._prev_composed = damped
+
+            # FIX KRITIS: get_image_blending MuseTalk menerima (ori_frame, res_frame_resized,
+            # face_box, mask_array, crop_box) — res_frame_resized adalah hasil
+            # resize ke ukuran bbox, BUKAN 256x256. damped sudah berukuran bbox yang benar.
+            # Pastikan dimensi damped cocok dengan crop body sebelum blending.
+            bh, bw = y2 - y1, x2 - x1
+            if damped.shape[:2] != (bh, bw):
+                damped = cv2.resize(damped, (bw, bh), interpolation=cv2.INTER_LINEAR)
+                self._prev_composed = damped
+
             blended = get_image_blending(
                 body, damped, list(face_box), mask_array, crop_box
             )
@@ -2358,11 +2368,14 @@ def frame_fetcher_loop(
         else:
             pcm, is_speech = audio_fn()
 
-        if bridge is not None and bridge.is_utterance_active():
-            if is_speech and not was_speaking:
-                sm.begin_utterance()
+        utterance_active = bridge is not None and bridge.is_utterance_active()
 
-            elif not is_speech and was_speaking and bridge.is_audio_exhausted():
+        if utterance_active:
+            # begin_utterance() sudah dipanggil dari _on_utterance_start callback.
+            # Di sini kita TIDAK memanggil begin_utterance() lagi untuk menghindari
+            # double-call yang menyebabkan state machine tidak masuk TALK dengan benar.
+            # Hanya tandai audio selesai dan trigger end_utterance saat visual tuntas.
+            if not is_speech and was_speaking and bridge.is_audio_exhausted():
                 sm.mark_utterance_audio_done()
             if sm.utterance_visual_complete():
                 another_ready = (
@@ -2374,7 +2387,7 @@ def frame_fetcher_loop(
                 bridge.signal_visual_complete()
 
         # BE reload / diam: jangan stuck hold-talk di talk clip.
-        if bridge is not None and not bridge.is_utterance_active():
+        if bridge is not None and not utterance_active:
             queue_ready = (
                 bridge.has_upcoming_work()
                 if hasattr(bridge, "has_upcoming_work")
@@ -2384,20 +2397,25 @@ def frame_fetcher_loop(
 
         was_speaking = is_speech or (
             bridge is not None
-            and bridge.is_utterance_active()
+            and utterance_active
             and not bridge.is_audio_exhausted()
         )
 
         action = action_fn()
         pkt = sm.next_packet(pcm, is_speech, llm_action=action, whisper_idx=whisper_idx)
         pkt.whisper_idx = whisper_idx
-        if (
-            whisper_idx is not None
-            and pkt.clip_name
-            and sm.bank.clip_has_musetalk(pkt.clip_name)
-        ):
-            pkt.needs_lipsync = True
-        elif not sm.bank.clip_has_musetalk(pkt.clip_name):
+
+        # FIX: needs_lipsync harus aktif selama utterance aktif + clip punya materials.
+        # Sebelumnya hanya diset saat whisper_idx is not None — ini menyebabkan frame
+        # pertama (saat whisper_idx bisa None sesaat) tidak mendapatkan lipsync.
+        if sm.bank.clip_has_musetalk(pkt.clip_name):
+            if whisper_idx is not None:
+                pkt.needs_lipsync = True
+            elif utterance_active and sm._utterance_active:
+                # Pertahankan needs_lipsync=True selama utterance aktif meski
+                # whisper_idx sesaat None (transisi antar chunk).
+                pkt.needs_lipsync = pkt.needs_lipsync or (is_speech and sm._utterance_active)
+        else:
             pkt.needs_lipsync = False
         metrics.set_gauge("raw_queue_depth", float(raw_q.qsize()))
         if bridge is not None:
