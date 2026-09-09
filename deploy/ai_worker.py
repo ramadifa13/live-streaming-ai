@@ -2303,6 +2303,122 @@ class LipSyncEngine:
                 body, damped_256, list(face_box), mask_array, crop_box
             )
 
+            # ================================================================
+            # MUSE TALK MASK / SPATIAL DIAGNOSTIC
+            # ================================================================
+            # This is intentionally diagnostic-only. It does NOT alter the
+            # production composite. It tells us whether MuseTalk's parsing
+            # mask is actually concentrated around the mouth/jaw or is
+            # covering too much of the face.
+            if whisper_idx is not None and int(whisper_idx) % 25 == 0:
+                try:
+                    m = np.asarray(mask_array, dtype=np.uint8)
+                    active = m > 32
+                    ys, xs = np.where(active)
+                    active_area = int(active.sum())
+                    total_area = int(active.size)
+                    area_ratio = (active_area / total_area) if total_area else 0.0
+
+                    if len(xs):
+                        mx1, mx2 = int(xs.min()), int(xs.max())
+                        my1, my2 = int(ys.min()), int(ys.max())
+                        centroid_x = float(xs.mean())
+                        centroid_y = float(ys.mean())
+                    else:
+                        mx1 = mx2 = my1 = my2 = -1
+                        centroid_x = centroid_y = -1.0
+
+                    print(
+                        f"[LipSync][MASK] idx={whisper_idx} "
+                        f"active={active_area}/{total_area} ({area_ratio*100:.2f}%) "
+                        f"active_bbox=({mx1},{my1},{mx2},{my2}) "
+                        f"centroid=({centroid_x:.1f},{centroid_y:.1f}) "
+                        f"mask_shape={m.shape} crop={crop_box} face={face_box}"
+                    )
+
+                    # Optional visual dump. Enable with:
+                    #   AI_WORKER_MUSE_DEBUG=1
+                    # Files are written to AI_WORKER_MUSE_DEBUG_DIR.
+                    if os.environ.get("AI_WORKER_MUSE_DEBUG", "0") == "1":
+                        debug_dir = os.environ.get(
+                            "AI_WORKER_MUSE_DEBUG_DIR", "/tmp/musetalk_debug"
+                        )
+                        os.makedirs(debug_dir, exist_ok=True)
+                        tag = f"{clip.name}_idx{int(whisper_idx):05d}"
+
+                        # Original frame.
+                        cv2.imwrite(
+                            os.path.join(debug_dir, f"{tag}_01_original.jpg"),
+                            body,
+                        )
+
+                        # Generated MuseTalk face exactly as used for blending.
+                        cv2.imwrite(
+                            os.path.join(debug_dir, f"{tag}_02_generated_bbox.jpg"),
+                            damped_256,
+                        )
+
+                        # Mask visualized in crop coordinates. White = active.
+                        crop_w = max(1, int(crop_box[2] - crop_box[0]))
+                        crop_h = max(1, int(crop_box[3] - crop_box[1]))
+                        mask_crop = cv2.resize(
+                            m, (crop_w, crop_h), interpolation=cv2.INTER_NEAREST
+                        )
+                        mask_bgr = cv2.cvtColor(mask_crop, cv2.COLOR_GRAY2BGR)
+                        cv2.imwrite(
+                            os.path.join(debug_dir, f"{tag}_03_mask_crop.jpg"),
+                            mask_bgr,
+                        )
+
+                        # Red mask overlay on the ORIGINAL frame.
+                        overlay = body.copy()
+                        rx1, ry1 = int(crop_box[0]), int(crop_box[1])
+                        rx2, ry2 = int(crop_box[2]), int(crop_box[3])
+                        rx1 = max(0, min(rx1, overlay.shape[1]))
+                        rx2 = max(rx1, min(rx2, overlay.shape[1]))
+                        ry1 = max(0, min(ry1, overlay.shape[0]))
+                        ry2 = max(ry1, min(ry2, overlay.shape[0]))
+                        if rx2 > rx1 and ry2 > ry1:
+                            local_mask = mask_crop[: ry2-ry1, : rx2-rx1]
+                            # Resize again in case clipping changed dimensions.
+                            if local_mask.shape[:2] != (ry2-ry1, rx2-rx1):
+                                local_mask = cv2.resize(
+                                    m,
+                                    (rx2-rx1, ry2-ry1),
+                                    interpolation=cv2.INTER_NEAREST,
+                                )
+                            red = np.zeros_like(overlay[ry1:ry2, rx1:rx2])
+                            red[:, :, 2] = local_mask
+                            alpha = (local_mask.astype(np.float32) / 255.0) * 0.55
+                            base = overlay[ry1:ry2, rx1:rx2].astype(np.float32)
+                            overlay[ry1:ry2, rx1:rx2] = (
+                                base * (1.0 - alpha[..., None])
+                                + red.astype(np.float32) * alpha[..., None]
+                            ).astype(np.uint8)
+
+                        # Draw bbox around the exact generated face region.
+                        cv2.rectangle(
+                            overlay,
+                            (x1, y1),
+                            (x2 - 1, y2 - 1),
+                            (255, 255, 255),
+                            2,
+                        )
+                        cv2.imwrite(
+                            os.path.join(debug_dir, f"{tag}_04_mask_overlay.jpg"),
+                            overlay,
+                        )
+
+                        # Final output.
+                        cv2.imwrite(
+                            os.path.join(debug_dir, f"{tag}_05_final.jpg"),
+                            blended,
+                        )
+                except Exception as mask_diag_err:
+                    print(
+                        f"[LipSync][MASK] diagnostic failed: {mask_diag_err}"
+                    )
+
             # Composite diagnostic: if MuseTalk output changes but the final
             # bbox barely changes, the problem is mask/crop/blending.
             if whisper_idx is not None and int(whisper_idx) % 25 == 0:
