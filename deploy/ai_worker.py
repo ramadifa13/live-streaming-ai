@@ -2117,64 +2117,60 @@ class LipSyncEngine:
         y2 = max(y1 + 1, min(y2, body.shape[0]))
         face_box = (x1, y1, x2, y2)
         try:
-            # resize_generated_to_bbox menghasilkan crop berukuran bbox (bw x bh)
-            mouth = resize_generated_to_bbox(
-                mouth_256, face_box, square_pad=self._square_pad
-            )
-            orig = body[y1:y2, x1:x2]
-            if orig.size == 0:
-                print(f"[LipSync] ERROR: Empty orig crop for face_box={face_box}")
+            cx1, cy1, cx2, cy2 = [int(v) for v in crop_box]
+            cx1 = max(0, cx1)
+            cy1 = max(0, cy1)
+            cx2 = min(body.shape[1], cx2)
+            cy2 = min(body.shape[0], cy2)
+            
+            orig_crop = body[cy1:cy2, cx1:cx2]
+            if orig_crop.size == 0:
+                print(f"[LipSync] ERROR: Empty orig crop for crop_box={crop_box}")
                 return body
+                
+            orig_256 = cv2.resize(orig_crop, (256, 256), interpolation=cv2.INTER_LINEAR)
 
             # Dampen: lerp antara mulut original dan mulut yang di-generate MuseTalk.
-            # Ini menjaga mulut terlihat natural tanpa terlalu "plastik".
             strength = _mouth_strength_for_pcm(pcm)
             if strength >= 0.999 and float(MOUTH_MAX_DELTA) <= 0:
-                damped = mouth
+                damped_256 = mouth_256
             else:
-                damped = _dampen_generated_mouth(orig, mouth, strength)
+                damped_256 = _dampen_generated_mouth(orig_256, mouth_256, strength)
 
             # Temporal smoothing antar frame agar gerakan halus
             if (
                 self._prev_composed is not None
-                and self._prev_composed.shape == damped.shape
+                and self._prev_composed.shape == damped_256.shape
                 and 0.0 < MOUTH_TEMPORAL < 0.95
             ):
-                damped = cv2.addWeighted(
+                damped_256 = cv2.addWeighted(
                     self._prev_composed,
                     float(MOUTH_TEMPORAL),
-                    damped,
+                    damped_256,
                     1.0 - float(MOUTH_TEMPORAL),
                     0,
                 )
 
-            # Per-frame delta clamp — hanya aktif jika MOUTH_FRAME_DELTA > 0
+            # Per-frame delta clamp
             jump = float(MOUTH_FRAME_DELTA)
             if (
                 jump > 0
                 and self._prev_composed is not None
-                and self._prev_composed.shape == damped.shape
+                and self._prev_composed.shape == damped_256.shape
             ):
                 prev_f = self._prev_composed.astype(np.float32)
-                now_f = damped.astype(np.float32)
-                damped = np.clip(
+                now_f = damped_256.astype(np.float32)
+                damped_256 = np.clip(
                     prev_f + np.clip(now_f - prev_f, -jump, jump),
                     0,
                     255,
                 ).astype(np.uint8)
-            self._prev_composed = damped
+                
+            self._prev_composed = damped_256
 
-            # FIX KRITIS: get_image_blending MuseTalk menerima (ori_frame, res_frame_resized,
-            # face_box, mask_array, crop_box) — res_frame_resized adalah hasil
-            # resize ke ukuran bbox, BUKAN 256x256. damped sudah berukuran bbox yang benar.
-            # Pastikan dimensi damped cocok dengan crop body sebelum blending.
-            bh, bw = y2 - y1, x2 - x1
-            if damped.shape[:2] != (bh, bw):
-                damped = cv2.resize(damped, (bw, bh), interpolation=cv2.INTER_LINEAR)
-                self._prev_composed = damped
-
+            # Meneruskan image berukuran 256x256 ke get_image_blending
             blended = get_image_blending(
-                body, damped, list(face_box), mask_array, crop_box
+                body, damped_256, list(face_box), mask_array, crop_box
             )
             return blended
         except Exception as err:
