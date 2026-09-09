@@ -38,8 +38,8 @@ CROSSFADE_FRAMES = 4
 OVERLAP_FRAMES = 4
 OVERLAP_FRAMES_MAX = 6
 BBOX_SMOOTH_WINDOW = 7
-RAW_QUEUE_SIZE = 24
-RENDER_QUEUE_SIZE = 48
+RAW_QUEUE_SIZE = 120
+RENDER_QUEUE_SIZE = 240
 RAW_QUEUE_BLOCK_SEC = 0.25
 MASK_FEATHER_PX = 5
 AMBIENT_MIN_SEC = 4
@@ -72,13 +72,13 @@ MOUTH_STRENGTH = 1.0
 MOUTH_TEMPORAL = 0.12
 MOUTH_MAX_DELTA = 0
 MOUTH_FRAME_DELTA = 0
-LIPSYNC_PREROLL_FRAMES = 10
+LIPSYNC_PREROLL_FRAMES = 2
 LIPSYNC_WAIT_SEC = 0
 # Sync shift 0 memastikan viseme tepat waktu dengan audio stream
 LIPSYNC_SYNC_SHIFT = 0
 LIPSYNC_PREROLL_TIMEOUT_SEC = 4.0
-# 1 = jangan start audio sampai preroll mouths penuh (anti stutter awal kalimat).
-LIPSYNC_HARD_PREROLL = True
+# 0 = mulai audio saat mouth 1-2 frame siap (hilangkan delay 400ms/utterance).
+LIPSYNC_HARD_PREROLL = False
 # 1 = mouth miss → body-only (bukan sticky last mouth).
 MOUTH_MISS_BODY_ONLY = True
 

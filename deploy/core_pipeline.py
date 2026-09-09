@@ -771,7 +771,7 @@ class NewAIVisualWorker:
         self.engine = LipSyncEngine(
             models,
             self.bank,
-            batch_size=8,
+            batch_size=4,
             face_registry=self.sm._face_registry
             if hasattr(self.sm, "_face_registry")
             else None,

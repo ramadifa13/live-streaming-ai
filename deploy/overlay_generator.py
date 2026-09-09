@@ -21,13 +21,21 @@ def download_or_decode_image(
     if src.startswith("data:image/"):
         try:
             _, encoded = src.split(",", 1)
-            img_data = base64.b64decode(encoded)
+            img_data = base64.b64decode(encoded.strip())
             with open(target_path, "wb") as f:
                 f.write(img_data)
             return target_path
         except Exception as e:
-            print(f"[OVERLAY ERROR] Gagal decode base64: {e}")
+            print(f"[OVERLAY ERROR] Gagal decode data:image base64: {e}")
             return None
+    elif src.startswith(("/9j/", "iVBORw", "UklGR", "R0lGO")) or (len(src) > 256 and not src.startswith(("http", "/", "\\")) and " " not in src[:64]):
+        try:
+            img_data = base64.b64decode(src)
+            with open(target_path, "wb") as f:
+                f.write(img_data)
+            return target_path
+        except Exception as e:
+            print(f"[OVERLAY ERROR] Gagal decode raw base64: {e}")
     elif src.startswith("http://") or src.startswith("https://"):
         try:
             req = urllib.request.Request(
@@ -157,16 +165,16 @@ def render_pil_overlay(
         shadow_card = shadow_card.filter(ImageFilter.GaussianBlur(radius=12))
         overlay = Image.alpha_composite(overlay, shadow_card)
 
-        card_img = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
-        card_draw = ImageDraw.Draw(card_img)
+        card_canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+        card_draw = ImageDraw.Draw(card_canvas)
         card_draw.rounded_rectangle(
-            (0, 0, card_w, card_h),
+            (card_x, card_y, card_x + card_w, card_y + card_h),
             radius=radius,
             fill=(255, 255, 255, 250),
             outline=(241, 245, 249, 255),
             width=2,
         )
-        overlay.paste(card_img, (card_x, card_y), card_img)
+        overlay = Image.alpha_composite(overlay, card_canvas)
         draw = ImageDraw.Draw(overlay)
 
         thumb_size = 106
