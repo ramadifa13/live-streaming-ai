@@ -698,6 +698,8 @@ class SpeechBridge:
             try:
                 self._on_utterance_start(candidate)
             except Exception as err:
+                import traceback
+                traceback.print_exc()
                 print(f"[SpeechBridge] on_start notice: {err}")
         print(f"[SpeechBridge] ▶ Playing {candidate.task_id}")
 
