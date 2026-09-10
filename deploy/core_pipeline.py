@@ -618,21 +618,15 @@ class StreamBroadcaster(threading.Thread):
                                 pkt = self.render_q.get(timeout=0.25)
                             except queue.Empty:
                                 metrics.inc("broadcast_speech_wait_packet")
-                        if pkt is not None:
-                            frame = pkt.frame
-                            pcm = pkt.audio_pcm
-                            clip_name = getattr(pkt, "clip_name", "") or "idle"
-                            frame_idx = int(getattr(pkt, "frame_idx", 0) or 0)
-                            self.fallback_player.sync(clip_name, frame_idx)
-                        else:
-                            frame = self.fallback_player.next_frame()
-                            pcm = _silence_bytes_for_frame(self._audio_frame_index)
-                            clip_name = getattr(
-                                self.fallback_player._clip, "name", "idle"
-                            )
-                            frame_idx = int(
-                                getattr(self.fallback_player, "_idx", 0) or 0
-                            )
+                        if pkt is None:
+                            # Still waiting / stopping — do not inject silence
+                            # (silence holes make mouth/audio desync and "diem").
+                            continue
+                        frame = pkt.frame
+                        pcm = pkt.audio_pcm
+                        clip_name = getattr(pkt, "clip_name", "") or "idle"
+                        frame_idx = int(getattr(pkt, "frame_idx", 0) or 0)
+                        self.fallback_player.sync(clip_name, frame_idx)
                     else:
                         # ZERO-LATENCY FALLBACK (Mencegah patah/loncat dengan ping-pong continuous player)
                         metrics.inc("broadcast_idle_fallback")
@@ -746,8 +740,10 @@ class NewAIVisualWorker:
         self.sm = None
         self.engine = None
 
-        self.in_q = queue.Queue(maxsize=100)
-        self.render_q = queue.Queue(maxsize=300)
+        # Match ai_worker short queues — deep render_q stays "penuh" forever
+        # under realtime pacing and causes jump / silence / desync.
+        self.in_q = queue.Queue(maxsize=48)
+        self.render_q = queue.Queue(maxsize=72)
         self.stop_event = threading.Event()
 
         self.threads = []

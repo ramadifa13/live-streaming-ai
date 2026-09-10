@@ -72,6 +72,12 @@ def check_seamless_contract() -> None:
         _fail("LIPSYNC_HARD_PREROLL hilang")
     if "broadcast_micro_advance" not in src:
         _fail("broadcast_micro_advance metric path hilang")
+    if "broadcast_lag_catchup" in src and "metrics.inc(\"broadcast_lag_catchup\")" in src:
+        _fail("broadcast_lag_catchup masih aktif (penyebab loncat/audio cepat)")
+    if "broadcast_seq_fast_forward" in src and "metrics.inc(\"broadcast_seq_fast_forward\")" in src:
+        _fail("broadcast_seq_fast_forward masih aktif")
+    if "RENDER_QUEUE_SIZE = 240" in src or "maxsize=300" in src:
+        _fail("render queue terlalu dalam (harus pendek + backpressure)")
     print("[INVARIANT] seamless/continuity contract OK")
 
 

@@ -47,8 +47,10 @@ OVERLAP_FRAMES_MAX = max(OVERLAP_FRAMES, 6)
 _bbox_smooth = int(os.environ.get("AI_WORKER_BBOX_SMOOTH_WINDOW", "12"))
 BBOX_SMOOTH_WINDOW = max(3, _bbox_smooth)
 
-RAW_QUEUE_SIZE = 120
-RENDER_QUEUE_SIZE = 240
+# Short queues (~2–3s). Deep queues + drop-oldest caused stuck depth=300,
+# jumps, silent holes, and mouth/audio desync.
+RAW_QUEUE_SIZE = 48
+RENDER_QUEUE_SIZE = 72
 RAW_QUEUE_BLOCK_SEC = 0.25
 MASK_FEATHER_PX = 5
 AMBIENT_MIN_SEC = 4
@@ -76,11 +78,13 @@ REST_GATE_NEAR_FRAMES = 12
 # Setelah audio habis, jangan menambah tail silence tambahan karena itu
 # memperpanjang durasi visual dan memberi efek audio terpotong/panjangan.
 UTTERANCE_TAIL_FRAMES = 0
-BROADCAST_MAX_LAG = 8
-BROADCAST_RENDER_WAIT_SEC = 0.10
-BROADCAST_SPEECH_WAIT_SEC = 10.0
-BROADCAST_SPEECH_GAP_WAIT_SEC = 0.25
-PENDING_MAX = RENDER_QUEUE_SIZE + BROADCAST_MAX_LAG
+# Lag catch-up / seq fast-forward disabled (0): skipping frames made video
+# jump and made platform/FFmpeg audio feel "cepat" then go silent.
+BROADCAST_MAX_LAG = 0
+BROADCAST_RENDER_WAIT_SEC = 0.25
+BROADCAST_SPEECH_WAIT_SEC = 30.0
+BROADCAST_SPEECH_GAP_WAIT_SEC = 2.0
+PENDING_MAX = RENDER_QUEUE_SIZE + 8
 SEAMLESS_THRESHOLD = 0.92
 
 # ====== MOUTH/LIP-SYNC PARAMETERS (untuk smooth lip-sync) ======
@@ -1711,8 +1715,9 @@ class VideoStateMachine:
                 )
                 return
 
-        # Soft failed: during speech / pinned talk, hold pose instead of hard cut.
-        if self._utterance_active or self._talk_pinned:
+        # Soft failed: never hard-cut while speaking / pinned / pin-talk mode —
+        # hard cuts caused the loncat-loncat body jumps mid-stream.
+        if self._utterance_active or self._talk_pinned or PIN_TALK_SCENE:
             metrics.inc("hard_cut_suppressed")
             self.state = new_state
             if to_name == from_name or PIN_TALK_SCENE:
@@ -1721,6 +1726,13 @@ class VideoStateMachine:
                     f"(suppress hard cut → {to_name})"
                 )
                 return
+            # Different clip requested but pin mode off and not same name:
+            # still avoid hard jump — keep current pose.
+            print(
+                f"[StateMachine] Hold {from_name}@{from_idx} "
+                f"(suppress hard cut → {to_name})"
+            )
+            return
 
         self._overlap = None
         self.current_name = to_name
@@ -2698,32 +2710,22 @@ def lipsync_worker_loop(
                 frame_idx=pkt.frame_idx,
             )
             metrics.set_gauge("render_queue_depth", float(render_q.qsize()))
-            speaking = bool(pkt.is_speech or pkt.needs_lipsync)
-            if speaking:
-                while not stop_event.is_set():
-                    try:
-                        render_q.put(out, timeout=0.25)
-                        break
-                    except queue.Full:
-                        metrics.inc("render_queue_speech_backpressure")
-                if stop_event.is_set():
-                    break
-            else:
+            # Never drop-oldest: that discarded speech PCM sitting in the queue
+            # and caused jumps, silent holes, and mouth/audio desync.
+            while not stop_event.is_set():
                 try:
-                    render_q.put(out, block=False)
+                    render_q.put(out, timeout=0.25)
+                    break
                 except queue.Full:
-                    metrics.inc("render_queue_backpressure")
-                    try:
-                        render_q.get_nowait()
-                        render_q.task_done()
-                    except queue.Empty:
-                        pass
-                    try:
-                        render_q.put_nowait(out)
-                    except queue.Full:
-                        metrics.inc("render_queue_dropped")
+                    metrics.inc(
+                        "render_queue_speech_backpressure"
+                        if (pkt.is_speech or pkt.needs_lipsync)
+                        else "render_queue_backpressure"
+                    )
+            if stop_event.is_set():
+                break
             frame_count += 1
-            if frame_count % 300 == 0:
+            if frame_count % 120 == 0:
                 print(
                     f"[LipSync] Processed {frame_count} frames, queue depth: {render_q.qsize()}"
                 )
@@ -2739,25 +2741,12 @@ def lipsync_worker_loop(
                 clip_name=pkt.clip_name,
                 frame_idx=pkt.frame_idx,
             )
-            try:
-                if pkt.is_speech or pkt.needs_lipsync:
-                    while not stop_event.is_set():
-                        try:
-                            render_q.put(fallback, timeout=0.25)
-                            break
-                        except queue.Full:
-                            metrics.inc("render_queue_speech_backpressure")
-                else:
-                    render_q.put_nowait(fallback)
-            except queue.Full:
+            while not stop_event.is_set():
                 try:
-                    render_q.get_nowait()
-                    render_q.task_done()
-                    render_q.put_nowait(fallback)
-                except queue.Empty:
-                    pass
+                    render_q.put(fallback, timeout=0.25)
+                    break
                 except queue.Full:
-                    metrics.inc("render_queue_dropped")
+                    metrics.inc("render_queue_speech_backpressure")
         finally:
             raw_q.task_done()
 
@@ -2771,30 +2760,19 @@ def _put_raw_frame(
     *,
     must_keep: bool = False,
 ) -> None:
-    """Bounded enqueue; speech packets apply backpressure instead of being dropped."""
+    """Bounded enqueue with backpressure — never drop frames (keeps A/V paired)."""
+    del must_keep  # retained for call-site compat; all packets are kept
     try:
         raw_q.put_nowait(pkt)
         return
     except queue.Full:
         metrics.inc("raw_queue_backpressure")
-    if must_keep:
-        while not stop_event.is_set():
-            try:
-                raw_q.put(pkt, timeout=max(0.05, float(block_sec)))
-                return
-            except queue.Full:
-                metrics.inc("raw_queue_speech_backpressure")
-        return
-    try:
-        raw_q.get_nowait()
-        raw_q.task_done()
-        metrics.inc("raw_queue_dropped")
-    except queue.Empty:
-        return
-    try:
-        raw_q.put_nowait(pkt)
-    except queue.Full:
-        metrics.inc("raw_queue_dropped")
+    while not stop_event.is_set():
+        try:
+            raw_q.put(pkt, timeout=max(0.05, float(block_sec)))
+            return
+        except queue.Full:
+            metrics.inc("raw_queue_speech_backpressure")
 
 
 def frame_fetcher_loop(
@@ -3526,34 +3504,16 @@ def broadcaster_loop(
         metrics.set_gauge("render_queue_depth", float(render_q.qsize()))
         utterance_active = bridge_ref is not None and bridge_ref.is_utterance_active()
 
+        # Never skip/fast-forward sequences — that caused loncat + chipmunk-like audio.
         if len(pending) > max(1, PENDING_MAX):
-            if utterance_active:
-                # During speech keep sequence — do not fast-forward (audio speed-up).
-                metrics.inc("broadcast_pending_overflow_held")
-            else:
-                cutoff = max(next_seq, max(pending) - max(1, BROADCAST_MAX_LAG))
-                for stale in [s for s in list(pending) if s < cutoff]:
-                    pending.pop(stale, None)
-                    metrics.inc("broadcast_pending_overflow")
-                if cutoff > next_seq:
-                    next_seq = cutoff
-                    metrics.inc("broadcast_seq_fast_forward")
-
-        if pending and not utterance_active:
-            newest = max(pending.keys())
-            if newest - next_seq > BROADCAST_MAX_LAG:
-                target = max(next_seq, newest - 2)
-                for stale in [s for s in list(pending.keys()) if s < target]:
-                    pending.pop(stale, None)
-                    metrics.inc("broadcast_lag_catchup")
-                next_seq = target
+            metrics.inc("broadcast_pending_overflow_held")
 
         pkt = pending.pop(next_seq, None)
         if pkt is None and utterance_active:
-            # Jangan menulis last_pcm berulang: audio dan MuseTalk harus maju
-            # dari RenderedPacket sequence yang sama.
+            # Hold wall-clock until the matching speech packet arrives. Do not
+            # inject silence or advance next_seq (that desyncs mouth vs audio).
             wait_deadline = time.perf_counter() + max(
-                BROADCAST_RENDER_WAIT_SEC, BROADCAST_SPEECH_GAP_WAIT_SEC
+                BROADCAST_SPEECH_WAIT_SEC, BROADCAST_SPEECH_GAP_WAIT_SEC
             )
             while pkt is None and not stop_event.is_set():
                 pkt = pending.pop(next_seq, None)
@@ -3564,10 +3524,9 @@ def broadcaster_loop(
                     metrics.inc("broadcast_speech_packet_timeout")
                     print(
                         f"[Broadcaster] Timeout menunggu speech packet seq={next_seq}; "
-                        "menghentikan broadcaster agar audio tidak diulang.",
+                        "tahan frame terakhir (tanpa silence hole / tanpa stop).",
                         flush=True,
                     )
-                    stop_event.set()
                     break
                 try:
                     fresh: RenderedPacket = render_q.get(timeout=min(0.25, remaining))
@@ -3577,22 +3536,12 @@ def broadcaster_loop(
                         pending[fresh.seq] = fresh
                 except queue.Empty:
                     continue
-            if pkt is None and not stop_event.is_set():
-                metrics.inc("broadcast_seq_gap_committed")
 
-        if pkt is None and pending:
-            if utterance_active:
-                future = min((seq for seq in pending if seq > next_seq), default=None)
-                if future is not None:
-                    metrics.inc("broadcast_seq_gap_committed")
-            else:
-                pick = min(pending.keys())
-                for stale in [s for s in list(pending.keys()) if s < pick]:
-                    pending.pop(stale, None)
+        if pkt is None and pending and not utterance_active:
+            pick = min(pending.keys())
+            if pick == next_seq:
                 pkt = pending.pop(pick, None)
-                if pkt is not None and pick != next_seq:
-                    metrics.inc("broadcast_seq_resync")
-                next_seq = pick
+            # Do not jump ahead to a future seq during idle — wait in order.
 
         if pkt is not None:
             last_good = pkt.frame
@@ -3605,14 +3554,17 @@ def broadcaster_loop(
             consumed_seq = False
             stale_misses += 1
             metrics.inc("broadcast_fallback_frames")
-            # Micro-advance body instead of freezing last_good (lebih natural).
-            if stale_misses >= 1:
+            if utterance_active:
+                # Hold last good frame + silence only if we truly timed out;
+                # prefer repeating last pcm length silence without advancing seq.
+                metrics.inc("broadcast_micro_advance")
+                pcm = silence
+            elif stale_misses >= IDLE_FALLBACK_AFTER:
                 last_good = idle_player.next_frame()
-                if utterance_active:
-                    metrics.inc("broadcast_micro_advance")
-                elif stale_misses >= IDLE_FALLBACK_AFTER:
-                    metrics.inc("idle_fallback_frames")
-            pcm = silence
+                metrics.inc("idle_fallback_frames")
+                pcm = silence
+            else:
+                pcm = silence
 
         frame_out = _apply_overlay(last_good)
         if bc and not stop_event.is_set():
@@ -3664,8 +3616,9 @@ def broadcaster_loop(
                             )
                         except Exception:
                             pass
-        # Commit every output tick so a missing speech packet cannot stall the timeline.
-        if consumed_seq or pkt is None:
+        # Only advance sequence when we consumed the real packet. Advancing on
+        # miss permanently dropped the speech frame and desynced mouth/audio.
+        if consumed_seq:
             next_seq += 1
 
         metrics.record_latency(
