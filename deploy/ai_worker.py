@@ -14,6 +14,7 @@ from argparse import Namespace
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Callable, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 import cv2
 import numpy as np
@@ -2303,6 +2304,12 @@ class StreamBroadcaster:
             )
         self._start_encoder()
 
+    def _safe_target(self) -> str:
+        parsed = urlsplit(self.rtmp_url)
+        host = parsed.hostname or "unknown"
+        port = f":{parsed.port}" if parsed.port else ""
+        return f"{parsed.scheme}://{host}{port}/***"
+
     @classmethod
     def _want_force_ipv4(cls) -> bool:
         return True
@@ -2605,7 +2612,7 @@ class StreamBroadcaster:
         self._a_fh = os.fdopen(audio_w, "wb", buffering=0)
         print(
             f"[Broadcaster] RTMP encoder={getattr(self, '_video_codec', 'libx264')} "
-            f"@ {self.fps}fps → {self.rtmp_url.split('?')[0]}?**"
+            f"@ {self.fps}fps → {self._safe_target()}"
         )
 
     def is_alive(self) -> bool:

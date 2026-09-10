@@ -11,6 +11,7 @@ import tempfile
 import time
 import threading
 import urllib.request
+from urllib.parse import urlsplit
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, HTTPException
@@ -912,15 +913,23 @@ async def start_broadcast(req: BroadcastRequest):
     global _broadcast_boot_inflight
 
     final_rtmp_url = (req.rtmp_url or req.rtmpUrl or "").strip()
-    final_stream_key = (
-        (req.stream_key or req.streamKey or "")
-        .replace("\r", "")
-        .replace("\n", "")
-        .strip()
-    )
+    raw_stream_key = req.stream_key or req.streamKey or ""
+    final_stream_key = raw_stream_key.strip()
     if not final_rtmp_url or not final_stream_key:
         raise HTTPException(
             status_code=400, detail="rtmp_url dan stream_key wajib diisi"
+        )
+    if (
+        any(char.isspace() for char in final_stream_key)
+        or len(final_stream_key) > 512
+        or "sedang menyiapkan siaran" in final_stream_key.lower()
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Stream Key tidak valid. Salin Stream Key asli dari Instagram Live, "
+                "bukan teks halaman atau URL preview."
+            ),
         )
 
     if (
@@ -1095,12 +1104,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     global _broadcast_boot_state, _broadcast_started_at
 
     final_rtmp_url = (req.rtmp_url or req.rtmpUrl or "").strip()
-    final_stream_key = (
-        (req.stream_key or req.streamKey or "")
-        .replace("\r", "")
-        .replace("\n", "")
-        .strip()
-    )
+    final_stream_key = (req.stream_key or req.streamKey or "").strip()
     if not final_rtmp_url or not final_stream_key:
         raise ValueError("rtmp_url dan stream_key wajib diisi")
 
@@ -1116,7 +1120,12 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
 
         publish_url = validate_publish_url(publish_url)
         preflight_rtmp_publish(publish_url)
-        print(f"[AI-Worker] RTMP preflight OK → {publish_url.split('?')[0]}?**")
+        parsed_publish = urlsplit(publish_url)
+        publish_port = f":{parsed_publish.port}" if parsed_publish.port else ""
+        print(
+            f"[AI-Worker] RTMP preflight OK → "
+            f"{parsed_publish.scheme}://{parsed_publish.hostname}{publish_port}/***"
+        )
     except ImportError:
         pass
     except ValueError as preflight_err:
@@ -1456,7 +1465,6 @@ async def update_stream_product(req: UpdateProductRequest):
             print("[AI-Worker] Background image di-materialize ulang untuk hot-swap")
         except Exception as bg_err:
             print(f"[AI-Worker] update-product background notice: {bg_err}")
-    # Render overlay dulu (support http + data:image), baru signal hot-reload.
     try:
         from overlay_generator import prepare_overlay_files
 
