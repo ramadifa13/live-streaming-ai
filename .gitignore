@@ -51,7 +51,8 @@ deploy/assets/3d/*_continuous_materials.pt
 # But allow .env.example files
 !.env.example
 backend/.env.example
-# Pocket TTS: venv/cache diabaikan; requirements.txt harus ikut git (VPS pip install)
+# Pocket TTS: venv/cache diabaikan; kode runner + requirements harus ikut git (VPS)
 backend/pocket_tts/*
 !backend/pocket_tts/requirements.txt
+!backend/pocket_tts/*.py
 frontend/.env.example
