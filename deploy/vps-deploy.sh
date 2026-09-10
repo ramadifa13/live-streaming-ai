@@ -145,7 +145,11 @@ if [ ! -x pocket_tts/env/bin/python ]; then
 	python3 -m venv pocket_tts/env
 fi
 pocket_tts/env/bin/python -m pip install --upgrade pip
-pocket_tts/env/bin/python -m pip install -r pocket_tts/requirements.txt
+# Pocket TTS jalan di CPU VPS. pip default Linux menarik Torch CUDA + nvidia-* (~GB).
+pocket_tts/env/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+pocket_tts/env/bin/python -m pip install -r pocket_tts/requirements.txt \
+	--extra-index-url https://download.pytorch.org/whl/cpu
+pocket_tts/env/bin/python -c "import torch; assert not torch.cuda.is_available(), 'Torch CUDA terpasang, harus CPU'; print('Pocket TTS torch', torch.__version__, 'cuda=', torch.cuda.is_available())"
 
 echo "[5/6] Build frontend"
 cd "$APP/frontend"
@@ -171,4 +175,18 @@ echo ""
 echo "[OK] Deploy selesai. TTS aktif = Pocket TTS. Piper/Supertonic/VoxCPM sudah dibersihkan."
 echo "     Health: curl -s http://127.0.0.1:4000/health"
 pm2 ls
-curl -sf http://127.0.0.1:4000/health || echo "[WARN] backend /health belum merespons"
+_ok=0
+for _i in 1 2 3 4 5 6 7 8; do
+	if curl -sf http://127.0.0.1:4000/health >/dev/null; then
+		_ok=1
+		break
+	fi
+	sleep 1
+done
+if [ "$_ok" = "1" ]; then
+	curl -s http://127.0.0.1:4000/health
+	echo
+else
+	echo "[WARN] backend /health belum merespons"
+	pm2 logs api --lines 40 --nostream || true
+fi
