@@ -15,8 +15,6 @@ git clone https://github.com/ramadifa13/live-streaming-ai.git live-streaming-ai
 cd /workspace/live-streaming-ai/deploy
 export HF_TOKEN="<your-token>"
 bash setup.sh
-cp -n .env.example /workspace/ai_live_worker/.env
-nano /workspace/ai_live_worker/.env
 FORCE_ASSETS=1 bash sync.sh --restart
 curl -s http://127.0.0.1:8000/health
 ```
