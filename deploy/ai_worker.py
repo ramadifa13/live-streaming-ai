@@ -35,12 +35,12 @@ SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
 BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2
     
-_cf_frames = int(os.environ.get("AI_WORKER_CROSSFADE_FRAMES", "8"))
+_cf_frames = int(os.environ.get("AI_WORKER_CROSSFADE_FRAMES", "3"))
 CROSSFADE_FRAMES = max(2, _cf_frames)
-_ov_frames = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "6"))
+_ov_frames = int(os.environ.get("AI_WORKER_OVERLAP_FRAMES", "3"))
 OVERLAP_FRAMES = max(2, _ov_frames)
-
-OVERLAP_FRAMES_MAX = max(OVERLAP_FRAMES, 6)
+# Hard cap — long overlaps double-expose the body (ghosting).
+OVERLAP_FRAMES_MAX = max(OVERLAP_FRAMES, 4)
 
 # BBOX_SMOOTH_WINDOW: window size untuk smoothing face detection bounding box
 # Default 7 = jerky. Raise ke 12-15 untuk smoother face tracking
@@ -1014,7 +1014,7 @@ class VideoStateMachine:
     ):
         self.bank = bank
         self.crossfade_frames = max(1, crossfade_frames)
-        self.overlap_frames = max(4, min(int(overlap_frames), OVERLAP_FRAMES_MAX))
+        self.overlap_frames = max(2, min(int(overlap_frames), OVERLAP_FRAMES_MAX))
         self._face_registry = face_registry
         self.state = PlayState.IDLE
         self.current_name = bank._idle_name
@@ -1536,14 +1536,14 @@ class VideoStateMachine:
     def _dynamic_overlap_n(
         self, from_clip: Optional[ClipAsset], from_idx: int, to_clip: ClipAsset
     ) -> int:
-        """Overlap cepat dan rapi (4-6 frame) agar tidak ghosting/goyang."""
-        base_n = max(3, min(self.overlap_frames, self.crossfade_frames))
+        """Overlap singkat (2-4 frame). Lebih panjang = ghosting tubuh."""
+        base_n = max(2, min(self.overlap_frames, self.crossfade_frames))
         if from_clip is None:
             return base_n
         dist = abs(int(from_idx) - int(to_clip.base_pose_frame))
         span = max(1, from_clip.end_pose - from_clip.base_pose_frame)
-        extra = int(round(2.0 * min(1.0, dist / float(span))))
-        return max(3, min(base_n + extra, OVERLAP_FRAMES_MAX))
+        extra = int(round(1.0 * min(1.0, dist / float(span))))
+        return max(2, min(base_n + extra, OVERLAP_FRAMES_MAX))
 
     def _build_overlap_pairs(
         self,
@@ -1555,7 +1555,7 @@ class VideoStateMachine:
         """Pasangan frame untuk blend tubuh (bergerak maju mulus tanpa lompat mundur)."""
         self.bank.ensure_frames(from_clip)
         self.bank.ensure_frames(to_clip)
-        n = max(3, min(int(n), OVERLAP_FRAMES_MAX))
+        n = max(2, min(int(n), OVERLAP_FRAMES_MAX))
         pairs: List[Tuple[np.ndarray, np.ndarray]] = []
         target_cycles: List[int] = []
         span_from = max(1, from_clip.end_pose - from_clip.base_pose_frame)
@@ -1591,23 +1591,13 @@ class VideoStateMachine:
                 self._talk_loop_count += 1
                 metrics.inc("talk_ping_pong")
                 return
-            n = max(3, min(int(self.overlap_frames), OVERLAP_FRAMES_MAX))
-            try:
-                pairs, target_cycles = self._build_overlap_pairs(clip, clip.end_pose, clip, n)
-            except Exception as err:
-                print(f"[StateMachine] Loop wrap notice: {err}")
-                return
-            if not pairs:
-                return
-            resume = clip.base_pose_frame + len(pairs)
-            if resume > clip.end_pose:
-                resume = clip.base_pose_frame
-            self._overlap = _OverlapTransition(
-                pairs=pairs, step=0, resume_frame_idx=resume, target_cycle_indices=target_cycles
-            )
+            # Seamless clip: snap end→base. Crossfade blend here doubles the
+            # body (ngebayang) every loop and feels like a micro-freeze.
+            self.frame_idx = clip.base_pose_frame
+            self._talk_direction = 1
+            self._overlap = None
             self._talk_loop_count += 1
-            metrics.inc("soft_loop_wrap")
-            print(f"[StateMachine] Soft loop wrap {clip.name} end→base ({len(pairs)}f)")
+            metrics.inc("talk_seamless_wrap")
             return
 
         to_clip = self.bank.get_clip(next_name)
@@ -1615,7 +1605,7 @@ class VideoStateMachine:
             return
         # The bank is designed as start=end seamless motion. Use a short visual
         # overlap, but NEVER change state or end the active utterance.
-        n = max(3, min(int(self.overlap_frames), OVERLAP_FRAMES_MAX))
+        n = max(2, min(int(self.overlap_frames), OVERLAP_FRAMES_MAX))
         try:
             pairs, target_cycles = self._build_overlap_pairs(clip, clip.end_pose, to_clip, n)
         except Exception as err:

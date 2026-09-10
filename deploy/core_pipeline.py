@@ -265,12 +265,11 @@ class StreamBroadcaster(threading.Thread):
         raw_mask = cv2.morphologyEx(raw_mask, cv2.MORPH_CLOSE, kernel)
         smooth_mask = cv2.GaussianBlur(raw_mask, (15, 15), 0)
 
-        # Temporal smoothing (EMA) dengan frame sebelumnya jika ada agar batas rambut tidak bergetar
+        # Light temporal matte only — heavy EMA left a ghost trail ("ngebayang").
         prev_key = (clip_name or "idle", max(0, int(frame_idx) - 1))
         prev_mask = self._foreground_masks.get(prev_key)
         if prev_mask is not None and prev_mask.shape == smooth_mask.shape:
-            # Prefer prior matte to reduce hair/jaw flicker under lip-sync.
-            smooth_mask = cv2.addWeighted(prev_mask, 0.72, smooth_mask, 0.28, 0)
+            smooth_mask = cv2.addWeighted(prev_mask, 0.35, smooth_mask, 0.65, 0)
 
         self._foreground_masks[key] = smooth_mask
         if len(self._foreground_masks) > 300:
