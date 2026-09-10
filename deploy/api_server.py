@@ -409,6 +409,23 @@ async def health():
     }
 
 
+@app.post("/stream/warmup")
+async def warmup_models():
+    """Muat MuseTalk ke VRAM tanpa mulai siaran — untuk demo / 1 pod 1 pembeli."""
+    worker.ensure_warmup_started()
+    status = worker.warmup_status()
+    return {
+        "success": True,
+        "status": status,
+        "warmed_up": bool(getattr(worker, "_warmed_up", False)),
+        "message": (
+            "MuseTalk siap di VRAM"
+            if status == "ready"
+            else "Sedang memuat model ke GPU — cek /health warmed_up"
+        ),
+    }
+
+
 @app.get("/tts/health")
 async def tts_health():
     return {

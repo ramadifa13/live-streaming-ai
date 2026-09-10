@@ -44,28 +44,47 @@ class AILiveWorker:
         self._ensure_musetalk_layout()
         self._clean_temp_dir()
 
-        # Warmup berat (load model ke VRAM & pre-cache avatar) — jangan blokir HTTP startup.
+        # Dedicated pod (1 pembeli): muat MuseTalk saat start, bukan saat siaran pertama.
+        # HTTP tetap naik dulu; warmup jalan di background.
         self._warmed_up = False
-        warmup_flag = "0"
-        marker_path = os.path.join(self.base_dir, ".musetalk_warmed_up")
-        if os.path.exists(marker_path):
-            print("[WARMUP] MuseTalk already warmed up – skipping")
-        elif warmup_flag in ("1", "true", "yes", "on"):
-            threading.Thread(
-                target=self._warmup_musetalk_safe,
-                name="MuseTalkWarmup",
-                daemon=True,
-            ).start()
-            print("[WARMUP] MuseTalk warmup di background (MUSETALK_WARMUP_ON_START=1)")
+        self._warmup_lock = threading.Lock()
+        self._warmup_thread: threading.Thread | None = None
+        warmup_flag = str(os.environ.get("MUSETALK_WARMUP_ON_START", "1")).strip().lower()
+        if warmup_flag in ("1", "true", "yes", "on"):
+            self.ensure_warmup_started()
+            print("[WARMUP] MuseTalk warmup di background saat start (siaran pertama tidak menunggu load model)")
         else:
             print(
                 "[WARMUP] Skip startup warmup (MUSETALK_WARMUP_ON_START=0) — "
-                "model dimuat saat broadcast/utterance pertama."
+                "model dimuat saat broadcast/utterance pertama atau bash warmup.sh."
             )
 
         print(
             f"[INFO] 🚀 AI Worker API siap (Batch: {self.batch_size}, warmup deferred={warmup_flag not in ('1', 'true', 'yes', 'on')})..."
         )
+
+    def ensure_warmup_started(self) -> None:
+        """Mulai load MuseTalk ke VRAM sekali; aman dipanggil berulang (demo warmup.sh)."""
+        if self._warmed_up:
+            return
+        with self._warmup_lock:
+            if self._warmed_up:
+                return
+            if self._warmup_thread is not None and self._warmup_thread.is_alive():
+                return
+            self._warmup_thread = threading.Thread(
+                target=self._warmup_musetalk_safe,
+                name="MuseTalkWarmup",
+                daemon=True,
+            )
+            self._warmup_thread.start()
+
+    def warmup_status(self) -> str:
+        if self._warmed_up:
+            return "ready"
+        if self._warmup_thread is not None and self._warmup_thread.is_alive():
+            return "warming"
+        return "cold"
 
     def _warmup_musetalk_safe(self) -> None:
         try:
@@ -123,8 +142,8 @@ class AILiveWorker:
                 print(f"[WARNING] Could not create symlink {link_path}: {link_err}")
 
     def _resolve_use_float16(self) -> bool:
-        mode = "segment"
-        warmup = "0"
+        mode = str(os.environ.get("BROADCAST_MODE", "ai_worker")).strip().lower()
+        warmup = str(os.environ.get("MUSETALK_WARMUP_ON_START", "1")).strip().lower()
         if mode in (
             "ai_worker",
             "ai-worker",

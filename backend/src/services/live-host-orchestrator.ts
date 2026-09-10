@@ -1605,6 +1605,11 @@ class LiveHostOrchestrator {
         continue;
       }
 
+      if (!this.sessions.has(sessionId) || state.abortController.signal.aborted) {
+        console.log(`[LiveHost] Batal antre GPU — sesi ${sessionId} sudah dihentikan.`);
+        return false;
+      }
+
       await this.submitToGPU(sessionId, spokenText, audioBase64, seg.action, priority);
     }
 

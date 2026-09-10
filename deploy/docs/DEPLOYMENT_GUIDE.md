@@ -241,8 +241,6 @@ certbot --nginx -d livio.id -d www.livio.id
 
 ### Membersihkan setup lama yang sudah terlanjur ada
 
-Gunakan ini jika VPS pernah dipasang versi lama, library TTS lama, atau build
-yang rusak. Jalankan setelah backup env. Perintah ini tidak menghapus database.
 
 ```bash
 pm2 delete api frontend 2>/dev/null || true
@@ -254,7 +252,7 @@ rm -rf backend/node_modules frontend/node_modules
 rm -rf backend/pocket_tts/env
 ```
 
-Install ulang dependency sesuai source terbaru:
+
 
 ```bash
 cd /var/www/app/backend
@@ -270,11 +268,6 @@ cd ../frontend
 npm install
 npm run build
 ```
-
-Pocket TTS **jangan dihapus dari source** selama `backend/src/services/tts.ts`
-atau `backend/src/services/pocket-tts-bridge.ts` masih merujuk ke folder tersebut.
-Jika sudah benar-benar migrasi ke VoxCPM2, hapus hanya setelah kode terbaru tidak
-lagi memiliki referensi Pocket TTS, lalu jalankan build bersih.
 
 ---
 

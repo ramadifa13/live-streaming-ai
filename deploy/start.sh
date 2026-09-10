@@ -83,8 +83,11 @@ if [ -f "$SYNC_SCRIPT" ]; then
 fi
 
 export BROADCAST_MODE="${BROADCAST_MODE:-ai_worker}"
+# 1 pod = 1 pembeli: model masuk VRAM saat start, bukan saat Go Live pertama.
+export MUSETALK_WARMUP_ON_START="${MUSETALK_WARMUP_ON_START:-1}"
 export WORKER_PORT="${PORT:-${WORKER_PORT:-8000}}"
 echo "[INFO] BROADCAST_MODE=${BROADCAST_MODE}"
+echo "[INFO] MUSETALK_WARMUP_ON_START=${MUSETALK_WARMUP_ON_START}"
 echo "[INFO] PORT=${WORKER_PORT}"
 
 # DNS pod RunPod kadang gagal resolve fbcdn.net → RTMP Instagram tidak pernah connect.
@@ -307,6 +310,32 @@ if ! kill -0 "$API_PID" 2>/dev/null; then
 	echo "[ERROR] api_server.py gagal start. Lihat log:"
 	echo "        tail -50 $WORKER_DIR/api_server.log"
 	exit 1
+fi
+
+if [ "${MUSETALK_WARMUP_ON_START}" = "1" ] || [ "${MUSETALK_WARMUP_ON_START}" = "true" ]; then
+	echo "[INFO] Menunggu MuseTalk masuk VRAM (setup pod, bukan siaran pertama)..."
+	_warm_ok=0
+	for _w in $(seq 1 180); do
+		if curl -fsS --max-time 3 "http://127.0.0.1:${WORKER_PORT}/health" 2>/dev/null \
+			| grep -Eq '"warmed_up"[[:space:]]*:[[:space:]]*true'; then
+			echo "[OK] MuseTalk sudah di VRAM — siaran pertama tidak perlu load model."
+			_warm_ok=1
+			break
+		fi
+		if ! kill -0 "$API_PID" 2>/dev/null; then
+			echo "[ERROR] api_server mati saat warmup. Log:"
+			tail -80 "$WORKER_DIR/api_server.log" 2>/dev/null || true
+			exit 1
+		fi
+		if [ "$((_w % 20))" -eq 0 ]; then
+			echo "[INFO] Warmup MuseTalk masih berjalan (${_w}s)..."
+			tail -2 "$WORKER_DIR/api_server.log" 2>/dev/null || true
+		fi
+		sleep 1
+	done
+	if [ "$_warm_ok" != "1" ]; then
+		echo "[WARN] Warmup belum selesai dalam 180s — siaran pertama mungkin masih load model."
+	fi
 fi
 
 echo "Broadcaster menunggu perintah backend melalui /stream/start-broadcast."
