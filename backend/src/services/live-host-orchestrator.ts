@@ -314,6 +314,10 @@ const IN_FLIGHT_RENDER_SECONDS = 10;
 const LIVE_CONTINUITY_BUFFER_SECONDS = 8;
 const LIVE_CONTINUITY_MIN_UTTERANCES = 3;
 const MIN_PLAYABLE_UTTERANCES = LIVE_CONTINUITY_MIN_UTTERANCES;
+const MAX_WORKER_UTTERANCE_QUEUE = Math.max(
+  1,
+  Number(process.env.LIVE_MAX_WORKER_UTTERANCE_QUEUE || 3),
+);
 
 function isAiWorkerBroadcastMode(mode: string): boolean {
   const m = (mode || "").trim().toLowerCase();
@@ -977,6 +981,20 @@ class LiveHostOrchestrator {
 
         this.pruneCommentQueue(s);
 
+        const workerQueueDepth = Math.max(
+          s.lastQueue.utteranceQueueCount || 0,
+          s.lastQueue.readyUtteranceCount || 0,
+        );
+        // Backpressure: jangan flood worker saat lipsync/queue sudah penuh.
+        if (
+          isAiWorkerBroadcastMode(s.lastQueue.broadcastMode) &&
+          (s.lastQueue.visualWorkerInitializing ||
+            workerQueueDepth >= MAX_WORKER_UTTERANCE_QUEUE)
+        ) {
+          await sleep(COMMENT_SCAN_MS);
+          continue;
+        }
+
         const playableQueueDepth = isAiWorkerBroadcastMode(s.lastQueue.broadcastMode)
           ? s.lastQueue.readyUtteranceCount || 0
           : s.lastQueue.queuedVideos || 0;
@@ -1567,7 +1585,6 @@ class LiveHostOrchestrator {
           podId: state.config.podId || process.env.RUNPOD_POD_ID || null,
           sessionId,
           allowOfflineSynth: true,
-          targetDurationSeconds: 9.0,
         });
         if (ttsResult.success && ttsResult.audioBuffer) {
           audioBase64 = ttsResult.audioBuffer.toString("base64");

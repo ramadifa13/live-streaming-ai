@@ -269,7 +269,8 @@ class StreamBroadcaster(threading.Thread):
         prev_key = (clip_name or "idle", max(0, int(frame_idx) - 1))
         prev_mask = self._foreground_masks.get(prev_key)
         if prev_mask is not None and prev_mask.shape == smooth_mask.shape:
-            smooth_mask = cv2.addWeighted(prev_mask, 0.45, smooth_mask, 0.55, 0)
+            # Prefer prior matte to reduce hair/jaw flicker under lip-sync.
+            smooth_mask = cv2.addWeighted(prev_mask, 0.72, smooth_mask, 0.28, 0)
 
         self._foreground_masks[key] = smooth_mask
         if len(self._foreground_masks) > 300:
@@ -567,6 +568,7 @@ class StreamBroadcaster(threading.Thread):
 
         frame_duration = 1.0 / TARGET_FPS
         next_frame_time = time.perf_counter()
+        last_emit_time = 0.0
         print("[StreamBroadcaster] Running seamless loop...")
 
         metrics = get_telemetry()
@@ -603,17 +605,26 @@ class StreamBroadcaster(threading.Thread):
                         self.fallback_player.sync(pkt.clip_name, pkt.frame_idx)
                 except queue.Empty:
                     if self.bridge is not None and self.bridge.is_utterance_active():
-                        try:
-                            # Toleransi batch latency GPU (hingga 3 detik) agar ucapan tidak terpotong di tengah jalan
-                            pkt = self.render_q.get(timeout=3.0)
+                        pkt = None
+                        while (
+                            pkt is None
+                            and not self.stop_event.is_set()
+                            and self.bridge is not None
+                            and self.bridge.is_utterance_active()
+                        ):
+                            try:
+                                # Speech packets carry the PCM timeline. Wait for the
+                                # real packet so GPU lag cannot create silent holes.
+                                pkt = self.render_q.get(timeout=0.25)
+                            except queue.Empty:
+                                metrics.inc("broadcast_speech_wait_packet")
+                        if pkt is not None:
                             frame = pkt.frame
                             pcm = pkt.audio_pcm
                             clip_name = getattr(pkt, "clip_name", "") or "idle"
                             frame_idx = int(getattr(pkt, "frame_idx", 0) or 0)
                             self.fallback_player.sync(clip_name, frame_idx)
-                        except queue.Empty:
-                            # Jangan gagalkan siaran, fallback sementara ke idle frame agar stream tetap hidup
-                            metrics.inc("broadcast_speech_timeout_idle")
+                        else:
                             frame = self.fallback_player.next_frame()
                             pcm = _silence_bytes_for_frame(self._audio_frame_index)
                             clip_name = getattr(
@@ -664,13 +675,24 @@ class StreamBroadcaster(threading.Thread):
                         self._write_all(self.v_fh, buf)
                         self._write_all(self.a_fh, pcm)
 
-                sleep_time = next_frame_time - now
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-                elif sleep_time < -frame_duration * 2:
-                    next_frame_time = now
+                # Hard realtime gate: never dump A/V faster than TARGET_FPS after
+                # GPU/speech lag, even when render_q is deep (prevents chipmunk audio).
+                now_after = time.perf_counter()
+                min_gap = frame_duration * 0.98
+                if last_emit_time > 0.0:
+                    since_emit = now_after - last_emit_time
+                    if since_emit < min_gap:
+                        time.sleep(min_gap - since_emit)
+                        now_after = time.perf_counter()
+                last_emit_time = now_after
 
-                next_frame_time += frame_duration
+                if next_frame_time < now_after - frame_duration:
+                    metrics.inc("broadcast_pacer_late_rebase")
+                    next_frame_time = now_after
+                sleep_time = next_frame_time - now_after
+                if sleep_time > 0.0005:
+                    time.sleep(sleep_time)
+                next_frame_time = max(next_frame_time, time.perf_counter()) + frame_duration
 
             except (BrokenPipeError, OSError) as e:
                 self.last_error = f"Pipe siaran tertutup: {e}"

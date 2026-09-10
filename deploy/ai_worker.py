@@ -58,11 +58,17 @@ IDLE_BREATH_CHANCE = 0.18
 IDLE_FALLBACK_AFTER = 2
 # Hold talk antar-utterance: kalau tidak ada suara baru, segera balik ke idle.
 HOLD_TALK_MAX_SEC = 3.5
-# Pin talk clip panjang (continuous body timeline) — rotasi tiap 1-2 utterance agar bervariasi.
-TALK_STREAK_BEFORE_ROTATE = 1
+# Pin talk clip panjang (continuous body timeline). Default: jangan rotate
+# antar utterance agar tubuh tidak loncat talk_1↔talk_2 di tengah siaran.
+TALK_STREAK_BEFORE_ROTATE = int(os.environ.get("TALK_STREAK_BEFORE_ROTATE", "9999"))
 
 # 0 = rotasi alami antar talk clips (talk_1, talk_2, talk_3). 1 = kunci ke 1 clip saja.
-PIN_TALK_SCENE = False
+PIN_TALK_SCENE = os.environ.get("PIN_TALK_SCENE", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
 
 # Rest-gated begin: tunggu base/end max N ms sebelum soft-cut paksa.
 REST_GATE_MAX_MS = 400
@@ -1134,19 +1140,18 @@ class VideoStateMachine:
         print(f"[StateMachine] Ambient gesture → {tag}")
 
     def _ensure_talk_sequence(self, first: Optional[str] = None) -> List[str]:
-        """Build a deterministic talk sequence for one continuous utterance.
+        """Build talk sequence for one continuous utterance.
 
-        The visual timeline rotates talk clips at clip boundaries while the
-        utterance and MuseTalk timeline remain continuous.
+        When PIN_TALK_SCENE is on, stay on a single clip for the whole stream.
         """
         ready = self.bank.talk_clips_ready()
         if not ready:
             return [self.bank.crash_fallback_name()]
         first = first if first in ready else (self.current_name if self.current_name in ready else ready[0])
+        if PIN_TALK_SCENE:
+            return [first]
         seq = [first]
         pool = [c for c in ready if c != first]
-        # Deterministic rotation avoids random changes between state machine and
-        # MuseTalk inference. Repeat the pool cyclically for arbitrarily long audio.
         seq.extend(pool)
         if not seq:
             seq = [first]
@@ -1154,6 +1159,8 @@ class VideoStateMachine:
 
     def _next_talk_clip_for_wrap(self, current: str) -> str:
         """Return next TALK clip; never enter IDLE during an active utterance."""
+        if PIN_TALK_SCENE:
+            return current
         ready = self.bank.talk_clips_ready()
         if len(ready) <= 1:
             return current
@@ -1439,13 +1446,12 @@ class VideoStateMachine:
             self._pending_begin_utterance = False
             self._begin_wait_since = None
             # Keep _talk_target saat hold supaya pin/lipsync tidak loncat clip.
-            if not (self.bank.clip_has_musetalk(self.current_name)):
-                self._talk_target = None
-            else:
+            if self.bank.clip_has_musetalk(self.current_name):
                 self._talk_target = self.current_name
-            # Reset _talk_target dan _pinned_task_id agar utterance berikutnya bebas memilih random clip baru!
-            self._talk_target = None
-            self._pinned_task_id = None
+            # Jangan clear pin — utterance berikutnya lanjut di clip yang sama.
+            if not (another_utterance_ready or self.bank.clip_has_musetalk(self.current_name)):
+                self._talk_target = None
+                self._pinned_task_id = None
             if self._face_registry:
                 self._face_registry.release_lock()
             self._drain_action_queue()
@@ -1465,6 +1471,7 @@ class VideoStateMachine:
                 self._talk_pinned = False
                 self._hold_talk_since = None
                 self._talk_target = None
+                self._pinned_task_id = None
                 self.state = PlayState.IDLE
                 self.pending_action = self.bank._idle_name
                 print(
@@ -1554,16 +1561,15 @@ class VideoStateMachine:
         return pairs, target_cycles
 
     def _start_talk_loop_wrap(self, clip: ClipAsset) -> None:
-        """Advance continuous TALK to the next bank clip without ending utterance.
+        """Loop continuous TALK on the same clip — never rotate mid-utterance.
 
-        For seamless talk banks, the boundary is treated as a visual clip
-        rotation, not as a new speech utterance. MuseTalk state is preserved.
-        If only one talk clip exists, it still loops seamlessly as before.
+        Rotating talk_1→talk_2 at body boundaries caused visible jumps. With
+        PIN_TALK_SCENE (default on) and same-clip wrap, body stays continuous.
         """
         metrics = get_telemetry()
-        next_name = self._next_talk_clip_for_wrap(clip.name)
+        next_name = clip.name if PIN_TALK_SCENE else self._next_talk_clip_for_wrap(clip.name)
 
-        # Only one ready TALK clip: preserve the existing seamless loop.
+        # Same clip (or only one ready): seamless loop / ping-pong.
         if next_name == clip.name:
             if not clip.is_seamless_loop:
                 self._talk_direction = -1
@@ -1692,6 +1698,17 @@ class VideoStateMachine:
                 print(
                     f"[StateMachine] Soft {from_name}@{from_idx} → {to_name}@{resume} "
                     f"({len(pairs)}f, state={new_state.name})"
+                )
+                return
+
+        # Soft failed: during speech / pinned talk, hold pose instead of hard cut.
+        if self._utterance_active or self._talk_pinned:
+            metrics.inc("hard_cut_suppressed")
+            self.state = new_state
+            if to_name == from_name or PIN_TALK_SCENE:
+                print(
+                    f"[StateMachine] Hold {from_name}@{from_idx} "
+                    f"(suppress hard cut → {to_name})"
                 )
                 return
 
@@ -2672,19 +2689,29 @@ def lipsync_worker_loop(
             )
             metrics.set_gauge("render_queue_depth", float(render_q.qsize()))
             speaking = bool(pkt.is_speech or pkt.needs_lipsync)
-            try:
-                render_q.put(out, block=False)
-            except queue.Full:
-                metrics.inc("render_queue_backpressure")
+            if speaking:
+                while not stop_event.is_set():
+                    try:
+                        render_q.put(out, timeout=0.25)
+                        break
+                    except queue.Full:
+                        metrics.inc("render_queue_speech_backpressure")
+                if stop_event.is_set():
+                    break
+            else:
                 try:
-                    render_q.get_nowait()
-                    render_q.task_done()
-                except queue.Empty:
-                    pass
-                try:
-                    render_q.put_nowait(out)
+                    render_q.put(out, block=False)
                 except queue.Full:
-                    metrics.inc("render_queue_dropped")
+                    metrics.inc("render_queue_backpressure")
+                    try:
+                        render_q.get_nowait()
+                        render_q.task_done()
+                    except queue.Empty:
+                        pass
+                    try:
+                        render_q.put_nowait(out)
+                    except queue.Full:
+                        metrics.inc("render_queue_dropped")
             frame_count += 1
             if frame_count % 300 == 0:
                 print(
@@ -2703,7 +2730,15 @@ def lipsync_worker_loop(
                 frame_idx=pkt.frame_idx,
             )
             try:
-                render_q.put_nowait(fallback)
+                if pkt.is_speech or pkt.needs_lipsync:
+                    while not stop_event.is_set():
+                        try:
+                            render_q.put(fallback, timeout=0.25)
+                            break
+                        except queue.Full:
+                            metrics.inc("render_queue_speech_backpressure")
+                else:
+                    render_q.put_nowait(fallback)
             except queue.Full:
                 try:
                     render_q.get_nowait()
@@ -2726,12 +2761,20 @@ def _put_raw_frame(
     *,
     must_keep: bool = False,
 ) -> None:
-    """Bounded enqueue: drop oldest packet rather than blocking the frame clock."""
+    """Bounded enqueue; speech packets apply backpressure instead of being dropped."""
     try:
         raw_q.put_nowait(pkt)
         return
     except queue.Full:
         metrics.inc("raw_queue_backpressure")
+    if must_keep:
+        while not stop_event.is_set():
+            try:
+                raw_q.put(pkt, timeout=max(0.05, float(block_sec)))
+                return
+            except queue.Full:
+                metrics.inc("raw_queue_speech_backpressure")
+        return
     try:
         raw_q.get_nowait()
         raw_q.task_done()
@@ -3470,17 +3513,21 @@ def broadcaster_loop(
             except queue.Empty:
                 break
 
-        if len(pending) > max(1, PENDING_MAX):
-            cutoff = max(next_seq, max(pending) - max(1, BROADCAST_MAX_LAG))
-            for stale in [s for s in list(pending) if s < cutoff]:
-                pending.pop(stale, None)
-                metrics.inc("broadcast_pending_overflow")
-            if cutoff > next_seq:
-                next_seq = cutoff
-                metrics.inc("broadcast_seq_fast_forward")
-
         metrics.set_gauge("render_queue_depth", float(render_q.qsize()))
         utterance_active = bridge_ref is not None and bridge_ref.is_utterance_active()
+
+        if len(pending) > max(1, PENDING_MAX):
+            if utterance_active:
+                # During speech keep sequence — do not fast-forward (audio speed-up).
+                metrics.inc("broadcast_pending_overflow_held")
+            else:
+                cutoff = max(next_seq, max(pending) - max(1, BROADCAST_MAX_LAG))
+                for stale in [s for s in list(pending) if s < cutoff]:
+                    pending.pop(stale, None)
+                    metrics.inc("broadcast_pending_overflow")
+                if cutoff > next_seq:
+                    next_seq = cutoff
+                    metrics.inc("broadcast_seq_fast_forward")
 
         if pending and not utterance_active:
             newest = max(pending.keys())
@@ -3615,12 +3662,21 @@ def broadcaster_loop(
             "broadcast_tick_ms", (time.perf_counter() - tick_start) * 1000.0
         )
         metrics.maybe_log_summary(target_fps=TARGET_FPS)
+        now_after = time.perf_counter()
+        min_gap = period * 0.98
+        if frames_written > 0:
+            # Track last successful pace using deadline; never dump faster than FPS.
+            since = now_after - (deadline - period)
+            if since < min_gap:
+                time.sleep(min_gap - since)
+                now_after = time.perf_counter()
         deadline += period
-        sleep_for = deadline - time.perf_counter()
+        sleep_for = deadline - now_after
         if sleep_for > 0:
             time.sleep(sleep_for)
         elif sleep_for < -period * 2:
-            deadline = time.perf_counter()
+            # Late: rebase schedule without catch-up dump of queued packets.
+            deadline = time.perf_counter() + period
             metrics.inc("broadcast_pacer_reset")
 
     if out_dir:

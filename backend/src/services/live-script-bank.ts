@@ -303,7 +303,7 @@ export function ensureNaturalPunctuation(text: string): string {
     s = s.replace(regex, "$1, $2");
   }
 
-  // Jika ada rentang lebih dari 7 kata berturut-turut tanpa jeda nafas,
+  // Jika ada rentang lebih dari 12 kata berturut-turut tanpa jeda nafas,
   // cari kata sambung (dan, tapi, atau, serta) untuk disisipkan koma
   const words = s.split(" ");
   let wordsSincePunct = 0;
@@ -314,7 +314,7 @@ export function ensureNaturalPunctuation(text: string): string {
     if (/[,.!?;:—]/.test(w)) {
       wordsSincePunct = 0;
       outWords.push(w);
-    } else if (wordsSincePunct >= 7 && i < words.length - 2) {
+    } else if (wordsSincePunct >= 12 && i < words.length - 2) {
       if (/^(dan|atau|tapi|tetapi|serta|bahkan|padahal)$/i.test(w)) {
         if (outWords.length > 0) {
           outWords[outWords.length - 1] = outWords[outWords.length - 1].replace(/[,;]?$/, ",");
@@ -349,28 +349,27 @@ export function ensureNaturalPunctuation(text: string): string {
 }
 
 const DURATION_FILLERS = [
-  ", supaya kamu bisa menilai dengan tenang,",
-  ", sesuaikan juga dengan kebutuhan kamu ya,",
-  ", detail lengkapnya bisa kamu cek di etalase,",
+  ", ya,",
+  ", nih,",
 ];
 
 export function fitScriptBankSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
   const cappedMaxWords = Math.max(8, Math.min(Number(maxWords) || SCRIPT_BANK_MAX_WORDS, SCRIPT_BANK_MAX_WORDS));
   const sanitized = sanitizeForLiveTTS(text);
   const normalized = ensureNaturalPunctuation(sanitized).replace(/\s+/g, " ").trim();
-  const targetMinWords = Math.min(Math.max(SCRIPT_BANK_MIN_WORDS, 20), cappedMaxWords);
+  // Soft target: prefer natural length; only light-pad if far below min.
+  const targetMinWords = Math.min(Math.max(SCRIPT_BANK_MIN_WORDS - 4, 12), cappedMaxWords);
 
   const padToTarget = (sourceWords: string[]): string => {
     const words = sourceWords.filter(Boolean);
     if (words.length >= targetMinWords) return words.join(" ");
-    let fillerIndex = 0;
-    const out = [...words];
-    while (out.length < targetMinWords && out.length < cappedMaxWords) {
-      const filler = DURATION_FILLERS[fillerIndex % DURATION_FILLERS.length] || ", supaya kamu bisa menilai dengan tenang,";
-      out.push(...filler.split(/\s+/).filter(Boolean));
-      fillerIndex++;
+    // Avoid stuffing long canned fillers — at most one short breath marker.
+    if (words.length + 2 >= targetMinWords) {
+      const filler = DURATION_FILLERS[0] || ", ya,";
+      const joined = `${words.join(" ").replace(/[.!?]?$/, "")}${filler}`.replace(/\s+/g, " ").trim();
+      return joined;
     }
-    return out.join(" ");
+    return words.join(" ");
   };
 
   let words = normalized.split(" ").filter(Boolean);
@@ -400,8 +399,8 @@ function clampSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
   return fitScriptBankSpeech(text, Math.min(maxWords, SCRIPT_BANK_MAX_WORDS));
 }
 
-export const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 20);
-export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 24);
+export const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 22);
+export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 36);
 
 function splitFacts(text: string): string[] {
   if (!text?.trim()) return [];

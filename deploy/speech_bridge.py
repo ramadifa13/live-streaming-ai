@@ -200,8 +200,8 @@ class RuntimeGuard:
 
 
 def build_live_script(raw_text: str) -> str:
-    """Wrapper production: ubah teks saja agar durasi tetap natural tanpa memotong audio."""
-    return fit_script_to_target(raw_text)
+    """Normalize text only; video timeline loops independently from audio length."""
+    return normalize_script(raw_text)
 
 
 def ensure_no_idle_policy(
@@ -349,11 +349,12 @@ def _split_pcm_frames(
             break
         chunk = pcm[pos : pos + frame_bytes]
         if len(chunk) < frame_bytes:
-            # Last frame: pad only if we have substantial data
-            if len(chunk) >= frame_bytes // 2:
-                chunk += b"\x00" * (frame_bytes - len(chunk))
-            else:
+            # Last frame: keep every real sample and pad only to satisfy the
+            # fixed-size frame contract. Dropping this tail can audibly cut
+            # short natural TTS.
+            if not chunk:
                 break
+            chunk += b"\x00" * (frame_bytes - len(chunk))
         frames.append(chunk)
         pos += frame_bytes
     return frames
@@ -657,7 +658,12 @@ class SpeechBridge:
 
         if not candidate.lipsync_ready.is_set():
             waited = time.monotonic() - (candidate.primed_at or candidate.created_at)
-            hard_preroll = True
+            hard_preroll = os.environ.get("LIPSYNC_HARD_PREROLL", "0").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
             preroll_timeout = 2.5
             # Hard preroll avoids a partial mouth, but never blocks audio forever.
             if hard_preroll:

@@ -1283,7 +1283,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
 
     if ai_mode and get_visual_worker is not None:
         os.environ["AI_WORKER_FPS"] = os.environ.get(
-            "AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "30")
+            "AI_WORKER_FPS", os.environ.get("FRAME_FEED_FPS", "24")
         )
         host_raw = (
             req.host_name
@@ -1333,7 +1333,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
             bridge.output_folder = output_dir
         print(
             f"[AI-Worker] STAGE: LIVE pipeline aktif @ "
-            f"{os.environ.get('AI_WORKER_FPS', '30')}fps "
+            f"{os.environ.get('AI_WORKER_FPS', '24')}fps "
             f"(RTMP connected / handshake selesai)"
         )
         broadcaster_process = None

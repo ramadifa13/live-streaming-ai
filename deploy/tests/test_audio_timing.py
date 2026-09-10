@@ -9,22 +9,21 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from speech_bridge import (
-    TARGET_MAX_SEC,
-    TARGET_MIN_SEC,
     SpeechBridge,
     _split_pcm_frames,
     build_live_script,
     ensure_no_idle_policy,
-    estimate_duration_seconds,
 )
 
 
-def test_split_pcm_frames_does_not_append_silence_tail():
+def test_split_pcm_frames_keeps_partial_tail_without_cutting_audio():
     pcm = b"\x00" * (667 * 2 * 2)
 
     frames = _split_pcm_frames(pcm)
 
-    assert sum(len(frame) for frame in frames) == len(pcm)
+    joined = b"".join(frames)
+    assert joined.startswith(pcm)
+    assert len(joined) - len(pcm) < len(frames[-1])
     assert all(frame[:1] == b"\x00" for frame in frames)
     assert len(frames) >= 1
 
@@ -56,14 +55,11 @@ def test_hard_deadline_does_not_cut_active_pcm():
     assert bridge._frame_cursor == 1
 
 
-def test_script_is_rewritten_to_target_duration_without_truncating_audio():
+def test_script_is_not_rewritten_for_continuous_video_mode():
     raw = "Baik teman-teman hari ini saya ingin menjelaskan bahwa keberhasilan itu tidak datang dari satu langkah besar tetapi dari konsistensi kecil yang kita lakukan setiap hari."
     fixed = build_live_script(raw)
-    duration = estimate_duration_seconds(fixed)
 
-    assert TARGET_MIN_SEC <= duration <= TARGET_MAX_SEC
-    assert fixed != raw
-    assert fixed.startswith("Baik") or fixed.startswith("Keberhasilan")
+    assert fixed == raw
 
 
 def test_idle_policy_keeps_talk_when_queue_still_has_work():

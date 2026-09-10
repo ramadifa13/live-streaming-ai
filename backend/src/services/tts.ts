@@ -447,10 +447,22 @@ async function ensureWav16kMono(input: Buffer): Promise<Buffer> {
 
 export function wavDurationSeconds(input: Buffer): number | undefined {
   if (input.length < 44 || input.toString("ascii", 0, 4) !== "RIFF") return undefined;
+  if (input.toString("ascii", 8, 12) !== "WAVE") return undefined;
   const sampleRate = input.readUInt32LE(24);
   const channels = input.readUInt16LE(22);
   const bitsPerSample = input.readUInt16LE(34);
-  const dataBytes = input.readUInt32LE(40);
+  let dataBytes: number | undefined;
+  let offset = 12;
+  while (offset + 8 <= input.length) {
+    const chunkId = input.toString("ascii", offset, offset + 4);
+    const chunkSize = input.readUInt32LE(offset + 4);
+    if (chunkId === "data") {
+      dataBytes = Math.min(chunkSize, input.length - offset - 8);
+      break;
+    }
+    offset += 8 + chunkSize + (chunkSize % 2);
+  }
+  if (dataBytes == null) return undefined;
   const bytesPerSecond = sampleRate * channels * (bitsPerSample / 8);
   if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return undefined;
   return dataBytes / bytesPerSecond;
@@ -494,6 +506,14 @@ export async function calibrateAudioDuration(
   targetSeconds = 8.8,
   options?: { minDurationForCalibration?: number },
 ): Promise<Buffer> {
+  if ((process.env.LIVE_TTS_AUDIO_CALIBRATION ?? "0").trim() !== "1") {
+    const dur = wavDurationSeconds(inputWav);
+    if (dur && dur > 0) {
+      console.log(`[TTS] Audio duration kept natural: ${dur.toFixed(2)}s (target=${targetSeconds.toFixed(2)}s, calibration=off)`);
+    }
+    return inputWav;
+  }
+
   const dur = wavDurationSeconds(inputWav);
   if (!dur || dur <= 0) return inputWav;
 
