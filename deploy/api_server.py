@@ -1429,6 +1429,11 @@ async def stop_broadcast():
             _cleanup_playable_outputs(output_dir)
         except Exception as exc:
             print(f"[AI-Worker] bg cleanup: {exc}")
+        if write_rtmp_status is not None:
+            try:
+                write_rtmp_status(output_dir, "disconnected")
+            except Exception:
+                pass
 
     threading.Thread(target=_bg_stop, name="StopBroadcastBg", daemon=True).start()
     return {"success": True, "status": "stopped"}
