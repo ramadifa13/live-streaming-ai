@@ -2758,6 +2758,8 @@ class FramePostProcessor:
         self._overlay_alpha = None
         self._bg_mtime = -1.0
         self._overlay_mtime = -1.0
+        self._last_reload_check = 0.0
+        self._matte_cache: dict[tuple[str, int], np.ndarray] = {}
 
     def _resolve_background(self) -> str:
         if self.background_path and os.path.isfile(self.background_path):
@@ -2780,6 +2782,10 @@ class FramePostProcessor:
         return ""
 
     def reload(self) -> None:
+        now = time.monotonic()
+        if now - self._last_reload_check < 1.0:
+            return
+        self._last_reload_check = now
         bg_path = self._resolve_background()
         if bg_path:
             mtime = os.path.getmtime(bg_path)
@@ -2799,17 +2805,31 @@ class FramePostProcessor:
                     self._overlay_alpha = image[:, :, 3:4].astype(np.float32) / 255.0
                     self._overlay_mtime = mtime
 
-    def apply(self, frame: np.ndarray) -> np.ndarray:
+    def apply(
+        self, frame: np.ndarray, clip_name: str = "", frame_idx: int = 0
+    ) -> np.ndarray:
         self.reload()
         out = frame
         if self._bg is not None:
-            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            is_bg = (hsv[:, :, 1] < 40) & (gray > 215)
-            matte = np.where(is_bg, 0, 255).astype(np.uint8)
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-            matte = cv2.morphologyEx(matte, cv2.MORPH_CLOSE, kernel)
-            matte = cv2.GaussianBlur(matte, (9, 9), 0)
+            key = (clip_name, int(frame_idx))
+            matte_small = self._matte_cache.get(key)
+            if matte_small is None:
+                # Quarter-size frame-local matte is ~16x cheaper than processing
+                # 720x1280 and stays deterministic (no temporal EMA/ghost trail).
+                small = cv2.resize(
+                    frame, (CANVAS_W // 4, CANVAS_H // 4), interpolation=cv2.INTER_AREA
+                )
+                hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+                gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+                is_bg = (hsv[:, :, 1] < 40) & (gray > 215)
+                matte_small = np.where(is_bg, 0, 255).astype(np.uint8)
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                matte_small = cv2.morphologyEx(matte_small, cv2.MORPH_CLOSE, kernel)
+                matte_small = cv2.GaussianBlur(matte_small, (5, 5), 0)
+                self._matte_cache[key] = matte_small
+            matte = cv2.resize(
+                matte_small, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_LINEAR
+            )
             alpha = matte.astype(np.float32)[:, :, None] / 255.0
             out = np.clip(
                 frame.astype(np.float32) * alpha
@@ -3156,7 +3176,7 @@ def continuous_broadcaster_loop(
             if bc is None or not bc.is_alive():
                 raise RuntimeError("RTMP encoder is not alive")
 
-            frame = post.apply(pkt.frame)
+            frame = post.apply(pkt.frame, pkt.clip_name, pkt.frame_idx)
             started = time.perf_counter()
             if not bc.write(frame, pkt.audio_pcm):
                 raise RuntimeError("FFmpeg rejected continuous A/V packet")
