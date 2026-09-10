@@ -82,11 +82,25 @@ def compute_body_matte(frame: np.ndarray) -> np.ndarray:
 def write_body_mattes(frames: list[np.ndarray], path: Path) -> Path:
     if not frames:
         raise RuntimeError("cannot bake empty body mattes")
-    stacked = np.stack([compute_body_matte(frame) for frame in frames], axis=0)
+    baked: list[np.ndarray] = []
+    for frame in frames:
+        matte = compute_body_matte(frame)
+        height, width = matte.shape[:2]
+        baked.append(
+            cv2.resize(
+                matte,
+                (max(1, width // 4), max(1, height // 4)),
+                interpolation=cv2.INTER_AREA,
+            )
+        )
+    stacked = np.stack(baked, axis=0)
     temp = path.with_suffix(".tmp.npy")
     np.save(temp, stacked)
     os.replace(temp, path)
-    print(f"[ContinuousCompiler] wrote {path.name}: {stacked.shape[0]} mattes")
+    print(
+        f"[ContinuousCompiler] wrote {path.name}: {stacked.shape[0]} mattes "
+        f"{tuple(stacked.shape[1:])}"
+    )
     return path
 
 
@@ -127,7 +141,13 @@ def compile_timeline(
         try:
             cached_meta = json.loads(meta_path.read_text(encoding="utf-8"))
             mattes = np.load(matte_path, mmap_mode="r")
-            return int(mattes.shape[0]) == int(cached_meta.get("num_frames") or 0)
+            height, width = int(mattes.shape[1]), int(mattes.shape[2])
+            # Reject full-res npy (runtime hitch). Compact bake is ~1/4 canvas.
+            return (
+                int(mattes.shape[0]) == int(cached_meta.get("num_frames") or 0)
+                and height <= 400
+                and width <= 240
+            )
         except Exception:
             return False
 

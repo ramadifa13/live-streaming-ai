@@ -48,6 +48,9 @@ BBOX_SMOOTH_WINDOW = max(3, _bbox_smooth)
 
 RAW_QUEUE_SIZE = 12
 RENDER_QUEUE_SIZE = 12
+# Full-res baked mattes hitch on network-volume mmap. Keep a 1/4 copy in RAM
+# and upscale during blend so the 24 fps thread never page-faults 720x1280.
+RUNTIME_MATTE_SCALE = 4
 RAW_QUEUE_BLOCK_SEC = 0.25
 MASK_FEATHER_PX = 5
 SEAMLESS_THRESHOLD = 0.94
@@ -186,6 +189,26 @@ def get_llm_action() -> Optional[str]:
 
 class PlayState(Enum):
     TALK = auto()
+
+
+def prepare_runtime_body_mattes(mattes: np.ndarray) -> np.ndarray:
+    """Copy baked mattes into a compact contiguous RAM buffer.
+
+    Full-res mmap on the network volume page-faults during the 24 fps blend.
+    Erode already happened at bake; AREA downsample keeps the thin edge.
+    """
+    if mattes.ndim != 3 or mattes.shape[0] < 1:
+        raise ValueError("body mattes must be (N,H,W)")
+    count, height, width = (int(mattes.shape[0]), int(mattes.shape[1]), int(mattes.shape[2]))
+    out_h = max(1, height // RUNTIME_MATTE_SCALE)
+    out_w = max(1, width // RUNTIME_MATTE_SCALE)
+    if height == out_h and width == out_w:
+        return np.ascontiguousarray(mattes, dtype=np.uint8)
+    out = np.empty((count, out_h, out_w), dtype=np.uint8)
+    for index in range(count):
+        src = np.ascontiguousarray(mattes[index])
+        out[index] = cv2.resize(src, (out_w, out_h), interpolation=cv2.INTER_AREA)
+    return out
 
 
 @dataclass
@@ -660,12 +683,12 @@ class AssetBank:
         if not os.path.isfile(matte_path):
             return
         try:
-            mattes = np.load(matte_path, mmap_mode="r")
-            if mattes.ndim != 3 or mattes.shape[0] < 1:
+            raw = np.load(matte_path, mmap_mode="r")
+            if raw.ndim != 3 or raw.shape[0] < 1:
                 return
-            clip.body_mattes = mattes
+            clip.body_mattes = prepare_runtime_body_mattes(raw)
             print(
-                f"[AssetBank] Baked body matte {tuple(mattes.shape)} for {clip.name}",
+                f"[AssetBank] Baked body matte {tuple(clip.body_mattes.shape)} for {clip.name}",
                 flush=True,
             )
         except Exception as err:
@@ -2862,6 +2885,9 @@ class FramePostProcessor:
         self._overlay_mtime = -1.0
         self._last_reload_check = 0.0
         self._matte_cache: dict[tuple[str, int], np.ndarray] = {}
+        self._up_matte: Optional[np.ndarray] = None
+        self._alpha: Optional[np.ndarray] = None
+        self._inv_alpha: Optional[np.ndarray] = None
 
     def _resolve_background(self) -> str:
         if self.background_path and os.path.isfile(self.background_path):
@@ -2917,40 +2943,45 @@ class FramePostProcessor:
         self.reload()
         out = frame
         if self._bg is not None:
+            height, width = frame.shape[:2]
             matte = baked_matte
             if matte is None:
                 key = (clip_name, int(frame_idx))
-                matte_small = self._matte_cache.get(key)
-                if matte_small is None:
+                matte = self._matte_cache.get(key)
+                if matte is None:
                     small = cv2.resize(
                         frame,
-                        (CANVAS_W // 4, CANVAS_H // 4),
+                        (CANVAS_W // RUNTIME_MATTE_SCALE, CANVAS_H // RUNTIME_MATTE_SCALE),
                         interpolation=cv2.INTER_AREA,
                     )
                     hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
                     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
                     is_bg = (hsv[:, :, 1] < 40) & (gray > 215)
-                    matte_small = np.where(is_bg, 0, 255).astype(np.uint8)
+                    matte = np.where(is_bg, 0, 255).astype(np.uint8)
                     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-                    matte_small = cv2.morphologyEx(matte_small, cv2.MORPH_CLOSE, kernel)
-                    matte_small = cv2.erode(matte_small, kernel, iterations=1)
-                    matte_small = cv2.GaussianBlur(matte_small, (3, 3), 0.6)
-                    self._matte_cache[key] = matte_small
-                matte = cv2.resize(
-                    matte_small,
-                    (frame.shape[1], frame.shape[0]),
+                    matte = cv2.morphologyEx(matte, cv2.MORPH_CLOSE, kernel)
+                    matte = cv2.erode(matte, kernel, iterations=1)
+                    matte = cv2.GaussianBlur(matte, (3, 3), 0.6)
+                    self._matte_cache[key] = matte
+            matte = np.ascontiguousarray(matte)
+            if matte.ndim == 3:
+                matte = matte[:, :, 0]
+            if matte.shape[:2] != (height, width):
+                if self._up_matte is None or self._up_matte.shape != (height, width):
+                    self._up_matte = np.empty((height, width), dtype=np.uint8)
+                cv2.resize(
+                    matte,
+                    (width, height),
+                    dst=self._up_matte,
                     interpolation=cv2.INTER_LINEAR,
                 )
-            elif matte.shape[:2] != frame.shape[:2]:
-                matte = cv2.resize(
-                    np.asarray(matte),
-                    (frame.shape[1], frame.shape[0]),
-                    interpolation=cv2.INTER_LINEAR,
-                )
-            alpha = np.asarray(matte, dtype=np.float32) / 255.0
-            if alpha.ndim == 3:
-                alpha = alpha[:, :, 0]
-            out = cv2.blendLinear(frame, self._bg, alpha, 1.0 - alpha)
+                matte = self._up_matte
+            if self._alpha is None or self._alpha.shape != (height, width):
+                self._alpha = np.empty((height, width), dtype=np.float32)
+                self._inv_alpha = np.empty((height, width), dtype=np.float32)
+            np.divide(matte, np.float32(255.0), out=self._alpha)
+            np.subtract(np.float32(1.0), self._alpha, out=self._inv_alpha)
+            out = cv2.blendLinear(frame, self._bg, self._alpha, self._inv_alpha)
         if self._overlay_alpha is not None and self._overlay_rgb is not None:
             alpha = self._overlay_alpha[:, :, 0]
             out = cv2.blendLinear(out, self._overlay_rgb, 1.0 - alpha, alpha)
@@ -3294,7 +3325,11 @@ def continuous_broadcaster_loop(
             if clip is not None and clip.body_mattes is not None and clip.body_mattes.shape[0] > 0:
                 idx = max(0, min(int(pkt.frame_idx), int(clip.body_mattes.shape[0]) - 1))
                 baked = clip.body_mattes[idx]
+            post_started = time.perf_counter()
             frame = post.apply(pkt.frame, pkt.clip_name, pkt.frame_idx, baked_matte=baked)
+            metrics.record_latency(
+                "post_apply_ms", (time.perf_counter() - post_started) * 1000.0
+            )
             started = time.perf_counter()
             if not bc.write(frame, pkt.audio_pcm):
                 raise RuntimeError("FFmpeg rejected continuous A/V packet")
