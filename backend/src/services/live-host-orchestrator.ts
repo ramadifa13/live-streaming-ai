@@ -237,6 +237,7 @@ const LIVE_MIN_BUFFER = Number(process.env.LIVE_MIN_BUFFER_SECONDS || 6);
 const LIVE_MAX_UTTERANCE_SECONDS = Number(process.env.LIVE_MAX_UTTERANCE_SECONDS || 10);
 const LIVE_TTS_MAX_SPEED = 1.0;
 const GO_LIVE_MIN_UTTERANCES = Number(process.env.GO_LIVE_MIN_UTTERANCES || 1);
+const AI_WORKER_GO_LIVE_MIN_UTTERANCES = 1;
 
 const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   "1H": {
@@ -2078,7 +2079,8 @@ class LiveHostOrchestrator {
     const rtmpOk = !rtmpRequired || queue.rtmpConnected;
     const aiWorker = isAiWorkerBroadcastMode(queue.broadcastMode);
     const playableReady = aiWorker
-      ? queue.readyUtteranceCount >= GO_LIVE_MIN_UTTERANCES && queue.bufferSeconds >= Math.min(policy.minBufferSeconds, 8)
+      ? queue.readyUtteranceCount >= AI_WORKER_GO_LIVE_MIN_UTTERANCES &&
+        queue.bufferSeconds >= Math.min(policy.minBufferSeconds, 8)
       : queue.queuedVideos >= GO_LIVE_MIN_UTTERANCES && queue.bufferSeconds >= policy.minBufferSeconds;
     const bufferReady = playableReady;
 
@@ -2147,7 +2149,8 @@ class LiveHostOrchestrator {
       stageText = "Menyalakan mesin AI di cloud Mohon tunggu.";
     } else if (
       (aiWorker
-        ? queue.utteranceQueueCount < GO_LIVE_MIN_UTTERANCES && queue.readyUtteranceCount < GO_LIVE_MIN_UTTERANCES
+        ? queue.utteranceQueueCount < AI_WORKER_GO_LIVE_MIN_UTTERANCES &&
+          queue.readyUtteranceCount < AI_WORKER_GO_LIVE_MIN_UTTERANCES
         : queue.bufferSeconds < policy.minBufferSeconds && queue.queuedVideos < GO_LIVE_MIN_UTTERANCES) &&
       !state.pipelineReady
     ) {
