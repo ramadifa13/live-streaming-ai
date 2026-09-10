@@ -203,6 +203,7 @@ class ClipAsset:
     latent_list_cycle: list = field(default_factory=list)
     mask_materials_cycle: list = field(default_factory=list)
     loop: bool = True
+    body_mattes: Optional[np.ndarray] = None
 
     @property
     def num_frames(self) -> int:
@@ -279,6 +280,7 @@ class RawFramePacket:
     audio_pcm: bytes
     is_speech: bool
     whisper_idx: Optional[int] = None
+    utterance_id: Optional[str] = None
     crossfade_from: Optional[np.ndarray] = None
     crossfade_alpha: float = 1.0
 
@@ -596,6 +598,7 @@ class AssetBank:
             )
             if frames and clip.seamless_score < 0:
                 clip.seamless_score = compute_seamless_score(clip)
+            self._load_body_mattes(clip)
             self.clips[name] = clip
             status = f"{len(frames)} frames" if frames else f"lazy ({num_frames}f)"
             seam = (
@@ -648,6 +651,25 @@ class AssetBank:
         clip.frames = self._decode_video(clip.path)
         if clip.seamless_score < 0:
             clip.seamless_score = compute_seamless_score(clip)
+        self._load_body_mattes(clip)
+
+    def _load_body_mattes(self, clip: ClipAsset) -> None:
+        if clip.body_mattes is not None or not clip.path:
+            return
+        matte_path = os.path.splitext(clip.path)[0] + "_matte.npy"
+        if not os.path.isfile(matte_path):
+            return
+        try:
+            mattes = np.load(matte_path, mmap_mode="r")
+            if mattes.ndim != 3 or mattes.shape[0] < 1:
+                return
+            clip.body_mattes = mattes
+            print(
+                f"[AssetBank] Baked body matte {tuple(mattes.shape)} for {clip.name}",
+                flush=True,
+            )
+        except Exception as err:
+            print(f"[AssetBank] Body matte load notice ({clip.name}): {err}")
 
     def get_clip(self, name: str) -> Optional[ClipAsset]:
         clip = self.clips.get(name)
@@ -1512,6 +1534,21 @@ class VideoStateMachine:
             return pkt
 
 
+@dataclass
+class _MouthSlot:
+    utterance_id: str
+    whisper_chunks: Optional[torch.Tensor]
+    mouths: Dict[int, np.ndarray] = field(default_factory=dict)
+    infer_cursor: int = 0
+    start_frame_idx: int = 0
+    talk_clip_name: str = CONTINUOUS_CLIP_NAME
+    talk_sequence: List[str] = field(default_factory=list)
+    infer_stop: threading.Event = field(default_factory=threading.Event)
+    infer_thread: Optional[threading.Thread] = None
+    last_mouth_256: Optional[np.ndarray] = None
+    retired: bool = False
+
+
 class LipSyncEngine:
     """Generate mouth crops ahead of audio, then composite onto the live body frame."""
 
@@ -1529,6 +1566,8 @@ class LipSyncEngine:
         self.weight_dtype = models_bundle["weight_dtype"]
         self._face_registry = face_registry
         self._lock = threading.Lock()
+        self._slots: Dict[str, _MouthSlot] = {}
+        self._active_id: Optional[str] = None
         self._utterance_id: Optional[str] = None
         self._whisper_chunks: Optional[torch.Tensor] = None
         self._mouths: Dict[int, np.ndarray] = {}
@@ -1556,21 +1595,25 @@ class LipSyncEngine:
         body_clip: Optional[str] = None,
         talk_sequence: Optional[List[str]] = None,
     ) -> None:
-        """Mulai batch-ahead inference untuk satu utterance."""
-        if job is not None and self._utterance_id == getattr(job, "task_id", None):
-            return
-        self.clear_utterance()
+        """Start mouth inference for one utterance without wiping in-flight caches."""
+        task_id = getattr(job, "task_id", None) if job is not None else None
+        with self._lock:
+            existing = self._slots.get(task_id) if task_id else None
+            if (
+                existing is not None
+                and not existing.retired
+                and existing.whisper_chunks is not None
+            ):
+                return
         if job is None or job.whisper_chunks is None:
             print(
-                f"[LipSync] Skip infer {getattr(job, 'task_id', '?')}: "
+                f"[LipSync] Skip infer {task_id or '?'}: "
                 "whisper_chunks kosong — mulut tidak akan bergerak"
             )
             return
         talk = body_clip or self.bank.pick_talk_clip()
         if not self.bank.clip_has_musetalk(talk):
             talk = self.bank.crash_fallback_name()
-        if talk in self.bank.clips:
-            self._talk_clip_name = talk
         seq = [
             c
             for c in (talk_sequence or [talk])
@@ -1579,59 +1622,105 @@ class LipSyncEngine:
         if not seq:
             seq = [talk] if talk in self.bank.clips else [self.bank.talk_clip_name()]
         start_idx = int(start_frame_idx)
+        slot = _MouthSlot(
+            utterance_id=str(task_id),
+            whisper_chunks=job.whisper_chunks,
+            start_frame_idx=start_idx,
+            talk_clip_name=talk if talk in self.bank.clips else seq[0],
+            talk_sequence=list(seq),
+        )
         with self._lock:
-            self._utterance_id = job.task_id
-            self._whisper_chunks = job.whisper_chunks
+            self._slots[str(task_id)] = slot
+            self._utterance_id = str(task_id)
+            self._whisper_chunks = slot.whisper_chunks
+            self._mouths = slot.mouths
             self._start_frame_idx = start_idx
             self._talk_sequence = list(seq)
-            self._mouths = {}
+            self._talk_clip_name = slot.talk_clip_name
             self._infer_cursor = 0
             self._last_mouth_256 = None
-        self._infer_stop.clear()
-        self._infer_thread = threading.Thread(
+        slot.infer_thread = threading.Thread(
             target=self._batch_inference_loop,
-            name=f"LipSync-{job.task_id[:20]}",
+            args=(slot,),
+            name=f"LipSync-{str(task_id)[:20]}",
             daemon=True,
         )
-        self._infer_thread.start()
+        slot.infer_thread.start()
+        self._infer_thread = slot.infer_thread
         print(
-            f"[LipSync] Infer {job.task_id}: {int(job.whisper_chunks.shape[0])} frames, "
-            f"batch={self.batch_size}, body={self._talk_clip_name}, "
+            f"[LipSync] Infer {task_id}: {int(job.whisper_chunks.shape[0])} frames, "
+            f"batch={self.batch_size}, body={slot.talk_clip_name}, "
             f"start_frame={start_idx}"
         )
 
+    def activate_utterance(self, task_id: Optional[str]) -> None:
+        if not task_id:
+            return
+        with self._lock:
+            slot = self._slots.get(task_id)
+            if slot is None:
+                return
+            slot.retired = False
+            self._active_id = task_id
+            self._utterance_id = task_id
+            self._whisper_chunks = slot.whisper_chunks
+            self._mouths = slot.mouths
+            self._start_frame_idx = slot.start_frame_idx
+            self._talk_sequence = list(slot.talk_sequence)
+            self._talk_clip_name = slot.talk_clip_name
+            self._infer_cursor = slot.infer_cursor
+            self._last_mouth_256 = slot.last_mouth_256
+
+    def retire_utterance(self, task_id: Optional[str]) -> None:
+        """Keep mouths for in-flight packets; do not block the 24 fps clock."""
+        if not task_id:
+            return
+        with self._lock:
+            slot = self._slots.get(task_id)
+            if slot is not None:
+                slot.retired = True
+            if self._active_id == task_id:
+                self._active_id = None
+        self._drop_retired_overflow()
+
     def wait_preroll(
-        self, n: Optional[int] = None, timeout: float = LIPSYNC_PREROLL_TIMEOUT_SEC
+        self,
+        n: Optional[int] = None,
+        timeout: float = LIPSYNC_PREROLL_TIMEOUT_SEC,
+        task_id: Optional[str] = None,
     ) -> bool:
         """Wait until every mouth frame exists before allowing PCM playback."""
         metrics = get_telemetry()
-        with self._lock:
-            chunks = self._whisper_chunks
-        if chunks is None:
+        slot = self._slot_for(task_id)
+        if slot is None or slot.whisper_chunks is None:
             return False
-        total = int(chunks.shape[0])
+        total = int(slot.whisper_chunks.shape[0])
         need = total if n is None else min(max(1, int(n)), total)
         deadline = time.monotonic() + max(0.05, timeout)
         while time.monotonic() < deadline:
-            with self._lock:
-                ready = sum(1 for i in range(need) if i in self._mouths)
-                infer_done = self._infer_cursor >= total
+            ready = sum(1 for i in range(need) if i in slot.mouths)
+            infer_done = slot.infer_cursor >= total
             if ready >= need and (n is not None or infer_done):
                 return True
-            if self._infer_stop.is_set():
+            if slot.infer_stop.is_set() or self._infer_stop.is_set():
                 return False
             time.sleep(0.008)
-        with self._lock:
-            ready = sum(1 for i in range(need) if i in self._mouths)
+        ready = sum(1 for i in range(need) if i in slot.mouths)
         print(f"[LipSync] Preroll {ready}/{need} (timeout)")
         metrics.inc("preroll_timeout")
         return False
 
-    def clear_utterance(self) -> None:
+    def clear_utterance(self, task_id: Optional[str] = None) -> None:
+        if task_id:
+            self._drop_slot(task_id)
+            return
         self._infer_stop.set()
-        if self._infer_thread and self._infer_thread.is_alive():
-            self._infer_thread.join(timeout=1.0)
+        ids = list(self._slots.keys())
+        for uid in ids:
+            self._drop_slot(uid)
         with self._lock:
+            self._slots.clear()
+            self._active_id = None
             self._utterance_id = None
             self._whisper_chunks = None
             self._mouths = {}
@@ -1640,6 +1729,43 @@ class LipSyncEngine:
             self._talk_sequence = []
             self._last_mouth_256 = None
         self._infer_thread = None
+        self._infer_stop.clear()
+
+    def _slot_for(self, utterance_id: Optional[str] = None) -> Optional[_MouthSlot]:
+        with self._lock:
+            if utterance_id and utterance_id in self._slots:
+                return self._slots[utterance_id]
+            if self._active_id and self._active_id in self._slots:
+                return self._slots[self._active_id]
+            if self._utterance_id and self._utterance_id in self._slots:
+                return self._slots[self._utterance_id]
+            if len(self._slots) == 1:
+                return next(iter(self._slots.values()))
+            return None
+
+    def _drop_slot(self, task_id: str) -> None:
+        with self._lock:
+            slot = self._slots.pop(task_id, None)
+            if self._active_id == task_id:
+                self._active_id = None
+            if self._utterance_id == task_id:
+                self._utterance_id = None
+                self._whisper_chunks = None
+                self._mouths = {}
+        if slot is None:
+            return
+        slot.infer_stop.set()
+        # Never join() here — retire/drop can run on the 24 fps producer thread.
+
+    def _drop_retired_overflow(self) -> None:
+        with self._lock:
+            retired = [
+                uid
+                for uid, slot in self._slots.items()
+                if slot.retired and uid != self._active_id
+            ]
+        while len(retired) > 1:
+            self._drop_slot(retired.pop(0))
 
     def _latent_index(self, clip: ClipAsset, body_idx: int) -> int:
         """Hitung latent index dari body pose index.
@@ -1654,7 +1780,7 @@ class LipSyncEngine:
         offset = max(0, int(body_idx) - clip.base_pose_frame)
         return offset % max(1, forward_n)
 
-    def _batch_inference_loop(self) -> None:
+    def _batch_inference_loop(self, slot: _MouthSlot) -> None:
         vae = self.models["vae"]
         unet = self.models["unet"]
         pe = self.models["pe"]
@@ -1667,25 +1793,18 @@ class LipSyncEngine:
         print(
             f"[LipSync] Starting batch inference for {default_clip.name}, "
             f"{len(default_clip.latent_list_cycle)} default latents "
-            f"(full-prerender, start_frame={self._start_frame_idx})"
+            f"(full-prerender, start_frame={slot.start_frame_idx})"
         )
         batch_count = 0
-        # Deep diagnostics: compare the actual signal at every stage.
-        # These values let us distinguish:
-        #   audio/Whisper frozen -> PE frozen -> MuseTalk output frozen
-        #   MuseTalk output moving -> compositing/mask broken
         prev_whisper = None
         prev_pe = None
         prev_recon = None
-        while not self._infer_stop.is_set():
-            with self._lock:
-                chunks = self._whisper_chunks
-                cursor = self._infer_cursor
+        while not slot.infer_stop.is_set() and not self._infer_stop.is_set():
+            chunks = slot.whisper_chunks
+            cursor = slot.infer_cursor
             if chunks is None or cursor >= chunks.shape[0]:
                 break
 
-            with self._lock:
-                start_idx = int(self._start_frame_idx)
             end = min(cursor + self.batch_size, chunks.shape[0])
             whisper_batch = chunks[cursor:end].to(
                 device=self.device, dtype=self.weight_dtype
@@ -1786,31 +1905,43 @@ class LipSyncEngine:
                         )
 
                 with self._lock:
-                    self._mouths[frame_idx] = mouth_256
-                    self._last_mouth_256 = mouth_256
+                    slot.mouths[frame_idx] = mouth_256
+                    slot.last_mouth_256 = mouth_256
+                    if self._utterance_id == slot.utterance_id:
+                        self._mouths = slot.mouths
+                        self._last_mouth_256 = mouth_256
 
-            with self._lock:
+            slot.infer_cursor = end
+            if self._utterance_id == slot.utterance_id:
                 self._infer_cursor = end
             batch_count += 1
             if batch_count % 10 == 0:
                 print(
-                    f"[LipSync] Processed {self._infer_cursor}/{chunks.shape[0]} frames"
+                    f"[LipSync] Processed {slot.infer_cursor}/{chunks.shape[0]} frames"
                 )
 
         print(
-            f"[LipSync] Batch inference complete: {batch_count} batches, {self._infer_cursor} frames"
+            f"[LipSync] Batch inference complete: {batch_count} batches, {slot.infer_cursor} frames"
         )
 
     def _wait_mouth(
-        self, idx: int, timeout: float = MOUTH_WAIT_SEC
+        self,
+        idx: int,
+        timeout: float = MOUTH_WAIT_SEC,
+        slot: Optional[_MouthSlot] = None,
     ) -> Optional[np.ndarray]:
         deadline = time.perf_counter() + max(0.0, float(timeout))
         metrics = get_telemetry()
+        target = slot or self._slot_for()
 
         while True:
-            with self._lock:
-                cached = self._mouths.get(int(idx))
-                cursor = int(self._infer_cursor)
+            if target is not None:
+                cached = target.mouths.get(int(idx))
+                cursor = int(target.infer_cursor)
+            else:
+                with self._lock:
+                    cached = self._mouths.get(int(idx))
+                    cursor = int(self._infer_cursor)
 
             if cached is not None:
                 self._last_mouth_frame = cached
@@ -2043,18 +2174,16 @@ class LipSyncEngine:
         if not pkt.needs_lipsync:
             metrics.inc("lipsync_skipped_no_needs_lipsync")
             return pkt.frame
+        slot = self._slot_for(pkt.utterance_id)
         if pkt.whisper_idx is None:
-            with self._lock:
-                last_cursor = max(0, self._infer_cursor - 1)
-                total = (
-                    0
-                    if self._whisper_chunks is None
-                    else int(self._whisper_chunks.shape[0])
-                )
+            if slot is None or slot.whisper_chunks is None:
+                metrics.inc("lipsync_skipped_no_whisper_idx")
+                return pkt.frame
+            last_cursor = max(0, slot.infer_cursor - 1)
+            total = int(slot.whisper_chunks.shape[0])
             if total == 0 or last_cursor >= total:
                 metrics.inc("lipsync_skipped_no_whisper_idx")
                 return pkt.frame
-            # Gunakan frame terakhir yang valid sebagai proxy (bibir tetap natural)
             pkt = RawFramePacket(
                 seq=pkt.seq,
                 frame=pkt.frame,
@@ -2066,6 +2195,7 @@ class LipSyncEngine:
                 audio_pcm=pkt.audio_pcm,
                 is_speech=pkt.is_speech,
                 whisper_idx=last_cursor,
+                utterance_id=pkt.utterance_id or (slot.utterance_id if slot else None),
             )
             metrics.inc("lipsync_whisper_idx_fallback")
 
@@ -2073,27 +2203,21 @@ class LipSyncEngine:
             metrics.inc("lipsync_skipped_wrong_clip")
             return pkt.frame
 
-        # Prefer talk clip; jangan skip lipsync jika body juga punya MuseTalk materials
-        # (soft-cut / hold) — mulut tertutup jauh lebih jelek daripada mask mismatch.
+        talk_name = slot.talk_clip_name if slot is not None else self._talk_clip_name
         if (
-            self._talk_clip_name
-            and pkt.clip_name != self._talk_clip_name
+            talk_name
+            and pkt.clip_name != talk_name
             and not self.bank.clip_has_musetalk(pkt.clip_name)
         ):
             metrics.inc("lipsync_skipped_wrong_clip")
             return pkt.frame
 
         mouth_idx = int(pkt.whisper_idx) + LIPSYNC_SYNC_SHIFT
-        with self._lock:
-            total = (
-                0
-                if self._whisper_chunks is None
-                else int(self._whisper_chunks.shape[0])
-            )
+        total = 0 if slot is None or slot.whisper_chunks is None else int(slot.whisper_chunks.shape[0])
         if total > 0:
             mouth_idx = max(0, min(mouth_idx, total - 1))
 
-        mouth = self._wait_mouth(mouth_idx, timeout=MOUTH_WAIT_SEC)
+        mouth = self._wait_mouth(mouth_idx, timeout=MOUTH_WAIT_SEC, slot=slot)
         if mouth is None:
             raise RuntimeError(
                 f"full-prerender contract violated: mouth {mouth_idx} is missing"
@@ -2209,6 +2333,10 @@ def frame_fetcher_loop(
     while not stop_event.is_set():
         tick_start = time.perf_counter()
         whisper_idx = None
+        current_uid = None
+        if bridge is not None:
+            current_job = bridge.current_utterance()
+            current_uid = getattr(current_job, "task_id", None) if current_job else None
         if audio_fn_ext is not None:
             pcm, is_speech, whisper_idx = audio_fn_ext()
         else:
@@ -2239,6 +2367,8 @@ def frame_fetcher_loop(
         action = action_fn()
         pkt = sm.next_packet(pcm, is_speech, llm_action=action, whisper_idx=whisper_idx)
         pkt.whisper_idx = whisper_idx
+        if current_uid:
+            pkt.utterance_id = current_uid
 
         # FIX: needs_lipsync aktif selama utterance aktif DAN clip punya materials.
         # Override agar pkt.needs_lipsync dari state machine tidak bisa False
@@ -2778,33 +2908,48 @@ class FramePostProcessor:
                     self._overlay_mtime = mtime
 
     def apply(
-        self, frame: np.ndarray, clip_name: str = "", frame_idx: int = 0
+        self,
+        frame: np.ndarray,
+        clip_name: str = "",
+        frame_idx: int = 0,
+        baked_matte: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         self.reload()
         out = frame
         if self._bg is not None:
-            key = (clip_name, int(frame_idx))
-            matte_small = self._matte_cache.get(key)
-            if matte_small is None:
-                # Quarter-size frame-local matte is ~16x cheaper than processing
-                # 720x1280 and stays deterministic (no temporal EMA/ghost trail).
-                small = cv2.resize(
-                    frame, (CANVAS_W // 4, CANVAS_H // 4), interpolation=cv2.INTER_AREA
+            matte = baked_matte
+            if matte is None:
+                key = (clip_name, int(frame_idx))
+                matte_small = self._matte_cache.get(key)
+                if matte_small is None:
+                    small = cv2.resize(
+                        frame,
+                        (CANVAS_W // 4, CANVAS_H // 4),
+                        interpolation=cv2.INTER_AREA,
+                    )
+                    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+                    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+                    is_bg = (hsv[:, :, 1] < 40) & (gray > 215)
+                    matte_small = np.where(is_bg, 0, 255).astype(np.uint8)
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                    matte_small = cv2.morphologyEx(matte_small, cv2.MORPH_CLOSE, kernel)
+                    matte_small = cv2.erode(matte_small, kernel, iterations=1)
+                    matte_small = cv2.GaussianBlur(matte_small, (3, 3), 0.6)
+                    self._matte_cache[key] = matte_small
+                matte = cv2.resize(
+                    matte_small,
+                    (frame.shape[1], frame.shape[0]),
+                    interpolation=cv2.INTER_LINEAR,
                 )
-                hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
-                gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-                is_bg = (hsv[:, :, 1] < 40) & (gray > 215)
-                matte_small = np.where(is_bg, 0, 255).astype(np.uint8)
-                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-                matte_small = cv2.morphologyEx(matte_small, cv2.MORPH_CLOSE, kernel)
-                matte_small = cv2.GaussianBlur(matte_small, (5, 5), 0)
-                self._matte_cache[key] = matte_small
-            matte = cv2.resize(
-                matte_small,
-                (frame.shape[1], frame.shape[0]),
-                interpolation=cv2.INTER_LINEAR,
-            )
-            alpha = matte.astype(np.float32) / 255.0
+            elif matte.shape[:2] != frame.shape[:2]:
+                matte = cv2.resize(
+                    np.asarray(matte),
+                    (frame.shape[1], frame.shape[0]),
+                    interpolation=cv2.INTER_LINEAR,
+                )
+            alpha = np.asarray(matte, dtype=np.float32) / 255.0
+            if alpha.ndim == 3:
+                alpha = alpha[:, :, 0]
             out = cv2.blendLinear(frame, self._bg, alpha, 1.0 - alpha)
         if self._overlay_alpha is not None and self._overlay_rgb is not None:
             alpha = self._overlay_alpha[:, :, 0]
@@ -3119,13 +3264,14 @@ def continuous_broadcaster_loop(
     overlay_path: str = "",
 ) -> None:
     """Strict one-packet/one-tick emitter with no fallback, skip, or replay."""
-    del bank, bridge
+    del bridge
     period = 1.0 / float(TARGET_FPS)
     expected_seq = 0
     deadline = time.perf_counter()
     post = FramePostProcessor(output_folder, background_path, overlay_path)
     metrics = get_telemetry()
     metrics.set_gauge("target_fps", float(TARGET_FPS))
+    continuous = bank.get_clip(CONTINUOUS_CLIP_NAME) if bank is not None else None
 
     while not stop_event.is_set():
         try:
@@ -3141,7 +3287,14 @@ def continuous_broadcaster_loop(
             if bc is None or not bc.is_alive():
                 raise RuntimeError("RTMP encoder is not alive")
 
-            frame = post.apply(pkt.frame, pkt.clip_name, pkt.frame_idx)
+            clip = None
+            if bank is not None:
+                clip = bank.clips.get(pkt.clip_name) or continuous
+            baked = None
+            if clip is not None and clip.body_mattes is not None and clip.body_mattes.shape[0] > 0:
+                idx = max(0, min(int(pkt.frame_idx), int(clip.body_mattes.shape[0]) - 1))
+                baked = clip.body_mattes[idx]
+            frame = post.apply(pkt.frame, pkt.clip_name, pkt.frame_idx, baked_matte=baked)
             started = time.perf_counter()
             if not bc.write(frame, pkt.audio_pcm):
                 raise RuntimeError("FFmpeg rejected continuous A/V packet")
@@ -3246,7 +3399,9 @@ class AIVisualWorker:
                 ok = bool(
                     self._engine
                     and self._engine.wait_preroll(
-                        None, timeout=LIPSYNC_PREROLL_TIMEOUT_SEC
+                        None,
+                        timeout=LIPSYNC_PREROLL_TIMEOUT_SEC,
+                        task_id=getattr(job, "task_id", None),
                     )
                 )
                 if not ok:
@@ -3269,21 +3424,23 @@ class AIVisualWorker:
         ).start()
 
     def _on_utterance_start(self, job) -> None:
-        if self._engine and getattr(self._engine, "_utterance_id", None) != getattr(
-            job, "task_id", None
-        ):
-            raise RuntimeError("utterance started without full mouth prerender")
+        if self._engine:
+            self._engine.activate_utterance(getattr(job, "task_id", None))
+            if getattr(self._engine, "_utterance_id", None) != getattr(
+                job, "task_id", None
+            ):
+                raise RuntimeError("utterance started without full mouth prerender")
         if self._sm:
             self._sm.begin_utterance()
 
-    def _on_utterance_end(self, _job) -> None:
-        # Producer may be ahead by the bounded queues. Keep this utterance's
-        # mouth cache alive until every paired A/V packet has been consumed.
-        self._raw_q.join()
-        self._render_q.join()
+    def _on_utterance_end(self, job) -> None:
+        # Keep the mouth cache for packets already in the bounded queues.
+        # Do not join() here — that stalled the 24 fps producer clock.
         if self._engine:
-            self._engine.clear_utterance()
-        if self._face_registry:
+            self._engine.retire_utterance(getattr(job, "task_id", None))
+        if self._face_registry and not (
+            self._bridge and self._bridge.has_upcoming_work()
+        ):
             self._face_registry.release_lock()
 
     def _load_models(self):
@@ -3727,19 +3884,29 @@ class AIVisualWorker:
     def prerender_status(self) -> dict:
         if self._engine is None:
             return {"task_id": None, "ready": 0, "total": 0, "complete": False}
-        with self._engine._lock:
-            total = (
-                0
-                if self._engine._whisper_chunks is None
-                else int(self._engine._whisper_chunks.shape[0])
-            )
-            ready = len(self._engine._mouths)
-            return {
-                "task_id": self._engine._utterance_id,
-                "ready": ready,
-                "total": total,
-                "complete": total > 0 and ready == total,
-            }
+        slot = self._engine._slot_for()
+        if slot is None or slot.whisper_chunks is None:
+            with self._engine._lock:
+                total = (
+                    0
+                    if self._engine._whisper_chunks is None
+                    else int(self._engine._whisper_chunks.shape[0])
+                )
+                ready = len(self._engine._mouths)
+                return {
+                    "task_id": self._engine._utterance_id,
+                    "ready": ready,
+                    "total": total,
+                    "complete": total > 0 and ready == total,
+                }
+        total = int(slot.whisper_chunks.shape[0])
+        ready = len(slot.mouths)
+        return {
+            "task_id": slot.utterance_id,
+            "ready": ready,
+            "total": total,
+            "complete": total > 0 and ready == total,
+        }
 
     def run_forever(self, **kwargs) -> None:
         self.start(**kwargs)

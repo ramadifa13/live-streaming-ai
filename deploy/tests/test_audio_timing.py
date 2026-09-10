@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 from speech_bridge import (
     SpeechBridge,
     UtteranceJob,
+    _apply_pcm_edge_fades,
     _split_pcm_frames,
     build_live_script,
     ensure_no_idle_policy,
@@ -27,6 +28,18 @@ def test_split_pcm_frames_keeps_partial_tail_without_cutting_audio():
     assert len(joined) - len(pcm) < len(frames[-1])
     assert all(frame[:1] == b"\x00" for frame in frames)
     assert len(frames) >= 1
+
+
+def test_pcm_edge_fades_keep_frame_sizes_and_only_soften_edges():
+    frame = b"\x00\x40" * (667 * 2)
+    frames = [frame for _ in range(24)]
+    faded = _apply_pcm_edge_fades(frames, fade_frames=3)
+
+    assert len(faded) == 24
+    assert all(len(item) == len(frame) for item in faded)
+    assert faded[12] == frame
+    assert faded[0] != frame
+    assert faded[-1] != frame
 
 
 def test_hard_deadline_does_not_cut_active_pcm():

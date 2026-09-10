@@ -351,7 +351,36 @@ def _split_pcm_frames(
             chunk += b"\x00" * (frame_bytes - len(chunk))
         frames.append(chunk)
         pos += frame_bytes
-    return frames
+    return _apply_pcm_edge_fades(frames)
+
+
+# ~125 ms at 24 fps. Softens AAC clicks between utterances without changing duration.
+PCM_EDGE_FADE_FRAMES = 3
+
+
+def _scale_pcm_frame(frame: bytes, gain: float) -> bytes:
+    if not frame or gain >= 0.999:
+        return frame
+    samples = np.frombuffer(frame, dtype=np.int16).astype(np.float32)
+    samples *= max(0.0, min(1.0, float(gain)))
+    return np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
+
+
+def _apply_pcm_edge_fades(
+    frames: List[bytes], fade_frames: int = PCM_EDGE_FADE_FRAMES
+) -> List[bytes]:
+    """Fade in/out at utterance edges. Sample count per frame stays identical."""
+    n = len(frames)
+    if n == 0 or fade_frames <= 0:
+        return frames
+    fade = min(max(1, int(fade_frames)), max(1, n // 4))
+    out = list(frames)
+    for i in range(fade):
+        in_gain = ((i + 1) / float(fade)) ** 2
+        out[i] = _scale_pcm_frame(out[i], in_gain)
+        out_gain = ((fade - i) / float(fade)) ** 2
+        out[n - fade + i] = _scale_pcm_frame(out[n - fade + i], out_gain)
+    return out
 
 
 @dataclass
