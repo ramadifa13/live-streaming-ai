@@ -2086,9 +2086,10 @@ class LiveHostOrchestrator {
     const rtmpRequired = Boolean(state.config.rtmpUrl);
     const rtmpOk = !rtmpRequired || queue.rtmpConnected;
     const aiWorker = isAiWorkerBroadcastMode(queue.broadcastMode);
+    // AI worker: one prerendered greeting is enough. Do not wait for plan minBuffer
+    // (24H/8H cap at 8s) — a single ~7s utterance left the overlay stuck on "Siap".
     const playableReady = aiWorker
-      ? queue.readyUtteranceCount >= AI_WORKER_GO_LIVE_MIN_UTTERANCES &&
-        queue.bufferSeconds >= Math.min(policy.minBufferSeconds, 8)
+      ? queue.readyUtteranceCount >= AI_WORKER_GO_LIVE_MIN_UTTERANCES
       : queue.queuedVideos >= GO_LIVE_MIN_UTTERANCES && queue.bufferSeconds >= policy.minBufferSeconds;
     const bufferReady = playableReady;
 

@@ -465,7 +465,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       const realtime = /ai_worker|ai-worker|realtime|visual_worker/i.test(String(pipelineStatus.broadcastMode || ""));
       const minUtt = Number(pipelineStatus.goLiveMinUtterances || 1);
       const playable = realtime ? Number(pipelineStatus.readyUtteranceCount || 0) : Number(pipelineStatus.videosQueued || 0);
-      if (!pipelineStatus.ready || playable < minUtt) {
+      const rtmpOk = pipelineStatus.isRtmpConnected === true;
+      if (playable < minUtt || !rtmpOk) {
         reply.code(409);
         const bufferLabel = realtime ? `ucapan siap ${playable}/${minUtt}` : `video ${playable}/${minUtt}`;
         return {
