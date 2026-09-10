@@ -1318,6 +1318,12 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
             "skip jika sudah hangat; bisa 1–3 menit saat cold start"
         )
         vw.initialize()
+        # asyncio cancellation cannot stop the blocking to_thread initializer.
+        # A stop request clears this exact env; do not let the orphaned thread
+        # start an invisible broadcaster after initialization eventually ends.
+        if current_broadcast_env is not env or _broadcast_boot_state != "starting":
+            vw.stop(clear_queue=False)
+            raise RuntimeError("broadcast boot cancelled before pipeline start")
         print("[AI-Worker] STAGE: model READY — mulai RTMP handshake")
         try:
             vw.start(wait_rtmp=True)
@@ -1332,7 +1338,6 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
             if write_rtmp_status is not None:
                 write_rtmp_status(output_dir, "failed", str(start_err)[:240])
             raise RuntimeError(str(start_err)) from start_err
-        global _broadcast_boot_state
         _broadcast_boot_state = "running"
         bridge = get_speech_bridge(output_dir)
         if bridge is not None:

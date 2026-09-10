@@ -109,6 +109,9 @@ def check_single_pipeline() -> None:
         _fail("core_pipeline masih memiliki duplicate worker/broadcaster")
     if "NewAIVisualWorker = AIVisualWorker" not in core:
         _fail("core_pipeline bukan compatibility adapter")
+    api = (ROOT / "api_server.py").read_text(encoding="utf-8", errors="replace")
+    if "broadcast boot cancelled before pipeline start" not in api:
+        _fail("cancelled cold-start masih dapat membuat orphan broadcaster")
     print("[INVARIANT] single pipeline adapter OK")
 
 

@@ -37,24 +37,19 @@ except ImportError:
     def fit_bgr(frame, width=CANVAS_W, height=CANVAS_H):
         return frame
 
-BROADCAST_MODE = os.environ.get("BROADCAST_MODE", "ai_worker")
+
+BROADCAST_MODE = "ai_worker"
 BYTES_PER_AUDIO_FRAME = bytes_for_frame(0)
 
-# BBOX_SMOOTH_WINDOW: window size untuk smoothing face detection bounding box
-# Default 7 = jerky. Raise ke 12-15 untuk smoother face tracking
-_bbox_smooth = int(os.environ.get("AI_WORKER_BBOX_SMOOTH_WINDOW", "12"))
+_bbox_smooth = 12
 BBOX_SMOOTH_WINDOW = max(3, _bbox_smooth)
 
-# Full mouth prerender removes GPU work from the on-air critical path. Queues
-# only absorb scheduler jitter, not seconds of latency.
+
 RAW_QUEUE_SIZE = 12
 RENDER_QUEUE_SIZE = 12
 RAW_QUEUE_BLOCK_SEC = 0.25
 MASK_FEATHER_PX = 5
 SEAMLESS_THRESHOLD = 0.94
-
-# Compatibility sentinels for unreachable legacy helpers retained temporarily
-# for old pickled/test imports. The production state machine never calls them.
 AMBIENT_MIN_SEC = AMBIENT_MAX_SEC = 0.0
 TALK_STREAK_BEFORE_ROTATE = 1
 OVERLAP_FRAMES_MAX = 0
@@ -62,43 +57,19 @@ PENDING_MAX = RENDER_QUEUE_SIZE
 BROADCAST_SPEECH_WAIT_SEC = 0.0
 BROADCAST_SPEECH_GAP_WAIT_SEC = 0.0
 IDLE_FALLBACK_AFTER = 0
-
-# ====== MOUTH/LIP-SYNC PARAMETERS (untuk smooth lip-sync) ======
-# Keep the worker deterministic and environment-free for deploy/test invariants.
-# Mulut harus natural, tidak terlalu terbuka dan tidak geser ke samping.
-# MuseTalk output dipakai penuh. Filtering terlalu agresif bisa membuat
-# viseme kecil (i/e/u) hilang dan mulut terlihat diam.
 MOUTH_STRENGTH = 1.0
-
-# Smoothing dilakukan oleh model + frame rate. Jangan blur temporal output
-# MuseTalk karena itu menahan perubahan viseme antar-frame.
 MOUTH_TEMPORAL = 0.0
-
-# 0 = tidak membatasi perubahan pixel per frame.
 MOUTH_MAX_DELTA = 0.0
 MOUTH_FRAME_DELTA = 0.0
-
-# Jika inference tertinggal sedikit dari renderer, tunggu sebentar agar
-# mouth frame yang benar masuk. 0 detik membuat race condition menjadi
-# body-only dan hasilnya terlihat seperti MuseTalk tidak bekerja.
 MOUTH_WAIT_SEC = 0.0
 MOUTH_MAX_STALE_FRAMES = 0
-
-# Saat MuseTalk pertama kali masuk, bbox face bisa bergetar karena perubahan
-# landmark per-frame. Batasi pergeseran bbox agar transisi awal stabil.
 FACE_JITTER_MAX_DELTA = 2
 LIPSYNC_BBOX_LOCK_FRAMES = 4
 LIPSYNC_WAIT_SEC = 0.0
-# Sync shift 0 memastikan viseme tepat waktu dengan audio stream
 LIPSYNC_SYNC_SHIFT = 0
 LIPSYNC_PREROLL_TIMEOUT_SEC = 300.0
 LIPSYNC_HARD_PREROLL = True
 MOUTH_MISS_BODY_ONLY = True
-
-# ====== MUSE TALK COMPOSITE FIX ======
-# MuseTalk's jaw/lower-face mask can make the reconstructed face look pasted on.
-# Gate it to a soft mouth region in the SAME crop coordinate system used by
-# get_image_blending(), while preserving the original MuseTalk mask.
 MOUTH_MASK_GATE = os.environ.get("AI_WORKER_MOUTH_MASK_GATE", "1") != "0"
 MOUTH_MASK_CENTER_Y = float(os.environ.get("AI_WORKER_MOUTH_MASK_CENTER_Y", "0.78"))
 MOUTH_MASK_RX = float(os.environ.get("AI_WORKER_MOUTH_MASK_RX", "0.34"))
@@ -106,8 +77,6 @@ MOUTH_MASK_RY = float(os.environ.get("AI_WORKER_MOUTH_MASK_RY", "0.14"))
 MOUTH_MASK_FEATHER = float(os.environ.get("AI_WORKER_MOUTH_MASK_FEATHER", "0.35"))
 MUSE_DEBUG = os.environ.get("AI_WORKER_MUSE_DEBUG", "0") == "1"
 MUSE_DEBUG_DIR = os.environ.get("AI_WORKER_MUSE_DEBUG_DIR", "/tmp/musetalk_debug")
-
-
 CONTINUOUS_CLIP_NAME = "continuous"
 TALK_CLIP_NAMES = frozenset({CONTINUOUS_CLIP_NAME})
 BODY_CLIP_NAMES = TALK_CLIP_NAMES
@@ -148,7 +117,6 @@ def _is_talk_clip_name(name: Optional[str]) -> bool:
 
 
 def _is_idle_clip_name(name: Optional[str]) -> bool:
-    """True untuk semua body clip yang diizinkan (idle + talk*)."""
     if not name:
         return False
     key = _normalize_clip_name(name)
@@ -156,14 +124,12 @@ def _is_idle_clip_name(name: Optional[str]) -> bool:
 
 
 def _is_neutral_action(tag: Optional[str]) -> bool:
-    """True jika bukan body clip dikenal — diarahkan ke true idle."""
     if not tag:
         return True
     return not _is_idle_clip_name(tag)
 
 
 def _is_allowed_gesture(tag: Optional[str]) -> bool:
-    """Gesture non-body dimatikan — fokus idle/talk saja."""
     return False
 
 
@@ -206,7 +172,6 @@ except ImportError:
 
 
 def get_audio_chunk() -> Tuple[bytes, bool]:
-    """Return (pcm_stereo_s16le_chunk, is_speech) for one video frame."""
     bridge = get_speech_bridge()
     if bridge is not None:
         pcm, speech, _idx = bridge.get_audio_chunk()
@@ -215,7 +180,6 @@ def get_audio_chunk() -> Tuple[bytes, bool]:
 
 
 def get_llm_action() -> Optional[str]:
-    """Action LLM — gesture off; body dipilih state machine dari idle/talk*."""
     return None
 
 
@@ -231,7 +195,6 @@ class ClipAsset:
     base_pose_frame: int = 0
     end_pose_frame: int = -1
     probed_frame_count: int = 0
-    # SSIM base↔end; <0 means unknown (compute after decode).
     seamless_score: float = -1.0
 
     frame_list_cycle: List[np.ndarray] = field(default_factory=list)
@@ -252,20 +215,16 @@ class ClipAsset:
 
     @property
     def is_seamless_loop(self) -> bool:
-        """True jika skor seamless (SSIM base↔end) ≥ threshold."""
         if self.seamless_score >= 0.0:
             return self.seamless_score >= SEAMLESS_THRESHOLD
-        # Tanpa skor: anggap seamless hanya jika span sangat pendek (statis).
         return self.end_pose <= self.base_pose_frame
 
     def forward_at(self, idx: int) -> Tuple[np.ndarray, int]:
-        """Forward-only frame access — no ping-pong during playthrough."""
         n = max(1, self.num_frames)
         fi = max(0, min(idx, n - 1))
         return self.frames[fi], fi
 
     def material_at(self, idx: int) -> Tuple[np.ndarray, int]:
-        """Return (body frame, cycle index for MuseTalk materials)."""
         n = max(1, len(self.frames))
         fi = idx % n
         if self.frame_list_cycle and fi < len(self.frame_list_cycle):
@@ -278,7 +237,6 @@ class ClipAsset:
 
 
 def _frame_ssim(a: np.ndarray, b: np.ndarray) -> float:
-    """Fast grayscale SSIM between two BGR frames."""
     if a is None or b is None:
         return 0.0
     if a.shape != b.shape:
@@ -301,7 +259,6 @@ def _frame_ssim(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def compute_seamless_score(clip: ClipAsset) -> float:
-    """SSIM between base_pose and end_pose frames (0..1)."""
     if not clip.frames:
         return -1.0
     bi = max(0, min(clip.base_pose_frame, len(clip.frames) - 1))
@@ -335,7 +292,6 @@ class RenderedPacket:
 
 
 def feather_mask(mask_array: np.ndarray, kernel: int = MASK_FEATHER_PX) -> np.ndarray:
-    """Extra Gaussian feather on MuseTalk jaw mask edges with lateral corner tapering."""
     if mask_array is None:
         return mask_array
     arr = np.asarray(mask_array, dtype=np.uint8)
@@ -343,15 +299,11 @@ def feather_mask(mask_array: np.ndarray, kernel: int = MASK_FEATHER_PX) -> np.nd
         return mask_array
     k = max(3, kernel | 1)
     blurred = cv2.GaussianBlur(arr, (k, k), 0)
-    
-    # Jangan melakukan taper lateral tambahan. Mask MuseTalk hasil parsing
-    # sudah menentukan area yang boleh berubah; taper 15% sebelumnya dapat
-    # mematikan perubahan di sudut bibir.
+
     return blurred
 
 
 def blend_weighted(a: np.ndarray, b: np.ndarray, alpha: float) -> np.ndarray:
-    """cv2.addWeighted wrapper — alpha=1 → full b."""
     if a is None:
         return b
     if b is None or alpha >= 1.0:
@@ -362,12 +314,10 @@ def blend_weighted(a: np.ndarray, b: np.ndarray, alpha: float) -> np.ndarray:
 
 
 def blend_crossfade(a: np.ndarray, b: np.ndarray, alpha: float) -> np.ndarray:
-    """Linear crossfade between two BGR frames (alpha=1 → full b)."""
     return blend_weighted(a, b, alpha)
 
 
 def _ease_in_out(t: float) -> float:
-    """Cosine ease — transisi clip tanpa lonjakan alpha di awal/akhir."""
     t = max(0.0, min(1.0, float(t)))
     return 0.5 - 0.5 * math.cos(math.pi * t)
 
@@ -382,7 +332,6 @@ def _pcm_rms(pcm: bytes) -> float:
 
 
 def _mouth_strength_for_pcm(pcm: bytes) -> float:
-    """Volume hanya meredam jika STRENGTH < 1. Clamp 0.92 lama = mix idle = bibir buram."""
     if float(MOUTH_STRENGTH) >= 0.999:
         return 1.0
     base = max(0.0, min(1.0, float(MOUTH_STRENGTH)))
@@ -394,7 +343,6 @@ def _mouth_strength_for_pcm(pcm: bytes) -> float:
 def _dampen_generated_mouth(
     original: np.ndarray, generated: np.ndarray, strength: float
 ) -> np.ndarray:
-    """Lerp MuseTalk vs crop idle. Clamp delta opsional (0 = matikan, biar mulut benar-benar buka)."""
     if original is None or generated is None:
         return generated if generated is not None else original
     if original.shape != generated.shape:
@@ -417,7 +365,6 @@ def _dampen_generated_mouth(
 def _talk_body_index(
     clip: "ClipAsset", whisper_idx: int, start_frame_idx: int = 0
 ) -> int:
-    """Pose tubuh untuk UNet = pose visual saat audio frame 0, lalu +whisper_idx."""
     span = max(1, clip.end_pose - clip.base_pose_frame + 1)
     origin = int(start_frame_idx) - clip.base_pose_frame
     offset = (origin + int(whisper_idx)) % span
@@ -425,7 +372,6 @@ def _talk_body_index(
 
 
 class FaceCoordRegistry:
-    """Ambil mask/bbox milik frame yang sedang tampil dan stabilkan transisi awal."""
 
     def __init__(self, window: int = BBOX_SMOOTH_WINDOW):
         self._window = max(1, window)
@@ -433,7 +379,9 @@ class FaceCoordRegistry:
         self._locked: Dict[str, tuple] = {}
         self._entry_lock_remaining: Dict[str, int] = {}
 
-    def _smooth_face_box(self, key: str, face_box: Tuple[int, int, int, int]) -> Tuple[int, int, int, int]:
+    def _smooth_face_box(
+        self, key: str, face_box: Tuple[int, int, int, int]
+    ) -> Tuple[int, int, int, int]:
         if face_box is None:
             return face_box
         box = tuple(int(v) for v in face_box)
@@ -459,10 +407,38 @@ class FaceCoordRegistry:
             )
             if drift > FACE_JITTER_MAX_DELTA:
                 smoothed = (
-                    prev[0] + int(np.clip(smoothed[0] - prev[0], -FACE_JITTER_MAX_DELTA, FACE_JITTER_MAX_DELTA)),
-                    prev[1] + int(np.clip(smoothed[1] - prev[1], -FACE_JITTER_MAX_DELTA, FACE_JITTER_MAX_DELTA)),
-                    prev[2] + int(np.clip(smoothed[2] - prev[2], -FACE_JITTER_MAX_DELTA, FACE_JITTER_MAX_DELTA)),
-                    prev[3] + int(np.clip(smoothed[3] - prev[3], -FACE_JITTER_MAX_DELTA, FACE_JITTER_MAX_DELTA)),
+                    prev[0]
+                    + int(
+                        np.clip(
+                            smoothed[0] - prev[0],
+                            -FACE_JITTER_MAX_DELTA,
+                            FACE_JITTER_MAX_DELTA,
+                        )
+                    ),
+                    prev[1]
+                    + int(
+                        np.clip(
+                            smoothed[1] - prev[1],
+                            -FACE_JITTER_MAX_DELTA,
+                            FACE_JITTER_MAX_DELTA,
+                        )
+                    ),
+                    prev[2]
+                    + int(
+                        np.clip(
+                            smoothed[2] - prev[2],
+                            -FACE_JITTER_MAX_DELTA,
+                            FACE_JITTER_MAX_DELTA,
+                        )
+                    ),
+                    prev[3]
+                    + int(
+                        np.clip(
+                            smoothed[3] - prev[3],
+                            -FACE_JITTER_MAX_DELTA,
+                            FACE_JITTER_MAX_DELTA,
+                        )
+                    ),
                 )
         self._locked[key] = smoothed
         return smoothed
@@ -499,17 +475,14 @@ class FaceCoordRegistry:
 
 @dataclass
 class _OverlapTransition:
-    """N pasang frame: from[-N..] blended dengan target[0..N-1]."""
 
     pairs: List[Tuple[np.ndarray, np.ndarray]]
     step: int = 0
     resume_frame_idx: int = 0
-    # Index material MuseTalk di sisi target (bukan step blend).
     target_cycle_indices: List[int] = field(default_factory=list)
 
 
 class AssetBank:
-    """Load the single compiled, validated continuous body timeline."""
 
     def crash_fallback_name(self) -> str:
         if CRASH_FALLBACK_CLIP in self.clips:
@@ -525,20 +498,22 @@ class AssetBank:
         if clip is None:
             return False
         has = bool(clip.latent_list_cycle and clip.mask_materials_cycle)
-        # Log hanya sekali per clip yang hilang — tidak per frame (log spam).
         if not has and name not in AssetBank._musetalk_warn_logged:
             AssetBank._musetalk_warn_logged.add(name)
             if not clip.latent_list_cycle:
-                print(f"[AssetBank] clip_has_musetalk FALSE: latents missing for '{name}'")
+                print(
+                    f"[AssetBank] clip_has_musetalk FALSE: latents missing for '{name}'"
+                )
             if not clip.mask_materials_cycle:
-                print(f"[AssetBank] clip_has_musetalk FALSE: masks missing for '{name}'")
+                print(
+                    f"[AssetBank] clip_has_musetalk FALSE: masks missing for '{name}'"
+                )
         return has
 
     def talk_clip_pool(self) -> List[str]:
         return [CONTINUOUS_CLIP_NAME] if CONTINUOUS_CLIP_NAME in self.clips else []
 
     def talk_clips_ready(self) -> List[str]:
-        # Cache the ready talk clips to avoid recomputation and recursion
         if self._ready_talk_clips is not None:
             return self._ready_talk_clips
         ready = [n for n in self.talk_clip_pool() if self.clip_has_musetalk(n)]
@@ -803,7 +778,6 @@ class AssetBank:
 
                 print(f"[AssetBank] ERROR: MuseTalk warmup failed for {name}: {err}")
                 traceback.print_exc()
-                # Don't silently continue - re-raise to fail fast
                 raise
         self._ready_talk_clips = None
         print(
@@ -996,9 +970,7 @@ class VideoStateMachine:
             self._talk_streak_count = 1
             metrics.inc("talk_clip_rotate")
         self._last_talk_clip = choice
-        print(
-            f"[StateMachine] Talk clip selected: {choice} (avoided: {avoid_clip})"
-        )
+        print(f"[StateMachine] Talk clip selected: {choice} (avoided: {avoid_clip})")
         return choice
 
     def _maybe_queue_ambient_gesture(self) -> None:
@@ -1033,7 +1005,11 @@ class VideoStateMachine:
         ready = self.bank.talk_clips_ready()
         if not ready:
             return [self.bank.crash_fallback_name()]
-        first = first if first in ready else (self.current_name if self.current_name in ready else ready[0])
+        first = (
+            first
+            if first in ready
+            else (self.current_name if self.current_name in ready else ready[0])
+        )
         if PIN_TALK_SCENE:
             return [first]
         seq = [first]
@@ -1168,7 +1144,6 @@ class VideoStateMachine:
         return self.frame_idx >= clip.end_pose
 
     def utterance_visual_complete(self) -> bool:
-        """Mouth lifecycle ends exactly when the paired PCM is exhausted."""
         if not self._utterance_active:
             return False
         return self._utterance_audio_done
@@ -1260,7 +1235,9 @@ class VideoStateMachine:
         PIN_TALK_SCENE (default on) and same-clip wrap, body stays continuous.
         """
         metrics = get_telemetry()
-        next_name = clip.name if PIN_TALK_SCENE else self._next_talk_clip_for_wrap(clip.name)
+        next_name = (
+            clip.name if PIN_TALK_SCENE else self._next_talk_clip_for_wrap(clip.name)
+        )
 
         # Same clip (or only one ready): seamless loop / ping-pong.
         if next_name == clip.name:
@@ -1286,7 +1263,9 @@ class VideoStateMachine:
         # overlap, but NEVER change state or end the active utterance.
         n = max(2, min(int(self.overlap_frames), OVERLAP_FRAMES_MAX))
         try:
-            pairs, target_cycles = self._build_overlap_pairs(clip, clip.end_pose, to_clip, n)
+            pairs, target_cycles = self._build_overlap_pairs(
+                clip, clip.end_pose, to_clip, n
+            )
         except Exception as err:
             print(f"[StateMachine] Talk rotation notice: {err}")
             return
@@ -1296,7 +1275,10 @@ class VideoStateMachine:
         if resume > to_clip.end_pose:
             resume = to_clip.base_pose_frame
         self._overlap = _OverlapTransition(
-            pairs=pairs, step=0, resume_frame_idx=resume, target_cycle_indices=target_cycles
+            pairs=pairs,
+            step=0,
+            resume_frame_idx=resume,
+            target_cycle_indices=target_cycles,
         )
         self.current_name = next_name
         self.frame_idx = resume
@@ -1312,7 +1294,13 @@ class VideoStateMachine:
             f"({len(pairs)}f, utterance_active={self._utterance_active})"
         )
 
-    def _transition_guard(self, from_clip: Optional[ClipAsset], to_clip: ClipAsset, from_idx: int, to_idx: int) -> bool:
+    def _transition_guard(
+        self,
+        from_clip: Optional[ClipAsset],
+        to_clip: ClipAsset,
+        from_idx: int,
+        to_idx: int,
+    ) -> bool:
         """Blokir transisi hard-cut raksasa yang memicu jump jarak besar."""
         if from_clip is None:
             return False
@@ -1462,7 +1450,6 @@ class VideoStateMachine:
         if _is_true_idle_name(target) or target in (idle_name, "idle"):
             new_state = PlayState.IDLE
         elif _is_talk_clip_name(target) or target == talk_name:
-            # Talk body: TALK state saat utterance/hold; selain itu tetap putar sebagai body.
             new_state = (
                 PlayState.TALK
                 if (self._utterance_active or self._talk_pinned)
@@ -1562,7 +1549,11 @@ class LipSyncEngine:
             pass
 
     def set_utterance(
-        self, job, start_frame_idx: int = 0, body_clip: Optional[str] = None, talk_sequence: Optional[List[str]] = None
+        self,
+        job,
+        start_frame_idx: int = 0,
+        body_clip: Optional[str] = None,
+        talk_sequence: Optional[List[str]] = None,
     ) -> None:
         """Mulai batch-ahead inference untuk satu utterance."""
         if job is not None and self._utterance_id == getattr(job, "task_id", None):
@@ -1579,7 +1570,11 @@ class LipSyncEngine:
             talk = self.bank.crash_fallback_name()
         if talk in self.bank.clips:
             self._talk_clip_name = talk
-        seq = [c for c in (talk_sequence or [talk]) if c in self.bank.clips and self.bank.clip_has_musetalk(c)]
+        seq = [
+            c
+            for c in (talk_sequence or [talk])
+            if c in self.bank.clips and self.bank.clip_has_musetalk(c)
+        ]
         if not seq:
             seq = [talk] if talk in self.bank.clips else [self.bank.talk_clip_name()]
         start_idx = int(start_frame_idx)
@@ -1696,9 +1691,6 @@ class LipSyncEngine:
             )
             latent_list = []
             for i in range(cursor, end):
-                # Canonical face latent keeps prerender independent from the
-                # continuously moving body clock. The generated mouth is placed
-                # with the exact material of the visible body frame at compose.
                 body_idx = default_clip.base_pose_frame
                 lat_idx = self._latent_index(default_clip, body_idx)
                 lat = default_clip.latent_list_cycle[lat_idx]
@@ -1723,9 +1715,6 @@ class LipSyncEngine:
                         encoder_hidden_states=audio_feature_batch,
                     ).sample
                     recon = vae.decode_latents(pred)
-
-                    # Stage diagnostics: compare first decoded frame of this
-                    # batch against the previous batch, plus Whisper/PE.
                     try:
                         w0 = whisper_batch[0].detach().float()
                         p0 = audio_feature_batch[0].detach().float()
@@ -1735,7 +1724,8 @@ class LipSyncEngine:
                             r0 = torch.as_tensor(recon[0]).float()
                         w_delta = (
                             float(torch.mean(torch.abs(w0 - prev_whisper)).item())
-                            if prev_whisper is not None and prev_whisper.shape == w0.shape
+                            if prev_whisper is not None
+                            and prev_whisper.shape == w0.shape
                             else -1.0
                         )
                         p_delta = (
@@ -1762,7 +1752,9 @@ class LipSyncEngine:
                         prev_recon = r0.clone()
                     except Exception as diag_err:
                         if cursor % 25 == 0:
-                            print(f"[LipSync][DIAG] stage diagnostic failed: {diag_err}")
+                            print(
+                                f"[LipSync][DIAG] stage diagnostic failed: {diag_err}"
+                            )
             except Exception as err:
                 import traceback
 
@@ -1775,8 +1767,6 @@ class LipSyncEngine:
                 frame_idx = cursor + local_i
                 mouth_256 = np.ascontiguousarray(res_frame.astype(np.uint8))
 
-                # Diagnostics ringan: kalau output MuseTalk identik terus,
-                # masalah ada di PE/UNet/VAE/Whisper, bukan compositing.
                 if local_i > 0:
                     prev = np.asarray(recon[local_i - 1], dtype=np.int16)
                     cur = mouth_256.astype(np.int16)
@@ -1813,7 +1803,6 @@ class LipSyncEngine:
     def _wait_mouth(
         self, idx: int, timeout: float = MOUTH_WAIT_SEC
     ) -> Optional[np.ndarray]:
-        """Return only the exact prerendered mouth frame; never reuse stale lips."""
         deadline = time.perf_counter() + max(0.0, float(timeout))
         metrics = get_telemetry()
 
@@ -1826,7 +1815,6 @@ class LipSyncEngine:
                 self._last_mouth_frame = cached
                 return cached
 
-            # Inference belum menghasilkan idx: tunggu sampai deadline.
             if cursor <= int(idx) and time.perf_counter() < deadline:
                 time.sleep(0.004)
                 continue
@@ -1844,9 +1832,6 @@ class LipSyncEngine:
         cached = self._feather_cache.get(key)
         if cached is not None:
             return cached
-        # IMPORTANT: mask, crop_box, dan face_box berasal dari frame/material
-        # yang sama. Jangan mengambil face_box yang sudah di-smooth dari frame
-        # lain karena koordinatnya bisa tidak lagi cocok dengan crop/mask.
         if clip.mask_materials_cycle:
             raw = clip.mask_materials_cycle[cidx % len(clip.mask_materials_cycle)]
             if raw:
@@ -1861,7 +1846,6 @@ class LipSyncEngine:
         return None
 
     def _mouth_only_mask(self, mask_array, crop_box, face_box):
-        """Restrict MuseTalk's jaw mask to a soft mouth-region gate."""
         m = np.ascontiguousarray(np.asarray(mask_array), dtype=np.uint8)
         if not MOUTH_MASK_GATE or m.ndim < 2:
             return m
@@ -1872,7 +1856,6 @@ class LipSyncEngine:
         fw = max(1.0, fx2 - fx1)
         fh = max(1.0, fy2 - fy1)
 
-        # Face coordinates -> crop coordinates.
         center_x = ((fx1 + fx2) * 0.5) - cx1
         center_y = (fy1 - cy1) + fh * MOUTH_MASK_CENTER_Y
         rx = max(4.0, fw * MOUTH_MASK_RX)
@@ -1882,9 +1865,6 @@ class LipSyncEngine:
         d = ((xx - center_x) / rx) ** 2 + ((yy - center_y) / ry) ** 2
         gate = np.clip(1.0 - d, 0.0, 1.0)
 
-        # Smooth transition at the edge.
-        # Use a broad Gaussian blur so the gate does not leave a visible
-        # "mask/patch" boundary around the lips.
         if MOUTH_MASK_FEATHER > 0:
             sigma = max(1.0, min(float(MOUTH_MASK_FEATHER) * 12.0, 8.0))
             gate = cv2.GaussianBlur(
@@ -1897,9 +1877,6 @@ class LipSyncEngine:
 
         out = m.astype(np.float32) * gate
 
-        # Very low alpha around the perimeter is visually detectable as a
-        # soft halo. Remove only the weakest tail, while preserving the
-        # natural MuseTalk feather inside the mouth region.
         out[out < 18.0] = 0.0
 
         return np.ascontiguousarray(np.clip(out, 0, 255).astype(np.uint8))
@@ -1975,10 +1952,6 @@ class LipSyncEngine:
             print(f"[LipSync] ERROR: No material for clip={clip.name} cidx={cidx}")
             return body
         mask_array, crop_box, face_box = mat
-        # IMPORTANT: use the gated mouth-only mask for actual compositing.
-        # This prevents MuseTalk's jaw/face parsing mask from replacing
-        # cheek/nose/under-eye pixels and creating a "face pasted on face"
-        # appearance.
         mask_array = self._mouth_only_mask(mask_array, crop_box, face_box)
         x1, y1, x2, y2 = [int(v) for v in face_box]
         if x2 <= x1 or y2 <= y1:
@@ -1995,27 +1968,20 @@ class LipSyncEngine:
             cy1 = max(0, cy1)
             cx2 = min(body.shape[1], cx2)
             cy2 = min(body.shape[0], cy2)
-            
+
             orig_crop = body[cy1:cy2, cx1:cx2]
             if orig_crop.size == 0:
                 print(f"[LipSync] ERROR: Empty orig crop for crop_box={crop_box}")
                 return body
-                
+
             orig_256 = cv2.resize(orig_crop, (256, 256), interpolation=cv2.INTER_LINEAR)
 
-            # Dampen: lerp antara mulut original dan mulut yang di-generate MuseTalk.
             strength = _mouth_strength_for_pcm(pcm)
             if strength >= 0.999 and float(MOUTH_MAX_DELTA) <= 0:
                 damped_256 = mouth_256
             else:
                 damped_256 = _dampen_generated_mouth(orig_256, mouth_256, strength)
 
-            # CRITICAL MuseTalk FIX:
-            # VAE menghasilkan 256x256, tetapi get_image_blending() expects
-            # the generated face patch to already match the detected bbox size.
-            # Official MuseTalk realtime inference does exactly this resize
-            # before blending. Tanpa ini, patch 256x256 tidak aligned dengan
-            # face bbox dan hasil bisa terlihat seperti mulut tidak berubah.
             bw = max(1, int(face_box[2] - face_box[0]))
             bh = max(1, int(face_box[3] - face_box[1]))
             if damped_256.shape[1] != bw or damped_256.shape[0] != bh:
@@ -2027,8 +1993,6 @@ class LipSyncEngine:
 
             damped_256 = np.ascontiguousarray(damped_256, dtype=np.uint8)
 
-            # FINAL FIX: do not blend the full jaw/face reconstruction.
-            # Keep only a soft mouth-region gate.
             blend_mask = self._mouth_only_mask(mask_array, crop_box, face_box)
 
             if whisper_idx is not None and int(whisper_idx) % 25 == 0:
@@ -2046,8 +2010,6 @@ class LipSyncEngine:
                     body, mouth_256, blend_mask, crop_box, face_box, int(whisper_idx)
                 )
 
-            # Composite diagnostic: if MuseTalk output changes but the final
-            # bbox barely changes, the problem is mask/crop/blending.
             if whisper_idx is not None and int(whisper_idx) % 25 == 0:
                 try:
                     bx1, by1, bx2, by2 = face_box
@@ -2077,26 +2039,31 @@ class LipSyncEngine:
     @torch.no_grad()
     def process(self, pkt: RawFramePacket, clip: ClipAsset) -> np.ndarray:
         metrics = get_telemetry()
-        # FIX KRITIS: Jangan skip berdasarkan whisper_idx saja.
-        # needs_lipsync adalah gate utama. whisper_idx None ditangani di bawah
-        # dengan fallback ke last valid index.
         if not pkt.needs_lipsync:
             metrics.inc("lipsync_skipped_no_needs_lipsync")
             return pkt.frame
         if pkt.whisper_idx is None:
-            # Coba gunakan index terakhir yang valid (frame jeda antar kata)
             with self._lock:
                 last_cursor = max(0, self._infer_cursor - 1)
-                total = 0 if self._whisper_chunks is None else int(self._whisper_chunks.shape[0])
+                total = (
+                    0
+                    if self._whisper_chunks is None
+                    else int(self._whisper_chunks.shape[0])
+                )
             if total == 0 or last_cursor >= total:
                 metrics.inc("lipsync_skipped_no_whisper_idx")
                 return pkt.frame
             # Gunakan frame terakhir yang valid sebagai proxy (bibir tetap natural)
             pkt = RawFramePacket(
-                seq=pkt.seq, frame=pkt.frame, clip_name=pkt.clip_name,
-                frame_idx=pkt.frame_idx, cycle_idx=pkt.cycle_idx,
-                state=pkt.state, needs_lipsync=pkt.needs_lipsync,
-                audio_pcm=pkt.audio_pcm, is_speech=pkt.is_speech,
+                seq=pkt.seq,
+                frame=pkt.frame,
+                clip_name=pkt.clip_name,
+                frame_idx=pkt.frame_idx,
+                cycle_idx=pkt.cycle_idx,
+                state=pkt.state,
+                needs_lipsync=pkt.needs_lipsync,
+                audio_pcm=pkt.audio_pcm,
+                is_speech=pkt.is_speech,
                 whisper_idx=last_cursor,
             )
             metrics.inc("lipsync_whisper_idx_fallback")
@@ -2265,9 +2232,7 @@ def frame_fetcher_loop(
                 bridge.signal_visual_complete()
 
         was_speaking = is_speech or (
-            bridge is not None
-            and utterance_active
-            and not bridge.is_audio_exhausted()
+            bridge is not None and utterance_active and not bridge.is_audio_exhausted()
         )
 
         action = action_fn()
@@ -2801,7 +2766,7 @@ class FramePostProcessor:
                 image = cv2.imread(overlay_path, cv2.IMREAD_UNCHANGED)
                 if image is not None and image.ndim == 3 and image.shape[2] == 4:
                     image = cv2.resize(image, (CANVAS_W, CANVAS_H))
-                    self._overlay_rgb = image[:, :, :3].astype(np.float32)
+                    self._overlay_rgb = np.ascontiguousarray(image[:, :, :3])
                     self._overlay_alpha = image[:, :, 3:4].astype(np.float32) / 255.0
                     self._overlay_mtime = mtime
 
@@ -2828,20 +2793,15 @@ class FramePostProcessor:
                 matte_small = cv2.GaussianBlur(matte_small, (5, 5), 0)
                 self._matte_cache[key] = matte_small
             matte = cv2.resize(
-                matte_small, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_LINEAR
+                matte_small,
+                (frame.shape[1], frame.shape[0]),
+                interpolation=cv2.INTER_LINEAR,
             )
-            alpha = matte.astype(np.float32)[:, :, None] / 255.0
-            out = np.clip(
-                frame.astype(np.float32) * alpha
-                + self._bg.astype(np.float32) * (1.0 - alpha),
-                0,
-                255,
-            ).astype(np.uint8)
+            alpha = matte.astype(np.float32) / 255.0
+            out = cv2.blendLinear(frame, self._bg, alpha, 1.0 - alpha)
         if self._overlay_alpha is not None and self._overlay_rgb is not None:
-            out = (
-                out.astype(np.float32) * (1.0 - self._overlay_alpha)
-                + self._overlay_rgb * self._overlay_alpha
-            ).astype(np.uint8)
+            alpha = self._overlay_alpha[:, :, 0]
+            out = cv2.blendLinear(out, self._overlay_rgb, 1.0 - alpha, alpha)
         return out
 
 
@@ -2972,11 +2932,11 @@ def broadcaster_loop(
                             if ov.shape[0] != CANVAS_H or ov.shape[1] != CANVAS_W:
                                 ov = cv2.resize(ov, (CANVAS_W, CANVAS_H))
                             if ov.shape[2] == 4:
-                                overlay_alpha = (
-                                    ov[:, :, 3:4].astype(np.float32) / 255.0
-                                )
+                                overlay_alpha = ov[:, :, 3:4].astype(np.float32) / 255.0
                                 overlay_rgb = ov[:, :, :3].astype(np.float32)
-                                print(f"[Broadcaster] Overlay loaded asynchronously: {candidate}")
+                                print(
+                                    f"[Broadcaster] Overlay loaded asynchronously: {candidate}"
+                                )
                         break
                     except Exception:
                         pass
@@ -3164,8 +3124,6 @@ def continuous_broadcaster_loop(
         try:
             pkt: RenderedPacket = render_q.get(timeout=0.25)
         except queue.Empty:
-            # No synthetic frame/audio is emitted. The continuous source queue
-            # normally remains primed because speech is fully prerendered.
             metrics.inc("broadcast_source_wait")
             continue
         try:
@@ -3269,7 +3227,12 @@ class AIVisualWorker:
         else:
             talk_sequence = [body] if body else None
         if self._engine:
-            self._engine.set_utterance(job, start_frame_idx=start_idx, body_clip=body, talk_sequence=talk_sequence)
+            self._engine.set_utterance(
+                job,
+                start_frame_idx=start_idx,
+                body_clip=body,
+                talk_sequence=talk_sequence,
+            )
 
         def _mark_ready() -> None:
             try:
@@ -3388,7 +3351,6 @@ class AIVisualWorker:
         return self._models
 
     def initialize(self, *, force: bool = False) -> None:
-        """Load models + assets. Skip jika sudah siap (Go Live kedua tanpa delay panjang)."""
         bank_stale = (
             self._bank is None
             or getattr(self._bank, "assets_dir", None) != self.assets_dir
@@ -3478,7 +3440,6 @@ class AIVisualWorker:
         action: Optional[str] = None,
         priority: bool = False,
     ):
-        """API entry — antri audio TTS untuk diputar live."""
         if self._bridge is None:
             raise RuntimeError("SpeechBridge tidak tersedia")
         if not self._bank:
@@ -3529,7 +3490,6 @@ class AIVisualWorker:
             progress = bool(
                 self._broadcaster is not None and self._broadcaster.has_progress()
             )
-            # Hard connected = status connected DAN (non-IG ATAU sudah ada frame=).
             if state == "connected" and (progress or not deferred):
                 self._rtmp_connected = True
                 print("[AIVisualWorker] RTMP connected (publish aktif).")
@@ -3570,8 +3530,6 @@ class AIVisualWorker:
                 pass
             self._rtmp_connected = True
             return
-        # FFmpeg masih hidup: jangan anggap gagal fatal (terutama IG/FB deferred ACK).
-        # Pipeline lanjut; status "connecting" + hint lembut — FE/BE menunggu sampai connected.
         if self._broadcaster is not None and self._broadcaster.is_alive():
             try:
                 write_rtmp_status(self.output_folder, "connecting", "")
@@ -3744,7 +3702,6 @@ class AIVisualWorker:
 
     @property
     def is_pipeline_active(self) -> bool:
-        """True saat thread pipeline hidup (termasuk saat menunggu RTMP handshake)."""
         return self._pipeline_active
 
     @property
@@ -3813,7 +3770,6 @@ def start_visual_broadcast(
     background_path: str = "",
     overlay_path: str = "",
 ) -> AIVisualWorker:
-    """Mulai pipeline visual in-process (menggantikan subprocess frame_feed)."""
     assets_dir = (
         os.path.dirname(idle_video)
         if idle_video and os.path.exists(idle_video)
@@ -3834,7 +3790,6 @@ def start_visual_broadcast(
 
 
 def stop_visual_broadcast(*, destroy: bool = True) -> None:
-    """Stop pipeline/RTMP. destroy=False menjaga model di memori (Go Live ulang cepat)."""
     global _visual_worker_singleton
     out = ""
     with _visual_lock:
@@ -3854,7 +3809,6 @@ def stop_visual_broadcast(*, destroy: bool = True) -> None:
 
 
 def pause_visual_broadcast(output_folder: str = "") -> dict:
-    """Soft pause: hold speech (hapus playback_active), RTMP + idle tetap jalan."""
     out = output_folder or (
         _visual_worker_singleton.output_folder if _visual_worker_singleton else ""
     )
@@ -3881,7 +3835,6 @@ def pause_visual_broadcast(output_folder: str = "") -> dict:
 
 
 def resume_visual_broadcast(output_folder: str = "") -> dict:
-    """Resume soft pause: restore playback_active jika sebelumnya armed."""
     out = output_folder or (
         _visual_worker_singleton.output_folder if _visual_worker_singleton else ""
     )
