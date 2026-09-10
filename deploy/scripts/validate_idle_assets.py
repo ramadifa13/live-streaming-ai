@@ -136,7 +136,7 @@ def validate_dir(
         print(f"[validate] FAIL: assets dir missing: {assets_dir}", file=sys.stderr)
         return 2
 
-    want = set(clips) if clips else {"idle", "talk_1", "talk_2", "talk_3"}
+    want = set(clips) if clips else {"continuous"}
     mp4s = sorted(assets_dir.glob("*.mp4"))
     targets = []
     for p in mp4s:
@@ -167,12 +167,24 @@ def validate_dir(
             print(f"[validate] FAIL {name}: {err}", file=sys.stderr)
             failures += 1
             continue
+        cap = cv2.VideoCapture(str(path))
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        cap.release()
+        height, width = frames[0].shape[:2]
+        contract_ok = abs(fps - 24.0) <= 0.05 and (width, height) == (720, 1280)
+        if not contract_ok:
+            print(
+                f"[validate] FAIL {name}: expected 720x1280@24, "
+                f"got {width}x{height}@{fps:.3f}",
+                file=sys.stderr,
+            )
+            failures += 1
         base, end, ssim, mse, start_motion, end_motion = _best_pose_pair(frames, window=window)
         # Also report naive first/last
         g0 = _to_gray(frames[0])
         gN = _to_gray(frames[-1])
         naive_ssim = _ssim_gray(g0, gN)
-        ok = ssim >= threshold
+        ok = ssim >= threshold and contract_ok
         status = "OK" if ok else "LOW"
         if not ok:
             failures += 1
@@ -192,6 +204,9 @@ def validate_dir(
                 "start_motion": round(start_motion, 6),
                 "end_motion": round(end_motion, 6),
                 "num_frames": len(frames),
+                "fps": fps,
+                "width": width,
+                "height": height,
                 "threshold": threshold,
                 "seamless": bool(ok),
             }
@@ -229,7 +244,7 @@ def main() -> None:
     ap.add_argument("--write-meta", action="store_true")
     ap.add_argument(
         "--clips",
-        default="idle,talk_1,talk_2,talk_3",
+        default="continuous",
         help="Comma-separated clip stems to check",
     )
     ap.add_argument(

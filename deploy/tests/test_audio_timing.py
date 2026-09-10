@@ -74,3 +74,23 @@ def test_idle_policy_keeps_talk_when_queue_still_has_work():
 
     assert keep_talk is True
     assert enter_idle is False
+
+
+def test_ready_count_requires_full_mouth_prerender():
+    bridge = SpeechBridge(output_folder="/tmp/ai_live_worker_test")
+    job = type("Job", (), {})()
+    job.ready = type("Ready", (), {"is_set": lambda self: True})()
+    job.lipsync_ready = type(
+        "MouthReady", (), {"is_set": lambda self: self.value}
+    )()
+    job.lipsync_ready.value = False
+    job.error = ""
+    job.num_frames = 24
+    job.whisper_chunks = torch.zeros((24, 1))
+    bridge._pending.append(job)
+
+    assert bridge.ready_pending_count() == 0
+    assert bridge.queued_audio_seconds() == 0
+    job.lipsync_ready.value = True
+    assert bridge.ready_pending_count() == 1
+    assert bridge.queued_audio_seconds() == 1.0

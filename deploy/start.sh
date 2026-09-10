@@ -255,6 +255,23 @@ fi
 
 export PYTHONUNBUFFERED=1
 
+# Build one forward-only body timeline once. Runtime is not allowed to rotate
+# clips, crossfade bodies, ping-pong, or fall back to idle.
+CONTINUOUS_COMPILER="$WORKER_DIR/compile_continuous_timeline.py"
+if [ -f "$CONTINUOUS_COMPILER" ]; then
+	echo "[INFO] Validating continuous body timeline..."
+	"$PYTHON_BIN" "$CONTINUOUS_COMPILER" \
+		--assets-dir "$WORKER_DIR/assets/3d" \
+		--host "${HOST_NAME:-namira}" \
+		--min-seam "${AI_WORKER_SEAMLESS_THRESHOLD:-0.94}" || {
+			echo "[ERROR] Continuous body timeline tidak valid; worker tidak dijalankan."
+			exit 1
+		}
+else
+	echo "[ERROR] compile_continuous_timeline.py tidak ditemukan."
+	exit 1
+fi
+
 echo "Memulai AI Worker API (port ${WORKER_PORT})..."
 : > "$WORKER_DIR/api_server.log"
 "$PYTHON_BIN" -u api_server.py >> "$WORKER_DIR/api_server.log" 2>&1 &

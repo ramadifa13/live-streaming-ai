@@ -15,14 +15,15 @@ class TestMuseTalkCropConfig(unittest.TestCase):
 
     def test_mouth_motion_is_soft_and_natural(self):
         text = Path("deploy/ai_worker.py").read_text(encoding="utf-8")
-        self.assertIn("MOUTH_STRENGTH = 0.72", text)
-        self.assertIn('AI_WORKER_MOUTH_TEMPORAL", "0.30"', text)
-        self.assertIn("MOUTH_MAX_DELTA = 8.0", text)
+        self.assertIn("MOUTH_STRENGTH = 1.0", text)
+        self.assertIn("MOUTH_TEMPORAL = 0.0", text)
+        self.assertIn("MOUTH_MAX_DELTA = 0.0", text)
+        self.assertIn("MOUTH_MAX_STALE_FRAMES = 0", text)
 
     def test_musetalk_facebox_stabilizes_on_entry(self):
         text = Path("deploy/ai_worker.py").read_text(encoding="utf-8")
-        self.assertIn("FACE_JITTER_MAX_DELTA = 8", text)
-        self.assertIn("_smooth_face_box", text)
+        self.assertIn("FACE_JITTER_MAX_DELTA = 2", text)
+        self.assertIn("full-prerender contract violated", text)
 
     def test_visual_cache_invalidates_on_param_change(self):
         text = Path("deploy/inference.py").read_text(encoding="utf-8")
@@ -31,9 +32,10 @@ class TestMuseTalkCropConfig(unittest.TestCase):
         self.assertIn('"MUSETALK_BBOX_SHIFT_X", "0"', text)
         self.assertIn('"MUSETALK_UPPER_BOUNDARY_RATIO", "0.32"', text)
 
-    def test_transition_guard_avoids_hard_jump(self):
+    def test_continuous_pipeline_has_no_runtime_transition(self):
         text = Path("deploy/ai_worker.py").read_text(encoding="utf-8")
-        self.assertIn("_transition_guard", text)
+        self.assertIn('CONTINUOUS_CLIP_NAME = "continuous"', text)
+        self.assertIn("target=continuous_broadcaster_loop", text)
 
 
 if __name__ == "__main__":

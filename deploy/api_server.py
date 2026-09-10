@@ -376,8 +376,9 @@ async def health():
     visual_running = _visual_worker_pipeline_active() or (
         visual_worker is not None and visual_worker.is_running
     )
-    broadcaster_running = (
-        broadcaster_process is not None and broadcaster_process.poll() is None
+    broadcaster_running = bool(
+        (visual_worker is not None and getattr(visual_worker, "broadcaster_running", False))
+        or (broadcaster_process is not None and broadcaster_process.poll() is None)
     )
     stream_ready = (visual_running or broadcaster_running) and rtmp_state in (
         "connected",
@@ -398,6 +399,11 @@ async def health():
         "rtmp_state": rtmp_state,
         "rtmp_error": rtmp_error,
         "stream_ready": stream_ready,
+        "prerender": (
+            getattr(visual_worker, "prerender_status", {})
+            if visual_worker is not None
+            else {}
+        ),
         "tts": tts_info,
     }
 

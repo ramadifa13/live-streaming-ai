@@ -21,6 +21,14 @@ from typing import Callable, Deque, List, Optional, Tuple
 import numpy as np
 import torch
 
+from av_timing import (
+    FPS as TARGET_FPS,
+    SAMPLE_RATE,
+    bytes_for_frame,
+    samples_for_frame as _samples_for_frame,
+    silence_for_frame,
+)
+
 try:
     from ffseg import audio_to_pcm_s16le
 except ImportError:
@@ -40,18 +48,7 @@ except ImportError:
         return _NoopTelemetry()
 
 
-TARGET_FPS = 24
-# Keep the bridge contract identical to core_pipeline and MuseTalk input.
-SAMPLE_RATE = 16000
-SAMPLES_PER_FRAME = int(round(SAMPLE_RATE / float(TARGET_FPS)))
-BYTES_PER_AUDIO_FRAME = SAMPLES_PER_FRAME * 2 * 2
-
-
-def _samples_for_frame(frame_index: int) -> int:
-    """Distribute 16 kHz samples across 30 FPS without cumulative clock drift."""
-    start = int(frame_index * SAMPLE_RATE / TARGET_FPS)
-    end = int((frame_index + 1) * SAMPLE_RATE / TARGET_FPS)
-    return max(1, end - start)
+BYTES_PER_AUDIO_FRAME = bytes_for_frame(0)
 
 
 def _sequence_key(task_id: str):
@@ -334,17 +331,14 @@ def _split_pcm_frames(
     pcm: bytes, bytes_per_frame: int = BYTES_PER_AUDIO_FRAME
 ) -> List[bytes]:
     """Split PCM by exact sample count per frame — no drift, no synthetic tail."""
+    del bytes_per_frame
     if not pcm:
         return []
     frames: List[bytes] = []
     bytes_per_sample = 2 * 2  # stereo s16le
-    total_samples = len(pcm) // bytes_per_sample
     pos = 0
     for frame_index in range(100000):  # safety cap
-        start = int(frame_index * SAMPLE_RATE / TARGET_FPS)
-        end = int((frame_index + 1) * SAMPLE_RATE / TARGET_FPS)
-        frame_samples = max(1, end - start)
-        frame_bytes = frame_samples * bytes_per_sample
+        frame_bytes = bytes_for_frame(frame_index)
         if pos >= len(pcm):
             break
         chunk = pcm[pos : pos + frame_bytes]
@@ -402,7 +396,6 @@ class SpeechBridge:
         self._on_utterance_start: Optional[Callable[[UtteranceJob], None]] = None
         self._on_utterance_end: Optional[Callable[[UtteranceJob], None]] = None
         self._on_utterance_ready: Optional[Callable[[UtteranceJob], None]] = None
-        self._silence = b"\x00" * BYTES_PER_AUDIO_FRAME
         self._silence_frame_index = 0
         self._audio_exhausted = False
         self._awaiting_visual_tail = False
@@ -618,7 +611,6 @@ class SpeechBridge:
             )
             self._prequeue_gate_active = False
 
-        preroll_timeout = 4.0
         candidate = None
         with self._lock:
             while self._pending:
@@ -657,36 +649,12 @@ class SpeechBridge:
                 candidate.lipsync_ready.set()
 
         if not candidate.lipsync_ready.is_set():
-            waited = time.monotonic() - (candidate.primed_at or candidate.created_at)
-            hard_preroll = os.environ.get("LIPSYNC_HARD_PREROLL", "0").strip().lower() in (
-                "1",
-                "true",
-                "yes",
-                "on",
-            )
-            preroll_timeout = 2.5
-            # Hard preroll avoids a partial mouth, but never blocks audio forever.
-            if hard_preroll:
-                # The worker has an absolute deadline; the bridge keeps retrying
-                # while that deadline is in progress and preserves idle rendering.
-                with self._lock:
-                    self._pending.appendleft(candidate)
-                if int(waited) > 0 and int(waited) % 5 == 0:
-                    print(
-                        f"[SpeechBridge] Waiting hard preroll {candidate.task_id} "
-                        f"({waited:.1f}s)"
-                    )
-                return
-            # Soft legacy: tunggu lalu mulai parsial.
-            hard_cap = max(1.2, preroll_timeout) * 3.0
-            if waited < hard_cap:
-                with self._lock:
-                    self._pending.appendleft(candidate)
-                return
-            print(
-                f"[SpeechBridge] Preroll lambat {candidate.task_id} "
-                f"({waited:.1f}s) — mulai dengan mouths parsial"
-            )
+            with self._lock:
+                self._pending.appendleft(candidate)
+            return
+        if candidate.error:
+            print(f"[SpeechBridge] Skip {candidate.task_id}: {candidate.error}")
+            return
 
         with self._lock:
             self._current = candidate
@@ -695,8 +663,7 @@ class SpeechBridge:
             self._awaiting_visual_tail = False
             candidate.started_at = time.monotonic()
             duration = max(1.0, candidate.num_frames / float(TARGET_FPS))
-            tail = max(1.0, 3.0 / TARGET_FPS)
-            self._active_deadline = candidate.started_at + duration + tail + 30.0
+            self._active_deadline = candidate.started_at + duration + 30.0
             # Gate selamanya off setelah utterance pertama mulai.
             self._ever_started = True
             self._prequeue_gate_active = False
@@ -782,18 +749,6 @@ class SpeechBridge:
         # PCM aktif.
         if self._frame_cursor < self._current.num_frames:
             return True, self._frame_cursor
-        # Dalam grace tail whisper — masih ada viseme untuk dirender.
-        grace_tail = 3
-        whisper_total = (
-            int(self._current.whisper_chunks.shape[0])
-            if self._current.whisper_chunks is not None
-            else self._current.num_frames
-        )
-        if (
-            self._frame_cursor < whisper_total
-            and self._frame_cursor < self._current.num_frames + grace_tail
-        ):
-            return False, self._frame_cursor
         if not self._audio_exhausted:
             self._audio_exhausted = True
             self._awaiting_visual_tail = True
@@ -814,10 +769,7 @@ class SpeechBridge:
     def get_audio_chunk(self) -> Tuple[bytes, bool, Optional[int]]:
         """Return (pcm_stereo, is_speech, whisper_frame_index).
 
-        Audio boleh habis sebelum video selesai — visual tail dilanjutkan
-        dengan silence sampai state machine memanggil ``signal_visual_complete``.
-        Grace tail: setelah PCM habis, izinkan beberapa frame silence sambil
-        whisper index terus maju (mouth masih bergerak untuk suku kata akhir).
+        PCM and Whisper share the same exact frame count and finish together.
         """
         if (
             self._current is not None
@@ -829,14 +781,14 @@ class SpeechBridge:
             self._finish_current()
 
         if not self.playback_active() and not self._ever_started and self._current is None:
-            size = _samples_for_frame(self._silence_frame_index) * 2 * 2
+            size = bytes_for_frame(self._silence_frame_index)
             self._silence_frame_index += 1
             return b"\x00" * size, False, None
 
         self._start_next_if_needed()
 
         if self._current is None:
-            size = _samples_for_frame(self._silence_frame_index) * 2 * 2
+            size = bytes_for_frame(self._silence_frame_index)
             self._silence_frame_index += 1
             return b"\x00" * size, False, None
 
@@ -847,29 +799,13 @@ class SpeechBridge:
             self._frame_cursor += 1
             return pcm, True, idx
 
-        # Grace tail: setelah PCM habis, izinkan beberapa frame silence dengan
-        # whisper index untuk merender suku kata akhir.
-        # FIX: Kondisi lama memeriksa num_frames lagi (selalu False setelah PCM habis).
-        whisper_total = (
-            int(self._current.whisper_chunks.shape[0])
-            if self._current.whisper_chunks is not None
-            else self._current.num_frames
-        )
-        if (
-            self._frame_cursor < whisper_total
-        ):
-            idx = self._frame_cursor
-            self._frame_cursor += 1
-            return b"\x00" * (_samples_for_frame(idx) * 2 * 2), False, idx
-
-        # Benar-benar selesai.
         if not self._audio_exhausted:
             self._audio_exhausted = True
             self._awaiting_visual_tail = True
         if self._visual_complete_signaled:
             self._visual_complete_signaled = False
             self._finish_current()
-        size = _samples_for_frame(self._silence_frame_index) * 2 * 2
+        size = bytes_for_frame(self._silence_frame_index)
         self._silence_frame_index += 1
         return b"\x00" * size, False, None
 
@@ -897,17 +833,17 @@ class SpeechBridge:
             )
 
     def ready_pending_count(self) -> int:
-        """Jumlah job di `_pending` yang sudah prepared — jangan hitung `_current`.
-
-        Dipakai `end_utterance(another_utterance_ready=...)`. Kalau `_current`
-        ikut dihitung, hold-talk selalu aktif meski antrian kosong → stuck di
-        Hold talk agar tubuh tidak lompat ke idle saat BE mati/reload.
-        """
+        """Count utterances whose complete mouth timeline is ready to play."""
         with self._lock:
-            n = 0
+            n = int(
+                self._current is not None
+                and self._current.lipsync_ready.is_set()
+                and not self._current.error
+            )
             for job in self._pending:
                 if (
                     job.ready.is_set()
+                    and job.lipsync_ready.is_set()
                     and not job.error
                     and job.num_frames > 0
                     and job.whisper_chunks is not None
@@ -924,7 +860,12 @@ class SpeechBridge:
                 remain = max(0, int(self._current.num_frames) - int(self._frame_cursor))
                 total_frames += remain
             for job in self._pending:
-                if job.error or job.num_frames <= 0 or job.whisper_chunks is None:
+                if (
+                    job.error
+                    or job.num_frames <= 0
+                    or job.whisper_chunks is None
+                    or not job.lipsync_ready.is_set()
+                ):
                     continue
                 if not job.ready.is_set():
                     continue

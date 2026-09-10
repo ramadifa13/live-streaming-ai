@@ -70,8 +70,14 @@ def check_seamless_contract() -> None:
         _fail("MOUTH_MISS_BODY_ONLY hilang")
     if "LIPSYNC_HARD_PREROLL" not in src:
         _fail("LIPSYNC_HARD_PREROLL hilang")
-    if "broadcast_micro_advance" not in src:
-        _fail("broadcast_micro_advance metric path hilang")
+    for needle in (
+        'CONTINUOUS_CLIP_NAME = "continuous"',
+        "target=continuous_broadcaster_loop",
+        "full-prerender contract violated",
+        "if consumed_seq:",
+    ):
+        if needle not in src:
+            _fail(f"continuous-only contract missing: {needle}")
     if "broadcast_lag_catchup" in src and "metrics.inc(\"broadcast_lag_catchup\")" in src:
         _fail("broadcast_lag_catchup masih aktif (penyebab loncat/audio cepat)")
     if "broadcast_seq_fast_forward" in src and "metrics.inc(\"broadcast_seq_fast_forward\")" in src:
@@ -97,33 +103,28 @@ def check_validate_assets_script() -> None:
     print("[INVARIANT] validate_idle_assets.py OK")
 
 
+def check_single_pipeline() -> None:
+    core = (ROOT / "core_pipeline.py").read_text(encoding="utf-8", errors="replace")
+    if "class StreamBroadcaster" in core or "class NewAIVisualWorker" in core:
+        _fail("core_pipeline masih memiliki duplicate worker/broadcaster")
+    if "NewAIVisualWorker = AIVisualWorker" not in core:
+        _fail("core_pipeline bukan compatibility adapter")
+    print("[INVARIANT] single pipeline adapter OK")
+
+
 def check_fps_lock() -> None:
     src = (ROOT / "ai_worker.py").read_text(encoding="utf-8", errors="replace")
-    if 'BROADCAST_MODE' not in src or "AI_WORKER_FPS" not in src:
-        _fail("FPS lock untuk ai_worker tidak jelas")
-    print("[INVARIANT] FPS env OK")
+    bridge = (ROOT / "speech_bridge.py").read_text(encoding="utf-8", errors="replace")
+    for name, text in (("ai_worker", src), ("speech_bridge", bridge)):
+        if "from av_timing import" not in text:
+            _fail(f"{name} tidak memakai shared A/V clock")
+    print("[INVARIANT] shared FPS clock OK")
 
 
 def check_audio_sample_rate_contract() -> None:
-    expected = {
-        ROOT / "speech_bridge.py": "SAMPLE_RATE",
-        ROOT / "ai_worker.py": "SAMPLE_RATE",
-        ROOT / "core_pipeline.py": "AUDIO_SAMPLE_RATE",
-    }
-    for path, name in expected.items():
-        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-        values = [
-            node.value.value
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-            and node.targets[0].id == name
-            and isinstance(node.value, ast.Constant)
-            and isinstance(node.value.value, int)
-        ]
-        if values != [16000]:
-            _fail(f"{path.name} harus memakai {name}=16000, ditemukan {values}")
+    timing = (ROOT / "av_timing.py").read_text(encoding="utf-8", errors="replace")
+    if "SAMPLE_RATE = 16_000" not in timing or "samples_for_frame" not in timing:
+        _fail("av_timing tidak memiliki exact 16 kHz sample contract")
     print("[INVARIANT] audio sample-rate contract OK")
 
 
@@ -131,6 +132,7 @@ def main() -> None:
     check_rtmp_utils()
     check_lipsync_not_forced_on_any_clip()
     check_seamless_contract()
+    check_single_pipeline()
     check_validate_assets_script()
     check_fps_lock()
     check_audio_sample_rate_contract()

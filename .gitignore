@@ -34,6 +34,10 @@ deploy/live_videos/*.mp4
 
 # Backup clip avatar sebelum normalisasi 720x1280/25fps
 deploy/assets_original/
+deploy/assets/3d/*_continuous.mp4
+deploy/assets/3d/*_continuous_meta.json
+deploy/assets/3d/*_continuous_coords.pkl
+deploy/assets/3d/*_continuous_materials.pt
 
 # System & IDE
 .DS_Store

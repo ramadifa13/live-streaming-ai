@@ -215,6 +215,9 @@ sync_worker_files() {
 	if [ -f "$DEPLOY_DIR/scripts/validate_idle_assets.py" ]; then
 		cp -f "$DEPLOY_DIR/scripts/validate_idle_assets.py" "$WORKER_DIR/validate_idle_assets.py"
 	fi
+	if [ -f "$DEPLOY_DIR/scripts/compile_continuous_timeline.py" ]; then
+		cp -f "$DEPLOY_DIR/scripts/compile_continuous_timeline.py" "$WORKER_DIR/compile_continuous_timeline.py"
+	fi
 	if [ -f "$DEPLOY_DIR/scripts/_start_worker.sh" ]; then
 		cp -f "$DEPLOY_DIR/scripts/_start_worker.sh" "$WORKER_DIR/_start_worker.sh"
 		chmod +x "$WORKER_DIR/_start_worker.sh" 2>/dev/null || true

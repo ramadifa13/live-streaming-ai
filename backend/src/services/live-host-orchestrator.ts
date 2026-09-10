@@ -309,7 +309,6 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   },
 };
 
-const FALLBACK_SPEECH_SECONDS = 5;
 const IN_FLIGHT_RENDER_SECONDS = 10;
 const LIVE_CONTINUITY_BUFFER_SECONDS = 8;
 const LIVE_CONTINUITY_MIN_UTTERANCES = 3;
@@ -1953,9 +1952,11 @@ class LiveHostOrchestrator {
           playableSeconds + (Number.isFinite(inFlightSeconds) ? inFlightSeconds : activeProcessing * IN_FLIGHT_RENDER_SECONDS),
         );
       } else if (aiWorker) {
-        bufferSeconds = Math.max(0, utteranceQueueCount * FALLBACK_SPEECH_SECONDS + activeProcessing * 3);
+        // Continuous worker reports real prepared PCM duration. Never invent
+        // buffer seconds: that could arm playback before full mouth prerender.
+        bufferSeconds = 0;
       } else {
-        bufferSeconds = Math.max(0, queuedVideos * FALLBACK_SPEECH_SECONDS + activeProcessing * IN_FLIGHT_RENDER_SECONDS);
+        bufferSeconds = Math.max(0, activeProcessing * IN_FLIGHT_RENDER_SECONDS);
       }
 
       state.estimatedBufferSeconds = bufferSeconds;

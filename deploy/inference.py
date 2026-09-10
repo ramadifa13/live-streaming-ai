@@ -710,7 +710,7 @@ def _get_avatar_materials(
 
         frame_h, frame_w = frame_list[0].shape[:2]
         cache_signature = {
-            "format": 6,
+            "format": 7,
             "frames": len(frame_list),
             "width": frame_w,
             "height": frame_h,
@@ -725,7 +725,7 @@ def _get_avatar_materials(
             **cache_signature,
             "version": str(version),
             "parsing_mode": str(parsing_mode),
-            "materials_format": 1,
+            "materials_format": 2,
         }
 
         # Cache landmark disimpan sebagai koordinat piksel absolut, jadi cache
@@ -856,11 +856,12 @@ def _get_avatar_materials(
                 materials_path, materials_signature, input_latent_list, mask_materials
             )
 
-        # Smooth cycle (forward + backward)
-        frame_list_cycle = frame_list + frame_list[::-1]
-        coord_list_cycle = coord_list + coord_list[::-1]
-        input_latent_list_cycle = input_latent_list + input_latent_list[::-1]
-        mask_materials_cycle = mask_materials + mask_materials[::-1]
+        # Continuous-only: one forward timeline. Reverse duplication caused
+        # latent/body index ambiguity and visible ping-pong motion.
+        frame_list_cycle = frame_list
+        coord_list_cycle = coord_list
+        input_latent_list_cycle = input_latent_list
+        mask_materials_cycle = mask_materials
 
         material_bundle = {
             "fps": float(default_fps) or 25.0,
