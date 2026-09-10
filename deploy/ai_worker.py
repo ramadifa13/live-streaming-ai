@@ -793,13 +793,15 @@ class AssetBank:
 
         With PIN_TALK_SCENE (default), only warm the pinned talk clip so boot
         stays fast; other talk clips warm lazily on first use.
+
+        IMPORTANT: do not call talk_clip_name() here — before materials exist it
+        falls back to idle and would warm the wrong clip.
         """
         names = [n for n in self.talk_clip_pool() if n in self.clips]
-        if PIN_TALK_SCENE and names:
-            pinned = self.talk_clip_name()
-            if pinned in self.clips:
-                return [pinned]
-            return names[:1]
+        if PIN_TALK_SCENE:
+            if TALK_CLIP_DEFAULT in self.clips:
+                return [TALK_CLIP_DEFAULT]
+            return names[:1] if names else []
         return names
 
     def ensure_musetalk_materials(self, name: str) -> bool:
