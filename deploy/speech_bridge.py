@@ -428,6 +428,7 @@ class SpeechBridge:
         self._on_utterance_start: Optional[Callable[[UtteranceJob], None]] = None
         self._on_utterance_end: Optional[Callable[[UtteranceJob], None]] = None
         self._on_utterance_ready: Optional[Callable[[UtteranceJob], None]] = None
+        self._visual_allows_next: Optional[Callable[[], bool]] = None
         self._silence_frame_index = 0
         self._audio_exhausted = False
         self._awaiting_visual_tail = False
@@ -468,6 +469,19 @@ class SpeechBridge:
         self._on_utterance_start = on_start
         self._on_utterance_end = on_end
         self._on_utterance_ready = on_ready
+
+    def set_visual_gate(self, fn: Optional[Callable[[], bool]] = None) -> None:
+        """Block starting a new sentence until the idle cycle has finished."""
+        self._visual_allows_next = fn
+
+    def _visual_allows_next_start(self) -> bool:
+        if self._visual_allows_next is None:
+            return True
+        try:
+            return bool(self._visual_allows_next())
+        except Exception as err:
+            print(f"[SpeechBridge] visual gate notice: {err}")
+            return True
 
     def playback_active(self) -> bool:
         flag = os.path.join(self.output_folder, "playback_active.flag")
@@ -880,7 +894,8 @@ class SpeechBridge:
             self._finish_current()
 
         armed = self.playback_active()
-        self._start_next_if_needed(allow_playback=armed)
+        allow_new = armed and self._visual_allows_next_start()
+        self._start_next_if_needed(allow_playback=allow_new)
         if not armed and not self._ever_started and self._current is None:
             size = bytes_for_frame(self._silence_frame_index)
             self._silence_frame_index += 1
@@ -898,10 +913,10 @@ class SpeechBridge:
             self._frame_cursor += 1
             return pcm, True, idx
 
-        # Audio done. If N+1 is READY, play it immediately — no visual-tail gap.
-        if self.ready_upcoming_count() > 0:
+        # Audio done. Start N+1 only when the visual is not mid-idle.
+        if self.ready_upcoming_count() > 0 and self._visual_allows_next_start():
             self._finish_current()
-            self._start_next_if_needed(allow_playback=armed)
+            self._start_next_if_needed(allow_playback=allow_new)
             if self._current is not None and self._frame_cursor < self._current.num_frames:
                 pcm = self._current.pcm_frames[self._frame_cursor]
                 idx = self._frame_cursor

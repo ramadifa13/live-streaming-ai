@@ -131,10 +131,24 @@ def check_audio_sample_rate_contract() -> None:
     if "BROADCAST_SAMPLE_RATE = 48_000" not in timing:
         _fail("av_timing harus 48 kHz untuk PCM siaran")
     worker = (ROOT / "ai_worker.py").read_text(encoding="utf-8", errors="replace")
+    bridge = (ROOT / "speech_bridge.py").read_text(encoding="utf-8", errors="replace")
     if '"44100"' in worker:
         _fail("FFmpeg AAC siaran masih 44100; harus 48 kHz")
-    if "if not is_speech:" not in worker:
-        _fail("idle freeze (hold last pose) hilang dari VideoStateMachine")
+    advance = ""
+    if "def _advance_frame_index" in worker:
+        advance = worker.split("def _advance_frame_index", 1)[1].split(
+            "def _drain_action_queue", 1
+        )[0]
+    if "if not is_speech:" in advance:
+        _fail("idle freeze (hold last pose) masih di _advance_frame_index")
+    if 'IDLE_CLIP_NAME = "idle_2s"' not in worker:
+        _fail("idle_2s clip name hilang")
+    if "def _switch_at_boundary" not in worker:
+        _fail("boundary playthrough (_switch_at_boundary) hilang")
+    if "def allows_next_utterance_start" not in worker:
+        _fail("visual gate allows_next_utterance_start hilang")
+    if "set_visual_gate" not in bridge:
+        _fail("SpeechBridge.set_visual_gate hilang")
     if "samples_for_frame" not in timing:
         _fail("av_timing tidak memiliki samples_for_frame")
     print("[INVARIANT] audio sample-rate contract OK")

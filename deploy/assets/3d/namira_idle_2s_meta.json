@@ -1,0 +1,12 @@
+{
+  "base_pose_frame": 0,
+  "end_pose_frame": 47,
+  "seamless_score": 0.9944,
+  "naive_first_last_ssim": 0.9935,
+  "num_frames": 48,
+  "fps": 24.0,
+  "width": 720,
+  "height": 1280,
+  "threshold": 0.94,
+  "seamless": true
+}

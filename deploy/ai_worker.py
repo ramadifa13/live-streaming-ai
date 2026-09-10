@@ -79,9 +79,10 @@ MOUTH_MASK_FEATHER = float(os.environ.get("AI_WORKER_MOUTH_MASK_FEATHER", "0.35"
 MUSE_DEBUG = os.environ.get("AI_WORKER_MUSE_DEBUG", "0") == "1"
 MUSE_DEBUG_DIR = os.environ.get("AI_WORKER_MUSE_DEBUG_DIR", "/tmp/musetalk_debug")
 CONTINUOUS_CLIP_NAME = "continuous"
+IDLE_CLIP_NAME = "idle_2s"
 TALK_CLIP_NAMES = frozenset({CONTINUOUS_CLIP_NAME})
-BODY_CLIP_NAMES = TALK_CLIP_NAMES
-TRUE_IDLE_NAMES: frozenset = frozenset()
+TRUE_IDLE_NAMES: frozenset = frozenset({IDLE_CLIP_NAME})
+BODY_CLIP_NAMES = TALK_CLIP_NAMES | TRUE_IDLE_NAMES
 TALK_CLIP_DEFAULT = CONTINUOUS_CLIP_NAME
 CRASH_FALLBACK_CLIP = CONTINUOUS_CLIP_NAME
 PIN_TALK_SCENE = True
@@ -120,8 +121,7 @@ def _is_talk_clip_name(name: Optional[str]) -> bool:
 def _is_idle_clip_name(name: Optional[str]) -> bool:
     if not name:
         return False
-    key = _normalize_clip_name(name)
-    return key in BODY_CLIP_NAMES
+    return _normalize_clip_name(name) in TRUE_IDLE_NAMES
 
 
 def _is_neutral_action(tag: Optional[str]) -> bool:
@@ -186,6 +186,8 @@ def get_llm_action() -> Optional[str]:
 
 class PlayState(Enum):
     TALK = auto()
+    IDLE = auto()
+    ACTION = auto()
 
 
 @dataclass
@@ -552,7 +554,7 @@ class AssetBank:
         self.host = host.lower()
         self.models = models_bundle
         self.clips: Dict[str, ClipAsset] = {}
-        self._idle_name = CONTINUOUS_CLIP_NAME
+        self._idle_name = IDLE_CLIP_NAME
         self._ready_talk_clips: Optional[List[str]] = None
 
     def discover_and_load(self) -> None:
@@ -617,7 +619,12 @@ class AssetBank:
             raise RuntimeError(
                 f"{self.host}_{CONTINUOUS_CLIP_NAME}.mp4 missing; run continuous compiler"
             )
-        self._idle_name = CONTINUOUS_CLIP_NAME
+        self._idle_name = self._pick_primary_idle()
+        if self._idle_name not in self.clips:
+            print(
+                f"[AssetBank] WARNING: {IDLE_CLIP_NAME} missing — "
+                "talk wrap will be used when audio is idle"
+            )
         print(
             f"[AssetBank] Primary idle={self._idle_name} talk={self.talk_clip_name()}, "
             f"variants={self.idle_variant_clips()}"
@@ -627,10 +634,15 @@ class AssetBank:
             self._warm_musetalk_materials()
 
     def _pick_primary_idle(self) -> str:
+        if IDLE_CLIP_NAME in self.clips:
+            return IDLE_CLIP_NAME
         return CONTINUOUS_CLIP_NAME
 
     def _eager_clip_names(self) -> List[str]:
-        return [CONTINUOUS_CLIP_NAME]
+        names = [CONTINUOUS_CLIP_NAME]
+        if IDLE_CLIP_NAME in BODY_CLIP_NAMES:
+            names.append(IDLE_CLIP_NAME)
+        return names
 
     def _probe_frame_count(self, path: str) -> int:
         cap = cv2.VideoCapture(path)
@@ -668,9 +680,14 @@ class AssetBank:
         """
         names = [n for n in self.talk_clip_pool() if n in self.clips]
         if PIN_TALK_SCENE:
-            if TALK_CLIP_DEFAULT in self.clips:
-                return [TALK_CLIP_DEFAULT]
-            return names[:1] if names else []
+            names = (
+                [TALK_CLIP_DEFAULT]
+                if TALK_CLIP_DEFAULT in self.clips
+                else names[:1]
+            )
+        idle = self._idle_name if self._idle_name in self.clips else IDLE_CLIP_NAME
+        if idle in self.clips and idle not in names:
+            names.append(idle)
         return names
 
     def ensure_musetalk_materials(self, name: str) -> bool:
@@ -856,7 +873,7 @@ class AssetBank:
 
 
 class VideoStateMachine:
-    """One forward-only body timeline; utterances only toggle mouth activity."""
+    """Talk + idle_2s playthrough. Switch clips only at cycle boundaries."""
 
     def __init__(
         self,
@@ -1086,7 +1103,7 @@ class VideoStateMachine:
             return int(self.frame_idx)
 
     def begin_utterance(self) -> None:
-        """Enable mouth animation without touching the body timeline."""
+        """Enable mouth animation without cutting the current body clip."""
         with self._lock:
             self._utterance_active = True
             self._utterance_audio_done = False
@@ -1096,9 +1113,10 @@ class VideoStateMachine:
             self._hold_talk_since = None
             self._hold_pose_for_infer = False
             self._talk_target = CONTINUOUS_CLIP_NAME
-            self.current_name = CONTINUOUS_CLIP_NAME
             self._talk_direction = 1
-            self.state = PlayState.TALK
+            if not _is_true_idle_name(self.current_name):
+                self.state = PlayState.TALK
+                self.current_name = CONTINUOUS_CLIP_NAME
 
     def mark_utterance_audio_done(self) -> None:
         with self._lock:
@@ -1145,6 +1163,11 @@ class VideoStateMachine:
             return True
         return self.frame_idx >= clip.end_pose
 
+    def allows_next_utterance_start(self) -> bool:
+        """New sentences may start only while not inside an idle cycle."""
+        with self._lock:
+            return not _is_true_idle_name(self.current_name)
+
     def utterance_visual_complete(self) -> bool:
         if not self._utterance_active:
             return False
@@ -1168,8 +1191,6 @@ class VideoStateMachine:
             if self._face_registry:
                 self._face_registry.release_lock()
             self.pending_action = None
-            self.state = PlayState.TALK
-            self.current_name = CONTINUOUS_CLIP_NAME
             self._talk_pinned = True
             self._hold_pose_for_infer = False
             self._hold_talk_since = None
@@ -1467,16 +1488,53 @@ class VideoStateMachine:
             self._playthrough_lock = False
         return True
 
-    def _advance_frame_index(self, clip: ClipAsset, is_speech: bool) -> None:
-        # Idle freeze: hold last pose when there is no READY speech. Still emit 24 FPS.
-        if not is_speech:
+    def _switch_at_boundary(self, to_name: str, new_state: PlayState) -> None:
+        """Snap to the next clip only after the current cycle's last frame."""
+        to_clip = self.bank.get_clip(to_name)
+        if to_clip is None:
             return
-        self.frame_idx += 1
-        if self.frame_idx > clip.end_pose:
-            if not clip.is_seamless_loop:
-                raise RuntimeError("continuous timeline lost seamless validation")
+        from_name = self.current_name
+        from_idx = int(self.frame_idx)
+        self._overlap = None
+        self.current_name = to_name
+        self.frame_idx = int(to_clip.base_pose_frame)
+        self.state = new_state
+        self._talk_direction = 1
+        print(
+            f"[StateMachine] Boundary {from_name}@{from_idx} → "
+            f"{to_name}@{self.frame_idx} ({new_state.name})"
+        )
+
+    def _advance_frame_index(
+        self,
+        clip: ClipAsset,
+        is_speech: bool,
+        *,
+        next_ready: bool = False,
+    ) -> None:
+        if self.frame_idx < clip.end_pose:
+            self.frame_idx += 1
+            return
+
+        idle_name = self.bank._idle_name
+        has_idle = idle_name in self.bank.clips and _is_true_idle_name(idle_name)
+        leftover = bool(is_speech)
+        want_talk = (not leftover) and bool(next_ready)
+        on_idle = _is_true_idle_name(self.current_name)
+
+        if on_idle:
+            if want_talk:
+                self._switch_at_boundary(CONTINUOUS_CLIP_NAME, PlayState.TALK)
+                return
             self.frame_idx = clip.base_pose_frame
-            self._talk_loop_count += 1
+            return
+
+        if leftover or not want_talk:
+            if has_idle:
+                self._switch_at_boundary(idle_name, PlayState.IDLE)
+                return
+        self.frame_idx = clip.base_pose_frame
+        self._talk_loop_count += 1
 
     def _drain_action_queue(self) -> None:
         if self._action_queue and not self.pending_action:
@@ -1488,10 +1546,13 @@ class VideoStateMachine:
         is_speech: bool,
         llm_action: Optional[str] = None,
         whisper_idx: Optional[int] = None,
+        next_ready: bool = False,
     ) -> RawFramePacket:
         del llm_action
         with self._lock:
-            clip = self.bank.get_clip(CONTINUOUS_CLIP_NAME)
+            clip = self.bank.get_clip(self.current_name)
+            if clip is None:
+                clip = self.bank.get_clip(CONTINUOUS_CLIP_NAME)
             if clip is None:
                 raise RuntimeError("compiled continuous clip missing")
             visible_idx = int(self.frame_idx)
@@ -1501,16 +1562,16 @@ class VideoStateMachine:
             pkt = RawFramePacket(
                 seq=self._seq,
                 frame=frame.copy(),
-                clip_name=CONTINUOUS_CLIP_NAME,
+                clip_name=clip.name,
                 frame_idx=visible_idx,
                 cycle_idx=cycle_idx,
-                state=PlayState.TALK,
+                state=self.state,
                 needs_lipsync=needs_lipsync,
                 audio_pcm=audio_pcm,
                 is_speech=is_speech,
                 whisper_idx=whisper_idx,
             )
-            self._advance_frame_index(clip, is_speech)
+            self._advance_frame_index(clip, is_speech, next_ready=next_ready)
             self._seq += 1
             return pkt
 
@@ -2398,7 +2459,16 @@ def frame_fetcher_loop(
         )
 
         action = action_fn()
-        pkt = sm.next_packet(pcm, is_speech, llm_action=action, whisper_idx=whisper_idx)
+        next_ready = False
+        if bridge is not None and hasattr(bridge, "ready_upcoming_count"):
+            next_ready = bridge.ready_upcoming_count() > 0
+        pkt = sm.next_packet(
+            pcm,
+            is_speech,
+            llm_action=action,
+            whisper_idx=whisper_idx,
+            next_ready=next_ready,
+        )
         pkt.whisper_idx = whisper_idx
         if current_uid:
             pkt.utterance_id = current_uid
@@ -3550,6 +3620,8 @@ class AIVisualWorker:
                     on_end=self._on_utterance_end,
                     on_ready=self._on_utterance_ready,
                 )
+                if self._sm is not None:
+                    self._bridge.set_visual_gate(self._sm.allows_next_utterance_start)
             return
 
         print(f"[AIVisualWorker] Loading models + assets ({self.fps} FPS target)...")
@@ -3592,6 +3664,7 @@ class AIVisualWorker:
                 on_end=self._on_utterance_end,
                 on_ready=self._on_utterance_ready,
             )
+            self._bridge.set_visual_gate(self._sm.allows_next_utterance_start)
         print(f"[AIVisualWorker] Ready — clips: {list(self._bank.clips.keys())}")
         try:
             from inference import musetalk_visual_params
