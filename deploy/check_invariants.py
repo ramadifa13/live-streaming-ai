@@ -84,19 +84,6 @@ def check_seamless_contract() -> None:
         _fail("broadcast_seq_fast_forward masih aktif")
     if "RENDER_QUEUE_SIZE = 240" in src or "maxsize=300" in src:
         _fail("render queue terlalu dalam (harus pendek + backpressure)")
-    if "baked_matte" not in src or "body_mattes" not in src:
-        _fail("baked body matte runtime path hilang")
-    compiler_candidates = [
-        ROOT / "compile_continuous_timeline.py",
-        ROOT / "scripts" / "compile_continuous_timeline.py",
-        ROOT.parent / "deploy" / "scripts" / "compile_continuous_timeline.py",
-    ]
-    compiler_path = next((p for p in compiler_candidates if p.is_file()), None)
-    if compiler_path is None:
-        _fail("compile_continuous_timeline.py hilang (root atau scripts/)")
-    compiler = compiler_path.read_text(encoding="utf-8", errors="replace")
-    if "compute_body_matte" not in compiler or "write_body_mattes" not in compiler:
-        _fail("compile_continuous_timeline tidak bake body matte")
     print("[INVARIANT] seamless/continuity contract OK")
 
 

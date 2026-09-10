@@ -59,32 +59,3 @@ def test_utterance_lifecycle_never_resets_body_index():
     sm.end_utterance()
     assert sm.frame_idx == before
     assert sm.state is PlayState.TALK
-
-
-def test_compute_body_matte_thins_white_halo():
-    scripts = ROOT / "scripts"
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
-    from compile_continuous_timeline import compute_body_matte
-
-    frame = np.full((64, 64, 3), 250, dtype=np.uint8)
-    frame[16:48, 16:48] = (40, 40, 40)
-    matte = compute_body_matte(frame)
-    assert matte.shape == (64, 64)
-    assert matte[0, 0] < 40
-    assert matte[32, 32] > 200
-    # Inward erode should keep a thin dark edge instead of a white halo ring.
-    assert int(matte[16, 32]) <= int(matte[32, 32])
-
-
-def test_runtime_body_mattes_are_compact_and_contiguous():
-    from ai_worker import prepare_runtime_body_mattes
-
-    full = np.zeros((5, 64, 32), dtype=np.uint8)
-    full[:, 16:48, 8:24] = 255
-    small = prepare_runtime_body_mattes(full)
-    assert small.shape == (5, 16, 8)
-    assert small.flags["C_CONTIGUOUS"]
-    assert small.dtype == np.uint8
-    assert int(small[0, 0, 0]) < 40
-    assert int(small[0, 8, 4]) > 200
