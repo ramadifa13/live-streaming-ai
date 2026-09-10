@@ -1,0 +1,5 @@
+scipy>=1.13,<2
+# Pocket TTS Indonesian runner
+pocket-tts @ git+https://github.com/anak10thn/pocket-tts.git@indonesian
+numpy>=1.26
+soundfile>=0.12
