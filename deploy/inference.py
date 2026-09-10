@@ -530,6 +530,109 @@ def _load_models_cached(args=None):
     return _models_cache[cache_key]
 
 
+def _materials_disk_path(video_path: str) -> str:
+    input_basename = os.path.splitext(os.path.basename(video_path))[0]
+    return os.path.join(os.path.dirname(video_path), f"{input_basename}_materials.pt")
+
+
+def _latents_to_cpu(latents_list):
+    out = []
+    for lat in latents_list:
+        if lat is None:
+            out.append(None)
+        elif torch.is_tensor(lat):
+            out.append(lat.detach().cpu())
+        elif isinstance(lat, (list, tuple)):
+            out.append(
+                [
+                    t.detach().cpu() if torch.is_tensor(t) else t
+                    for t in lat
+                ]
+            )
+        else:
+            out.append(lat)
+    return out
+
+
+def _latents_to_device(latents_list, device, dtype=None):
+    out = []
+    for lat in latents_list:
+        if lat is None:
+            out.append(None)
+        elif torch.is_tensor(lat):
+            t = lat.to(device=device, non_blocking=True)
+            if dtype is not None and t.is_floating_point():
+                t = t.to(dtype=dtype)
+            out.append(t)
+        elif isinstance(lat, (list, tuple)):
+            moved = []
+            for t in lat:
+                if torch.is_tensor(t):
+                    x = t.to(device=device, non_blocking=True)
+                    if dtype is not None and x.is_floating_point():
+                        x = x.to(dtype=dtype)
+                    moved.append(x)
+                else:
+                    moved.append(t)
+            out.append(type(lat)(moved) if not isinstance(lat, list) else moved)
+        else:
+            out.append(lat)
+    return out
+
+
+def _try_load_materials_disk(path: str, signature: dict, device, dtype=None):
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        blob = torch.load(path, map_location="cpu")
+        if not isinstance(blob, dict) or blob.get("signature") != signature:
+            print(
+                f"[AvatarCache] ♻️ Disk materials {os.path.basename(path)} "
+                "tidak cocok — rebuild."
+            )
+            return None
+        latents = blob.get("input_latent_list")
+        masks = blob.get("mask_materials")
+        if not isinstance(latents, list) or not isinstance(masks, list):
+            return None
+        if len(latents) == 0 or len(latents) != len(masks):
+            return None
+        latents = _latents_to_device(latents, device, dtype=dtype)
+        print(
+            f"[AvatarCache] ⚡ Disk hit {os.path.basename(path)} "
+            f"({len(latents)} frames) — skip VAE/mask rebuild."
+        )
+        return latents, masks
+    except Exception as err:
+        print(f"[AvatarCache] Disk materials load notice: {err}")
+        return None
+
+
+def _save_materials_disk(path: str, signature: dict, latents_list, mask_materials) -> None:
+    if not path:
+        return
+    try:
+        tmp = f"{path}.tmp"
+        torch.save(
+            {
+                "format": 1,
+                "signature": signature,
+                "input_latent_list": _latents_to_cpu(latents_list),
+                "mask_materials": mask_materials,
+            },
+            tmp,
+        )
+        os.replace(tmp, path)
+        print(f"[AvatarCache] 💾 Saved disk materials → {os.path.basename(path)}")
+    except Exception as err:
+        print(f"[AvatarCache] Disk materials save notice: {err}")
+        try:
+            if os.path.exists(f"{path}.tmp"):
+                os.remove(f"{path}.tmp")
+        except Exception:
+            pass
+
+
 def _get_avatar_materials(
     video_path,
     bbox_shift,
@@ -544,8 +647,9 @@ def _get_avatar_materials(
     bbox_shift_x=None,
 ):
     """
-    Pre-cache all decoded frames, landmark bounding boxes, VAE latents, and blending masks in RAM.
-    Subsequent tasks for the same avatar will fetch materials instantly in 0 ms.
+    Pre-cache all decoded frames, landmark bounding boxes, VAE latents, and blending masks.
+    Latents/masks are persisted to `{clip}_materials.pt` on the network volume so
+    process restarts stay warm (coords remain in `*_coords.pkl`).
     """
     global _avatar_assets_cache
     if default_fps is None:
@@ -580,7 +684,7 @@ def _get_avatar_materials(
             return _avatar_assets_cache[cache_key]
 
         print(
-            f"[AvatarCache] ⏳ Pre-processing avatar assets in RAM for: {os.path.basename(video_path)}..."
+            f"[AvatarCache] ⏳ Pre-processing avatar assets for: {os.path.basename(video_path)}..."
         )
 
         # 1. Read frames using OpenCV VideoCapture directly (no PNG dump to disk)
@@ -602,6 +706,7 @@ def _get_avatar_materials(
         pkl_path = os.path.join(
             os.path.dirname(video_path), f"{input_basename}_coords.pkl"
         )
+        materials_path = _materials_disk_path(video_path)
 
         frame_h, frame_w = frame_list[0].shape[:2]
         cache_signature = {
@@ -615,6 +720,12 @@ def _get_avatar_materials(
             "upper_boundary_ratio": round(float(upper_boundary_ratio), 3),
             "square_pad": bool(square_pad),
             "bbox_smooth_window": int(os.environ.get("MUSETALK_BBOX_SMOOTH_WINDOW", "7")),
+        }
+        materials_signature = {
+            **cache_signature,
+            "version": str(version),
+            "parsing_mode": str(parsing_mode),
+            "materials_format": 1,
         }
 
         # Cache landmark disimpan sebagai koordinat piksel absolut, jadi cache
@@ -661,67 +772,89 @@ def _get_avatar_materials(
                 f"({len(coord_list)} frames)"
             )
 
-        # 3. Calculate VAE latents for cropped face frames
-        input_latent_list = []
-        mask_materials = []
-        last_bbox = None
-
-        for bbox, frame in zip(coord_list, frame_list):
-            use_bbox = bbox
-            if bbox == coord_placeholder:
-                use_bbox = last_bbox
-            if use_bbox is None or use_bbox == coord_placeholder:
-                input_latent_list.append(None)
-                mask_materials.append(None)
-                continue
-            last_bbox = use_bbox
-            x1, y1, x2, y2 = [int(v) for v in use_bbox]
-            x1 = max(0, min(x1, frame.shape[1] - 2))
-            x2 = max(x1 + 1, min(x2, frame.shape[1]))
-            y1 = max(0, min(y1, frame.shape[0] - 2))
-            if version == "v15":
-                y2 = y2 + extra_margin
-            y2 = max(y1 + 1, min(y2, frame.shape[0]))
-            crop_frame = frame[y1:y2, x1:x2]
-            if crop_frame.size == 0:
-                input_latent_list.append(None)
-                mask_materials.append(None)
-                continue
-            crop_frame_resized = encode_face_for_vae(crop_frame, square_pad=square_pad)
-            latents = vae.get_latents_for_unet(crop_frame_resized)
-            input_latent_list.append(latents)
-
-            try:
-                mask_array, crop_box = get_image_prepare_material(
-                    frame,
-                    [x1, y1, x2, y2],
-                    upper_boundary_ratio=float(upper_boundary_ratio),
-                    fp=fp,
-                    mode=parsing_mode,
-                )
-                mask_materials.append((mask_array, crop_box, [x1, y1, x2, y2]))
-            except Exception as e:
-                print(
-                    f"[AvatarCache] Frame {len(input_latent_list) - 1}: mask generation failed: {e}"
-                )
-                mask_materials.append(None)
-
-        # Fill any missing latents from nearest neighbour so index == frame index
-        valid_idx = next(
-            (i for i, lat in enumerate(input_latent_list) if lat is not None), None
+        # Prefer disk materials (latents+masks) so process restart stays warm.
+        vae_device = _nn_device(getattr(vae, "vae", vae))
+        weight_dtype = None
+        try:
+            weight_dtype = next(getattr(vae, "vae", vae).parameters()).dtype
+        except Exception:
+            weight_dtype = None
+        disk_hit = _try_load_materials_disk(
+            materials_path, materials_signature, vae_device, dtype=weight_dtype
         )
-        if valid_idx is None:
-            raise ValueError(f"No face detected in avatar video: {video_path}")
-        last_lat = input_latent_list[valid_idx]
-        last_mat = mask_materials[valid_idx]
-        for i in range(len(input_latent_list)):
-            if input_latent_list[i] is None:
-                input_latent_list[i] = last_lat
-                mask_materials[i] = last_mat
-            else:
-                last_lat = input_latent_list[i]
-                if mask_materials[i] is not None:
-                    last_mat = mask_materials[i]
+        if disk_hit is not None:
+            input_latent_list, mask_materials = disk_hit
+            if len(input_latent_list) != len(frame_list):
+                print(
+                    "[AvatarCache] Disk materials frame count mismatch — rebuild."
+                )
+                disk_hit = None
+        if disk_hit is None:
+            # 3. Calculate VAE latents for cropped face frames
+            input_latent_list = []
+            mask_materials = []
+            last_bbox = None
+
+            for bbox, frame in zip(coord_list, frame_list):
+                use_bbox = bbox
+                if bbox == coord_placeholder:
+                    use_bbox = last_bbox
+                if use_bbox is None or use_bbox == coord_placeholder:
+                    input_latent_list.append(None)
+                    mask_materials.append(None)
+                    continue
+                last_bbox = use_bbox
+                x1, y1, x2, y2 = [int(v) for v in use_bbox]
+                x1 = max(0, min(x1, frame.shape[1] - 2))
+                x2 = max(x1 + 1, min(x2, frame.shape[1]))
+                y1 = max(0, min(y1, frame.shape[0] - 2))
+                if version == "v15":
+                    y2 = y2 + extra_margin
+                y2 = max(y1 + 1, min(y2, frame.shape[0]))
+                crop_frame = frame[y1:y2, x1:x2]
+                if crop_frame.size == 0:
+                    input_latent_list.append(None)
+                    mask_materials.append(None)
+                    continue
+                crop_frame_resized = encode_face_for_vae(crop_frame, square_pad=square_pad)
+                latents = vae.get_latents_for_unet(crop_frame_resized)
+                input_latent_list.append(latents)
+
+                try:
+                    mask_array, crop_box = get_image_prepare_material(
+                        frame,
+                        [x1, y1, x2, y2],
+                        upper_boundary_ratio=float(upper_boundary_ratio),
+                        fp=fp,
+                        mode=parsing_mode,
+                    )
+                    mask_materials.append((mask_array, crop_box, [x1, y1, x2, y2]))
+                except Exception as e:
+                    print(
+                        f"[AvatarCache] Frame {len(input_latent_list) - 1}: mask generation failed: {e}"
+                    )
+                    mask_materials.append(None)
+
+            # Fill any missing latents from nearest neighbour so index == frame index
+            valid_idx = next(
+                (i for i, lat in enumerate(input_latent_list) if lat is not None), None
+            )
+            if valid_idx is None:
+                raise ValueError(f"No face detected in avatar video: {video_path}")
+            last_lat = input_latent_list[valid_idx]
+            last_mat = mask_materials[valid_idx]
+            for i in range(len(input_latent_list)):
+                if input_latent_list[i] is None:
+                    input_latent_list[i] = last_lat
+                    mask_materials[i] = last_mat
+                else:
+                    last_lat = input_latent_list[i]
+                    if mask_materials[i] is not None:
+                        last_mat = mask_materials[i]
+
+            _save_materials_disk(
+                materials_path, materials_signature, input_latent_list, mask_materials
+            )
 
         # Smooth cycle (forward + backward)
         frame_list_cycle = frame_list + frame_list[::-1]

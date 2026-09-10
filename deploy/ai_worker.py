@@ -789,10 +789,18 @@ class AssetBank:
         return clip
 
     def _precache_clip_names(self) -> List[str]:
-        """MuseTalk untuk semua talk*."""
-        names = [*self.talk_clip_pool()]
-        # fb (idle) tidak perlu di-precache MuseTalk karena bukan clip bicara.
-        return [n for n in names if n in self.clips]
+        """MuseTalk precache targets.
+
+        With PIN_TALK_SCENE (default), only warm the pinned talk clip so boot
+        stays fast; other talk clips warm lazily on first use.
+        """
+        names = [n for n in self.talk_clip_pool() if n in self.clips]
+        if PIN_TALK_SCENE and names:
+            pinned = self.talk_clip_name()
+            if pinned in self.clips:
+                return [pinned]
+            return names[:1]
+        return names
 
     def ensure_musetalk_materials(self, name: str) -> bool:
         """Lazy precache satu clip saat dibutuhkan (mis. gesture jarang dipakai)."""

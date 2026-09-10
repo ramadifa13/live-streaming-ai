@@ -142,9 +142,9 @@ stop_supervisor() {
 
 cleanup_worker_stack() {
 	echo "[INFO] Membersihkan AI Worker API, ffmpeg rtmp, dan membebaskan port ${WORKER_PORT}..."
-	# Hapus cache data sebelumnya
-	echo "[INFO] Menghapus cache data sebelumnya (coords pkl, tmp_assets)..."
-	rm -f "$WORKER_DIR/assets/"*_coords.pkl 2>/dev/null || true
+	# Keep landmark/materials disk cache on the network volume so restart stays warm.
+	# Only clear ephemeral live overlay/tmp artifacts.
+	echo "[INFO] Membersihkan tmp_assets (coords/materials cache dipertahankan)..."
 	rm -rf "$WORKER_DIR/output/tmp_assets/"* 2>/dev/null || true
 
 	# Kill Python HTTP API & worker processes
