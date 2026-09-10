@@ -919,8 +919,11 @@ class LiveHostOrchestrator {
         }
 
         const policy = this.getPolicy(s);
-        const playableDepth = isAiWorkerBroadcastMode(queue.broadcastMode) ? queue.utteranceQueueCount : queue.queuedVideos;
-        if (playableDepth >= GO_LIVE_MIN_UTTERANCES && queue.bufferSeconds >= policy.minBufferSeconds) {
+        const aiWorkerQueue = isAiWorkerBroadcastMode(queue.broadcastMode);
+        const playableDepth = aiWorkerQueue ? queue.readyUtteranceCount : queue.queuedVideos;
+        const minPlayableDepth = aiWorkerQueue ? AI_WORKER_GO_LIVE_MIN_UTTERANCES : GO_LIVE_MIN_UTTERANCES;
+        const minBufferSeconds = aiWorkerQueue ? Math.min(policy.minBufferSeconds, 8) : policy.minBufferSeconds;
+        if (playableDepth >= minPlayableDepth && queue.bufferSeconds >= minBufferSeconds) {
           await sleep(1200);
           continue;
         }
@@ -998,10 +1001,13 @@ class LiveHostOrchestrator {
         const playableQueueDepth = isAiWorkerBroadcastMode(s.lastQueue.broadcastMode)
           ? s.lastQueue.readyUtteranceCount || 0
           : s.lastQueue.queuedVideos || 0;
+        const continuityMinUtterances = isAiWorkerBroadcastMode(s.lastQueue.broadcastMode)
+          ? AI_WORKER_GO_LIVE_MIN_UTTERANCES
+          : LIVE_CONTINUITY_MIN_UTTERANCES;
         const queueNeedsContinuity =
-          playableQueueDepth < MIN_PLAYABLE_UTTERANCES ||
+          playableQueueDepth < (isAiWorkerBroadcastMode(s.lastQueue.broadcastMode) ? AI_WORKER_GO_LIVE_MIN_UTTERANCES : MIN_PLAYABLE_UTTERANCES) ||
           s.lastQueue.bufferSeconds <= MAX_ONAIR_IDLE_SECONDS ||
-          (s.isLive && s.lastQueue.bufferSeconds < LIVE_CONTINUITY_BUFFER_SECONDS && playableQueueDepth < LIVE_CONTINUITY_MIN_UTTERANCES + 1);
+          (s.isLive && s.lastQueue.bufferSeconds < LIVE_CONTINUITY_BUFFER_SECONDS && playableQueueDepth < continuityMinUtterances + 1);
 
         if (queueNeedsContinuity) {
           await this.generateAndQueueNext(sessionId, "live");
@@ -1021,16 +1027,18 @@ class LiveHostOrchestrator {
           continue;
         }
 
-        const queueDepth = isAiWorkerBroadcastMode(s.lastQueue.broadcastMode)
+        const aiWorkerBroadcast = isAiWorkerBroadcastMode(s.lastQueue.broadcastMode);
+        const queueDepth = aiWorkerBroadcast
           ? Math.max(s.lastQueue.utteranceQueueCount || 0, s.lastQueue.readyUtteranceCount || 0)
           : s.lastQueue.queuedVideos || 0;
+        const minQueueBufferSeconds = aiWorkerBroadcast ? Math.min(policy.minBufferSeconds, 8) : policy.minBufferSeconds;
 
         const needsRefill =
           s.lastQueue.bufferSeconds < policy.targetBufferSeconds ||
-          s.lastQueue.bufferSeconds < policy.minBufferSeconds ||
-          s.lastQueue.queuedVideos === 0 ||
-          queueDepth < MIN_PLAYABLE_UTTERANCES ||
-          queueDepth < GO_LIVE_MIN_UTTERANCES;
+          s.lastQueue.bufferSeconds < minQueueBufferSeconds ||
+          (!aiWorkerBroadcast && s.lastQueue.queuedVideos === 0) ||
+          queueDepth < (aiWorkerBroadcast ? AI_WORKER_GO_LIVE_MIN_UTTERANCES : MIN_PLAYABLE_UTTERANCES) ||
+          queueDepth < (aiWorkerBroadcast ? AI_WORKER_GO_LIVE_MIN_UTTERANCES : GO_LIVE_MIN_UTTERANCES);
 
         if (needsRefill) {
           await this.generateAndQueueNext(sessionId, "live");
@@ -2156,7 +2164,7 @@ class LiveHostOrchestrator {
     ) {
       stageIndex = 2;
       stageText = aiWorker
-        ? `Menyiapkan kata pembuka host (${Math.max(queue.readyUtteranceCount, queue.utteranceQueueCount)}/${GO_LIVE_MIN_UTTERANCES})`
+        ? `Menyiapkan kata pembuka host (${queue.readyUtteranceCount}/${AI_WORKER_GO_LIVE_MIN_UTTERANCES})`
         : "Menyiapkan video pembuka host";
     } else if (rtmpRequired && !queue.rtmpConnected) {
       stageIndex = 3;
@@ -2177,7 +2185,7 @@ class LiveHostOrchestrator {
       utteranceQueueCount: queue.utteranceQueueCount,
       readyUtteranceCount: queue.readyUtteranceCount,
       playbackArmed: queue.playbackArmed,
-      goLiveMinUtterances: GO_LIVE_MIN_UTTERANCES,
+      goLiveMinUtterances: aiWorker ? AI_WORKER_GO_LIVE_MIN_UTTERANCES : GO_LIVE_MIN_UTTERANCES,
       broadcastMode: queue.broadcastMode,
       visualWorkerRunning: queue.visualWorkerRunning,
       visualWorkerInitializing: queue.visualWorkerInitializing,
