@@ -229,6 +229,8 @@ export function sanitizeForLiveTTS(text: string): string {
     out = out.replace(regex, "$1, $2");
   }
 
+  out = collapseRepeatedSpeech(out);
+
   return out
     .replace(/[!]{2,}/g, "!")
     .replace(/[?]{2,}/g, "?")
@@ -242,6 +244,12 @@ export function sanitizeForLiveTTS(text: string): string {
     .replace(/([,.!?])([a-zA-Z0-9])/g, "$1 $2")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function collapseRepeatedSpeech(text: string): string {
+  let out = text.replace(/\b([\p{L}\p{N}']+)(?:\s+\1){1,}/giu, "$1");
+  out = out.replace(/\b((?:[\p{L}\p{N}']+\s+){1,3}[\p{L}\p{N}']+)(?:\s+\1)+\b/giu, "$1");
+  return out.replace(/\s+/g, " ").trim();
 }
 
 function normalizeConversationalTerms(text: string): string {
@@ -390,11 +398,11 @@ function resolveFfmpegBinary(): string {
 
 const FFMPEG_BIN = resolveFfmpegBinary();
 
-async function ensureWav16kMono(input: Buffer): Promise<Buffer> {
+async function ensureWavPcm(input: Buffer): Promise<Buffer> {
   if (input.length >= 44 && input.toString("ascii", 0, 4) === "RIFF" && input.toString("ascii", 8, 12) === "WAVE") {
     const rate = input.readUInt32LE(24);
     const channels = input.readUInt16LE(22);
-    if (rate === 16000 && channels === 1) return input;
+    if (channels === 1 && (rate === 24000 || rate === 48000 || rate === 16000)) return input;
   }
 
   return new Promise((resolve, reject) => {
@@ -408,7 +416,7 @@ async function ensureWav16kMono(input: Buffer): Promise<Buffer> {
       "-i",
       inFile,
       "-ar",
-      "16000",
+      "24000",
       "-ac",
       "1",
       "-c:a",
@@ -620,7 +628,7 @@ async function synthesizeWithPocket(
   const t0 = Date.now();
   const audio = await synthesizeWithPocketTts(cleanText, voiceId);
   if (audio.length < 44) throw new Error("Pocket TTS WAV kosong/pendek");
-  const monoBuffer = await ensureWav16kMono(audio);
+  const monoBuffer = await ensureWavPcm(audio);
   const targetDur = opts.targetDurationSeconds ?? 8.8;
   const buffer = await calibrateAudioDuration(monoBuffer, targetDur);
   const metrics = {

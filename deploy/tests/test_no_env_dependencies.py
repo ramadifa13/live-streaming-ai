@@ -12,7 +12,7 @@ def test_shared_clock_has_no_cumulative_sample_drift():
     frames = FPS * 60
     total = sum(samples_for_frame(i) for i in range(frames))
     assert total == SAMPLE_RATE * 60
-    assert {samples_for_frame(i) for i in range(FPS)} <= {666, 667}
+    assert {samples_for_frame(i) for i in range(FPS)} == {SAMPLE_RATE // FPS}
 
 
 def test_pcm_packets_are_stereo_s16le_aligned():

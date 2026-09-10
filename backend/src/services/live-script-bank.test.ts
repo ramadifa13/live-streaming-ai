@@ -195,6 +195,33 @@ describe("product re-entry A→B→C→A", () => {
   });
 });
 
+describe("dedupe before TTS", () => {
+  it("collapses consecutive duplicate words and phrases", async () => {
+    const { sanitizeForLiveTTS } = await import("./tts.js");
+    assert.equal(sanitizeForLiveTTS("delivery delivery delivery"), "delivery");
+    const collapsed = sanitizeForLiveTTS("pengiriman cepat pengiriman cepat hari ini");
+    assert.equal((collapsed.match(/pengiriman cepat/gi) || []).length, 1);
+  });
+
+  it("does not immediately recycle a just-used line", () => {
+    const lineA =
+      "Tekstur serum ini ringan di kulit dan nyaman dipakai setiap hari tanpa rasa lengket sama sekali ya.";
+    const lineB =
+      "Kandungan utamanya membantu jaga kelembapan biar wajah tetap segar sepanjang hari untuk pemula.";
+    const bank = emptyScriptBank("dedupe");
+    bank.lines.push(
+      { speech: lineA, topic: "texture", mode: "ENGAGE", ctaType: "NONE", action: "talk", interruptible: true, claims: [] } as any,
+      { speech: lineB, topic: "benefit", mode: "ENGAGE", ctaType: "NONE", action: "talk", interruptible: true, claims: [] } as any,
+    );
+    const first = takeScriptLine(bank, [], { cycleId: 0, now: Date.now() });
+    assert.ok(first);
+    const second = takeScriptLine(bank, [first!.speech], { cycleId: 0, now: Date.now() });
+    assert.ok(second);
+    assert.equal(isExactRepeat(second!.speech, first!.speech), false);
+    assert.equal(isLexicalRepeat(second!.speech, first!.speech), false);
+  });
+});
+
 describe("cycle + product reference", () => {
   it("rotates preferred angles across cycles", () => {
     assert.notEqual(preferredAnglesForCycle(0).join(","), preferredAnglesForCycle(1).join(","));

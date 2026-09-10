@@ -52,6 +52,13 @@ export interface RunPodQueueStatus {
   warmed_up?: boolean;
   utterance_queue_count?: number;
   ready_utterance_count?: number;
+  render_queue_size?: number;
+  ready_speech_seconds?: number;
+  render_time_sec?: number;
+  speech_duration_sec?: number;
+  real_time_ratio?: number;
+  render_time_over_speech?: number;
+  gpu_throughput_bound?: boolean;
   playback_armed?: boolean;
   broadcast_mode?: string;
   visual_worker_running?: boolean;
@@ -176,6 +183,7 @@ async function workerRequestWithRetry(
       const status = Number(err.message?.match(/\d{3}/)?.[0]);
       const isTransient =
         status === 404 ||
+        status === 429 ||
         status === 502 ||
         status === 503 ||
         status === 504 ||

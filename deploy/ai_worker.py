@@ -1468,7 +1468,9 @@ class VideoStateMachine:
         return True
 
     def _advance_frame_index(self, clip: ClipAsset, is_speech: bool) -> None:
-        del is_speech
+        # Idle freeze: hold last pose when there is no READY speech. Still emit 24 FPS.
+        if not is_speech:
+            return
         self.frame_idx += 1
         if self.frame_idx > clip.end_pose:
             if not clip.is_seamless_loop:
@@ -1560,6 +1562,11 @@ class LipSyncEngine:
         self._last_mouth_frame = None
         self._feather_cache: dict = {}
         self._square_pad = True
+        self._gpu_lock = threading.Lock()
+        self.last_render_time_sec = 0.0
+        self.last_speech_duration_sec = 0.0
+        self.last_real_time_ratio = 0.0
+        self.gpu_throughput_bound = False
         try:
             from inference import musetalk_visual_params
 
@@ -1759,6 +1766,18 @@ class LipSyncEngine:
         offset = max(0, int(body_idx) - clip.base_pose_frame)
         return offset % max(1, forward_n)
 
+    def pipeline_metrics(self) -> Dict[str, float]:
+        speech = float(self.last_speech_duration_sec)
+        render = float(self.last_render_time_sec)
+        over = (render / speech) if speech > 0.0 else 0.0
+        return {
+            "render_time_sec": round(render, 3),
+            "speech_duration_sec": round(speech, 3),
+            "real_time_ratio": round(float(self.last_real_time_ratio), 3),
+            "render_time_over_speech": round(over, 3),
+            "gpu_throughput_bound": 1.0 if self.gpu_throughput_bound else 0.0,
+        }
+
     def _batch_inference_loop(self, slot: _MouthSlot) -> None:
         vae = self.models["vae"]
         unet = self.models["unet"]
@@ -1769,6 +1788,41 @@ class LipSyncEngine:
             print("[LipSync] ERROR: compiled continuous materials missing")
             return
 
+        self._gpu_lock.acquire()
+        try:
+            render_start = time.perf_counter()
+            try:
+                self._run_batch_inference(slot, vae, unet, pe, timesteps, default_clip)
+            finally:
+                render_time = max(0.001, time.perf_counter() - render_start)
+                speech_dur = float(slot.infer_cursor) / float(TARGET_FPS)
+                ratio = speech_dur / render_time if render_time > 0 else 0.0
+                self.last_render_time_sec = render_time
+                self.last_speech_duration_sec = speech_dur
+                self.last_real_time_ratio = ratio
+                self.gpu_throughput_bound = ratio < 1.0
+                metrics = get_telemetry()
+                metrics.set_gauge("render_time_sec", render_time)
+                metrics.set_gauge("speech_duration_sec", speech_dur)
+                metrics.set_gauge("real_time_ratio", ratio)
+                metrics.set_gauge("gpu_throughput_bound", 1.0 if ratio < 1.0 else 0.0)
+                bound = "GPU_THROUGHPUT_BOUND" if ratio < 1.0 else "realtime_ok"
+                print(
+                    f"[LipSync] throughput task={slot.utterance_id} "
+                    f"render={render_time:.2f}s speech={speech_dur:.2f}s "
+                    f"real_time_ratio={ratio:.3f}x {bound}"
+                )
+                if ratio < 1.0:
+                    print(
+                        "[LipSync] Bottleneck is GPU throughput, not the playback queue. "
+                        "A READY buffer cannot sustain 1h continuous at this ratio."
+                    )
+        finally:
+            self._gpu_lock.release()
+
+    def _run_batch_inference(
+        self, slot: _MouthSlot, vae, unet, pe, timesteps, default_clip
+    ) -> None:
         print(
             f"[LipSync] Starting batch inference for {default_clip.name}, "
             f"{len(default_clip.latent_list_cycle)} default latents "
@@ -2365,6 +2419,8 @@ def frame_fetcher_loop(
         metrics.set_gauge("raw_queue_depth", float(raw_q.qsize()))
         if bridge is not None:
             metrics.set_gauge("utterance_queue_depth", float(bridge.pending_count()))
+            metrics.set_gauge("ready_speech_seconds", float(bridge.queued_audio_seconds()))
+            metrics.set_gauge("lipsync_render_queue", float(bridge.render_queue_size()))
         _put_raw_frame(
             raw_q,
             pkt,
@@ -2544,7 +2600,7 @@ class StreamBroadcaster:
                 "-b:a",
                 "128k",
                 "-ar",
-                "44100",
+                str(SAMPLE_RATE),
                 "-flvflags",
                 "no_duration_filesize",
                 "-f",

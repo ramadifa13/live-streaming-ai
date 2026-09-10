@@ -126,8 +126,17 @@ def check_fps_lock() -> None:
 
 def check_audio_sample_rate_contract() -> None:
     timing = (ROOT / "av_timing.py").read_text(encoding="utf-8", errors="replace")
-    if "SAMPLE_RATE = 16_000" not in timing or "samples_for_frame" not in timing:
-        _fail("av_timing tidak memiliki exact 16 kHz sample contract")
+    if "WHISPER_SAMPLE_RATE = 16_000" not in timing:
+        _fail("av_timing harus tetap 16 kHz untuk Whisper/MuseTalk")
+    if "BROADCAST_SAMPLE_RATE = 48_000" not in timing:
+        _fail("av_timing harus 48 kHz untuk PCM siaran")
+    worker = (ROOT / "ai_worker.py").read_text(encoding="utf-8", errors="replace")
+    if '"44100"' in worker:
+        _fail("FFmpeg AAC siaran masih 44100; harus 48 kHz")
+    if "if not is_speech:" not in worker:
+        _fail("idle freeze (hold last pose) hilang dari VideoStateMachine")
+    if "samples_for_frame" not in timing:
+        _fail("av_timing tidak memiliki samples_for_frame")
     print("[INVARIANT] audio sample-rate contract OK")
 
 

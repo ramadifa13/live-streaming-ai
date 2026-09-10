@@ -1,8 +1,8 @@
 """Bridge antara API server (TTS audio + LLM action) dan AIVisualWorker.
 
-Utterance masuk lewat ``enqueue()`` → PCM + Whisper chunks diprecompute di
-background → ``get_audio_chunk()`` / ``get_llm_action()`` dipanggil oleh
-thread FrameFetcher pada setiap tick 30 FPS.
+Utterance masuk lewat ``enqueue()`` → PCM 48 kHz + Whisper 16 kHz diprecompute
+dari file asli (satu resample masing-masing) → MuseTalk N+1 diprime sementara
+N diputar → ``get_audio_chunk()`` hanya mengambil segment READY pada tick 24 FPS.
 """
 
 from __future__ import annotations
@@ -23,7 +23,8 @@ import torch
 
 from av_timing import (
     FPS as TARGET_FPS,
-    SAMPLE_RATE,
+    BROADCAST_SAMPLE_RATE,
+    WHISPER_SAMPLE_RATE,
     bytes_for_frame,
     samples_for_frame as _samples_for_frame,
     silence_for_frame,
@@ -240,7 +241,7 @@ def _normalize_to_16k_wav(src_path: str) -> str:
         "-ac",
         "1",
         "-ar",
-        "16000",
+        str(WHISPER_SAMPLE_RATE),
         "-c:a",
         "pcm_s16le",
         dst,
@@ -301,7 +302,7 @@ def _as_whisper_feature_list(raw_features):
     return out
 
 
-def _extract_pcm_stereo(audio_path: str, sample_rate: int = SAMPLE_RATE) -> bytes:
+def _extract_pcm_stereo(audio_path: str, sample_rate: int = BROADCAST_SAMPLE_RATE) -> bytes:
     if audio_to_pcm_s16le is not None:
         return audio_to_pcm_s16le(audio_path, sample_rate=sample_rate, channels=2)
     cmd = [
@@ -414,6 +415,8 @@ class SpeechBridge:
     MIN_READY_UTTERANCES: int = 1
     MAX_PENDING_UTTERANCES: int = 12
     PREP_WORKERS: int = 2
+    # MuseTalk jobs to start while the current READY segment is still playing.
+    MAX_RENDER_AHEAD: int = 2
 
     def __init__(self, output_folder: str = ""):
         self.output_folder = output_folder or "/workspace/ai_live_worker/output"
@@ -506,7 +509,7 @@ class SpeechBridge:
         metrics = get_telemetry()
         prep_start = time.perf_counter()
         try:
-            pcm = _extract_pcm_stereo(job.audio_path)
+            pcm = _extract_pcm_stereo(job.audio_path, sample_rate=BROADCAST_SAMPLE_RATE)
             job.pcm_frames = _split_pcm_frames(pcm)
             job.num_frames = len(job.pcm_frames)
 
@@ -536,8 +539,11 @@ class SpeechBridge:
             print(
                 f"[SpeechBridge] Ready {job.task_id}: "
                 f"{job.num_frames} frames @ {TARGET_FPS}fps "
+                f"pcm={BROADCAST_SAMPLE_RATE}Hz whisper={WHISPER_SAMPLE_RATE}Hz "
+                f"(from original, no chained resample) "
                 f"whisper={'ok' if job.whisper_chunks is not None else 'MISSING'}"
             )
+            self._prime_upcoming_renders()
         except Exception as err:
             job.error = str(err)
             job.ready.set()
@@ -618,7 +624,69 @@ class SpeechBridge:
             chunks = torch.cat([chunks, zeros], dim=0)
         return chunks.cpu()
 
+    def is_full(self) -> bool:
+        with self._lock:
+            return len(self._pending) >= max(1, self.MAX_PENDING_UTTERANCES)
+
+    def render_queue_size(self) -> int:
+        """Jobs with Whisper ready that are still waiting on MuseTalk."""
+        with self._lock:
+            n = 0
+            for job in self._pending:
+                if job.error or not job.ready.is_set() or job.whisper_chunks is None:
+                    continue
+                if not job.lipsync_ready.is_set():
+                    n += 1
+            return n
+
+    def ready_upcoming_count(self) -> int:
+        """READY segments waiting behind the currently playing job."""
+        with self._lock:
+            n = 0
+            for job in self._pending:
+                if (
+                    job.ready.is_set()
+                    and job.lipsync_ready.is_set()
+                    and not job.error
+                    and job.num_frames > 0
+                    and job.whisper_chunks is not None
+                ):
+                    n += 1
+            return n
+
+    def _prime_upcoming_renders(self) -> None:
+        """Start MuseTalk for N+1 while N is still playing. Never wait for N to finish."""
+        if self._on_utterance_ready is None:
+            return
+        to_prime: List[UtteranceJob] = []
+        with self._lock:
+            inflight = 0
+            for job in self._pending:
+                if job.error or job.num_frames <= 0:
+                    continue
+                if not job.ready.is_set() or job.whisper_chunks is None:
+                    continue
+                if job.lipsync_ready.is_set():
+                    continue
+                if job.lipsync_primed:
+                    inflight += 1
+                    continue
+                if inflight >= max(1, self.MAX_RENDER_AHEAD):
+                    break
+                job.lipsync_primed = True
+                job.primed_at = time.monotonic()
+                to_prime.append(job)
+                inflight += 1
+        for job in to_prime:
+            try:
+                print(f"[SpeechBridge] Prime MuseTalk ahead {job.task_id}")
+                self._on_utterance_ready(job)
+            except Exception as err:
+                print(f"[SpeechBridge] prime notice: {err}")
+                job.lipsync_ready.set()
+
     def _start_next_if_needed(self, *, allow_playback: bool = True) -> None:
+        self._prime_upcoming_renders()
 
         if self._current is not None:
             return
@@ -829,6 +897,16 @@ class SpeechBridge:
             idx = self._frame_cursor
             self._frame_cursor += 1
             return pcm, True, idx
+
+        # Audio done. If N+1 is READY, play it immediately — no visual-tail gap.
+        if self.ready_upcoming_count() > 0:
+            self._finish_current()
+            self._start_next_if_needed(allow_playback=armed)
+            if self._current is not None and self._frame_cursor < self._current.num_frames:
+                pcm = self._current.pcm_frames[self._frame_cursor]
+                idx = self._frame_cursor
+                self._frame_cursor += 1
+                return pcm, True, idx
 
         if not self._audio_exhausted:
             self._audio_exhausted = True

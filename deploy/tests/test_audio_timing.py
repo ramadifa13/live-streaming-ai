@@ -19,7 +19,7 @@ from speech_bridge import (
 
 
 def test_split_pcm_frames_keeps_partial_tail_without_cutting_audio():
-    pcm = b"\x00" * (667 * 2 * 2)
+    pcm = b"\x00" * (2000 * 2 * 2)
 
     frames = _split_pcm_frames(pcm)
 
@@ -31,7 +31,7 @@ def test_split_pcm_frames_keeps_partial_tail_without_cutting_audio():
 
 
 def test_pcm_edge_fades_keep_frame_sizes_and_only_soften_edges():
-    frame = b"\x00\x40" * (667 * 2)
+    frame = b"\x00\x40" * (2000 * 2)
     frames = [frame for _ in range(24)]
     faded = _apply_pcm_edge_fades(frames, fade_frames=3)
 
@@ -128,3 +128,68 @@ def test_prerender_runs_before_playback_is_armed():
 
     bridge._start_next_if_needed(allow_playback=True)
     assert bridge._current is job
+
+
+def test_prime_upcoming_while_current_is_playing():
+    bridge = SpeechBridge(output_folder="/tmp/ai_live_worker_test")
+    current = UtteranceJob(task_id="task_n", audio_path="")
+    current.pcm_frames = [b"A", b"B"]
+    current.num_frames = 2
+    current.whisper_chunks = torch.zeros((2, 1))
+    current.ready.set()
+    current.lipsync_ready.set()
+    current.lipsync_primed = True
+    bridge._current = current
+    bridge._frame_cursor = 0
+    bridge._ever_started = True
+
+    nxt = UtteranceJob(task_id="task_n1", audio_path="")
+    nxt.pcm_frames = [b"C"]
+    nxt.num_frames = 1
+    nxt.whisper_chunks = torch.zeros((1, 1))
+    nxt.ready.set()
+    primed = []
+
+    def _on_ready(ready_job):
+        primed.append(ready_job.task_id)
+        ready_job.lipsync_ready.set()
+
+    bridge._pending.append(nxt)
+    bridge.set_callbacks(on_ready=_on_ready)
+
+    bridge._start_next_if_needed(allow_playback=True)
+
+    assert bridge._current is current
+    assert nxt.lipsync_primed is True
+    assert primed == ["task_n1"]
+    assert nxt.lipsync_ready.is_set()
+
+
+def test_playback_takes_ready_next_without_waiting_for_visual_tail():
+    bridge = SpeechBridge(output_folder="/tmp/ai_live_worker_test")
+    current = UtteranceJob(task_id="task_n", audio_path="")
+    current.pcm_frames = [b"A"]
+    current.num_frames = 1
+    current.whisper_chunks = torch.zeros((1, 1))
+    current.ready.set()
+    current.lipsync_ready.set()
+    current.lipsync_primed = True
+    bridge._current = current
+    bridge._frame_cursor = 1
+    bridge._ever_started = True
+
+    nxt = UtteranceJob(task_id="task_n1", audio_path="")
+    nxt.pcm_frames = [b"C"]
+    nxt.num_frames = 1
+    nxt.whisper_chunks = torch.zeros((1, 1))
+    nxt.ready.set()
+    nxt.lipsync_ready.set()
+    nxt.lipsync_primed = True
+    bridge._pending.append(nxt)
+
+    pcm, is_speech, idx = bridge.get_audio_chunk()
+
+    assert pcm == b"C"
+    assert is_speech is True
+    assert idx == 0
+    assert bridge._current is nxt

@@ -160,8 +160,14 @@ interface QueueMetrics {
   warmedUp: boolean;
   broadcastMode: string;
   utteranceQueueCount: number;
-  readyUtteranceCount: number;
-  playbackArmed: boolean;
+    readyUtteranceCount: number;
+    renderQueueSize?: number;
+    readySpeechSeconds?: number;
+    renderTimeSec?: number;
+    speechDurationSec?: number;
+    realTimeRatio?: number;
+    gpuThroughputBound?: boolean;
+    playbackArmed: boolean;
   visualWorkerRunning: boolean;
   visualWorkerInitializing: boolean;
   broadcastBootState: string;
@@ -316,7 +322,7 @@ const LIVE_CONTINUITY_MIN_UTTERANCES = 3;
 const MIN_PLAYABLE_UTTERANCES = LIVE_CONTINUITY_MIN_UTTERANCES;
 const MAX_WORKER_UTTERANCE_QUEUE = Math.max(
   1,
-  Number(process.env.LIVE_MAX_WORKER_UTTERANCE_QUEUE || 3),
+  Number(process.env.LIVE_MAX_WORKER_UTTERANCE_QUEUE || 6),
 );
 
 function isAiWorkerBroadcastMode(mode: string): boolean {
@@ -984,15 +990,40 @@ class LiveHostOrchestrator {
 
         this.pruneCommentQueue(s);
 
+        const workerPending = s.lastQueue.utteranceQueueCount || 0;
+        const aiWorker = isAiWorkerBroadcastMode(s.lastQueue.broadcastMode);
+        if (aiWorker && (s.lastQueue.visualWorkerInitializing || workerPending >= MAX_WORKER_UTTERANCE_QUEUE)) {
+          await sleep(COMMENT_SCAN_MS);
+          continue;
+        }
+
+        if (aiWorker) {
+          const comment = this.takeBestComment(s);
+          const urgentComment = comment && (comment.priority >= 45 || (s.lastQueue.readyUtteranceCount || 0) < 1);
+          if (comment && urgentComment) {
+            await this.generateAndQueueCommentResponse(sessionId, comment);
+            continue;
+          }
+          try {
+            await this.generateAndQueueNext(sessionId, "live");
+          } catch (err: any) {
+            if (/429/.test(String(err?.message || err))) {
+              await sleep(COMMENT_SCAN_MS);
+              continue;
+            }
+            throw err;
+          }
+          continue;
+        }
+
         const workerQueueDepth = Math.max(
           s.lastQueue.utteranceQueueCount || 0,
           s.lastQueue.readyUtteranceCount || 0,
         );
         // Backpressure: jangan flood worker saat lipsync/queue sudah penuh.
         if (
-          isAiWorkerBroadcastMode(s.lastQueue.broadcastMode) &&
-          (s.lastQueue.visualWorkerInitializing ||
-            workerQueueDepth >= MAX_WORKER_UTTERANCE_QUEUE)
+          s.lastQueue.visualWorkerInitializing ||
+          workerQueueDepth >= MAX_WORKER_UTTERANCE_QUEUE
         ) {
           await sleep(COMMENT_SCAN_MS);
           continue;
@@ -1203,7 +1234,7 @@ class LiveHostOrchestrator {
 
     const remaining = remainingScriptLines(state.scriptBank);
     const freshCount = countFreshScriptLines(state.scriptBank, recent);
-    if (remaining > scriptBankLow * 1.5 && freshCount > SCRIPT_BANK_FRESH_LOW + 6) return;
+    if (remaining >= scriptBankLow && freshCount > SCRIPT_BANK_FRESH_LOW) return;
 
     const recycled = recycleLocalScriptBank(this.toScriptFacts(state.product), state.catalog, recent, recycleOpts);
     const addedLocal = mergeScriptLines(state.scriptBank, recycled, recent);
@@ -1926,6 +1957,12 @@ class LiveHostOrchestrator {
       const aiWorker = isAiWorkerBroadcastMode(broadcastMode);
       const utteranceQueueCount = Number(raw.utterance_queue_count ?? 0);
       const readyUtteranceCount = Number(raw.ready_utterance_count ?? utteranceQueueCount);
+      const renderQueueSize = Number(raw.render_queue_size ?? 0);
+      const readySpeechSeconds = Number(raw.ready_speech_seconds ?? raw.playable_buffer_seconds ?? 0);
+      const renderTimeSec = Number(raw.render_time_sec ?? 0);
+      const speechDurationSec = Number(raw.speech_duration_sec ?? 0);
+      const realTimeRatio = Number(raw.real_time_ratio ?? 0);
+      const gpuThroughputBound = Boolean(raw.gpu_throughput_bound);
       const readyVideos = Number(raw.ready_videos_count || 0);
       const activeProcessing = Number(raw.active_processing_count || 0);
       const visualWorkerRunning = Boolean(raw.visual_worker_running);
@@ -1990,6 +2027,12 @@ class LiveHostOrchestrator {
         broadcastMode,
         utteranceQueueCount,
         readyUtteranceCount,
+        renderQueueSize: Number.isFinite(renderQueueSize) ? renderQueueSize : 0,
+        readySpeechSeconds: Number.isFinite(readySpeechSeconds) ? readySpeechSeconds : 0,
+        renderTimeSec: Number.isFinite(renderTimeSec) ? renderTimeSec : 0,
+        speechDurationSec: Number.isFinite(speechDurationSec) ? speechDurationSec : 0,
+        realTimeRatio: Number.isFinite(realTimeRatio) ? realTimeRatio : 0,
+        gpuThroughputBound,
         playbackArmed: Boolean(raw.playback_armed),
         visualWorkerRunning,
         visualWorkerInitializing,
@@ -2045,8 +2088,12 @@ class LiveHostOrchestrator {
       state.counters.submitted++;
       state.estimatedBufferSeconds = Math.min(this.getPolicy(state).maxBufferSeconds, state.estimatedBufferSeconds + estimateDurationSeconds(text));
     } catch (err: any) {
-      state.counters.failed++;
       const msg = err?.message || String(err);
+      if (/429/.test(msg)) {
+        console.warn(`[LiveHost] Worker queue penuh (429) — rolling producer backoff`);
+        throw err;
+      }
+      state.counters.failed++;
       if (msg) state.lastWorkerError = msg;
       if (!state.workerOfflineSince) state.workerOfflineSince = Date.now();
       throw err;

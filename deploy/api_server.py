@@ -639,6 +639,13 @@ async def process_video_task(req: GenerateVideoRequest, task_id: str):
 @app.post("/stream/generate-neural-video")
 @app.post("/stream/live-utterance")
 async def generate_neural_video(req: GenerateVideoRequest, wait: bool = False):
+    if is_ai_worker_mode() and get_speech_bridge is not None:
+        bridge = get_speech_bridge(output_dir)
+        if bridge is not None and getattr(bridge, "is_full", None) and bridge.is_full():
+            raise HTTPException(
+                status_code=429,
+                detail="SpeechBridge queue penuh; retry setelah playback maju",
+            )
     prune_old_jobs()
     prefix = "prio_" if req.priority else ""
     task_id = f"{prefix}task_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
@@ -689,6 +696,7 @@ async def get_queue_status():
 
     utterance_pending = 0
     ready_utterance_count = 0
+    render_queue_size = 0
     playback_armed = False
     bridge = None
     if is_ai_worker_mode():
@@ -699,6 +707,8 @@ async def get_queue_status():
             ready_utterance_count = (
                 int(ready_fn()) if callable(ready_fn) else utterance_pending
             )
+            render_fn = getattr(bridge, "render_queue_size", None)
+            render_queue_size = int(render_fn()) if callable(render_fn) else 0
         playback_armed = os.path.exists(
             os.path.join(output_dir, "playback_active.flag")
         )
@@ -806,6 +816,14 @@ async def get_queue_status():
     elif read_rtmp_status is not None:
         rtmp_state, rtmp_error = read_rtmp_status(output_dir)
 
+    lipsync_metrics = {}
+    engine = getattr(visual_worker, "_engine", None) if visual_worker is not None else None
+    if engine is not None and hasattr(engine, "pipeline_metrics"):
+        try:
+            lipsync_metrics = engine.pipeline_metrics() or {}
+        except Exception:
+            lipsync_metrics = {}
+
     return {
         "success": True,
         "ready_videos_count": total_videos_rendered,
@@ -829,6 +847,13 @@ async def get_queue_status():
         "warmed_up": getattr(worker, "_warmed_up", False) or visual_worker_running,
         "utterance_queue_count": utterance_pending,
         "ready_utterance_count": ready_utterance_count,
+        "render_queue_size": render_queue_size,
+        "ready_speech_seconds": round(playable_seconds, 2),
+        "render_time_sec": lipsync_metrics.get("render_time_sec", 0),
+        "speech_duration_sec": lipsync_metrics.get("speech_duration_sec", 0),
+        "real_time_ratio": lipsync_metrics.get("real_time_ratio", 0),
+        "render_time_over_speech": lipsync_metrics.get("render_time_over_speech", 0),
+        "gpu_throughput_bound": bool(lipsync_metrics.get("gpu_throughput_bound", 0)),
         "playback_armed": playback_armed,
         "stream_paused": stream_paused,
         "visual_worker_running": visual_worker_running,

@@ -161,6 +161,10 @@ class WorkerTelemetry:
             f"raw_drop={cnt.get('raw_queue_dropped', 0)}",
             f"render_drop={cnt.get('render_queue_dropped', 0)}",
             f"lip_miss={cnt.get('lipsync_cache_miss', 0)}",
+            f"ready_s={gau.get('ready_speech_seconds', '?')}",
+            f"render_q={gau.get('lipsync_render_queue', '?')}",
+            f"rtr={gau.get('real_time_ratio', '?')}",
+            f"gpu_bound={gau.get('gpu_throughput_bound', 0)}",
         ]
         if "musetalk_batch_ms" in lat:
             b = lat["musetalk_batch_ms"]

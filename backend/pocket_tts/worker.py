@@ -17,10 +17,11 @@ CONFIG = os.environ.get(
     "hf://anak10thn/pocket-tts-indonesian/indonesian_6l.yaml@635cde7a28301861b120f57ec4dda8525073017c",
 )
 VOICE_ROOT = Path(os.environ.get("POCKET_TTS_VOICE_DIR", "voices")).resolve()
-OUTPUT_SAMPLE_RATE = 16000
+OUTPUT_SAMPLE_RATE = int(os.environ.get("POCKET_TTS_OUTPUT_RATE", "24000"))
 PROMPT_SAMPLE_RATE = 24000
 MAX_PROMPT_SECONDS = 12
-AUDIO_FILTER_ENABLED = os.environ.get("POCKET_TTS_AUDIO_FILTER", "1") != "0"
+# Aggressive band-pass ringing caused sudden buzz; keep native 24 kHz.
+AUDIO_FILTER_ENABLED = os.environ.get("POCKET_TTS_AUDIO_FILTER", "0") != "0"
 ONSET_FADE_MS = 20
 
 model = TTSModel.load_model(config=CONFIG)
@@ -90,27 +91,24 @@ def generate(request: dict) -> dict:
     samples = np.asarray(audio, dtype=np.float32)
     if samples.ndim > 1:
         samples = samples.reshape(-1)
-    source_sample_rate = int(getattr(model, "sample_rate", OUTPUT_SAMPLE_RATE))
+    source_sample_rate = int(getattr(model, "sample_rate", OUTPUT_SAMPLE_RATE) or OUTPUT_SAMPLE_RATE)
     if AUDIO_FILTER_ENABLED and samples.size >= source_sample_rate // 4:
         high_pass = butter(2, 35, btype="highpass", fs=source_sample_rate, output="sos")
-        low_pass = butter(2, min(7600, source_sample_rate * 0.45), btype="lowpass", fs=source_sample_rate, output="sos")
         samples = sosfiltfilt(high_pass, samples).astype(np.float32)
-        samples = sosfiltfilt(low_pass, samples).astype(np.float32)
-    if source_sample_rate != OUTPUT_SAMPLE_RATE:
-        samples = resample_poly(
-            samples,
-            OUTPUT_SAMPLE_RATE,
-            source_sample_rate,
-        ).astype(np.float32)
-    samples = smooth_onset(samples, OUTPUT_SAMPLE_RATE)
+    out_rate = int(OUTPUT_SAMPLE_RATE)
+    if source_sample_rate != out_rate:
+        samples = resample_poly(samples, out_rate, source_sample_rate).astype(np.float32)
+    else:
+        out_rate = source_sample_rate
+    samples = smooth_onset(samples, out_rate)
     peak = float(np.max(np.abs(samples))) if samples.size else 0.0
     if peak > 0.98:
         samples = (samples * (0.98 / peak)).astype(np.float32)
     output = __import__("io").BytesIO()
-    sf.write(output, samples, OUTPUT_SAMPLE_RATE, format="WAV", subtype="PCM_16")
+    sf.write(output, samples, out_rate, format="WAV", subtype="PCM_16")
     return {
         "audio": base64.b64encode(output.getvalue()).decode("ascii"),
-        "sample_rate": 16000,
+        "sample_rate": out_rate,
     }
 
 
