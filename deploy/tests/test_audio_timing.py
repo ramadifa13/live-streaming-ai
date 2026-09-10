@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
 
 from speech_bridge import (
     SpeechBridge,
+    UtteranceJob,
     _split_pcm_frames,
     build_live_script,
     ensure_no_idle_policy,
@@ -94,3 +95,23 @@ def test_ready_count_requires_full_mouth_prerender():
     job.lipsync_ready.value = True
     assert bridge.ready_pending_count() == 1
     assert bridge.queued_audio_seconds() == 1.0
+
+
+def test_prerender_runs_before_playback_is_armed():
+    bridge = SpeechBridge(output_folder="/tmp/ai_live_worker_test")
+    job = UtteranceJob(task_id="task_prerender", audio_path="")
+    job.pcm_frames = [b"A"]
+    job.num_frames = 1
+    job.whisper_chunks = torch.zeros((1, 1))
+    job.ready.set()
+    bridge._pending.append(job)
+    bridge.set_callbacks(on_ready=lambda ready_job: ready_job.lipsync_ready.set())
+
+    bridge._start_next_if_needed(allow_playback=False)
+
+    assert bridge._current is None
+    assert bridge.ready_pending_count() == 1
+    assert list(bridge._pending) == [job]
+
+    bridge._start_next_if_needed(allow_playback=True)
+    assert bridge._current is job

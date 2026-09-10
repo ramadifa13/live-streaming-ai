@@ -589,13 +589,8 @@ class SpeechBridge:
             chunks = torch.cat([chunks, zeros], dim=0)
         return chunks.cpu()
 
-    def _start_next_if_needed(self) -> None:
-        """Idle tetap jalan sampai job siap + preroll mulut selesai (tanpa freeze frame).
+    def _start_next_if_needed(self, *, allow_playback: bool = True) -> None:
 
-        Pre-queue gate: saat _prequeue_gate_active=True, tahan sampai
-        MIN_READY_UTTERANCES utterances siap di antrian sebelum mulai yang pertama.
-        Tujuan: stream dimulai langsung bicara tanpa idle.
-        """
         if self._current is not None:
             return
 
@@ -654,6 +649,12 @@ class SpeechBridge:
             return
         if candidate.error:
             print(f"[SpeechBridge] Skip {candidate.task_id}: {candidate.error}")
+            return
+        if not allow_playback:
+            # Prerender is allowed before the backend arms playback. Expose the
+            # fully-ready job through queue status, but do not consume PCM yet.
+            with self._lock:
+                self._pending.appendleft(candidate)
             return
 
         with self._lock:
@@ -741,9 +742,10 @@ class SpeechBridge:
 
     def peek_audio_state(self) -> Tuple[bool, Optional[int]]:
         """Non-consuming peek — untuk state machine / lipsync index tanpa mengambil PCM."""
-        if not self.playback_active():
+        armed = self.playback_active()
+        self._start_next_if_needed(allow_playback=armed)
+        if not armed:
             return False, None
-        self._start_next_if_needed()
         if self._current is None:
             return False, None
         # PCM aktif.
@@ -780,12 +782,12 @@ class SpeechBridge:
             print("[SpeechBridge] Active utterance deadline reached; advancing queue")
             self._finish_current()
 
-        if not self.playback_active() and not self._ever_started and self._current is None:
+        armed = self.playback_active()
+        self._start_next_if_needed(allow_playback=armed)
+        if not armed and not self._ever_started and self._current is None:
             size = bytes_for_frame(self._silence_frame_index)
             self._silence_frame_index += 1
             return b"\x00" * size, False, None
-
-        self._start_next_if_needed()
 
         if self._current is None:
             size = bytes_for_frame(self._silence_frame_index)
