@@ -164,6 +164,13 @@ def check_24fps_pacer() -> None:
         )[0]
     if "timeout=0.25" in lipsync_loop:
         _fail("lipsync_worker_loop put timeout 0.25s (lag spike)")
+    stop_fn = ""
+    if "def stop(self" in src:
+        stop_fn = src.split("def stop(self", 1)[1].split("def is_running", 1)[0]
+    shut_at = stop_fn.find("self._broadcaster.shutdown")
+    join_at = stop_fn.find(".join(")
+    if shut_at < 0 or join_at < 0 or shut_at > join_at:
+        _fail("stop() harus shutdown FFmpeg sebelum join() — cegah hang /health")
     print("[INVARIANT] 24fps pacer OK")
 
 
@@ -216,6 +223,36 @@ def check_audio_sample_rate_contract() -> None:
     print("[INVARIANT] audio sample-rate contract OK")
 
 
+def check_start_sweeps_previous_session() -> None:
+    api = (ROOT / "api_server.py").read_text(encoding="utf-8", errors="replace")
+    sup = (ROOT / "broadcast_supervisor.py").read_text(encoding="utf-8", errors="replace")
+    if "def reset_session_runtime" not in sup:
+        _fail("reset_session_runtime hilang")
+    if "cycle_state.json" not in sup:
+        _fail("reset_session_runtime harus hapus cycle_state.json")
+    if "_sweep_previous_session" not in api:
+        _fail("start-broadcast harus sapu sesi lama")
+    if "_session_encoder_alive" not in api or "_should_skip_start" not in api:
+        _fail("skip start harus cek encoder hidup, bukan hanya rtmp_status.txt")
+    start_fn = ""
+    if "def _start_broadcast_sync" in api:
+        start_fn = api.split("def _start_broadcast_sync", 1)[1].split(
+            "async def stop_broadcast", 1
+        )[0]
+    if "_sweep_previous_session" not in start_fn:
+        _fail("_start_broadcast_sync tidak menyapu sesi lama")
+    if "keep model + antrian ucapan" in start_fn:
+        _fail("start masih mempertahankan antrian ucapan lama")
+    skip_fn = ""
+    if "def start_broadcast" in api:
+        skip_fn = api.split("def start_broadcast", 1)[1].split(
+            "def _materialize_background", 1
+        )[0]
+    if "_should_skip_start" not in skip_fn:
+        _fail("start-broadcast skip tanpa cek encoder hidup")
+    print("[INVARIANT] start sapu sesi lama OK")
+
+
 def main() -> None:
     check_rtmp_utils()
     check_lipsync_not_forced_on_any_clip()
@@ -225,6 +262,7 @@ def main() -> None:
     check_fps_lock()
     check_24fps_pacer()
     check_audio_sample_rate_contract()
+    check_start_sweeps_previous_session()
     print("[INVARIANT] semua cek lolos")
 
 

@@ -111,6 +111,30 @@ def collect_playable_videos(output_folder: str, idle_abs: str = "") -> List[str]
     return playable
 
 
+SESSION_RUNTIME_FILES = (
+    "playback_active.flag",
+    "stream_paused.flag",
+    "rtmp_connected.flag",
+    "cycle_state.json",
+)
+
+
+def reset_session_runtime(folder: str, idle_abs: str = "") -> None:
+    """Sapu artefak sesi live sebelumnya. Aset idle/talk dan cache model tidak dihapus."""
+    if not folder:
+        return
+    cleanup_playable_outputs(folder, idle_abs)
+    for name in SESSION_RUNTIME_FILES:
+        path = os.path.join(folder, name)
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            elif os.path.isfile(path) or os.path.islink(path):
+                os.remove(path)
+        except OSError:
+            pass
+
+
 def cleanup_playable_outputs(folder: str, idle_abs: str = "") -> None:
     """Hapus sisa MP4 + .ffseg dari sesi sebelumnya (kecuali idle asset)."""
     scan_roots = [folder]

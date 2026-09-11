@@ -34,6 +34,7 @@ from broadcast_supervisor import (
     probe_duration_seconds as _probe_duration_seconds,
     collect_playable_videos as _collect_playable_videos,
     cleanup_playable_outputs as _cleanup_playable_outputs,
+    reset_session_runtime as _reset_session_runtime,
     prune_old_jobs as _prune_old_jobs_helper,
     broadcaster_script_path as _broadcaster_script_path,
     spawn_broadcaster as _spawn_broadcaster_helper,
@@ -162,6 +163,51 @@ def _clear_speech_bridge_queue() -> None:
     bridge = get_speech_bridge(output_dir) if get_speech_bridge is not None else None
     if bridge is not None and hasattr(bridge, "clear_pending"):
         bridge.clear_pending()
+
+
+def _same_broadcast_target(rtmp_url: str, stream_key: str) -> bool:
+    env = current_broadcast_env
+    return bool(
+        env is not None
+        and env.get("RTMP_URL") == rtmp_url
+        and env.get("STREAM_KEY") == stream_key
+    )
+
+
+def _session_encoder_alive() -> bool:
+    """True hanya jika proses FFmpeg masih hidup — jangan percaya rtmp_status.txt."""
+    vw = visual_worker
+    if vw is not None:
+        try:
+            if bool(getattr(vw, "broadcaster_running", False)):
+                return True
+        except Exception:
+            pass
+    proc = broadcaster_process
+    return proc is not None and proc.poll() is None
+
+
+def _should_skip_start(rtmp_url: str, stream_key: str) -> bool:
+    return _session_encoder_alive() and _same_broadcast_target(rtmp_url, stream_key)
+
+
+def _sweep_previous_session(idle_abs: str = "") -> None:
+    """Buang antrian + file sesi lama. Model MuseTalk / aset host tetap hangat."""
+    global jobs, total_videos_rendered
+    _clear_speech_bridge_queue()
+    try:
+        _reset_session_runtime(output_dir, idle_abs)
+    except Exception as exc:
+        print(f"[AI-Worker] session sweep notice: {exc}")
+    jobs.clear()
+    total_videos_rendered = 0
+    cleaner = getattr(worker, "_clean_temp_dir", None)
+    if callable(cleaner):
+        try:
+            cleaner()
+        except Exception:
+            pass
+    print("[AI-Worker] Sesi sebelumnya disapu (antrian + video sisa + flag)")
 
 
 def _spawn_broadcaster(env: Dict[str, str]) -> subprocess.Popen:
@@ -385,6 +431,12 @@ async def health():
         "connected",
         "connecting",
     )
+    prerender: dict = {}
+    if visual_running and visual_worker is not None:
+        try:
+            prerender = getattr(visual_worker, "prerender_status", {}) or {}
+        except Exception:
+            prerender = {}
     return {
         "status": "ok"
         if stream_ready or not (visual_running or broadcaster_running)
@@ -400,11 +452,7 @@ async def health():
         "rtmp_state": rtmp_state,
         "rtmp_error": rtmp_error,
         "stream_ready": stream_ready,
-        "prerender": (
-            getattr(visual_worker, "prerender_status", {})
-            if visual_worker is not None
-            else {}
-        ),
+        "prerender": prerender,
         "tts": tts_info,
     }
 
@@ -974,54 +1022,18 @@ async def start_broadcast(req: BroadcastRequest):
             ),
         )
 
-    if (
-        is_ai_worker_mode()
-        and visual_worker is not None
-        and _visual_worker_pipeline_active()
-    ):
-        rtmp_state = "disconnected"
-        if read_rtmp_status is not None:
-            rtmp_state, _ = read_rtmp_status(output_dir)
-        if rtmp_state == "connected":
-            same_target = (
-                current_broadcast_env is not None
-                and current_broadcast_env.get("RTMP_URL") == final_rtmp_url
-                and current_broadcast_env.get("STREAM_KEY") == final_stream_key
-            )
-            # Hanya skip jika target RTMP/key sama. Env None + status connected
-            # sering stale setelah stop — jangan skip start ke key baru.
-            if same_target:
-                print(
-                    "[AI-Worker] start-broadcast diabaikan — AIVisualWorker sudah "
-                    "connected dengan target yang sama."
-                )
-                return {
-                    "success": True,
-                    "status": "already_running",
-                    "pid": os.getpid(),
-                    "mode": "ai_worker",
-                }
-
-    if (
-        broadcaster_process is not None
-        and broadcaster_process.poll() is None
-        and current_broadcast_env is not None
-        and current_broadcast_env.get("RTMP_URL") == final_rtmp_url
-        and current_broadcast_env.get("STREAM_KEY") == final_stream_key
-    ):
-        rtmp_state = "disconnected"
-        if read_rtmp_status is not None:
-            rtmp_state, _ = read_rtmp_status(output_dir)
-        if rtmp_state == "connected":
-            print(
-                "[AI-Worker] start-broadcast diabaikan — siaran dengan target yang "
-                f"sama sudah aktif (PID: {broadcaster_process.pid})."
-            )
-            return {
-                "success": True,
-                "status": "already_running",
-                "pid": broadcaster_process.pid,
-            }
+    if _should_skip_start(final_rtmp_url, final_stream_key):
+        pid = broadcaster_process.pid if broadcaster_process else os.getpid()
+        print(
+            "[AI-Worker] start-broadcast diabaikan — encoder masih hidup "
+            "dengan target yang sama."
+        )
+        return {
+            "success": True,
+            "status": "already_running",
+            "pid": pid,
+            "mode": "ai_worker" if is_ai_worker_mode() else "legacy",
+        }
 
     if _broadcast_boot_inflight:
         return {"success": True, "status": "starting", "async": True}
@@ -1175,31 +1187,14 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
             write_rtmp_status(output_dir, "failed", str(preflight_err))
         raise
 
-    already_connected = False
     mode = (os.environ.get("BROADCAST_MODE") or "ai_worker").strip().lower()
     ai_mode = mode in ("ai_worker", "ai-worker", "realtime", "visual_worker")
 
-    if ai_mode and visual_worker is not None and _visual_worker_pipeline_active():
-        rtmp_state = "disconnected"
-        if read_rtmp_status is not None:
-            rtmp_state, _ = read_rtmp_status(output_dir)
-        already_connected = rtmp_state == "connected"
-    elif (
-        broadcaster_process is not None
-        and broadcaster_process.poll() is None
-        and current_broadcast_env is not None
-        and current_broadcast_env.get("RTMP_URL") == final_rtmp_url
-        and current_broadcast_env.get("STREAM_KEY") == final_stream_key
-    ):
-        rtmp_state = "disconnected"
-        if read_rtmp_status is not None:
-            rtmp_state, _ = read_rtmp_status(output_dir)
-        already_connected = rtmp_state == "connected"
-    if already_connected:
-        pid = broadcaster_process.pid if broadcaster_process else 0
+    if _should_skip_start(final_rtmp_url, final_stream_key):
+        pid = broadcaster_process.pid if broadcaster_process else os.getpid()
         print(
-            "[AI-Worker] start-broadcast diabaikan — siaran dengan target yang "
-            f"sama sudah aktif."
+            "[AI-Worker] start-broadcast diabaikan — encoder masih hidup "
+            "dengan target yang sama."
         )
         return {
             "success": True,
@@ -1241,7 +1236,7 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     if stop_visual_broadcast is not None:
         if _keep_warm:
             try:
-                # Restart broadcast: stop threads, keep model + antrian ucapan.
+                # Stop threads, keep MuseTalk singleton. Antrian sesi lama disapu di bawah.
                 stop_visual_broadcast(destroy=False)
             except TypeError:
                 stop_visual_broadcast()
@@ -1252,10 +1247,10 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
         else:
             stop_visual_broadcast()
             visual_worker = None
-            _clear_speech_bridge_queue()
     else:
         visual_worker = None
-        _clear_speech_bridge_queue()
+    idle_abs = os.path.abspath(resolved_idle) if resolved_idle else ""
+    _sweep_previous_session(idle_abs)
     if write_rtmp_status is not None:
         write_rtmp_status(output_dir, "connecting")
     # Reset log supaya error NVENC/sesi lama tidak mengacaukan diagnosis.
@@ -1273,14 +1268,6 @@ def _start_broadcast_sync(req: BroadcastRequest) -> Dict[str, Any]:
     total_videos_rendered = 0
     broadcaster_restarts = 0
     broadcaster_next_restart_at = 0.0
-
-    flag_path = os.path.join(output_dir, "playback_active.flag")
-    if os.path.exists(flag_path):
-        try:
-            os.remove(flag_path)
-        except Exception:
-            pass
-    idle_abs = os.path.abspath(resolved_idle) if resolved_idle else ""
 
     config_path = os.path.join(output_dir, "broadcast_config.json")
     config_data = {

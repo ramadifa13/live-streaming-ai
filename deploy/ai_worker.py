@@ -4117,21 +4117,26 @@ class AIVisualWorker:
         print("[AIVisualWorker] Pipeline running (3 threads, RTMP ready)")
 
     def stop(self, *, clear_queue: bool = True) -> None:
+        # Signal first so paced loops exit on the next tick.
         self._stop.set()
-        if self._engine:
-            self._engine.clear_utterance()
-        for t in self._threads:
-            t.join(timeout=5.0)
-        alive = [t.name for t in self._threads if t.is_alive()]
-        if alive:
-            print(f"[AIVisualWorker] WARNING thread masih hidup: {alive}")
-        self._threads = [t for t in self._threads if t.is_alive()]
+        self._running = False
+        self._pipeline_active = False
+        self._rtmp_connected = False
+
+        # Kill FFmpeg before join() — a blocked pipe write otherwise holds
+        # the broadcaster thread and starves the API event loop (/health hang).
         if self._broadcaster is not None:
             try:
                 self._broadcaster.shutdown()
             except Exception:
                 pass
             self._broadcaster = None
+
+        if self._engine:
+            try:
+                self._engine.clear_utterance()
+            except Exception as exc:
+                print(f"[AIVisualWorker] clear_utterance on stop: {exc}")
 
         for q in (self._raw_q, self._render_q):
             while True:
@@ -4140,14 +4145,24 @@ class AIVisualWorker:
                 except queue.Empty:
                     break
 
-        if self._sm is not None:
-            self._sm.reset_after_stop()
-        if clear_queue and self._bridge is not None:
-            self._bridge.clear_pending()
+        for t in self._threads:
+            t.join(timeout=1.0)
+        alive = [t.name for t in self._threads if t.is_alive()]
+        if alive:
+            print(f"[AIVisualWorker] WARNING thread masih hidup: {alive}")
+        self._threads = [t for t in self._threads if t.is_alive()]
 
-        self._running = False
-        self._pipeline_active = False
-        self._rtmp_connected = False
+        if self._sm is not None:
+            try:
+                self._sm.reset_after_stop()
+            except Exception:
+                pass
+        if clear_queue and self._bridge is not None:
+            try:
+                self._bridge.clear_pending()
+            except Exception:
+                pass
+
         print("[AIVisualWorker] Stopped")
 
     @property
