@@ -2778,7 +2778,7 @@ class StreamBroadcaster:
                 "2500k",
                 "-bufsize",
                 "2500k",
-                "-vsync",
+                "-fps_mode",
                 "cfr",
                 "-c:a",
                 "aac",
