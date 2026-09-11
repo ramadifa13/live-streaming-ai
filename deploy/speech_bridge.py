@@ -355,8 +355,10 @@ def _split_pcm_frames(
     return _apply_pcm_edge_fades(frames)
 
 
-# ~125 ms at 24 fps. Softens AAC clicks between utterances without changing duration.
-PCM_EDGE_FADE_FRAMES = 3
+# Soften AAC clicks. Longer fade-out than fade-in so Pocket TTS tail buzz dies
+# without swallowing the first consonant. Sample count per frame stays identical.
+PCM_EDGE_FADE_IN_FRAMES = 2
+PCM_EDGE_FADE_OUT_FRAMES = 8
 
 
 def _scale_pcm_frame(frame: bytes, gain: float) -> bytes:
@@ -368,19 +370,27 @@ def _scale_pcm_frame(frame: bytes, gain: float) -> bytes:
 
 
 def _apply_pcm_edge_fades(
-    frames: List[bytes], fade_frames: int = PCM_EDGE_FADE_FRAMES
+    frames: List[bytes],
+    fade_in_frames: int = PCM_EDGE_FADE_IN_FRAMES,
+    fade_out_frames: int = PCM_EDGE_FADE_OUT_FRAMES,
+    fade_frames: Optional[int] = None,
 ) -> List[bytes]:
     """Fade in/out at utterance edges. Sample count per frame stays identical."""
     n = len(frames)
-    if n == 0 or fade_frames <= 0:
+    if n == 0:
         return frames
-    fade = min(max(1, int(fade_frames)), max(1, n // 4))
+    if fade_frames is not None:
+        fade_in_frames = fade_frames
+        fade_out_frames = fade_frames
+    fade_in = min(max(1, int(fade_in_frames)), max(1, n // 4))
+    fade_out = min(max(1, int(fade_out_frames)), max(1, n // 4))
     out = list(frames)
-    for i in range(fade):
-        in_gain = ((i + 1) / float(fade)) ** 2
+    for i in range(fade_in):
+        in_gain = ((i + 1) / float(fade_in)) ** 2
         out[i] = _scale_pcm_frame(out[i], in_gain)
-        out_gain = ((fade - i) / float(fade)) ** 2
-        out[n - fade + i] = _scale_pcm_frame(out[n - fade + i], out_gain)
+    for i in range(fade_out):
+        out_gain = ((fade_out - i) / float(fade_out)) ** 2
+        out[n - fade_out + i] = _scale_pcm_frame(out[n - fade_out + i], out_gain)
     return out
 
 
@@ -405,14 +415,13 @@ class UtteranceJob:
 class SpeechBridge:
     """Antrian utterance + streaming PCM per frame.
 
-    Pre-queue gate: playback tidak mulai sampai MIN_READY_UTTERANCES utterances
-    sudah siap di antrian (default 2). Ini menghilangkan idle di awal live —
-    AI langsung bicara begitu stream dibuka. Set ke 1 atau 0 untuk disable gate.
+    Pre-queue gate: playback of the FIRST sentence waits until
+    MIN_READY_UTTERANCES mouths are READY. After that the gate stays off
+    forever for this session — later sentences start one-by-one.
     """
 
-    # Mulai langsung saat utterance pertama siap; ini menjaga host terasa natural
-    # dan tidak menahan kalimat pertama agar stream terlihat "terlambat".
-    MIN_READY_UTTERANCES: int = 1
+    # Opening buffer only. After utterance #1 starts, rolling producer = 1.
+    MIN_READY_UTTERANCES: int = 3
     MAX_PENDING_UTTERANCES: int = 12
     PREP_WORKERS: int = 2
     # MuseTalk jobs to start while the current READY segment is still playing.
@@ -486,6 +495,24 @@ class SpeechBridge:
     def playback_active(self) -> bool:
         flag = os.path.join(self.output_folder, "playback_active.flag")
         return os.path.exists(flag) or self._ever_started or self._current is not None
+
+    def can_start_first_speech(self) -> bool:
+        """True when the opening 3-READY gate has passed (or later sentences)."""
+        if not self.playback_active():
+            return False
+        if self._ever_started:
+            return True
+        return self.ready_pending_count() >= max(1, self.MIN_READY_UTTERANCES)
+
+    def next_almost_ready(self) -> bool:
+        """Upcoming job has PCM/Whisper; mouths may still be rendering."""
+        with self._lock:
+            for job in self._pending:
+                if job.error or job.num_frames <= 0:
+                    continue
+                if job.ready.is_set() and job.whisper_chunks is not None:
+                    return True
+            return False
 
     def enqueue(
         self,

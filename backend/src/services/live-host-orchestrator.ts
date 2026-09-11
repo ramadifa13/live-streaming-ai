@@ -243,7 +243,8 @@ const LIVE_MIN_BUFFER = Number(process.env.LIVE_MIN_BUFFER_SECONDS || 6);
 const LIVE_MAX_UTTERANCE_SECONDS = Number(process.env.LIVE_MAX_UTTERANCE_SECONDS || 10);
 const LIVE_TTS_MAX_SPEED = 1.0;
 const GO_LIVE_MIN_UTTERANCES = Number(process.env.GO_LIVE_MIN_UTTERANCES || 1);
-const AI_WORKER_GO_LIVE_MIN_UTTERANCES = 1;
+// Opening buffer only (overlay / first arm). Live loop still queues 1-by-1.
+const AI_WORKER_GO_LIVE_MIN_UTTERANCES = 3;
 
 const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   "1H": {
@@ -2138,8 +2139,8 @@ class LiveHostOrchestrator {
     const rtmpRequired = Boolean(state.config.rtmpUrl);
     const rtmpOk = !rtmpRequired || queue.rtmpConnected;
     const aiWorker = isAiWorkerBroadcastMode(queue.broadcastMode);
-    // AI worker: one prerendered greeting is enough. Do not wait for plan minBuffer
-    // (24H/8H cap at 8s) — a single ~7s utterance left the overlay stuck on "Siap".
+    // Opening: wait until 3 prerendered sentences exist. After Go Live the
+    // rolling producer keeps filling one-by-one up to the queue cap.
     const playableReady = aiWorker
       ? queue.readyUtteranceCount >= AI_WORKER_GO_LIVE_MIN_UTTERANCES
       : queue.queuedVideos >= GO_LIVE_MIN_UTTERANCES && queue.bufferSeconds >= policy.minBufferSeconds;

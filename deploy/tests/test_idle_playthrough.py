@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
 
 from av_timing import SAMPLE_RATE, bytes_for_frame, samples_for_frame
 from ai_worker import (
+    BOOT_IDLE_CLIP_NAME,
     CONTINUOUS_CLIP_NAME,
     IDLE_CLIP_NAME,
     ClipAsset,
@@ -24,7 +25,7 @@ from speech_bridge import SpeechBridge, UtteranceJob
 
 
 class _Bank:
-    def __init__(self, talk_frames=3, idle_frames=3):
+    def __init__(self, talk_frames=3, idle_frames=3, boot_frames=0):
         self.clips = {
             CONTINUOUS_CLIP_NAME: ClipAsset(
                 name=CONTINUOUS_CLIP_NAME,
@@ -49,6 +50,18 @@ class _Bank:
                 seamless_score=1.0,
             ),
         }
+        if boot_frames:
+            self.clips[BOOT_IDLE_CLIP_NAME] = ClipAsset(
+                name=BOOT_IDLE_CLIP_NAME,
+                path="",
+                frames=[
+                    np.full((8, 8, 3), 40 + i, dtype=np.uint8)
+                    for i in range(boot_frames)
+                ],
+                base_pose_frame=0,
+                end_pose_frame=boot_frames - 1,
+                seamless_score=1.0,
+            )
         self._idle_name = IDLE_CLIP_NAME
 
     def get_clip(self, name):
@@ -59,9 +72,9 @@ class _Bank:
 
 
 def _skip_boot_idle(sm, idle_frames=3):
-    """Drain the opening idle cycle with READY set so tests start on talk."""
+    """Drain the opening idle cycle with speech allowed so tests start on talk."""
     for _ in range(idle_frames):
-        sm.next_packet(b"\0" * 4, False, next_ready=True)
+        sm.next_packet(b"\0" * 4, False, next_ready=True, speech_may_start=True)
 
 
 def test_clock_stays_24fps_48k():
@@ -86,13 +99,33 @@ def test_go_live_loops_idle_until_ready_then_talk():
     assert sm.allows_next_utterance_start() is False
     seen = []
     for i in range(7):
-        pkt = sm.next_packet(b"\0" * 4, False, next_ready=(i >= 2))
+        allow = i >= 2
+        pkt = sm.next_packet(
+            b"\0" * 4, False, next_ready=allow, speech_may_start=allow
+        )
         seen.append((pkt.clip_name, pkt.frame_idx, pkt.state))
     assert [row[0] for row in seen[:3]] == [IDLE_CLIP_NAME] * 3
     assert [row[1] for row in seen[:3]] == [0, 1, 2]
     assert seen[3][0] == CONTINUOUS_CLIP_NAME
     assert seen[3][2] is PlayState.TALK
     assert sm.allows_next_utterance_start() is True
+
+
+def test_boot_namira_idle_ignores_ready_until_speech_may_start():
+    sm = VideoStateMachine(_Bank(talk_frames=3, idle_frames=3, boot_frames=3))
+    assert sm.current_name == BOOT_IDLE_CLIP_NAME
+    seen = []
+    for _ in range(6):
+        pkt = sm.next_packet(b"\0" * 4, False, next_ready=True, speech_may_start=False)
+        seen.append(pkt.clip_name)
+    assert seen == [BOOT_IDLE_CLIP_NAME] * 6
+    assert sm.allows_next_utterance_start() is False
+    pkt = sm.next_packet(b"\0" * 4, False, next_ready=True, speech_may_start=True)
+    assert pkt.clip_name == BOOT_IDLE_CLIP_NAME
+    pkt = sm.next_packet(b"\0" * 4, False, next_ready=True, speech_may_start=True)
+    pkt = sm.next_packet(b"\0" * 4, False, next_ready=True, speech_may_start=True)
+    assert sm.current_name == CONTINUOUS_CLIP_NAME
+    assert sm.state is PlayState.TALK
 
 
 def test_talk_end_without_ready_plays_full_idle_cycles():
@@ -125,12 +158,35 @@ def test_ready_mid_idle_waits_for_cycle_then_talk():
     seen = []
     for i in range(9):
         next_ready = i >= 4
-        pkt = sm.next_packet(b"\0" * 4, False, next_ready=next_ready)
+        pkt = sm.next_packet(
+            b"\0" * 4,
+            False,
+            next_ready=next_ready,
+            speech_may_start=next_ready,
+        )
         seen.append((pkt.clip_name, pkt.frame_idx, pkt.state))
     idle_run = [(n, idx) for n, idx, _st in seen if n == IDLE_CLIP_NAME]
     assert idle_run[:3] == [(IDLE_CLIP_NAME, 0), (IDLE_CLIP_NAME, 1), (IDLE_CLIP_NAME, 2)]
     assert seen[-1][0] == CONTINUOUS_CLIP_NAME
     assert seen[-1][2] is PlayState.TALK
+    assert sm.allows_next_utterance_start() is True
+
+
+def test_hold_talk_when_next_almost_ready():
+    sm = VideoStateMachine(_Bank(talk_frames=3, idle_frames=3))
+    _skip_boot_idle(sm)
+    seen = []
+    for _ in range(6):
+        pkt = sm.next_packet(
+            b"\0" * 4,
+            False,
+            next_ready=False,
+            next_almost_ready=True,
+            speech_may_start=True,
+        )
+        seen.append((pkt.clip_name, pkt.state))
+    assert all(name == CONTINUOUS_CLIP_NAME for name, _st in seen)
+    assert all(state is PlayState.TALK for _name, state in seen)
     assert sm.allows_next_utterance_start() is True
 
 
@@ -324,3 +380,35 @@ def test_missing_mouth_does_not_raise_or_use_wrong_slot():
     )
     out_gone = engine.process(gone, clip)
     assert np.array_equal(out_gone, body)
+
+
+def _ready_job(task_id: str) -> UtteranceJob:
+    job = UtteranceJob(task_id=task_id, audio_path="")
+    job.pcm_frames = [b"X"]
+    job.num_frames = 1
+    job.whisper_chunks = torch.zeros((1, 1))
+    job.ready.set()
+    job.lipsync_ready.set()
+    job.lipsync_primed = True
+    return job
+
+
+def test_opening_gate_waits_three_then_rolls_one():
+    bridge = SpeechBridge(output_folder="/tmp/ai_live_worker_test")
+    assert bridge.MIN_READY_UTTERANCES == 3
+    bridge._pending.append(_ready_job("task_1"))
+    bridge._start_next_if_needed(allow_playback=True)
+    assert bridge._current is None
+    assert bridge._prequeue_gate_active is True
+    bridge._pending.append(_ready_job("task_2"))
+    bridge._pending.append(_ready_job("task_3"))
+    bridge._start_next_if_needed(allow_playback=True)
+    assert bridge._current is not None
+    assert bridge._current.task_id == "task_1"
+    assert bridge._ever_started is True
+    assert bridge._prequeue_gate_active is False
+    bridge._current = None
+    bridge._frame_cursor = 0
+    bridge._start_next_if_needed(allow_playback=True)
+    assert bridge._current is not None
+    assert bridge._current.task_id == "task_2"

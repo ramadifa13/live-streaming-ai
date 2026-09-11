@@ -201,6 +201,10 @@ describe("dedupe before TTS", () => {
     assert.equal(sanitizeForLiveTTS("delivery delivery delivery"), "delivery");
     const collapsed = sanitizeForLiveTTS("pengiriman cepat pengiriman cepat hari ini");
     assert.equal((collapsed.match(/pengiriman cepat/gi) || []).length, 1);
+    assert.equal(
+      sanitizeForLiveTTS("matahari langsung, matahari langsung apa itu"),
+      "matahari langsung apa itu",
+    );
   });
 
   it("does not immediately recycle a just-used line", () => {

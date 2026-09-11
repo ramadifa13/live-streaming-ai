@@ -170,6 +170,12 @@ def check_audio_sample_rate_contract() -> None:
         _fail("idle freeze (hold last pose) masih di _advance_frame_index")
     if 'IDLE_CLIP_NAME = "idle_2s"' not in worker:
         _fail("idle_2s clip name hilang")
+    if 'BOOT_IDLE_CLIP_NAME = "idle"' not in worker:
+        _fail("BOOT_IDLE_CLIP_NAME idle (namira_idle.mp4) hilang")
+    if "speech_may_start" not in worker:
+        _fail("speech_may_start hilang — boot idle tidak boleh pindah ke talk sebelum bicara")
+    if "next_almost_ready" not in worker:
+        _fail("next_almost_ready hilang — hold talk saat kalimat berikutnya hampir READY")
     if "def _switch_at_boundary" not in worker:
         _fail("boundary playthrough (_switch_at_boundary) hilang")
     if "def allows_next_utterance_start" not in worker:
@@ -177,7 +183,12 @@ def check_audio_sample_rate_contract() -> None:
     if "set_visual_gate" not in bridge:
         _fail("SpeechBridge.set_visual_gate hilang")
     if "def enter_boot_idle" not in worker:
-        _fail("enter_boot_idle hilang — Go Live harus loop idle_2s dulu")
+        _fail("enter_boot_idle hilang — Go Live harus loop namira_idle dulu")
+    if "MIN_READY_UTTERANCES: int = 3" not in bridge:
+        _fail("SpeechBridge opening gate harus 3 kalimat READY, sekali di awal")
+    idle_asset = ROOT / "assets" / "3d" / "namira_idle.mp4"
+    if not idle_asset.is_file():
+        _fail("assets/3d/namira_idle.mp4 hilang")
     if "samples_for_frame" not in timing:
         _fail("av_timing tidak memiliki samples_for_frame")
     print("[INVARIANT] audio sample-rate contract OK")

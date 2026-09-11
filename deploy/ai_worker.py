@@ -79,9 +79,10 @@ MOUTH_MASK_FEATHER = float(os.environ.get("AI_WORKER_MOUTH_MASK_FEATHER", "0.35"
 MUSE_DEBUG = os.environ.get("AI_WORKER_MUSE_DEBUG", "0") == "1"
 MUSE_DEBUG_DIR = os.environ.get("AI_WORKER_MUSE_DEBUG_DIR", "/tmp/musetalk_debug")
 CONTINUOUS_CLIP_NAME = "continuous"
-IDLE_CLIP_NAME = "idle_2s"
+BOOT_IDLE_CLIP_NAME = "idle"  # namira_idle.mp4 — opening only, until first speech
+IDLE_CLIP_NAME = "idle_2s"  # leftover PCM + empty-queue gap between sentences
 TALK_CLIP_NAMES = frozenset({CONTINUOUS_CLIP_NAME})
-TRUE_IDLE_NAMES: frozenset = frozenset({IDLE_CLIP_NAME})
+TRUE_IDLE_NAMES: frozenset = frozenset({BOOT_IDLE_CLIP_NAME, IDLE_CLIP_NAME})
 BODY_CLIP_NAMES = TALK_CLIP_NAMES | TRUE_IDLE_NAMES
 TALK_CLIP_DEFAULT = CONTINUOUS_CLIP_NAME
 CRASH_FALLBACK_CLIP = CONTINUOUS_CLIP_NAME
@@ -110,6 +111,12 @@ def _is_true_idle_name(name: Optional[str]) -> bool:
     if not name:
         return False
     return _normalize_clip_name(name) in TRUE_IDLE_NAMES
+
+
+def _is_boot_idle_name(name: Optional[str]) -> bool:
+    if not name:
+        return False
+    return _normalize_clip_name(name) == BOOT_IDLE_CLIP_NAME
 
 
 def _is_talk_clip_name(name: Optional[str]) -> bool:
@@ -634,14 +641,18 @@ class AssetBank:
             self._warm_musetalk_materials()
 
     def _pick_primary_idle(self) -> str:
+        """Between-sentence idle is always idle_2s. namira_idle is boot-only."""
         if IDLE_CLIP_NAME in self.clips:
             return IDLE_CLIP_NAME
+        if BOOT_IDLE_CLIP_NAME in self.clips:
+            return BOOT_IDLE_CLIP_NAME
         return CONTINUOUS_CLIP_NAME
 
     def _eager_clip_names(self) -> List[str]:
         names = [CONTINUOUS_CLIP_NAME]
-        if IDLE_CLIP_NAME in BODY_CLIP_NAMES:
-            names.append(IDLE_CLIP_NAME)
+        for extra in (IDLE_CLIP_NAME, BOOT_IDLE_CLIP_NAME):
+            if extra in BODY_CLIP_NAMES:
+                names.append(extra)
         return names
 
     def _probe_frame_count(self, path: str) -> int:
@@ -685,9 +696,9 @@ class AssetBank:
                 if TALK_CLIP_DEFAULT in self.clips
                 else names[:1]
             )
-        idle = self._idle_name if self._idle_name in self.clips else IDLE_CLIP_NAME
-        if idle in self.clips and idle not in names:
-            names.append(idle)
+        # Leftover speech lipsyncs on idle_2s. Skip namira_idle — boot body only.
+        if IDLE_CLIP_NAME in self.clips and IDLE_CLIP_NAME not in names:
+            names.append(IDLE_CLIP_NAME)
         return names
 
     def ensure_musetalk_materials(self, name: str) -> bool:
@@ -1054,13 +1065,14 @@ class VideoStateMachine:
         return nxt
 
     def _boot_idle_clip(self) -> Optional[ClipAsset]:
-        idle_name = getattr(self.bank, "_idle_name", None) or IDLE_CLIP_NAME
-        if not _is_true_idle_name(idle_name):
-            return None
-        return self.bank.get_clip(idle_name)
+        for name in (BOOT_IDLE_CLIP_NAME, IDLE_CLIP_NAME):
+            clip = self.bank.get_clip(name)
+            if clip is not None and _is_true_idle_name(name):
+                return clip
+        return None
 
     def enter_boot_idle(self) -> None:
-        """Loop idle_2s until the first READY sentence can start on talk."""
+        """Loop namira_idle until playback is armed and the first sentence can start."""
         with self._lock:
             self._enter_boot_idle_locked()
 
@@ -1093,7 +1105,7 @@ class VideoStateMachine:
             self._talk_pinned = False
             print(
                 f"[StateMachine] Boot idle loop {idle_clip.name}@"
-                f"{self.frame_idx} (24fps, no talk until READY)"
+                f"{self.frame_idx} (24fps, namira_idle until first speech)"
             )
             return
         self.state = PlayState.TALK
@@ -1103,7 +1115,7 @@ class VideoStateMachine:
         self._talk_pinned = True
 
     def reset_after_stop(self) -> None:
-        """Next Go Live starts on idle_2s, not the talk clip."""
+        """Next Go Live starts on namira_idle, not the talk clip."""
         with self._lock:
             self._enter_boot_idle_locked()
 
@@ -1533,6 +1545,8 @@ class VideoStateMachine:
         is_speech: bool,
         *,
         next_ready: bool = False,
+        next_almost_ready: bool = False,
+        speech_may_start: bool = False,
     ) -> None:
         if self.frame_idx < clip.end_pose:
             self.frame_idx += 1
@@ -1541,20 +1555,29 @@ class VideoStateMachine:
         idle_name = self.bank._idle_name
         has_idle = idle_name in self.bank.clips and _is_true_idle_name(idle_name)
         leftover = bool(is_speech)
-        want_talk = (not leftover) and bool(next_ready)
         on_idle = _is_true_idle_name(self.current_name)
+        hold_talk = (not leftover) and (bool(next_ready) or bool(next_almost_ready))
+        leave_idle = (
+            (not leftover)
+            and bool(next_ready)
+            and bool(speech_may_start)
+        )
 
         if on_idle:
-            # Boot: loop idle_2s at 24fps until a READY sentence exists, then
-            # switch to talk only at cycle end. Leftover speech stays on idle
-            # with lipsync — do not mute, do not cut the 2s clip.
-            if want_talk:
+            # Boot namira_idle: stay until playback is armed and a READY
+            # sentence exists, then switch at cycle end. idle_2s leftover
+            # keeps looping with lipsync until PCM finishes.
+            if leave_idle:
+                if _is_boot_idle_name(self.current_name):
+                    print(
+                        "[StateMachine] Leaving namira_idle at cycle end — first speech may start"
+                    )
                 self._switch_at_boundary(CONTINUOUS_CLIP_NAME, PlayState.TALK)
                 return
             self.frame_idx = clip.base_pose_frame
             return
 
-        if leftover or not want_talk:
+        if leftover or not hold_talk:
             if has_idle:
                 self._switch_at_boundary(idle_name, PlayState.IDLE)
                 return
@@ -1572,6 +1595,8 @@ class VideoStateMachine:
         llm_action: Optional[str] = None,
         whisper_idx: Optional[int] = None,
         next_ready: bool = False,
+        next_almost_ready: bool = False,
+        speech_may_start: bool = False,
     ) -> RawFramePacket:
         del llm_action
         with self._lock:
@@ -1596,7 +1621,13 @@ class VideoStateMachine:
                 is_speech=is_speech,
                 whisper_idx=whisper_idx,
             )
-            self._advance_frame_index(clip, is_speech, next_ready=next_ready)
+            self._advance_frame_index(
+                clip,
+                is_speech,
+                next_ready=next_ready,
+                next_almost_ready=next_almost_ready,
+                speech_may_start=speech_may_start,
+            )
             self._seq += 1
             return pkt
 
@@ -2520,14 +2551,25 @@ def frame_fetcher_loop(
 
         action = action_fn()
         next_ready = False
-        if bridge is not None and hasattr(bridge, "ready_upcoming_count"):
-            next_ready = bridge.ready_upcoming_count() > 0
+        next_almost_ready = False
+        speech_may_start = False
+        if bridge is not None:
+            if hasattr(bridge, "ready_upcoming_count"):
+                next_ready = bridge.ready_upcoming_count() > 0
+            if hasattr(bridge, "next_almost_ready"):
+                next_almost_ready = bridge.next_almost_ready()
+            if hasattr(bridge, "can_start_first_speech"):
+                speech_may_start = bridge.can_start_first_speech()
+            elif hasattr(bridge, "playback_active"):
+                speech_may_start = bool(bridge.playback_active())
         pkt = sm.next_packet(
             pcm,
             is_speech,
             llm_action=action,
             whisper_idx=whisper_idx,
             next_ready=next_ready,
+            next_almost_ready=next_almost_ready,
+            speech_may_start=speech_may_start,
         )
         pkt.whisper_idx = whisper_idx
         if current_uid:

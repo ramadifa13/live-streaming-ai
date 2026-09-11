@@ -35,7 +35,7 @@ export const ConnectingOverlay: React.FC = () => {
   const stageIndex = pipelineStatus?.stageIndex ?? connectingStageIndex;
   const isRealtimeWorker =
     pipelineStatus?.broadcastMode === "ai_worker" || pipelineStatus?.broadcastMode === "ai-worker" || pipelineStatus?.visualWorkerRunning === true;
-  const minUtterances = pipelineStatus?.goLiveMinUtterances ?? 1;
+  const minUtterances = pipelineStatus?.goLiveMinUtterances ?? 3;
   const bufferCount = isRealtimeWorker ? (pipelineStatus?.readyUtteranceCount ?? 0) : (pipelineStatus?.videosQueued ?? 0);
   const videosReady = bufferCount >= minUtterances;
   const rtmpConnected = pipelineStatus?.isRtmpConnected === true;

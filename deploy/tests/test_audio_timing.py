@@ -123,11 +123,15 @@ def test_prerender_runs_before_playback_is_armed():
     bridge._start_next_if_needed(allow_playback=False)
 
     assert bridge._current is None
+    assert job.lipsync_primed is True
+    assert job.lipsync_ready.is_set()
     assert bridge.ready_pending_count() == 1
     assert list(bridge._pending) == [job]
 
+    # Opening gate (3 READY) still holds the first sentence even after arm.
     bridge._start_next_if_needed(allow_playback=True)
-    assert bridge._current is job
+    assert bridge._current is None
+    assert list(bridge._pending) == [job]
 
 
 def test_prime_upcoming_while_current_is_playing():

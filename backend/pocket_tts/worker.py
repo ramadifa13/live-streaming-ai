@@ -23,6 +23,42 @@ MAX_PROMPT_SECONDS = 12
 # Aggressive band-pass ringing caused sudden buzz; keep native 24 kHz.
 AUDIO_FILTER_ENABLED = os.environ.get("POCKET_TTS_AUDIO_FILTER", "0") != "0"
 ONSET_FADE_MS = 20
+TRAIL_FADE_MS = 280
+TRAIL_PAD_MS = 40
+TRAIL_MAX_TRIM_SEC = 0.9
+TRAIL_RMS_FLOOR = 0.018
+
+
+def smooth_onset(samples: np.ndarray, sample_rate: int) -> np.ndarray:
+    fade_samples = min(samples.size, max(1, int(sample_rate * ONSET_FADE_MS / 1000)))
+    if fade_samples <= 1:
+        return samples
+    fade = np.sin(np.linspace(0, np.pi / 2, fade_samples, dtype=np.float32)) ** 2
+    samples[:fade_samples] *= fade
+    return samples
+
+
+def trim_trailing_buzz(samples: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Drop vocoder tail drone, then fade out. Never trim more than TRAIL_MAX_TRIM_SEC."""
+    if samples.size < max(8, sample_rate // 4):
+        return samples
+    win = max(1, int(sample_rate * 0.01))
+    env = np.convolve(np.abs(samples), np.ones(win, dtype=np.float32) / win, mode="same")
+    peak = float(np.max(env)) if env.size else 0.0
+    floor = max(TRAIL_RMS_FLOOR, peak * 0.04)
+    active = np.flatnonzero(env > floor)
+    if active.size == 0:
+        return samples
+    pad = int(sample_rate * TRAIL_PAD_MS / 1000)
+    end = min(samples.size, int(active[-1]) + pad)
+    min_end = max(1, samples.size - int(sample_rate * TRAIL_MAX_TRIM_SEC))
+    end = max(end, min_end)
+    out = np.array(samples[:end], dtype=np.float32, copy=True)
+    fade = min(out.size, max(1, int(sample_rate * TRAIL_FADE_MS / 1000)))
+    if fade > 1:
+        ramp = np.sin(np.linspace(np.pi / 2, 0, fade, dtype=np.float32)) ** 2
+        out[-fade:] *= ramp
+    return out
 
 model = TTSModel.load_model(config=CONFIG)
 prompt_cache: dict[str, tuple[int, object]] = {}
@@ -101,6 +137,7 @@ def generate(request: dict) -> dict:
     else:
         out_rate = source_sample_rate
     samples = smooth_onset(samples, out_rate)
+    samples = trim_trailing_buzz(samples, out_rate)
     peak = float(np.max(np.abs(samples))) if samples.size else 0.0
     if peak > 0.98:
         samples = (samples * (0.98 / peak)).astype(np.float32)

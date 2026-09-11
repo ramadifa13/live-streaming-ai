@@ -247,8 +247,17 @@ export function sanitizeForLiveTTS(text: string): string {
 }
 
 function collapseRepeatedSpeech(text: string): string {
-  let out = text.replace(/\b([\p{L}\p{N}']+)(?:\s+\1){1,}/giu, "$1");
-  out = out.replace(/\b((?:[\p{L}\p{N}']+\s+){1,3}[\p{L}\p{N}']+)(?:\s+\1)+\b/giu, "$1");
+  let out = String(text || "");
+  for (let i = 0; i < 3; i++) {
+    const next = out
+      .replace(/\b([\p{L}\p{N}']+)(?:\s+\1){1,}/giu, "$1")
+      .replace(
+        /\b((?:[\p{L}\p{N}']+\s+){0,3}[\p{L}\p{N}']+)(?:(?:\s*[,.;:!?—–-]+\s*|\s+)\1)+\b/giu,
+        "$1",
+      );
+    if (next === out) break;
+    out = next;
+  }
   return out.replace(/\s+/g, " ").trim();
 }
 
