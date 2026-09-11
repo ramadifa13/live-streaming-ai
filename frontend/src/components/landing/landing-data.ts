@@ -1,5 +1,4 @@
 export {
-  livioLogos,
   platformIcons,
   supportedPlatforms,
   footerSocialPlatforms,

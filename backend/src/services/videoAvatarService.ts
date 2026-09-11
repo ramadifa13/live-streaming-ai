@@ -94,9 +94,10 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
     stage: "Menunggu GPU RunPod siap (bisa 30-60 dtk)...",
   });
   let gpuLeaseAcquired = false;
+  let leasedPodId: string | null = null;
 
   try {
-    await acquireGpuForJob();
+    leasedPodId = await acquireGpuForJob(`video-job:${jobId}`);
     gpuLeaseAcquired = true;
   } catch (err: any) {
     updateJob(jobId, {
@@ -107,7 +108,7 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
     throw err;
   }
 
-  const workerUrl = getWorkerUrl();
+  const workerUrl = getWorkerUrl(leasedPodId);
 
   updateJob(jobId, {
     progress: 10,
@@ -253,7 +254,7 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
       stage: `${engineLabel}  Video siap!`,
       videoUrl: finalVideoUrl,
     });
-    await releaseGpuForJob();
+    await releaseGpuForJob(leasedPodId, `video-job:${jobId}`);
     gpuLeaseAcquired = false;
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : String(e);
@@ -263,7 +264,7 @@ async function runLivePortrait(jobId: string, params: GenerateVideoParams): Prom
       stage: "Error pada AI Worker",
       error: errMsg,
     });
-    if (gpuLeaseAcquired) await releaseGpuForJob();
+    if (gpuLeaseAcquired) await releaseGpuForJob(leasedPodId, `video-job:${jobId}`);
     throw e;
   }
 }

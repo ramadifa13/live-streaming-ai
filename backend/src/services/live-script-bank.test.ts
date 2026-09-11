@@ -199,6 +199,9 @@ describe("dedupe before TTS", () => {
   it("collapses consecutive duplicate words and phrases", async () => {
     const { sanitizeForLiveTTS } = await import("./tts.js");
     assert.equal(sanitizeForLiveTTS("delivery delivery delivery"), "delivery");
+    assert.equal(sanitizeForLiveTTS("sama-sama ya kak"), "sama-sama ya kak");
+    assert.match(sanitizeForLiveTTS("pelan-pelan saja dipakai"), /pelan-pelan/);
+    assert.match(sanitizeForLiveTTS("masing-masing punya manfaat"), /masing-masing/);
     const collapsed = sanitizeForLiveTTS("pengiriman cepat pengiriman cepat hari ini");
     assert.equal((collapsed.match(/pengiriman cepat/gi) || []).length, 1);
     assert.equal(

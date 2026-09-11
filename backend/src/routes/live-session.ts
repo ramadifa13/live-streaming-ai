@@ -3,7 +3,7 @@ import { z } from "zod";
 import prisma from "../lib/prisma.js";
 import { stopBroadcast, pauseBroadcast, resumeBroadcast, getStreamStatus } from "../services/rtmp-streamer.js";
 import {
-  getRunPodBroadcastStatus,
+  getRunPodBroadcastStatusOnce,
   startRunPodBroadcast,
   updateRunPodBroadcastProduct,
   stopRunPodBroadcast,
@@ -12,6 +12,7 @@ import {
   resumeRunPodBroadcast,
   resolveMediaAsDataUrl,
 } from "../services/runpod-bridge.js";
+import { getStaticPodId } from "../services/runpod-manager.js";
 import { livePlatformConnector } from "../services/live-platform-connector.js";
 import { liveSessionManager } from "../services/live-session-manager.js";
 import { liveHostOrchestrator, durationHoursToPlan, normalizeClientProduct } from "../services/live-host-orchestrator.js";
@@ -59,10 +60,11 @@ const liveSessionSchema = z.object({
   product: productSnapshotSchema.optional(),
   products: z.array(productSnapshotSchema).optional(),
   backgroundImage: z.string().optional(),
+  clientRequestId: z.string().min(8).max(128).optional(),
 });
 
 const liveStopSchema = z.object({
-  sessionId: z.string().optional(),
+  sessionId: z.string().min(1),
   durationSeconds: z.number().optional().default(0),
   viewers: z.number().optional().default(0),
   comments: z.number().optional().default(0),
@@ -180,6 +182,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         product: product || undefined,
         catalog,
         backgroundImage: parsed.data.backgroundImage,
+        clientRequestId: parsed.data.clientRequestId,
       });
 
       reply.code(201);
@@ -231,7 +234,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
-    const sessionId = parsed.data.sessionId || "";
+    const sessionId = parsed.data.sessionId;
     if (sessionId) liveHostOrchestrator.stop(sessionId);
     const sessionObj = liveSessionManager.getSession(sessionId);
     void stopRunPodBroadcast(sessionObj?.podId).catch(() => {});
@@ -312,8 +315,10 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       }
     }
 
-    const podId = managedSession?.podId ?? process.env.RUNPOD_POD_ID?.trim() ?? null;
-    if (managedSession && !podId) {
+    const podId = managedSession?.podId ?? (getStaticPodId() || null);
+    const configuredWorkerUrl =
+      process.env.NODE_ENV === "production" ? "" : (process.env.RUNPOD_WORKER_URL || process.env.AVATAR_WORKER_URL || "").trim();
+    if (managedSession && !podId && !configuredWorkerUrl) {
       reply.code(409);
       return {
         success: false,
@@ -322,7 +327,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       };
     }
 
-    if (podId) {
+    if (podId || configuredWorkerUrl) {
       try {
         await ensureWorkerReachable(podId, 60);
       } catch (err) {
@@ -578,7 +583,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       reply.code(400);
       return { error: parsed.error.flatten() };
     }
-    const sessionId = parsed.data.sessionId || "";
+    const sessionId = parsed.data.sessionId;
     if (sessionId) liveHostOrchestrator.stop(sessionId);
     const sessionObj = liveSessionManager.getSession(sessionId);
     void stopRunPodBroadcast(sessionObj?.podId).catch(() => {});
@@ -589,9 +594,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  server.post("/api/live-stream/pause", async (request) => {
-    const body = (request.body || {}) as { sessionId?: string };
-    const managed = body.sessionId ? liveSessionManager.getSession(body.sessionId) : liveSessionManager.getLatestActiveSession();
+  server.post("/api/live-stream/pause", async (request, reply) => {
+    const parsedBody = z.object({ sessionId: z.string().min(1) }).safeParse(request.body || {});
+    if (!parsedBody.success) {
+      reply.code(400);
+      return { success: false, error: "sessionId wajib diisi." };
+    }
+    const body = parsedBody.data;
+    const managed = liveSessionManager.getSession(body.sessionId);
 
     const local = getStreamStatus();
     if (local.status === "streaming" || local.status === "connecting") {
@@ -623,9 +633,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  server.post("/api/live-stream/resume", async (request) => {
-    const body = (request.body || {}) as { sessionId?: string };
-    const managed = body.sessionId ? liveSessionManager.getSession(body.sessionId) : liveSessionManager.getLatestActiveSession();
+  server.post("/api/live-stream/resume", async (request, reply) => {
+    const parsedBody = z.object({ sessionId: z.string().min(1) }).safeParse(request.body || {});
+    if (!parsedBody.success) {
+      reply.code(400);
+      return { success: false, error: "sessionId wajib diisi." };
+    }
+    const body = parsedBody.data;
+    const managed = liveSessionManager.getSession(body.sessionId);
 
     const local = getStreamStatus();
     if (local.paused || local.status === "streaming") {
@@ -820,7 +835,10 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     const sessionId = session?.id || "";
     const managedSession = sessionId ? liveSessionManager.getSession(sessionId) : null;
     const streamStatus = getStreamStatus();
-    const workerBroadcast = await getRunPodBroadcastStatus(managedSession?.podId).catch(() => null);
+    const workerBroadcast =
+      managedSession?.podId || (process.env.NODE_ENV !== "production" && (process.env.RUNPOD_WORKER_URL || "").trim())
+        ? await getRunPodBroadcastStatusOnce(managedSession?.podId ?? null)
+        : null;
     const metrics = livePlatformConnector.getMetricsSnapshot(sessionId);
 
     const sessionStatus = managedSession?.state || session?.status || "idle";
@@ -828,8 +846,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     return {
       success: true,
       data: {
-        isStreaming: workerBroadcast?.status === "streaming" || streamStatus.status === "streaming",
-        handshakeVerified: workerBroadcast?.status === "streaming" || streamStatus.handshakeVerified,
+        isStreaming: workerBroadcast?.rtmp_connected === true || workerBroadcast?.status === "streaming" || streamStatus.status === "streaming",
+        handshakeVerified: workerBroadcast?.rtmp_connected === true || streamStatus.handshakeVerified,
         sessionStatus,
         sessionId: sessionId || null,
         platform: session?.platform || "TikTok LIVE",

@@ -1,10 +1,45 @@
 import prisma from "../lib/prisma.js";
-import { setLiveSessionActive, startPodAndWait, releaseGpuForJob, isPodKeepWarm, getStaticPodId } from "./runpod-manager.js";
+import {
+  setLiveSessionActive,
+  startPodAndWait,
+  releaseGpuForJob,
+  isPodKeepWarm,
+  getStaticPodId,
+  isStaticPodId,
+  verifyWorkerHealth,
+  listManagedLivePods,
+} from "./runpod-manager.js";
 import { livePlatformConnector } from "./live-platform-connector.js";
-import { liveHostOrchestrator, type ProductSnapshot } from "./live-host-orchestrator.js";
-import { triggerWorkerPlayback } from "./runpod-bridge.js";
+import { durationHoursToPlan, liveHostOrchestrator, type ProductSnapshot } from "./live-host-orchestrator.js";
+import { stopRunPodBroadcast, triggerWorkerPlayback } from "./runpod-bridge.js";
 
 export type SessionState = "starting" | "pending" | "live" | "ended" | "error";
+
+export function reuseExistingLiveStart(
+  existing: { id: string } | null | undefined,
+  managed: { state: SessionState } | null | undefined,
+): { sessionId: string; state: SessionState } | null {
+  if (existing && managed && managed.state !== "ended" && managed.state !== "error") {
+    return { sessionId: existing.id, state: managed.state };
+  }
+  return null;
+}
+
+export function canTransitionPlatformLive(input: {
+  isRtmpConnected: boolean;
+  playable: number;
+  minReady: number;
+}): boolean {
+  return input.isRtmpConnected === true && input.playable >= input.minReady;
+}
+
+export function shouldRehydrateRow(row: { runpodPodId: string | null }, alreadyActive: boolean): boolean {
+  return Boolean(row.runpodPodId) && !alreadyActive;
+}
+
+export function shouldTerminateOrphanPod(podId: string, knownPodIds: Set<string>): boolean {
+  return !knownPodIds.has(podId) && !isStaticPodId(podId);
+}
 
 export interface ManagedSession {
   sessionId: string;
@@ -75,18 +110,16 @@ class LiveSessionManager {
     product?: ProductSnapshot;
     catalog?: ProductSnapshot[];
     backgroundImage?: string;
+    clientRequestId?: string;
   }): Promise<{ sessionId: string; state: SessionState }> {
-    const previousIds = Array.from(this.activeSessions.keys());
-    const staticPodId = getStaticPodId();
-    const keepGpu = Boolean(staticPodId);
-    for (const id of previousIds) {
-      console.log(`[LiveSessionManager] Mengganti sesi lama ${id} sebelum sesi baru (keepGpu=${keepGpu}).`);
-      await this.stopSession(id, undefined, { keepGpu }).catch((err) =>
-        console.warn(`[LiveSessionManager] Gagal menghentikan sesi lama ${id}:`, err),
-      );
+    if (params.clientRequestId) {
+      const existing = await prisma.liveSession.findUnique({
+        where: { clientRequestId: params.clientRequestId },
+      });
+      const managed = existing ? this.activeSessions.get(existing.id) : null;
+      const reused = reuseExistingLiveStart(existing, managed);
+      if (reused) return reused;
     }
-
-    setLiveSessionActive(true);
 
     const session = await prisma.liveSession.create({
       data: {
@@ -100,10 +133,31 @@ class LiveSessionManager {
         autoPromotion: params.autoPromotion ?? true,
         autoModeration: params.autoModeration ?? true,
         status: "starting",
+        podStatus: "provisioning",
+        clientRequestId: params.clientRequestId,
+        deadlineAt: new Date(Date.now() + params.durationHours * 3600 * 1000),
+        runtimeConfig: JSON.stringify({
+          productId: params.productId,
+          avatarId: params.avatarId,
+          platform: params.platform,
+          durationHours: params.durationHours,
+          avatarName: params.avatarName,
+          voice: params.voice,
+          voiceId: params.voiceId,
+          style: params.style,
+          ttsLang: params.ttsLang,
+          speechSpeed: params.speechSpeed,
+          tone: params.tone,
+          product: params.product,
+          catalog: params.catalog,
+          backgroundImage: params.backgroundImage,
+        }),
         estimatedCost: Math.round(params.durationHours * 12500),
       },
     });
+    setLiveSessionActive(true, session.id);
 
+    const staticPodId = getStaticPodId();
     const catalog = params.catalog?.length ? params.catalog : params.product ? [params.product] : [];
     const product = params.product || catalog.find((item) => item.id === params.productId) || catalog[0];
 
@@ -133,12 +187,11 @@ class LiveSessionManager {
 
     this.activeSessions.set(session.id, managedSession);
 
-    livePlatformConnector.setLiveDetectedCallback(async (triggerSessionId?: string) => {
+    livePlatformConnector.setLiveDetectedCallback(session.id, async (triggerSessionId?: string) => {
       const sId = triggerSessionId || session.id;
       const currentSession = this.activeSessions.get(sId);
       if (currentSession?.state === "pending") {
-        console.log(`[LiveSessionManager] Platform live detected for session ${sId}. Transitioning to live...`);
-        await this.transitionState("live", sId);
+        await this.tryTransitionPlatformLive(sId);
       }
     });
 
@@ -181,6 +234,7 @@ class LiveSessionManager {
       managed.podBootStatus = "booting";
       managed.podBootMessage = getStaticPodId() ? `Menghubungkan ke pod statis ${getStaticPodId()}...` : "Mengalokasikan Cloud GPU (pod baru)...";
       const podIdStr = await startPodAndWait(360_000, {
+        sessionId,
         onProgress: (message) => {
           const current = this.activeSessions.get(sessionId);
           if (current) current.podBootMessage = message;
@@ -188,6 +242,16 @@ class LiveSessionManager {
         onPodCreated: (podId) => {
           const current = this.activeSessions.get(sessionId);
           if (current) current.podId = podId;
+          void prisma.liveSession
+            .update({
+              where: { id: sessionId },
+              data: {
+                runpodPodId: podId,
+                podStatus: "provisioning",
+                podCreatedAt: new Date(),
+              },
+            })
+            .catch((err) => console.error(`[LiveSessionManager] Gagal menyimpan pod ${podId}:`, err));
         },
         shouldAbort: () => {
           const current = this.activeSessions.get(sessionId);
@@ -202,7 +266,7 @@ class LiveSessionManager {
           if (podId === staticId || reused) {
             console.log(`[LiveSessionManager] Pod ${podId} tetap dipakai sesi lain — tidak di-release.`);
           } else {
-            await releaseGpuForJob(podId).catch((err) =>
+            await releaseGpuForJob(podId, sessionId).catch((err) =>
               console.error(`[LiveSessionManager] Gagal terminate pod ${podId} setelah sesi dihapus:`, err),
             );
           }
@@ -228,6 +292,13 @@ class LiveSessionManager {
         managed.podBootStatus = "ready";
         managed.podBootMessage = "GPU siap — menghubungkan ke worker...";
       }
+      await prisma.liveSession.update({
+        where: { id: sessionId },
+        data: {
+          runpodPodId: managed.podId || undefined,
+          podStatus: "ready",
+        },
+      });
 
       livePlatformConnector.startSession({
         sessionId,
@@ -256,6 +327,12 @@ class LiveSessionManager {
       if (current) {
         current.podBootStatus = "failed";
         current.podBootMessage = message;
+        await prisma.liveSession
+          .update({
+            where: { id: sessionId },
+            data: { podStatus: "failed", endedReason: "pod_boot_failed" },
+          })
+          .catch(() => {});
         await this.transitionState("error", sessionId);
       }
     }
@@ -298,45 +375,66 @@ class LiveSessionManager {
       sales?: number;
       productSold?: number;
     },
-    options?: { keepGpu?: boolean },
+    options?: { keepGpu?: boolean; endedReason?: string },
   ): Promise<{
     success: boolean;
     summary?: Record<string, unknown>;
   }> {
     const session = this.activeSessions.get(sessionId);
-    if (!session) {
+    const persisted = await prisma.liveSession.findUnique({ where: { id: sessionId } });
+    if (!session && !persisted) {
       return { success: false };
     }
 
-    session.bootstrapAbort = true;
+    if (session) session.bootstrapAbort = true;
     const staticPodId = getStaticPodId();
     const keepGpu = options?.keepGpu ?? isPodKeepWarm();
-    const podToTerminate = keepGpu ? null : session.podId || staticPodId || null;
+    const podToTerminate = keepGpu ? null : session?.podId || persisted?.runpodPodId || staticPodId || null;
 
     this.clearTimers(sessionId);
     liveHostOrchestrator.stop(sessionId);
 
-    await this.transitionState("ended", sessionId);
+    if (session) await this.transitionState("ended", sessionId);
 
     const metrics = livePlatformConnector.getMetricsSnapshot(sessionId);
     livePlatformConnector.stopSession(sessionId);
+    livePlatformConnector.setLiveDetectedCallback(sessionId, null);
 
     await prisma.liveSession.updateMany({
       where: {
         id: sessionId,
         status: { in: ["live", "pending", "starting"] },
       },
-      data: { status: "ended" },
+      data: {
+        status: "ended",
+        endedReason: options?.endedReason || "user_stop",
+      },
     });
 
     if (podToTerminate) {
-      void releaseGpuForJob(podToTerminate)
-        .then(() => {
-          console.log(`[LiveSessionManager] Pod ${podToTerminate} terminate/stop diminta untuk sesi ${sessionId}`);
-        })
-        .catch((err) => {
+      const claim = await prisma.liveSession.updateMany({
+        where: {
+          id: sessionId,
+          podStatus: { notIn: ["terminating", "terminated"] },
+        },
+        data: { podStatus: "terminating" },
+      });
+      if (claim.count > 0) {
+        await stopRunPodBroadcast(podToTerminate).catch(() => {});
+        try {
+          await releaseGpuForJob(podToTerminate, sessionId);
+          await prisma.liveSession.update({
+            where: { id: sessionId },
+            data: { podStatus: "terminated", podTerminatedAt: new Date() },
+          });
+          console.log(`[LiveSessionManager] Pod ${podToTerminate} terminated untuk sesi ${sessionId}`);
+        } catch (err) {
+          await prisma.liveSession
+            .update({ where: { id: sessionId }, data: { podStatus: "terminate_failed" } })
+            .catch(() => {});
           console.error("Failed to stop GPU Pod:", err);
-        });
+        }
+      }
     }
 
     const durationSeconds = summary?.durationSeconds && summary.durationSeconds > 0 ? summary.durationSeconds : metrics.durationSeconds;
@@ -353,9 +451,7 @@ class LiveSessionManager {
     const roiPercentage = estimatedGpuCost > 0 ? Math.round((netProfit / estimatedGpuCost) * 100) : 0;
 
     this.activeSessions.delete(sessionId);
-    if (this.activeSessions.size === 0) {
-      setLiveSessionActive(false);
-    }
+    setLiveSessionActive(false, sessionId);
 
     return {
       success: true,
@@ -428,12 +524,10 @@ class LiveSessionManager {
       session.liveStartedAt = Date.now();
       session.deadlineAt = session.liveStartedAt + session.durationHours * 3600 * 1000;
       this.startDurationWatchdog(sessionId);
-      if (session.podId) {
-        try {
-          await triggerWorkerPlayback(session.podId);
-        } catch (err) {
-          console.warn("[LiveSessionManager] triggerWorkerPlayback notice:", err);
-        }
+      try {
+        await triggerWorkerPlayback(session.podId ?? null);
+      } catch (err) {
+        console.warn("[LiveSessionManager] triggerWorkerPlayback notice:", err);
       }
       liveHostOrchestrator.startLivePipeline(sessionId).catch((err) => console.warn("[LiveSessionManager] startLivePipeline notice:", err));
     }
@@ -454,7 +548,15 @@ class LiveSessionManager {
           id: sessionId,
           status: { in: ["starting", "pending", "live"] },
         },
-        data: { status: newState },
+        data: {
+          status: newState,
+          ...(newState === "live"
+            ? {
+                liveStartedAt: new Date(session.liveStartedAt || Date.now()),
+                deadlineAt: new Date(session.deadlineAt),
+              }
+            : {}),
+        },
       });
     } catch (err) {
       console.error(`[LiveSessionManager] Failed to update session state to ${newState}:`, err);
@@ -476,7 +578,7 @@ class LiveSessionManager {
       const remaining = this.getRemainingDurationSeconds(sessionId);
       if (remaining <= 0) {
         console.log(`[LiveSessionManager] Duration exceeded for session ${s.sessionId}. Stopping...`);
-        await this.stopSession(sessionId);
+        await this.stopSession(sessionId, undefined, { endedReason: "duration_expiry" });
         return;
       }
 
@@ -487,7 +589,7 @@ class LiveSessionManager {
 
         if (elapsedSeconds >= maxSeconds) {
           console.log(`[LiveSessionManager] Max live duration reached (${maxSeconds}s). Stopping...`);
-          await this.stopSession(sessionId);
+          await this.stopSession(sessionId, undefined, { endedReason: "duration_expiry" });
         }
       }
     }, checkMs);
@@ -507,7 +609,9 @@ class LiveSessionManager {
           `${Math.round(timeoutMs / 60_000)} menit tanpa Go Live. ` +
           `Menghentikan sesi agar GPU tidak terus ditagih.`,
       );
-      void this.stopSession(sessionId).catch((err) => console.error(`[LiveSessionManager] Gagal menghentikan sesi pending ${sessionId}:`, err));
+      void this.stopSession(sessionId, undefined, { endedReason: "pending_timeout" }).catch((err) =>
+        console.error(`[LiveSessionManager] Gagal menghentikan sesi pending ${sessionId}:`, err),
+      );
     }, timeoutMs);
   }
 
@@ -565,9 +669,7 @@ class LiveSessionManager {
         const isLive = await this.checkPlatformLiveStatus(platform, liveVideoId, accessToken);
 
         if (isLive) {
-          console.log(`[LiveSessionManager] Platform confirmed live for session ${sessionId}. Starting AI...`);
-          await this.transitionState("live", sessionId);
-          return;
+          if (await this.tryTransitionPlatformLive(sessionId)) return;
         }
       } catch (err) {
         console.warn(`[LiveSessionManager] Platform live poll failed:`, err);
@@ -580,6 +682,27 @@ class LiveSessionManager {
     };
 
     session.livePollTimer = setTimeout(poll, 5000);
+  }
+
+  private async tryTransitionPlatformLive(sessionId: string): Promise<boolean> {
+    const status = await liveHostOrchestrator.getPipelineStatus(sessionId);
+    const minReady = Number(status.goLiveMinUtterances || 1);
+    const realtime = /ai_worker|ai-worker|realtime|visual_worker/i.test(String(status.broadcastMode || ""));
+    const playable = realtime ? Number(status.readyUtteranceCount || 0) : Number(status.videosQueued || 0);
+    if (!canTransitionPlatformLive({
+      isRtmpConnected: status.isRtmpConnected === true,
+      playable,
+      minReady,
+    })) {
+      console.log(
+        `[LiveSessionManager] Platform live ${sessionId}, tetapi pipeline belum siap ` +
+          `(rtmp=${status.isRtmpConnected === true}, ready=${playable}/${minReady}).`,
+      );
+      return false;
+    }
+    console.log(`[LiveSessionManager] Platform dan pipeline siap untuk ${sessionId}. Starting AI...`);
+    await this.transitionState("live", sessionId);
+    return true;
   }
 
   private async checkPlatformLiveStatus(platform: string, liveVideoId: string, accessToken: string): Promise<boolean> {
@@ -629,36 +752,136 @@ class LiveSessionManager {
     return false;
   }
 
-  public async forceStopSession(sessionId: string): Promise<void> {
-    const session = this.activeSessions.get(sessionId);
-    if (!session) return;
+  public async rehydrateActiveSessions(): Promise<void> {
+    const rows = await prisma.liveSession.findMany({
+      where: {
+        status: { in: ["starting", "pending", "live"] },
+        runpodPodId: { not: null },
+      },
+      orderBy: { createdAt: "asc" },
+    });
 
-    session.bootstrapAbort = true;
-    const podToTerminate = session.podId ?? null;
+    for (const row of rows) {
+      if (!shouldRehydrateRow(row, this.activeSessions.has(row.id))) continue;
+      const podId = row.runpodPodId;
+      if (!podId) continue;
+      const healthy = await verifyWorkerHealth(podId, 8_000);
+      if (!healthy) {
+        console.warn(`[LiveSessionManager] Reconcile: worker ${podId} offline untuk ${row.id}.`);
+        await this.stopSession(row.id, undefined, { endedReason: "recovery_worker_offline" });
+        continue;
+      }
 
-    this.clearTimers(sessionId);
-    liveHostOrchestrator.stop(sessionId);
-
-    try {
-      await prisma.liveSession.updateMany({
-        where: {
-          id: sessionId,
-          status: { in: ["starting", "pending", "live"] },
-        },
-        data: { status: "ended" },
+      let config: Record<string, any> = {};
+      try {
+        config = row.runtimeConfig ? JSON.parse(row.runtimeConfig) : {};
+      } catch {}
+      const durationHours = Number(config.durationHours || row.durationHours || 1);
+      const deadlineAt = row.deadlineAt?.getTime() || Date.now() + durationHours * 3600 * 1000;
+      const state = (["starting", "pending", "live"].includes(row.status) ? row.status : "pending") as SessionState;
+      const product = normalizeRecoveredProduct(config.product);
+      const catalog = Array.isArray(config.catalog)
+        ? config.catalog.map(normalizeRecoveredProduct).filter((item): item is ProductSnapshot => Boolean(item))
+        : product
+          ? [product]
+          : [];
+      const managed: ManagedSession = {
+        sessionId: row.id,
+        state,
+        platform: row.platform,
+        durationHours,
+        startedAt: row.createdAt.getTime(),
+        liveStartedAt: row.liveStartedAt?.getTime(),
+        deadlineAt,
+        avatarName: String(config.avatarName || "Namira"),
+        voice: config.voice ? String(config.voice) : row.voice || undefined,
+        voiceId: config.voiceId ? String(config.voiceId) : process.env.VOICE_ID || "girl_cute_kids",
+        style: config.style ? String(config.style) : undefined,
+        ttsLang: config.ttsLang ? String(config.ttsLang) : "id",
+        speechSpeed: Number(config.speechSpeed ?? 1),
+        tone: String(config.tone || "Persuasif"),
+        podId,
+        podBootStatus: "ready",
+        podBootMessage: "Sesi dipulihkan setelah backend restart.",
+        liveDetectionAttempts: 0,
+        product,
+        catalog,
+        backgroundImage: config.backgroundImage ? String(config.backgroundImage) : undefined,
+      };
+      this.activeSessions.set(row.id, managed);
+      setLiveSessionActive(true, row.id);
+      livePlatformConnector.startSession({
+        sessionId: row.id,
+        podId,
+        platform: row.platform,
+        productId: row.productId,
+        avatarName: managed.avatarName,
+        voice: managed.voice,
+        tone: managed.tone,
       });
-    } catch {}
-
-    livePlatformConnector.stopSession(sessionId);
-
-    if (podToTerminate) {
-      await releaseGpuForJob(podToTerminate).catch(() => {});
+      liveHostOrchestrator.startPipelineBackground({
+        productId: row.productId,
+        avatarName: managed.avatarName,
+        voice: managed.voice,
+        voiceId: managed.voiceId,
+        style: managed.style,
+        ttsLang: managed.ttsLang,
+        speechSpeed: managed.speechSpeed,
+        tone: managed.tone,
+        podId,
+        sessionId: row.id,
+        plan: durationHoursToPlan(durationHours),
+        maxDurationMs: Math.max(1_000, deadlineAt - Date.now()),
+        product,
+        catalog,
+        backgroundImage: managed.backgroundImage,
+      });
+      if (state === "live") {
+        await liveHostOrchestrator.startLivePipeline(row.id);
+        this.startDurationWatchdog(row.id);
+      } else {
+        this.startPendingTimeout(row.id);
+      }
+      console.log(`[LiveSessionManager] Rehydrated ${row.id} on pod ${row.runpodPodId}.`);
     }
-    this.activeSessions.delete(sessionId);
-    if (this.activeSessions.size === 0) {
-      setLiveSessionActive(false);
+
+    const dangling = await prisma.liveSession.findMany({
+      where: {
+        status: { in: ["starting", "pending", "live"] },
+        runpodPodId: null,
+      },
+    });
+    for (const row of dangling) {
+      await this.stopSession(row.id, undefined, { endedReason: "recovery_missing_pod" });
+    }
+
+    const knownPodIds = new Set(
+      (await prisma.liveSession.findMany({
+        where: { runpodPodId: { not: null }, status: { in: ["starting", "pending", "live"] } },
+        select: { runpodPodId: true },
+      }))
+        .map((row) => row.runpodPodId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const livePods = await listManagedLivePods();
+    for (const pod of livePods) {
+      if (!shouldTerminateOrphanPod(pod.id, knownPodIds)) continue;
+      console.warn(`[LiveSessionManager] Orphan pod ${pod.id} (${pod.name}) — terminate.`);
+      await releaseGpuForJob(pod.id).catch((err) =>
+        console.error(`[LiveSessionManager] Gagal terminate orphan ${pod.id}:`, err),
+      );
     }
   }
+
+  public async forceStopSession(sessionId: string): Promise<void> {
+    await this.stopSession(sessionId, undefined, { endedReason: "force_stop" });
+  }
+}
+
+function normalizeRecoveredProduct(value: unknown): ProductSnapshot | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const item = value as ProductSnapshot;
+  return item.id && item.name ? item : undefined;
 }
 
 export const liveSessionManager = new LiveSessionManager();

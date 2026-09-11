@@ -216,6 +216,7 @@ interface HostRuntimeState {
   rtmpFailStopping: boolean;
   workerOfflineSince: number;
   lastWorkerError: string;
+  lastTtsError: string;
   workerFailStopping: boolean;
   workerFailedAt: number;
   broadcastRetryAt: number;
@@ -244,7 +245,10 @@ const LIVE_MAX_UTTERANCE_SECONDS = Number(process.env.LIVE_MAX_UTTERANCE_SECONDS
 const LIVE_TTS_MAX_SPEED = 1.0;
 const GO_LIVE_MIN_UTTERANCES = Number(process.env.GO_LIVE_MIN_UTTERANCES || 1);
 // Opening buffer only (overlay / first arm). Live loop still queues 1-by-1.
-const AI_WORKER_GO_LIVE_MIN_UTTERANCES = 3;
+const AI_WORKER_GO_LIVE_MIN_UTTERANCES = Math.max(
+  1,
+  Number(process.env.AI_WORKER_GO_LIVE_MIN_UTTERANCES || 3),
+);
 
 const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   "1H": {
@@ -321,10 +325,48 @@ const IN_FLIGHT_RENDER_SECONDS = 10;
 const LIVE_CONTINUITY_BUFFER_SECONDS = 8;
 const LIVE_CONTINUITY_MIN_UTTERANCES = 3;
 const MIN_PLAYABLE_UTTERANCES = LIVE_CONTINUITY_MIN_UTTERANCES;
+const LIVE_ONAIR_MIN_READY_UTTERANCES = 2;
+const LIVE_ONAIR_MIN_SPEECH_SECONDS = 12;
+const LIVE_ONAIR_MAX_SPEECH_SECONDS = 22;
 const MAX_WORKER_UTTERANCE_QUEUE = Math.max(
   1,
   Number(process.env.LIVE_MAX_WORKER_UTTERANCE_QUEUE || 6),
 );
+
+export function hostResponseDelivered(submittedSegments: number): boolean {
+  return submittedSegments > 0;
+}
+
+export function decideOnAirStep(input: {
+  readyCount: number;
+  readySpeechSeconds: number;
+  workerPending: number;
+  renderQueue: number;
+  realTimeRatio: number;
+  visualWorkerInitializing?: boolean;
+  hasComment: boolean;
+  commentPriority?: number;
+}): "skip_init_or_cap" | "comment" | "wait" | "generate" {
+  if (input.visualWorkerInitializing || input.workerPending >= MAX_WORKER_UTTERANCE_QUEUE) {
+    return "skip_init_or_cap";
+  }
+  const bufferCritical =
+    input.readyCount < LIVE_ONAIR_MIN_READY_UTTERANCES || input.readySpeechSeconds < LIVE_ONAIR_MIN_SPEECH_SECONDS;
+  const bufferFull =
+    input.workerPending >= MAX_WORKER_UTTERANCE_QUEUE ||
+    input.readySpeechSeconds >= LIVE_ONAIR_MAX_SPEECH_SECONDS ||
+    input.renderQueue >= 2;
+  const gpuSlow = input.realTimeRatio > 0 && input.realTimeRatio < 1;
+  const commentSafe =
+    input.hasComment &&
+    !bufferCritical &&
+    input.readyCount >= LIVE_ONAIR_MIN_READY_UTTERANCES &&
+    input.readySpeechSeconds >= LIVE_ONAIR_MIN_SPEECH_SECONDS;
+  const urgentComment = input.hasComment && (input.commentPriority || 0) >= 45 && input.readyCount >= 1 && !gpuSlow;
+  if (input.hasComment && (commentSafe || urgentComment)) return "comment";
+  if (bufferFull || (gpuSlow && !bufferCritical)) return "wait";
+  return "generate";
+}
 
 function isAiWorkerBroadcastMode(mode: string): boolean {
   const m = (mode || "").trim().toLowerCase();
@@ -795,6 +837,7 @@ class LiveHostOrchestrator {
       rtmpFailStopping: false,
       workerOfflineSince: 0,
       lastWorkerError: "",
+      lastTtsError: "",
       workerFailStopping: false,
       workerFailedAt: 0,
       broadcastRetryAt: 0,
@@ -993,15 +1036,23 @@ class LiveHostOrchestrator {
 
         const workerPending = s.lastQueue.utteranceQueueCount || 0;
         const aiWorker = isAiWorkerBroadcastMode(s.lastQueue.broadcastMode);
-        if (aiWorker && (s.lastQueue.visualWorkerInitializing || workerPending >= MAX_WORKER_UTTERANCE_QUEUE)) {
-          await sleep(COMMENT_SCAN_MS);
-          continue;
-        }
-
         if (aiWorker) {
           const comment = this.takeBestComment(s);
-          const urgentComment = comment && (comment.priority >= 45 || (s.lastQueue.readyUtteranceCount || 0) < 1);
-          if (comment && urgentComment) {
+          const step = decideOnAirStep({
+            readyCount: s.lastQueue.readyUtteranceCount || 0,
+            readySpeechSeconds: Number(s.lastQueue.readySpeechSeconds || s.lastQueue.bufferSeconds || 0),
+            workerPending,
+            renderQueue: Number(s.lastQueue.renderQueueSize || 0),
+            realTimeRatio: Number(s.lastQueue.realTimeRatio || 0),
+            visualWorkerInitializing: s.lastQueue.visualWorkerInitializing,
+            hasComment: Boolean(comment),
+            commentPriority: comment?.priority,
+          });
+          if (step === "skip_init_or_cap" || step === "wait") {
+            await sleep(COMMENT_SCAN_MS);
+            continue;
+          }
+          if (step === "comment" && comment) {
             await this.generateAndQueueCommentResponse(sessionId, comment);
             continue;
           }
@@ -1602,6 +1653,7 @@ class LiveHostOrchestrator {
 
     const segments = splitSpeechIntoGestureSegments(speech, response.action);
     const priority = source === "comment";
+    let submittedSegments = 0;
 
     for (const seg of segments) {
       let audioBase64: string | undefined;
@@ -1628,11 +1680,14 @@ class LiveHostOrchestrator {
         });
         if (ttsResult.success && ttsResult.audioBuffer) {
           audioBase64 = ttsResult.audioBuffer.toString("base64");
+          state.lastTtsError = "";
         } else {
+          state.lastTtsError = ttsResult.message || "TTS gagal";
           console.warn(`[LiveHost] TTS failed: ${ttsResult.message}`);
           continue;
         }
       } catch (err: any) {
+        state.lastTtsError = err?.message || String(err);
         console.warn(`[LiveHost] TTS error (seg action=${seg.action}): ${err?.message || err}`);
         continue;
       }
@@ -1643,8 +1698,14 @@ class LiveHostOrchestrator {
       }
 
       await this.submitToGPU(sessionId, spokenText, audioBase64, seg.action, priority);
+      submittedSegments++;
     }
 
+    if (!hostResponseDelivered(submittedSegments)) {
+      state.counters.failed++;
+      state.lastWorkerError = state.lastTtsError || "Tidak ada segmen audio yang berhasil dikirim ke worker.";
+      return false;
+    }
     state.counters.generated++;
     state.lastActivityAt = Date.now();
     state.showTurn++;
@@ -2004,9 +2065,7 @@ class LiveHostOrchestrator {
           playableSeconds + (Number.isFinite(inFlightSeconds) ? inFlightSeconds : activeProcessing * IN_FLIGHT_RENDER_SECONDS),
         );
       } else if (aiWorker) {
-        // Continuous worker reports real prepared PCM duration. Never invent
-        // buffer seconds: that could arm playback before full mouth prerender.
-        bufferSeconds = 0;
+        bufferSeconds = Number.isFinite(readySpeechSeconds) ? Math.max(0, readySpeechSeconds) : 0;
       } else {
         bufferSeconds = Math.max(0, activeProcessing * IN_FLIGHT_RENDER_SECONDS);
       }
@@ -2087,7 +2146,9 @@ class LiveHostOrchestrator {
       });
 
       state.counters.submitted++;
-      state.estimatedBufferSeconds = Math.min(this.getPolicy(state).maxBufferSeconds, state.estimatedBufferSeconds + estimateDurationSeconds(text));
+      if (!isAiWorkerBroadcastMode(state.lastQueue.broadcastMode)) {
+        state.estimatedBufferSeconds = Math.min(this.getPolicy(state).maxBufferSeconds, state.estimatedBufferSeconds + estimateDurationSeconds(text));
+      }
     } catch (err: any) {
       const msg = err?.message || String(err);
       if (/429/.test(msg)) {
@@ -2255,6 +2316,7 @@ class LiveHostOrchestrator {
       rtmpConnectingSeconds: queue.rtmpConnectingSeconds || 0,
       rtmpFatal: fatalRtmp,
       workerError,
+      lastTtsError: state.lastTtsError || "",
       bufferSeconds: Math.round(queue.bufferSeconds),
       workerOffline: queue.workerOffline,
       workerOfflineSeconds: state.workerOfflineSince > 0 ? Math.round((Date.now() - state.workerOfflineSince) / 1000) : 0,

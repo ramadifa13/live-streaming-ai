@@ -5,16 +5,25 @@ set -euo pipefail
 export START_SH_RUNNING=1
 
 # CUDA / path (wajib di image RunPod PyTorch)
-export PATH="/usr/local/cuda-11.8/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+export PATH="/workspace/bin:/usr/local/cuda-11.8/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-11.8}"
 export LD_LIBRARY_PATH="/usr/local/cuda-11.8/lib64:${LD_LIBRARY_PATH:-}"
-export TMPDIR="${TMPDIR:-/workspace/tmp}"
-mkdir -p "$TMPDIR" 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKER_DIR="${WORKER_DIR:-/workspace/ai_live_worker}"
 REPO_DIR="${REPO_DIR:-/workspace/live-streaming-ai}"
 DEPLOY_DIR="${DEPLOY_DIR:-$REPO_DIR/deploy}"
+export WORKER_SHARED_ROOT="${WORKER_SHARED_ROOT:-$WORKER_DIR}"
+export WORKER_RUNTIME_ROOT="${WORKER_RUNTIME_ROOT:-/tmp/ai_live_worker}"
+export WORKER_SHARED_IMMUTABLE="${WORKER_SHARED_IMMUTABLE:-0}"
+export TMPDIR="${TMPDIR:-$WORKER_RUNTIME_ROOT/tmp}"
+export MUSETALK_RUNTIME_CACHE_ROOT="${MUSETALK_RUNTIME_CACHE_ROOT:-$WORKER_RUNTIME_ROOT/cache}"
+if [ "${WORKER_SHARED_ROOT#/workspace/}" != "$WORKER_SHARED_ROOT" ]; then
+	export MUSETALK_SHARED_CACHE_READONLY="${MUSETALK_SHARED_CACHE_READONLY:-1}"
+fi
+mkdir -p "$TMPDIR" "$MUSETALK_RUNTIME_CACHE_ROOT" \
+	"$WORKER_RUNTIME_ROOT/output" "$WORKER_RUNTIME_ROOT/logs" 2>/dev/null || true
+API_LOG="$WORKER_RUNTIME_ROOT/logs/api_server.log"
 
 # Opsional: git pull sebelum start (GIT_PULL=1 atau --pull)
 _do_pull=0
@@ -47,7 +56,9 @@ fi
 if [ ! -f "$WORKER_DIR/.setup_complete" ]; then
 	if [ -f "$WORKER_DIR/env/bin/python" ] && [ -d "$WORKER_DIR/MuseTalk/models" ]; then
 		echo "[INFO] Marker .setup_complete tidak ada, tetapi venv dan models terdeteksi. Melanjutkan..."
-		date -Iseconds > "$WORKER_DIR/.setup_complete" 2>/dev/null || true
+		if [ "$WORKER_SHARED_IMMUTABLE" != "1" ]; then
+			date -Iseconds > "$WORKER_DIR/.setup_complete" 2>/dev/null || true
+		fi
 	else
 		echo "[ERROR] Setup belum selesai (file .setup_complete tidak ditemukan)."
 		echo "        Jalankan: cd /workspace/live-streaming-ai/deploy && bash setup.sh"
@@ -71,7 +82,7 @@ if [ ! -f "$WORKER_DIR/api_server.py" ]; then
 fi
 
 SYNC_SCRIPT="${SYNC_SCRIPT:-$DEPLOY_DIR/sync.sh}"
-if [ -f "$SYNC_SCRIPT" ]; then
+if [ -f "$SYNC_SCRIPT" ] && [ "$WORKER_SHARED_IMMUTABLE" != "1" ]; then
 	# shellcheck source=sync.sh
 	source "$SYNC_SCRIPT"
 	if command -v cleanup_legacy_env >/dev/null 2>&1; then
@@ -80,6 +91,8 @@ if [ -f "$SYNC_SCRIPT" ]; then
 		bootstrap_worker_env
 	fi
 	purge_legacy_tts
+elif [ "$WORKER_SHARED_IMMUTABLE" = "1" ]; then
+	echo "[INFO] Shared volume immutable — skip cleanup yang menulis ke /workspace."
 fi
 
 export BROADCAST_MODE="${BROADCAST_MODE:-ai_worker}"
@@ -131,8 +144,8 @@ is_worker_healthy() {
 
 stop_supervisor() {
 	local spid=""
-	if [ -f "$WORKER_DIR/.start_supervisor.pid" ]; then
-		spid="$(tr -d '[:space:]' < "$WORKER_DIR/.start_supervisor.pid" 2>/dev/null || true)"
+	if [ -f "$WORKER_RUNTIME_ROOT/.start_supervisor.pid" ]; then
+		spid="$(tr -d '[:space:]' < "$WORKER_RUNTIME_ROOT/.start_supervisor.pid" 2>/dev/null || true)"
 	fi
 	if [ -n "$spid" ] && [ "$spid" != "$$" ] && kill -0 "$spid" 2>/dev/null; then
 		echo "[INFO] Menghentikan supervisor start.sh lama (PID $spid) ..."
@@ -140,15 +153,15 @@ stop_supervisor() {
 		sleep 2
 		kill -9 "$spid" 2>/dev/null || true
 	fi
-	rm -f "$WORKER_DIR/.start_supervisor.pid"
+	rm -f "$WORKER_RUNTIME_ROOT/.start_supervisor.pid"
 }
 
 cleanup_worker_stack() {
 	echo "[INFO] Membersihkan AI Worker API, ffmpeg rtmp, dan membebaskan port ${WORKER_PORT}..."
 	# Keep landmark/materials disk cache on the network volume so restart stays warm.
 	# Only clear ephemeral live overlay/tmp artifacts.
-	echo "[INFO] Membersihkan tmp_assets (coords/materials cache dipertahankan)..."
-	rm -rf "$WORKER_DIR/output/tmp_assets/"* 2>/dev/null || true
+	echo "[INFO] Membersihkan runtime lokal pod (cache model/aset shared dipertahankan)..."
+	rm -rf "$WORKER_RUNTIME_ROOT/output/tmp_assets/"* 2>/dev/null || true
 
 	# Kill Python HTTP API & worker processes
 	pkill -9 -f "[a]pi_server.py" 2>/dev/null || true
@@ -187,7 +200,7 @@ else
 	exit 1
 fi
 
-if [ -f "$SYNC_SCRIPT" ]; then
+if [ -f "$SYNC_SCRIPT" ] && [ "$WORKER_SHARED_IMMUTABLE" != "1" ]; then
 	ensure_worker_python_deps "$PYTHON_BIN" || {
 		echo "[ERROR] fastapi/uvicorn belum siap di venv."
 		echo "        Coba: $PYTHON_BIN -m pip install -r $WORKER_DIR/requirements-worker.txt"
@@ -205,11 +218,15 @@ export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:7b}"
 export OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0:11434}"
 
 echo "Menyiapkan symlink MuseTalk (./musetalk, ./models)..."
-ln -sfn "$WORKER_DIR/MuseTalk/musetalk" "$WORKER_DIR/musetalk"
-ln -sfn "$WORKER_DIR/MuseTalk/models" "$WORKER_DIR/models"
+if [ "$WORKER_SHARED_IMMUTABLE" != "1" ]; then
+	ln -sfn "$WORKER_DIR/MuseTalk/musetalk" "$WORKER_DIR/musetalk"
+	ln -sfn "$WORKER_DIR/MuseTalk/models" "$WORKER_DIR/models"
+fi
 
 echo "Menyinkronkan skrip worker dari repo ..."
-if [ -f "$SYNC_SCRIPT" ]; then
+if [ "$WORKER_SHARED_IMMUTABLE" = "1" ]; then
+	echo "[INFO] Shared volume immutable — memakai kode yang sudah dipersiapkan."
+elif [ -f "$SYNC_SCRIPT" ]; then
 	sync_worker_files
 elif [ -d "$DEPLOY_DIR" ]; then
 	cp -f "$DEPLOY_DIR"/*.py "$WORKER_DIR/" 2>/dev/null || true
@@ -248,8 +265,8 @@ elif is_worker_healthy; then
 		stop_existing_worker
 	else
 		echo "Sistem sudah berjalan! (api_server PID: $API_PID)"
-		echo "Log API: $WORKER_DIR/api_server.log"
-		echo "Pantau log: tail -f $WORKER_DIR/api_server.log"
+		echo "Log API: $API_LOG"
+		echo "Pantau log: tail -f $API_LOG"
 		exit 0
 	fi
 else
@@ -276,8 +293,8 @@ else
 fi
 
 echo "Memulai AI Worker API (port ${WORKER_PORT})..."
-: > "$WORKER_DIR/api_server.log"
-"$PYTHON_BIN" -u api_server.py >> "$WORKER_DIR/api_server.log" 2>&1 &
+: > "$API_LOG"
+"$PYTHON_BIN" -u api_server.py >> "$API_LOG" 2>&1 &
 API_PID=$!
 
 for attempt in $(seq 1 300); do
@@ -288,7 +305,7 @@ for attempt in $(seq 1 300); do
 	sleep 1
 	if ! kill -0 "$API_PID" 2>/dev/null; then
 		echo "[ERROR] api_server.py gagal start (proses mati). Log:"
-		tail -80 "$WORKER_DIR/api_server.log" 2>/dev/null || true
+		tail -80 "$API_LOG" 2>/dev/null || true
 		if command -v dmesg >/dev/null 2>&1; then
 			echo "[HINT] Cek OOM killer:"
 			dmesg 2>/dev/null | tail -5 | grep -i -E 'oom|killed' || true
@@ -297,18 +314,18 @@ for attempt in $(seq 1 300); do
 	fi
 	if [ "$((attempt % 15))" -eq 0 ]; then
 		echo "[INFO] Menunggu api_server... (${attempt}s, PID $API_PID masih hidup)"
-		tail -3 "$WORKER_DIR/api_server.log" 2>/dev/null || true
+		tail -3 "$API_LOG" 2>/dev/null || true
 	fi
 	if [ "$attempt" -eq 300 ]; then
 		echo "[ERROR] api_server.py timeout 300s. Log:"
-		tail -80 "$WORKER_DIR/api_server.log" 2>/dev/null || true
+		tail -80 "$API_LOG" 2>/dev/null || true
 		exit 1
 	fi
 done
 
 if ! kill -0 "$API_PID" 2>/dev/null; then
 	echo "[ERROR] api_server.py gagal start. Lihat log:"
-	echo "        tail -50 $WORKER_DIR/api_server.log"
+	echo "        tail -50 $API_LOG"
 	exit 1
 fi
 
@@ -324,12 +341,12 @@ if [ "${MUSETALK_WARMUP_ON_START}" = "1" ] || [ "${MUSETALK_WARMUP_ON_START}" = 
 		fi
 		if ! kill -0 "$API_PID" 2>/dev/null; then
 			echo "[ERROR] api_server mati saat warmup. Log:"
-			tail -80 "$WORKER_DIR/api_server.log" 2>/dev/null || true
+			tail -80 "$API_LOG" 2>/dev/null || true
 			exit 1
 		fi
 		if [ "$((_w % 20))" -eq 0 ]; then
 			echo "[INFO] Warmup MuseTalk masih berjalan (${_w}s)..."
-			tail -2 "$WORKER_DIR/api_server.log" 2>/dev/null || true
+			tail -2 "$API_LOG" 2>/dev/null || true
 		fi
 		sleep 1
 	done
@@ -341,12 +358,12 @@ fi
 echo "Broadcaster menunggu perintah backend melalui /stream/start-broadcast."
 
 echo "Sistem berhasil dijalankan di background! (api_server PID: $API_PID)"
-echo "Log API: $WORKER_DIR/api_server.log"
+echo "Log API: $API_LOG"
 echo "Health: curl -s http://127.0.0.1:${WORKER_PORT}/health"
-echo "Pantau log: tail -f $WORKER_DIR/api_server.log"
+echo "Pantau log: tail -f $API_LOG"
 
 if [ "${SKIP_WATCHDOG:-0}" = "1" ]; then
-	if [ -f "$DEPLOY_DIR/start.sh" ]; then
+	if [ "$WORKER_SHARED_IMMUTABLE" != "1" ] && [ -f "$DEPLOY_DIR/start.sh" ]; then
 		cp -f "$DEPLOY_DIR/start.sh" "$WORKER_DIR/start.sh"
 	fi
 	echo "[INFO] SKIP_WATCHDOG=1 — api_server berjalan tanpa supervisor loop (untuk redeploy/CI)."
@@ -354,12 +371,12 @@ if [ "${SKIP_WATCHDOG:-0}" = "1" ]; then
 fi
 
 # Update start.sh untuk run berikutnya (tidak ditimpa saat sync di atas).
-if [ -f "$DEPLOY_DIR/start.sh" ]; then
+if [ "$WORKER_SHARED_IMMUTABLE" != "1" ] && [ -f "$DEPLOY_DIR/start.sh" ]; then
 	cp -f "$DEPLOY_DIR/start.sh" "$WORKER_DIR/start.sh"
 fi
 
 # Container Watchdog Supervisor: Pantau terus status api_server
-echo $$ > "$WORKER_DIR/.start_supervisor.pid"
+echo $$ > "$WORKER_RUNTIME_ROOT/.start_supervisor.pid"
 echo "[WATCHDOG] Memulai container supervisor monitor (PID $$)..."
 while true; do
 	sleep 10
@@ -369,7 +386,7 @@ while true; do
 	fi
 	echo "[WATCHDOG ALERT] api_server tidak merespons di port ${WORKER_PORT} — restart..."
 	cleanup_worker_stack
-	"$PYTHON_BIN" -u api_server.py >> "$WORKER_DIR/api_server.log" 2>&1 &
+	"$PYTHON_BIN" -u api_server.py >> "$API_LOG" 2>&1 &
 	API_PID=$!
 	echo "[WATCHDOG] api_server di-restart (PID: $API_PID)"
 done

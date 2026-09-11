@@ -8,6 +8,7 @@
     "build": "node ./scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "lint": "tsc --noEmit",
+    "test": "tsx --test src/services/*.test.ts",
     "test:script-bank": "tsx --test src/services/live-script-bank.test.ts",
     "tts:test": "tsx test-tts.ts"
   },

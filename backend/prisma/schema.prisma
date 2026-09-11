@@ -37,6 +37,15 @@ model LiveSession {
   autoModeration  Boolean  @default(true)
   estimatedCost   Int?
   revenueEstimate Int?
+  runpodPodId      String?  @unique
+  podStatus        String   @default("none")
+  podCreatedAt     DateTime?
+  podTerminatedAt  DateTime?
+  liveStartedAt    DateTime?
+  deadlineAt       DateTime?
+  endedReason      String?
+  clientRequestId  String?  @unique
+  runtimeConfig    String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

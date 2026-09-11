@@ -54,7 +54,12 @@ type PocketResponse = { id: string; audio?: string; error?: string };
 
 let pocketProcess: ChildProcessWithoutNullStreams | null = null;
 let pocketReady: Promise<void> | null = null;
-let pocketQueue = Promise.resolve();
+let pocketStdout: ReturnType<typeof createInterface> | null = null;
+const pocketPending = new Map<
+  string,
+  { resolve: (audio: Buffer) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+>();
+const POCKET_REQUEST_TIMEOUT_MS = Math.max(8_000, Number(process.env.POCKET_TTS_TIMEOUT_MS || 45_000));
 
 function pocketPythonScript(): string {
   return path.resolve(process.cwd(), "pocket_tts", "worker.py");
@@ -67,6 +72,35 @@ function pocketPythonCommand(): string {
       ? path.resolve(process.cwd(), "pocket_tts", "env", "Scripts", "python.exe")
       : path.resolve(process.cwd(), "pocket_tts", "env", "bin", "python");
   return fs.existsSync(envPython) ? envPython : "python";
+}
+
+function failAllPocketPending(error: Error) {
+  for (const [id, pending] of pocketPending.entries()) {
+    clearTimeout(pending.timer);
+    pending.reject(error);
+    pocketPending.delete(id);
+  }
+}
+
+function dispatchPocketLine(line: string) {
+  let payload: PocketResponse & { ready?: boolean };
+  try {
+    payload = JSON.parse(line) as PocketResponse & { ready?: boolean };
+  } catch {
+    return;
+  }
+  if (payload.ready) return;
+  const pending = payload.id ? pocketPending.get(payload.id) : undefined;
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pocketPending.delete(payload.id);
+  if (payload.error) pending.reject(new Error(payload.error));
+  else if (!payload.audio) pending.reject(new Error("Pocket TTS tidak mengembalikan audio"));
+  else pending.resolve(Buffer.from(payload.audio, "base64"));
+}
+
+export function isPocketTtsReady(): boolean {
+  return Boolean(pocketProcess && pocketReady);
 }
 
 function startPocketTts(): Promise<void> {
@@ -83,60 +117,66 @@ function startPocketTts(): Promise<void> {
       stdio: ["pipe", "pipe", "pipe"],
     });
     pocketProcess = child;
-    const stdout = createInterface({ input: child.stdout });
+    pocketStdout = createInterface({ input: child.stdout });
+    pocketStdout.on("line", dispatchPocketLine);
     const onReady = (line: string) => {
       try {
         if (JSON.parse(line).ready) {
-          stdout.off("line", onReady);
+          pocketStdout?.off("line", onReady);
           resolve();
         }
       } catch {}
     };
-    stdout.on("line", onReady);
+    pocketStdout.on("line", onReady);
     child.stderr.on("data", (chunk) => console.warn(`[PocketTTS] ${chunk.toString().trim()}`));
     child.once("error", (error) => {
       pocketReady = null;
+      pocketStdout = null;
+      failAllPocketPending(error);
       reject(error);
     });
     child.once("exit", (code) => {
       pocketProcess = null;
       pocketReady = null;
-      if (code !== 0) reject(new Error(`Pocket TTS runner berhenti (${code})`));
+      pocketStdout = null;
+      const err = new Error(`Pocket TTS runner berhenti (${code ?? "unknown"})`);
+      failAllPocketPending(err);
+      if (code !== 0) reject(err);
     });
   });
   return pocketReady;
 }
 
+export function stopTTS() {
+  failAllPocketPending(new Error("Pocket TTS dihentikan"));
+  try {
+    pocketStdout?.close();
+  } catch {}
+  pocketStdout = null;
+  if (pocketProcess && !pocketProcess.killed) {
+    pocketProcess.kill();
+  }
+  pocketProcess = null;
+  pocketReady = null;
+}
+
 function synthesizeWithPocketTts(text: string, voiceId: string): Promise<Buffer> {
-  const request = async (): Promise<Buffer> => {
+  return (async () => {
     await startPocketTts();
-    if (!pocketProcess) throw new Error("Pocket TTS runner tidak tersedia");
-    return new Promise((resolve, reject) => {
-      const id = randomBytes(8).toString("hex");
-      const stdout = createInterface({ input: pocketProcess!.stdout });
-      const onLine = (line: string) => {
-        let response: PocketResponse;
-        try {
-          response = JSON.parse(line) as PocketResponse;
-        } catch {
-          return;
-        }
-        if (response.id !== id) return;
-        stdout.close();
-        if (response.error) reject(new Error(response.error));
-        else if (!response.audio) reject(new Error("Pocket TTS tidak mengembalikan audio"));
-        else resolve(Buffer.from(response.audio, "base64"));
-      };
-      stdout.on("line", onLine);
-      pocketProcess!.stdin.write(`${JSON.stringify({ id, text, voice_id: voiceId } satisfies PocketRequest)}\n`);
+    if (!pocketProcess?.stdin) throw new Error("Pocket TTS runner tidak tersedia");
+    const id = randomBytes(8).toString("hex");
+    return new Promise<Buffer>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pocketPending.delete(id);
+        reject(new Error(`Pocket TTS timeout setelah ${POCKET_REQUEST_TIMEOUT_MS}ms`));
+      }, POCKET_REQUEST_TIMEOUT_MS);
+      pocketPending.set(id, { resolve, reject, timer });
+      const ok = pocketProcess!.stdin.write(`${JSON.stringify({ id, text, voice_id: voiceId } satisfies PocketRequest)}\n`);
+      if (!ok) {
+        pocketProcess!.stdin.once("drain", () => undefined);
+      }
     });
-  };
-  const result = pocketQueue.then(request, request);
-  pocketQueue = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
+  })();
 }
 
 export interface SynthesizeRequest {
@@ -247,17 +287,26 @@ export function sanitizeForLiveTTS(text: string): string {
 }
 
 function collapseRepeatedSpeech(text: string): string {
-  let out = String(text || "");
+  const placeholders: string[] = [];
+  let out = String(text || "").replace(/\b[\p{L}]+-[\p{L}]+\b/giu, (match) => {
+    const [left, right] = match.split("-");
+    if (left && right && left.toLowerCase() === right.toLowerCase()) {
+      placeholders.push(match);
+      return `\u0000R${placeholders.length - 1}\u0000`;
+    }
+    return match;
+  });
   for (let i = 0; i < 3; i++) {
     const next = out
       .replace(/\b([\p{L}\p{N}']+)(?:\s+\1){1,}/giu, "$1")
       .replace(
-        /\b((?:[\p{L}\p{N}']+\s+){0,3}[\p{L}\p{N}']+)(?:(?:\s*[,.;:!?—–-]+\s*|\s+)\1)+\b/giu,
+        /\b((?:[\p{L}\p{N}']+\s+){0,3}[\p{L}\p{N}']+)(?:(?:\s*[,.;:!?—–]+\s*|\s+)\1)+\b/giu,
         "$1",
       );
     if (next === out) break;
     out = next;
   }
+  out = out.replace(/\u0000R(\d+)\u0000/g, (_m, idx: string) => placeholders[Number(idx)] || "");
   return out.replace(/\s+/g, " ").trim();
 }
 
@@ -555,7 +604,7 @@ export async function calibrateAudioDuration(
     // Audio kependekan (misal 7.2s) -> tempo diperlambat (0.80) agar lebih rileks dan pas 9s
     const rawTempo = dur / targetSeconds;
     const tempo = Math.min(1.22, Math.max(0.78, rawTempo));
-    const filter = `atempo=${tempo.toFixed(4)},apad=whole_dur=${targetSeconds.toFixed(2)}`;
+    const filter = `atempo=${tempo.toFixed(4)}`;
 
     const proc = spawn(FFMPEG_BIN, [
       "-hide_banner",
@@ -565,10 +614,8 @@ export async function calibrateAudioDuration(
       inFile,
       "-filter:a",
       filter,
-      "-t",
-      targetSeconds.toFixed(2),
       "-ar",
-      "16000",
+      "24000",
       "-ac",
       "1",
       "-c:a",
@@ -703,10 +750,4 @@ export async function synthesizeSpeech(req: SynthesizeRequest): Promise<Synthesi
 export async function warmUpTTS(): Promise<void> {
   await startPocketTts();
   console.log(`[TTS] Engine=Pocket TTS Indonesian voice_id=${DEFAULT_VOICE_ID}`);
-}
-
-export function stopTTS(): void {
-  if (pocketProcess && !pocketProcess.killed) pocketProcess.kill();
-  pocketProcess = null;
-  pocketReady = null;
 }

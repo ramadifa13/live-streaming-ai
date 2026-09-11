@@ -424,9 +424,7 @@ function extractActionTag(text: string): { speech: string; action: LunaAction } 
 }
 
 function cleanForTts(text: string): string {
-  return extractActionTag(text)
-    .speech.replace(/\s{2,}/g, " ")
-    .trim();
+  return sanitizeForLiveTTS(extractActionTag(text).speech);
 }
 
 function buildCatalogContext(allProducts: SalesBrainInput["allProducts"]): string {

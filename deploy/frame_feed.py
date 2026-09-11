@@ -487,7 +487,8 @@ class FrameFeedBroadcaster:
 
         print("[FRAME-FEED] Menyalakan encoder RTMP (satu sesi kontinu)...")
         write_rtmp_status(self.output_folder, "connecting")
-        log_dir = "/workspace/ai_live_worker/logs"
+        runtime_root = os.environ.get("WORKER_RUNTIME_ROOT", "/tmp/ai_live_worker")
+        log_dir = os.path.join(runtime_root, "logs")
         os.makedirs(log_dir, exist_ok=True)
         log_path = os.path.join(log_dir, "frame_feed_ffmpeg.log")
         self.log_file = open(log_path, "a", encoding="utf-8")
@@ -920,9 +921,6 @@ class FrameFeedBroadcaster:
                 prefetched = self._prefetch.take(path)
                 fade_in = (not came_from_idle) and (not self._chain_from_ai)
                 played = self._feed_ai_clip(path, fade_in=fade_in, prefetched=prefetched)
-                played = self._feed_ai_clip(
-                    path, fade_in=fade_in, prefetched=prefetched
-                )
                 if played:
                     last_spoken = path
                     self._chain_from_ai = True
@@ -947,7 +945,8 @@ if __name__ == "__main__":
     RTMP_URL = join_rtmp_url(RTMP_BASE_URL, STREAM_KEY)
     print(f"[FRAME-FEED] Target RTMP: {RTMP_URL.split('?')[0]}?**")
 
-    OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "/workspace/ai_live_worker/output")
+    runtime_root = os.environ.get("WORKER_RUNTIME_ROOT", "/tmp/ai_live_worker")
+    OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", os.path.join(runtime_root, "output"))
     IDLE_VIDEO = os.environ.get(
         "IDLE_VIDEO",
         "/workspace/ai_live_worker/assets/3d/namira_idle.mp4",

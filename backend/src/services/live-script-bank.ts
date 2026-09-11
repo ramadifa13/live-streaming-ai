@@ -348,28 +348,23 @@ export function ensureNaturalPunctuation(text: string): string {
   return s;
 }
 
-const DURATION_FILLERS = [
-  ", ya,",
-  ", nih,",
+const DURATION_CLOSERS = [
+  "Cek dulu di etalase kalau memang sesuai kebutuhanmu sekarang.",
+  "Ambil yang ketemu kebutuhanmu, bukan yang cuma ikut ramai.",
 ];
 
 export function fitScriptBankSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
   const cappedMaxWords = Math.max(8, Math.min(Number(maxWords) || SCRIPT_BANK_MAX_WORDS, SCRIPT_BANK_MAX_WORDS));
   const sanitized = sanitizeForLiveTTS(text);
   const normalized = ensureNaturalPunctuation(sanitized).replace(/\s+/g, " ").trim();
-  // Soft target: prefer natural length; only light-pad if far below min.
-  const targetMinWords = Math.min(Math.max(SCRIPT_BANK_MIN_WORDS - 4, 12), cappedMaxWords);
+  const targetMinWords = Math.min(Math.max(SCRIPT_BANK_MIN_WORDS, 12), cappedMaxWords);
 
   const padToTarget = (sourceWords: string[]): string => {
     const words = sourceWords.filter(Boolean);
     if (words.length >= targetMinWords) return words.join(" ");
-    // Avoid stuffing long canned fillers — at most one short breath marker.
-    if (words.length + 2 >= targetMinWords) {
-      const filler = DURATION_FILLERS[0] || ", ya,";
-      const joined = `${words.join(" ").replace(/[.!?]?$/, "")}${filler}`.replace(/\s+/g, " ").trim();
-      return joined;
-    }
-    return words.join(" ");
+    const closer = DURATION_CLOSERS[words.length % DURATION_CLOSERS.length] || DURATION_CLOSERS[0] || "";
+    const joined = `${words.join(" ").replace(/[.!?]+$/, "")}. ${closer}`.replace(/\s+/g, " ").trim();
+    return joined.split(/\s+/).filter(Boolean).slice(0, cappedMaxWords).join(" ");
   };
 
   let words = normalized.split(" ").filter(Boolean);
@@ -399,8 +394,8 @@ function clampSpeech(text: string, maxWords = SCRIPT_BANK_MAX_WORDS): string {
   return fitScriptBankSpeech(text, Math.min(maxWords, SCRIPT_BANK_MAX_WORDS));
 }
 
-export const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 22);
-export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 36);
+export const SCRIPT_BANK_MIN_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MIN_WORDS || 20);
+export const SCRIPT_BANK_MAX_WORDS = Number(process.env.LIVE_SCRIPT_BANK_MAX_WORDS || 24);
 
 function splitFacts(text: string): string[] {
   if (!text?.trim()) return [];
@@ -601,7 +596,7 @@ function greet(): string {
 
 function line(speech: string, topic: string, mode: HostMode, extras?: Partial<HostResponse>): HostResponse {
   const emotions: LunaEmotion[] = ["warm", "neutral", "happy", "excited"];
-  const maxWords = FILLER_TOPICS.has(topic) ? 16 : 32;
+  const maxWords = FILLER_TOPICS.has(topic) ? 16 : SCRIPT_BANK_MAX_WORDS;
   const clamped = clampSpeech(speech, maxWords);
   const semanticKey = extras?.semanticKey || inferSemanticKey(clamped, topic);
   const salesRule =

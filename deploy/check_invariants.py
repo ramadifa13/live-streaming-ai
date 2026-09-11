@@ -197,8 +197,10 @@ def check_audio_sample_rate_contract() -> None:
         _fail("BOOT_IDLE_CLIP_NAME idle (namira_idle.mp4) hilang")
     if "speech_may_start" not in worker:
         _fail("speech_may_start hilang — boot idle tidak boleh pindah ke talk sebelum bicara")
-    if "next_almost_ready" not in worker:
-        _fail("next_almost_ready hilang — hold talk saat kalimat berikutnya hampir READY")
+    if "hold_talk = (not leftover)" in advance:
+        _fail("hold_talk dari next_ready masih memaksa talk tanpa PCM")
+    if "whisper_idx: Optional[int] = None" not in advance and "whisper_idx" not in advance:
+        _fail("_advance_frame_index harus melihat whisper_idx untuk talk-only-when-speech")
     if "def _switch_at_boundary" not in worker:
         _fail("boundary playthrough (_switch_at_boundary) hilang")
     if "def allows_next_utterance_start" not in worker:
@@ -207,14 +209,16 @@ def check_audio_sample_rate_contract() -> None:
         _fail("SpeechBridge.set_visual_gate hilang")
     if "def enter_boot_idle" not in worker:
         _fail("enter_boot_idle hilang — Go Live harus loop namira_idle dulu")
-    if "BETWEEN_UTTERANCE_GAP_FRAMES: int = TARGET_FPS" not in bridge:
-        _fail("jeda 1s antar kalimat (BETWEEN_UTTERANCE_GAP_FRAMES) hilang")
+    if "BETWEEN_UTTERANCE_GAP_FRAMES: int = max(" not in bridge:
+        _fail("jeda antar kalimat harus 12–24 frame (default 18 / 0.75s)")
+    if 'return "INTER_GAP"' not in bridge and "INTER_GAP" not in bridge:
+        _fail("fase INTER_GAP hilang dari SpeechBridge")
     if "def in_between_utterance_gap" not in bridge:
-        _fail("in_between_utterance_gap hilang — end_utterance bisa potong jeda 1s")
+        _fail("in_between_utterance_gap hilang — end_utterance bisa potong jeda")
     if "in_between_utterance_gap" not in worker:
-        _fail("frame_fetcher tidak menghormati jeda 1s sebelum end_utterance")
-    if "MIN_READY_UTTERANCES: int = 3" not in bridge:
-        _fail("SpeechBridge opening gate harus 3 kalimat READY, sekali di awal")
+        _fail("frame_fetcher tidak menghormati jeda antar kalimat sebelum end_utterance")
+    if 'os.environ.get("AI_WORKER_GO_LIVE_MIN_UTTERANCES", "3")' not in bridge:
+        _fail("SpeechBridge opening gate harus default 3 kalimat READY")
     idle_asset = ROOT / "assets" / "3d" / "namira_idle.mp4"
     if not idle_asset.is_file():
         _fail("assets/3d/namira_idle.mp4 hilang")
@@ -253,6 +257,32 @@ def check_start_sweeps_previous_session() -> None:
     print("[INVARIANT] start sapu sesi lama OK")
 
 
+def check_runtime_isolation() -> None:
+    live = (ROOT / "live_worker.py").read_text(encoding="utf-8", errors="replace")
+    start = (ROOT / "start.sh").read_text(encoding="utf-8", errors="replace")
+    infer = (ROOT / "inference.py").read_text(encoding="utf-8", errors="replace")
+    if "WORKER_RUNTIME_ROOT" not in live or "WORKER_SHARED_ROOT" not in live:
+        _fail("live_worker harus memisahkan shared root vs runtime root")
+    if 'self.output_dir = os.path.join(self.runtime_root, "output")' not in live:
+        _fail("output_dir harus di runtime lokal, bukan volume shared")
+    if "WORKER_RUNTIME_ROOT" not in start:
+        _fail("start.sh harus inject WORKER_RUNTIME_ROOT")
+    if "rm -rf \"$WORKER_DIR/output\"" in start or "rm -rf $WORKER_DIR/output" in start:
+        _fail("start.sh tidak boleh menyapu output di volume shared")
+    if "MUSETALK_SHARED_CACHE_READONLY" not in infer:
+        _fail("inference cache shared harus read-only dengan fallback lokal")
+    print("[INVARIANT] runtime isolation OK")
+
+
+def check_paired_av() -> None:
+    worker = (ROOT / "ai_worker.py").read_text(encoding="utf-8", errors="replace")
+    if "class PairedAVQueue" not in worker:
+        _fail("PairedAVQueue hilang — dual writer harus admit A/V atomik")
+    if "self._a_q.put(pcm" in worker and "self._v_q.put(video_buf" in worker:
+        _fail("enqueue A/V independen masih ada (orphan PCM)")
+    print("[INVARIANT] paired A/V OK")
+
+
 def main() -> None:
     check_rtmp_utils()
     check_lipsync_not_forced_on_any_clip()
@@ -263,6 +293,8 @@ def main() -> None:
     check_24fps_pacer()
     check_audio_sample_rate_contract()
     check_start_sweeps_previous_session()
+    check_runtime_isolation()
+    check_paired_av()
     print("[INVARIANT] semua cek lolos")
 
 

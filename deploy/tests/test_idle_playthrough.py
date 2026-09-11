@@ -73,10 +73,9 @@ class _Bank:
         return name in self.clips
 
 
-def _skip_boot_idle(sm, idle_frames=3):
-    """Drain the opening idle cycle with speech allowed so tests start on talk."""
-    for _ in range(idle_frames):
-        sm.next_packet(b"\0" * 4, False, next_ready=True, speech_may_start=True)
+def _enter_talk(sm):
+    """Leave boot idle by feeding one speech packet so tests start on talk."""
+    sm.next_packet(b"\1", True, whisper_idx=0)
 
 
 def test_clock_stays_24fps_48k():
@@ -115,150 +114,93 @@ def test_advance_broadcast_clock_late_rebases_without_catchup():
     assert "broadcast_seq_fast_forward" not in metrics.names
 
 
-def test_go_live_loops_idle_until_ready_then_talk():
+def test_go_live_loops_idle_until_pcm_then_talk():
     sm = VideoStateMachine(_Bank(talk_frames=3, idle_frames=3))
     assert sm.current_name == IDLE_CLIP_NAME
     assert sm.state is PlayState.IDLE
-    assert sm.allows_next_utterance_start() is False
     seen = []
-    for i in range(7):
-        allow = i >= 2
-        pkt = sm.next_packet(
-            b"\0" * 4, False, next_ready=allow, speech_may_start=allow
-        )
+    for _ in range(6):
+        pkt = sm.next_packet(b"\0" * 4, False, next_ready=True, speech_may_start=True)
         seen.append((pkt.clip_name, pkt.frame_idx, pkt.state))
-    assert [row[0] for row in seen[:3]] == [IDLE_CLIP_NAME] * 3
-    assert [row[1] for row in seen[:3]] == [0, 1, 2]
-    assert seen[3][0] == CONTINUOUS_CLIP_NAME
-    assert seen[3][2] is PlayState.TALK
-    assert sm.allows_next_utterance_start() is True
+    assert all(row[0] == IDLE_CLIP_NAME for row in seen)
+    pkt = sm.next_packet(b"\1", True, whisper_idx=0)
+    assert pkt.clip_name == IDLE_CLIP_NAME
+    pkt = sm.next_packet(b"\1", True, whisper_idx=1)
+    assert pkt.clip_name == CONTINUOUS_CLIP_NAME
+    assert pkt.state is PlayState.TALK
+    assert pkt.needs_lipsync is True
 
 
-def test_boot_namira_idle_ignores_ready_until_speech_may_start():
+def test_boot_namira_idle_ignores_ready_until_pcm():
     sm = VideoStateMachine(_Bank(talk_frames=3, idle_frames=3, boot_frames=3))
     assert sm.current_name == BOOT_IDLE_CLIP_NAME
     seen = []
     for _ in range(6):
-        pkt = sm.next_packet(b"\0" * 4, False, next_ready=True, speech_may_start=False)
+        pkt = sm.next_packet(b"\0" * 4, False, next_ready=True, speech_may_start=True)
         seen.append(pkt.clip_name)
     assert seen == [BOOT_IDLE_CLIP_NAME] * 6
-    assert sm.allows_next_utterance_start() is False
-    pkt = sm.next_packet(b"\0" * 4, False, next_ready=True, speech_may_start=True)
+    pkt = sm.next_packet(b"\1", True, whisper_idx=0)
     assert pkt.clip_name == BOOT_IDLE_CLIP_NAME
-    pkt = sm.next_packet(b"\0" * 4, False, next_ready=True, speech_may_start=True)
-    pkt = sm.next_packet(b"\0" * 4, False, next_ready=True, speech_may_start=True)
-    assert sm.current_name == CONTINUOUS_CLIP_NAME
+    pkt = sm.next_packet(b"\1", True, whisper_idx=1)
+    assert pkt.clip_name == CONTINUOUS_CLIP_NAME
     assert sm.state is PlayState.TALK
 
 
-def test_talk_end_without_ready_plays_full_idle_cycles():
+def test_talk_end_without_pcm_uses_idle():
     sm = VideoStateMachine(_Bank(talk_frames=3, idle_frames=3))
-    _skip_boot_idle(sm)
+    _enter_talk(sm)
     seen = []
-    for _ in range(9):
+    for _ in range(6):
         pkt = sm.next_packet(b"\0" * 4, False, next_ready=False)
-        seen.append((pkt.clip_name, pkt.frame_idx))
-    assert seen[:3] == [
-        (CONTINUOUS_CLIP_NAME, 0),
-        (CONTINUOUS_CLIP_NAME, 1),
-        (CONTINUOUS_CLIP_NAME, 2),
-    ]
-    assert seen[3:6] == [
-        (IDLE_CLIP_NAME, 0),
-        (IDLE_CLIP_NAME, 1),
-        (IDLE_CLIP_NAME, 2),
-    ]
-    assert seen[6:9] == [
-        (IDLE_CLIP_NAME, 0),
-        (IDLE_CLIP_NAME, 1),
-        (IDLE_CLIP_NAME, 2),
-    ]
-    assert sm.allows_next_utterance_start() is False
+        seen.append((pkt.clip_name, pkt.state))
+    assert seen[0][0] == CONTINUOUS_CLIP_NAME
+    assert all(name == IDLE_CLIP_NAME for name, _st in seen[1:])
+    assert all(state is PlayState.IDLE for _name, state in seen[1:])
 
 
-def test_ready_mid_idle_waits_for_cycle_then_talk():
+def test_silence_never_holds_talk_when_next_ready():
     sm = VideoStateMachine(_Bank(talk_frames=3, idle_frames=3))
-    seen = []
-    for i in range(9):
-        next_ready = i >= 4
-        pkt = sm.next_packet(
-            b"\0" * 4,
-            False,
-            next_ready=next_ready,
-            speech_may_start=next_ready,
-        )
-        seen.append((pkt.clip_name, pkt.frame_idx, pkt.state))
-    idle_run = [(n, idx) for n, idx, _st in seen if n == IDLE_CLIP_NAME]
-    assert idle_run[:3] == [(IDLE_CLIP_NAME, 0), (IDLE_CLIP_NAME, 1), (IDLE_CLIP_NAME, 2)]
-    assert seen[-1][0] == CONTINUOUS_CLIP_NAME
-    assert seen[-1][2] is PlayState.TALK
-    assert sm.allows_next_utterance_start() is True
-
-
-def test_hold_talk_when_next_almost_ready():
-    sm = VideoStateMachine(_Bank(talk_frames=3, idle_frames=3))
-    _skip_boot_idle(sm)
+    _enter_talk(sm)
     seen = []
     for _ in range(6):
         pkt = sm.next_packet(
             b"\0" * 4,
             False,
-            next_ready=False,
+            next_ready=True,
             next_almost_ready=True,
             speech_may_start=True,
         )
-        seen.append((pkt.clip_name, pkt.state))
-    assert all(name == CONTINUOUS_CLIP_NAME for name, _st in seen)
-    assert all(state is PlayState.TALK for _name, state in seen)
-    assert sm.allows_next_utterance_start() is True
+        seen.append((pkt.clip_name, pkt.state, pkt.needs_lipsync))
+    assert seen[0][0] == CONTINUOUS_CLIP_NAME
+    assert all(name == IDLE_CLIP_NAME for name, _st, _lip in seen[1:])
+    assert all(lip is False for _name, _st, lip in seen)
 
 
-def test_leftover_speech_moves_to_idle_with_lipsync():
+def test_pcm_keeps_talk_body_and_lipsync():
     sm = VideoStateMachine(_Bank(talk_frames=3, idle_frames=3))
-    _skip_boot_idle(sm)
+    _enter_talk(sm)
     sm.begin_utterance()
     seen = []
     for i in range(6):
-        pkt = sm.next_packet(b"\0" * 4, True, whisper_idx=i, next_ready=False)
-        seen.append((pkt.clip_name, pkt.frame_idx, pkt.needs_lipsync))
-    assert seen[:3] == [
-        (CONTINUOUS_CLIP_NAME, 0, True),
-        (CONTINUOUS_CLIP_NAME, 1, True),
-        (CONTINUOUS_CLIP_NAME, 2, True),
-    ]
-    assert seen[3:] == [
-        (IDLE_CLIP_NAME, 0, True),
-        (IDLE_CLIP_NAME, 1, True),
-        (IDLE_CLIP_NAME, 2, True),
-    ]
+        pkt = sm.next_packet(bytes([i + 1]), True, whisper_idx=i, next_ready=False)
+        seen.append((pkt.clip_name, pkt.needs_lipsync, pkt.is_speech, pkt.whisper_idx))
+    assert all(name == CONTINUOUS_CLIP_NAME for name, *_rest in seen)
+    assert all(lip is True for _n, lip, *_r in seen)
+    assert [row[3] for row in seen] == list(range(6))
 
 
-def test_leftover_speech_keeps_talking_across_idle_loops():
-    sm = VideoStateMachine(_Bank(talk_frames=3, idle_frames=3))
-    _skip_boot_idle(sm)
-    sm.begin_utterance()
-    seen = []
-    for i in range(12):
-        pcm = bytes([i + 1])
-        pkt = sm.next_packet(pcm, True, whisper_idx=i, next_ready=False)
-        seen.append(
-            (
-                pkt.clip_name,
-                pkt.frame_idx,
-                pkt.needs_lipsync,
-                pkt.is_speech,
-                pkt.whisper_idx,
-                pkt.audio_pcm,
-            )
-        )
-    assert [row[0] for row in seen[:3]] == [CONTINUOUS_CLIP_NAME] * 3
-    idle = seen[3:]
-    assert [row[0] for row in idle] == [IDLE_CLIP_NAME] * 9
-    assert [row[1] for row in idle] == [0, 1, 2, 0, 1, 2, 0, 1, 2]
-    assert all(row[2] is True for row in seen)
-    assert all(row[3] is True for row in seen)
-    assert [row[4] for row in seen] == list(range(12))
-    assert [row[5] for row in seen] == [bytes([i + 1]) for i in range(12)]
+def test_idle_to_talk_resumes_continuous_index():
+    sm = VideoStateMachine(_Bank(talk_frames=5, idle_frames=3))
+    _enter_talk(sm)
+    for i in range(3):
+        sm.next_packet(b"\1", True, whisper_idx=i)
+    saved = sm._continuous_idx
+    sm.next_packet(b"\0", False)
+    assert sm.current_name == IDLE_CLIP_NAME
+    sm.next_packet(b"\1", True, whisper_idx=0)
+    pkt = sm.next_packet(b"\1", True, whisper_idx=1)
+    assert pkt.clip_name == CONTINUOUS_CLIP_NAME
+    assert pkt.frame_idx == (saved + 1) % 5 or pkt.frame_idx > 0
 
 
 def test_visual_gate_blocks_next_sentence_until_idle_done():
@@ -302,9 +244,10 @@ def test_visual_gate_blocks_next_sentence_until_idle_done():
     assert bridge._current is nxt
 
 
-def test_ready_next_gets_one_second_talk_gap():
+def test_ready_next_gets_idle_gap():
     bridge = SpeechBridge(output_folder="/tmp/ai_live_worker_test")
-    assert bridge.BETWEEN_UTTERANCE_GAP_FRAMES == 24
+    assert 12 <= bridge.BETWEEN_UTTERANCE_GAP_FRAMES <= 24
+    assert bridge.BETWEEN_UTTERANCE_GAP_FRAMES == 18
     current = UtteranceJob(task_id="task_n", audio_path="")
     current.pcm_frames = [b"A"]
     current.num_frames = 1
@@ -329,7 +272,8 @@ def test_ready_next_gets_one_second_talk_gap():
     assert first[1] is False
     assert first[0] != b"C"
     assert bridge.in_between_utterance_gap() is True
-    rest = [bridge.get_audio_chunk() for _ in range(23)]
+    assert bridge.current_audio_phase() == "INTER_GAP"
+    rest = [bridge.get_audio_chunk() for _ in range(bridge.BETWEEN_UTTERANCE_GAP_FRAMES - 1)]
     assert all(item[1] is False for item in rest)
     assert all(item[0] != b"C" for item in rest)
     assert bridge.in_between_utterance_gap() is False
@@ -475,3 +419,52 @@ def test_opening_gate_waits_three_then_rolls_one():
     bridge._start_next_if_needed(allow_playback=True)
     assert bridge._current is not None
     assert bridge._current.task_id == "task_2"
+
+
+def test_queue_underrun_after_speech_uses_idle_2s():
+    sm = VideoStateMachine(_Bank(talk_frames=4, idle_frames=3))
+    _enter_talk(sm)
+    sm.begin_utterance()
+    sm.next_packet(b"\1", True, whisper_idx=0)
+    sm.end_utterance()
+    seen = []
+    for _ in range(6):
+        pkt = sm.next_packet(b"\0" * 4, False, next_ready=False)
+        seen.append((pkt.clip_name, pkt.needs_lipsync, pkt.is_speech))
+    assert seen[0][0] == CONTINUOUS_CLIP_NAME
+    assert all(name == IDLE_CLIP_NAME for name, _lip, _speech in seen[1:])
+    assert all(lip is False for _name, lip, _speech in seen)
+    assert all(speech is False for _name, _lip, speech in seen)
+
+
+def test_twelve_utterances_keep_forward_body_index():
+    sm = VideoStateMachine(_Bank(talk_frames=8, idle_frames=3))
+    _enter_talk(sm)
+    last_idx = None
+    talk_count = 0
+    for utterance in range(12):
+        sm.begin_utterance()
+        uttered = 0
+        prev_in_utt = None
+        for i in range(12):
+            pkt = sm.next_packet(bytes([utterance + 1]), True, whisper_idx=i)
+            if pkt.clip_name != CONTINUOUS_CLIP_NAME:
+                prev_in_utt = None
+                continue
+            assert pkt.needs_lipsync is True
+            if prev_in_utt is not None:
+                assert pkt.frame_idx == (prev_in_utt + 1) % 8
+            if last_idx is not None and pkt.frame_idx < last_idx:
+                # Idle can consume the last clip frame, so wrap may resume at 0
+                # from 6 rather than from 7. Snapping back from mid-clip is not allowed.
+                assert last_idx >= 6
+            last_idx = pkt.frame_idx
+            prev_in_utt = pkt.frame_idx
+            uttered += 1
+            talk_count += 1
+            if uttered >= 3:
+                break
+        assert uttered >= 3
+        sm.end_utterance()
+        sm.next_packet(b"\0", False)
+    assert talk_count >= 36

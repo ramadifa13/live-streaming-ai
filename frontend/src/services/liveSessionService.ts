@@ -69,6 +69,7 @@ export interface StartSessionParams {
   product?: unknown;
   products?: unknown[];
   backgroundImage?: string;
+  clientRequestId?: string;
 }
 
 export interface BroadcastParams {
@@ -94,7 +95,10 @@ export const liveSessionService = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal,
-      body: JSON.stringify(params),
+      body: JSON.stringify({
+        ...params,
+        clientRequestId: params.clientRequestId || crypto.randomUUID(),
+      }),
     });
 
     if (!res.ok) {

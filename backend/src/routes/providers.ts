@@ -18,8 +18,12 @@ export async function providersRoutes(server: FastifyInstance) {
   }));
 
   server.post("/api/runpod/start", async (_request, reply) => {
+    if (process.env.NODE_ENV === "production") {
+      reply.code(404);
+      return { success: false, error: "Endpoint manual RunPod dinonaktifkan di production." };
+    }
     try {
-      await startPodAndWait();
+      await startPodAndWait(undefined, { sessionId: `manual-${Date.now()}` });
       return { success: true, data: await getGpuControlStatus(null) };
     } catch (error) {
       reply.code(502);
@@ -31,6 +35,10 @@ export async function providersRoutes(server: FastifyInstance) {
   });
 
   server.post("/api/runpod/stop", async (_request, reply) => {
+    if (process.env.NODE_ENV === "production") {
+      reply.code(404);
+      return { success: false, error: "Endpoint manual RunPod dinonaktifkan di production." };
+    }
     try {
       const stopped = await stopPod((_request.query as any).podId);
       if (!stopped) {

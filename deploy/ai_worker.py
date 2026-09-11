@@ -13,7 +13,7 @@ from collections import deque
 from argparse import Namespace
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 import cv2
@@ -925,6 +925,8 @@ class VideoStateMachine:
         self._pending_begin_utterance = False
         self._begin_wait_since: Optional[float] = None
         self._talk_direction = 1
+        self._continuous_idx = 0
+        self._ever_spoken = False
         self._enter_boot_idle_locked()
 
     def _schedule_next_ambient(self) -> None:
@@ -1100,6 +1102,8 @@ class VideoStateMachine:
         self._pending_begin_utterance = False
         self._begin_wait_since = None
         self._talk_direction = 1
+        self._continuous_idx = 0
+        self._ever_spoken = False
         if self._face_registry:
             self._face_registry.release_lock()
         if idle_clip is not None:
@@ -1202,9 +1206,8 @@ class VideoStateMachine:
         return self.frame_idx >= clip.end_pose
 
     def allows_next_utterance_start(self) -> bool:
-        """New sentences may start only while not inside an idle cycle."""
-        with self._lock:
-            return not _is_true_idle_name(self.current_name)
+        """Audio may start during idle; visual switches to talk when PCM is active."""
+        return True
 
     def utterance_visual_complete(self) -> bool:
         if not self._utterance_active:
@@ -1527,15 +1530,28 @@ class VideoStateMachine:
         return True
 
     def _switch_at_boundary(self, to_name: str, new_state: PlayState) -> None:
-        """Snap to the next clip only after the current cycle's last frame."""
+        """Change clips while preserving the continuous body index."""
         to_clip = self.bank.get_clip(to_name)
         if to_clip is None:
             return
         from_name = self.current_name
         from_idx = int(self.frame_idx)
+        if _is_talk_clip_name(from_name):
+            self._continuous_idx = from_idx
         self._overlap = None
         self.current_name = to_name
-        self.frame_idx = int(to_clip.base_pose_frame)
+        if _is_talk_clip_name(to_name):
+            if self._ever_spoken:
+                nxt = int(self._continuous_idx) + 1
+                if nxt > to_clip.end_pose:
+                    nxt = int(to_clip.base_pose_frame)
+                self.frame_idx = nxt
+            else:
+                self.frame_idx = int(to_clip.base_pose_frame)
+            self._continuous_idx = int(self.frame_idx)
+            self._ever_spoken = True
+        else:
+            self.frame_idx = int(to_clip.base_pose_frame)
         self.state = new_state
         self._talk_direction = 1
         print(
@@ -1551,42 +1567,39 @@ class VideoStateMachine:
         next_ready: bool = False,
         next_almost_ready: bool = False,
         speech_may_start: bool = False,
+        whisper_idx: Optional[int] = None,
     ) -> None:
+        del next_ready, next_almost_ready, speech_may_start
+        talking = bool(is_speech and whisper_idx is not None)
+        if _is_talk_clip_name(self.current_name):
+            self._continuous_idx = int(self.frame_idx)
+
+        if talking:
+            if not _is_talk_clip_name(self.current_name):
+                self._switch_at_boundary(CONTINUOUS_CLIP_NAME, PlayState.TALK)
+                return
+            if self.frame_idx < clip.end_pose:
+                self.frame_idx += 1
+            else:
+                self.frame_idx = int(clip.base_pose_frame)
+            self._continuous_idx = int(self.frame_idx)
+            self._ever_spoken = True
+            return
+
+        target_idle = (
+            BOOT_IDLE_CLIP_NAME
+            if (not self._ever_spoken and self.bank.get_clip(BOOT_IDLE_CLIP_NAME) is not None)
+            else self.bank._idle_name
+        )
+        if self.bank.get_clip(target_idle) is None:
+            target_idle = IDLE_CLIP_NAME if self.bank.get_clip(IDLE_CLIP_NAME) else self.bank._idle_name
+        if self.current_name != target_idle:
+            self._switch_at_boundary(target_idle, PlayState.IDLE)
+            return
         if self.frame_idx < clip.end_pose:
             self.frame_idx += 1
             return
-
-        idle_name = self.bank._idle_name
-        has_idle = idle_name in self.bank.clips and _is_true_idle_name(idle_name)
-        leftover = bool(is_speech)
-        on_idle = _is_true_idle_name(self.current_name)
-        hold_talk = (not leftover) and (bool(next_ready) or bool(next_almost_ready))
-        leave_idle = (
-            (not leftover)
-            and bool(next_ready)
-            and bool(speech_may_start)
-        )
-
-        if on_idle:
-            # Boot namira_idle: stay until playback is armed and a READY
-            # sentence exists, then switch at cycle end. idle_2s leftover
-            # keeps looping with lipsync until PCM finishes.
-            if leave_idle:
-                if _is_boot_idle_name(self.current_name):
-                    print(
-                        "[StateMachine] Leaving namira_idle at cycle end — first speech may start"
-                    )
-                self._switch_at_boundary(CONTINUOUS_CLIP_NAME, PlayState.TALK)
-                return
-            self.frame_idx = clip.base_pose_frame
-            return
-
-        if leftover or not hold_talk:
-            if has_idle:
-                self._switch_at_boundary(idle_name, PlayState.IDLE)
-                return
         self.frame_idx = clip.base_pose_frame
-        self._talk_loop_count += 1
 
     def _drain_action_queue(self) -> None:
         if self._action_queue and not self.pending_action:
@@ -1611,7 +1624,11 @@ class VideoStateMachine:
                 raise RuntimeError("compiled continuous clip missing")
             visible_idx = int(self.frame_idx)
             frame, cycle_idx = clip.forward_at(visible_idx)
-            needs_lipsync = bool(self._utterance_active and whisper_idx is not None)
+            needs_lipsync = bool(
+                is_speech
+                and whisper_idx is not None
+                and self.bank.clip_has_musetalk(clip.name)
+            )
 
             pkt = RawFramePacket(
                 seq=self._seq,
@@ -1631,6 +1648,7 @@ class VideoStateMachine:
                 next_ready=next_ready,
                 next_almost_ready=next_almost_ready,
                 speech_may_start=speech_may_start,
+                whisper_idx=whisper_idx,
             )
             self._seq += 1
             return pkt
@@ -2592,14 +2610,11 @@ def frame_fetcher_loop(
         if current_uid:
             pkt.utterance_id = current_uid
 
-        # Idle body may still carry leftover speech. Mouth index is whisper_idx,
-        # not the 48-frame idle clip length — keep lipsync on while PCM remains.
-        if whisper_idx is not None and (utterance_active or sm._utterance_active):
-            pkt.needs_lipsync = True
-        elif not utterance_active and not sm._utterance_active:
-            pkt.needs_lipsync = False
-        elif not sm.bank.clip_has_musetalk(pkt.clip_name):
-            pkt.needs_lipsync = False
+        pkt.needs_lipsync = bool(
+            is_speech
+            and whisper_idx is not None
+            and sm.bank.clip_has_musetalk(pkt.clip_name)
+        )
         metrics.set_gauge("raw_queue_depth", float(raw_q.qsize()))
         if bridge is not None:
             metrics.set_gauge("utterance_queue_depth", float(bridge.pending_count()))
@@ -2622,10 +2637,100 @@ def frame_fetcher_loop(
         deadline = _advance_broadcast_clock(deadline, period, metrics)
 
 
+@dataclass
+class PairedAVSlot:
+    seq: int
+    video: bytes
+    pcm: bytes
+    video_done: threading.Event = field(default_factory=threading.Event)
+    audio_done: threading.Event = field(default_factory=threading.Event)
+
+
+class PairedAVQueue:
+    """Admit one A/V packet once; both writers read the same slot object."""
+
+    SENTINEL = object()
+
+    def __init__(self, maxsize: int = 8):
+        self.maxsize = max(1, int(maxsize))
+        self._v_side: "queue.Queue[Any]" = queue.Queue(maxsize=self.maxsize)
+        self._a_side: "queue.Queue[Any]" = queue.Queue(maxsize=self.maxsize)
+        self._admit_lock = threading.Lock()
+        self._inflight: Dict[int, PairedAVSlot] = {}
+        self._completed: Dict[int, bool] = {}
+        self._next_seq = 0
+
+    def admit(
+        self,
+        video: bytes,
+        pcm: bytes,
+        *,
+        seq: Optional[int] = None,
+        timeout: float = 2.0,
+    ) -> bool:
+        if seq is None:
+            with self._admit_lock:
+                seq = self._next_seq
+                self._next_seq += 1
+        deadline = time.monotonic() + max(0.01, float(timeout))
+        with self._admit_lock:
+            if seq in self._completed:
+                return True
+            existing = self._inflight.get(seq)
+        if existing is not None:
+            remaining = max(0.05, deadline - time.monotonic())
+            return existing.video_done.wait(remaining) and existing.audio_done.wait(0.05)
+
+        slot = PairedAVSlot(seq=seq, video=video, pcm=pcm)
+        while True:
+            with self._admit_lock:
+                if (
+                    self._v_side.qsize() < self._v_side.maxsize
+                    and self._a_side.qsize() < self._a_side.maxsize
+                ):
+                    self._v_side.put_nowait(slot)
+                    self._a_side.put_nowait(slot)
+                    self._inflight[seq] = slot
+                    admitted = True
+                else:
+                    admitted = False
+            if admitted:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.005)
+
+    def mark_complete(self, slot: PairedAVSlot) -> None:
+        if not (slot.video_done.is_set() and slot.audio_done.is_set()):
+            return
+        with self._admit_lock:
+            self._inflight.pop(slot.seq, None)
+            self._completed[slot.seq] = True
+            if len(self._completed) > 64:
+                oldest = min(self._completed)
+                self._completed.pop(oldest, None)
+
+    def close(self) -> None:
+        for q in (self._v_side, self._a_side):
+            try:
+                q.put_nowait(self.SENTINEL)
+            except Exception:
+                pass
+
+
 class StreamBroadcaster:
-    """Push BGR + PCM to FFmpeg RTMP encoder (same pattern as frame_feed.py)."""
+    """Push BGR + PCM to FFmpeg RTMP encoder.
+
+    Dual anonymous pipes + dedicated A/V writer threads.
+
+    FFmpeg opens both inputs with its own demux threads. A single Python thread
+    that writes video then audio (or vice versa) deadlocks when one pipe fills
+    while FFmpeg is blocked reading the other. Writer threads keep each pipe
+    fed independently. Pipe capacity is at least one full BGR frame (~2.7 MiB).
+    """
 
     _ffmpeg_ipv4_supported: Optional[bool] = None
+    _SENTINEL = PairedAVQueue.SENTINEL
 
     def __init__(
         self,
@@ -2648,6 +2753,11 @@ class StreamBroadcaster:
         self._lock = threading.Lock()
         self._progress_seen = False
         self._video_codec = "libx264"
+        self._pair_q = PairedAVQueue(maxsize=8)
+        self._v_q = self._pair_q._v_side
+        self._a_q = self._pair_q._a_side
+        self._writer_threads: List[threading.Thread] = []
+        self._write_error = ""
         if not self.rtmp_url.lower().startswith(("rtmp://", "rtmps://")):
             raise ValueError(
                 f"RTMP URL tidak valid (harus rtmp:// atau rtmps://): {self.rtmp_url[:80]}"
@@ -2662,7 +2772,12 @@ class StreamBroadcaster:
 
     @classmethod
     def _want_force_ipv4(cls) -> bool:
-        return True
+        return os.environ.get("RTMP_FORCE_IPV4", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
 
     @classmethod
     def _ffmpeg_ipv4_flag_supported(cls) -> bool:
@@ -2671,8 +2786,10 @@ class StreamBroadcaster:
         import subprocess
 
         try:
+            # Do not use `-version` here: some builds ignore unknown flags and still
+            # exit 0, which falsely enables `-4` and then kills the real encode.
             proc = subprocess.run(
-                ["ffmpeg", "-hide_banner", "-4", "-version"],
+                ["ffmpeg", "-hide_banner", "-4"],
                 capture_output=True,
                 timeout=8,
             )
@@ -2682,11 +2799,21 @@ class StreamBroadcaster:
                 .lower()
             )
             cls._ffmpeg_ipv4_supported = (
-                proc.returncode == 0 and "unrecognized" not in err
+                proc.returncode == 0
+                and "unrecognized" not in err
+                and "option not found" not in err
             )
         except Exception:
             cls._ffmpeg_ipv4_supported = False
         return cls._ffmpeg_ipv4_supported
+
+    def _frame_bytes(self) -> int:
+        return int(self.width) * int(self.height) * 3
+
+    def _pipe_capacity(self) -> int:
+        # Must fit at least one full rawvideo frame; default Linux pipe is 64 KiB.
+        need = self._frame_bytes() + (256 * 1024)
+        return min(8 * 1024 * 1024, max(4 * 1024 * 1024, need))
 
     def _build_ffmpeg_cmd(
         self,
@@ -2712,6 +2839,7 @@ class StreamBroadcaster:
             "-hide_banner",
             "-loglevel",
             "info",
+            "-stats",
             "-y",
         ]
         if force_ipv4:
@@ -2721,7 +2849,7 @@ class StreamBroadcaster:
                 "-fflags",
                 "+nobuffer+genpts",
                 "-thread_queue_size",
-                "1024",
+                "512",
                 "-f",
                 "rawvideo",
                 "-pix_fmt",
@@ -2737,7 +2865,7 @@ class StreamBroadcaster:
                 "-i",
                 v_in,
                 "-thread_queue_size",
-                "1024",
+                "512",
                 "-f",
                 "s16le",
                 "-ar",
@@ -2792,8 +2920,6 @@ class StreamBroadcaster:
                 "flv",
                 "-rtmp_live",
                 "live",
-                "-stimeout",
-                "30000000",
                 "-rw_timeout",
                 "30000000",
             ]
@@ -2815,13 +2941,13 @@ class StreamBroadcaster:
             deadline = time.monotonic() + 1.5
             while time.monotonic() < deadline:
                 if proc.poll() is not None:
-                    rest = proc.stderr.read(max_bytes)
+                    rest = os.read(fd, max_bytes)
                     if rest:
                         text_parts.append(rest.decode("utf-8", errors="ignore"))
                     break
-                ready, _, _ = select.select([proc.stderr], [], [], 0.15)
+                ready, _, _ = select.select([fd], [], [], 0.15)
                 if ready:
-                    chunk = proc.stderr.read(4096)
+                    chunk = os.read(fd, 4096)
                     if chunk:
                         text_parts.append(chunk.decode("utf-8", errors="ignore"))
             body = "".join(text_parts)
@@ -2845,9 +2971,81 @@ class StreamBroadcaster:
                     pass
         raise RuntimeError(hint)
 
+    def _pipe_writer_loop(self, name: str, fh, q: "queue.Queue[Any]") -> None:
+        try:
+            while True:
+                item = q.get()
+                if item is self._SENTINEL:
+                    return
+                if self._closed or fh is None:
+                    return
+                payload = item.video if name == "video" else item.pcm
+                try:
+                    self._write_all(fh, payload)
+                    if name == "video":
+                        item.video_done.set()
+                    else:
+                        item.audio_done.set()
+                    self._pair_q.mark_complete(item)
+                except (BrokenPipeError, OSError, ValueError) as err:
+                    self._write_error = str(err)
+                    print(f"[Broadcaster] {name} pipe error: {err}", flush=True)
+                    out_dir = self.output_folder
+                    if out_dir:
+                        try:
+                            from rtmp_utils import write_rtmp_status
+
+                            write_rtmp_status(
+                                out_dir,
+                                "failed",
+                                "FFmpeg RTMP pipe putus — cek ai_worker_rtmp.log",
+                            )
+                        except Exception:
+                            pass
+                    return
+        except Exception as err:
+            self._write_error = str(err)
+            print(f"[Broadcaster] {name} writer fatal: {err}", flush=True)
+
+    def _start_writer_threads(self) -> None:
+        vt = threading.Thread(
+            target=self._pipe_writer_loop,
+            args=("video", self._v_fh, self._v_q),
+            name="FfmpegVideoWriter",
+            daemon=True,
+        )
+        at = threading.Thread(
+            target=self._pipe_writer_loop,
+            args=("audio", self._a_fh, self._a_q),
+            name="FfmpegAudioWriter",
+            daemon=True,
+        )
+        self._writer_threads = [vt, at]
+        for t in self._writer_threads:
+            t.start()
+
+    def _enqueue_av(
+        self,
+        video_buf: bytes,
+        pcm: bytes,
+        *,
+        block: bool = True,
+        seq: Optional[int] = None,
+    ) -> bool:
+        if self._closed or not self.is_alive() or self._write_error:
+            return False
+        ok = self._pair_q.admit(
+            video_buf,
+            pcm,
+            seq=seq,
+            timeout=2.0 if block else 0.05,
+        )
+        if not ok:
+            print("[Broadcaster] paired slot full — drop tick (FFmpeg slow/stuck)", flush=True)
+        return ok
+
     def _start_encoder(self) -> None:
         import subprocess
-        import threading
 
         video_r, video_w = os.pipe()
         audio_r, audio_w = os.pipe()
@@ -2855,6 +3053,14 @@ class StreamBroadcaster:
         os.set_inheritable(audio_r, True)
         os.set_inheritable(video_w, False)
         os.set_inheritable(audio_w, False)
+        pipe_cap = self._pipe_capacity()
+        for _pipe_fd in (video_r, video_w, audio_r, audio_w):
+            got = self._enlarge_pipe(_pipe_fd, pipe_cap)
+        print(
+            f"[Broadcaster] pipe capacity request={pipe_cap} "
+            f"frame_bytes={self._frame_bytes()} got≈{got}",
+            flush=True,
+        )
 
         v_in = f"/proc/self/fd/{video_r}"
         a_in = f"/proc/self/fd/{audio_r}"
@@ -2867,6 +3073,12 @@ class StreamBroadcaster:
                 log_path = os.path.join(out_dir, "ai_worker_rtmp.log")
                 log_fh = open(log_path, "a", encoding="utf-8", buffering=1)
                 self._stderr_log = log_fh
+                stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                log_fh.write(
+                    f"=== broadcast start {stamp} codec=libx264 "
+                    f"frame={self.width}x{self.height} pipe={pipe_cap} ===\n"
+                )
+                log_fh.flush()
             except Exception:
                 pass
 
@@ -2940,8 +3152,9 @@ class StreamBroadcaster:
                     if p is None or p.stderr is None:
                         return
                     try:
+                        fd = p.stderr.fileno()
                         while True:
-                            chunk = p.stderr.read(4096)
+                            chunk = os.read(fd, 4096)
                             if not chunk:
                                 break
                             text = chunk.decode("utf-8", errors="ignore")
@@ -2952,7 +3165,9 @@ class StreamBroadcaster:
                     except Exception:
                         pass
 
-                threading.Thread(target=_drain_stderr, daemon=True).start()
+                threading.Thread(
+                    target=_drain_stderr, name="FfmpegStderr", daemon=True
+                ).start()
             except Exception as exc:
                 print(f"[Broadcaster] RTMP stderr watcher notice: {exc}")
 
@@ -2960,25 +3175,62 @@ class StreamBroadcaster:
         os.close(audio_r)
         self._v_fh = os.fdopen(video_w, "wb", buffering=0)
         self._a_fh = os.fdopen(audio_w, "wb", buffering=0)
+        self._start_writer_threads()
+
+        # Prime both demuxers without blocking the caller on a full frame write.
+        black = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        if not self._enqueue_av(
+            np.ascontiguousarray(black, dtype=np.uint8).tobytes(),
+            self._silence_pcm(),
+            block=True,
+        ):
+            print("[Broadcaster] prime encoder queue failed", flush=True)
         print(
             f"[Broadcaster] RTMP encoder={getattr(self, '_video_codec', 'libx264')} "
-            f"@ {self.fps}fps → {self._safe_target()}"
+            f"@ {self.fps}fps → {self._safe_target()} (dual-writer)",
+            flush=True,
         )
 
     def is_alive(self) -> bool:
-        return self._proc is not None and self._proc.poll() is None
+        return (
+            self._proc is not None
+            and self._proc.poll() is None
+            and not self._write_error
+        )
 
     def has_progress(self) -> bool:
         """True setelah FFmpeg menulis frame=/bitrate (publish nyata, bukan soft-connect)."""
         return bool(self._progress_seen)
 
     @staticmethod
-    def _write_all(fh, data: bytes) -> None:
-        """Tulis seluruh buffer ke pipe blocking (rawvideo harus exact bytes).
+    def _enlarge_pipe(fd: int, size: int = 4 << 20) -> int:
+        try:
+            import fcntl
 
-        Jangan pakai O_NONBLOCK / select-timeout — partial write merusak frame,
-        sedangkan blocking write di thread Broadcaster aman saat FFmpeg handshake RTMP.
-        """
+            set_sz = getattr(fcntl, "F_SETPIPE_SZ", 1031)
+            get_sz = getattr(fcntl, "F_GETPIPE_SZ", 1032)
+            try:
+                fcntl.fcntl(fd, set_sz, int(size))
+            except Exception:
+                # Some hosts cap pipe size; try stepping down.
+                for cand in (4 << 20, 2 << 20, 1 << 20):
+                    if cand >= size:
+                        continue
+                    try:
+                        fcntl.fcntl(fd, set_sz, cand)
+                        break
+                    except Exception:
+                        continue
+            try:
+                return int(fcntl.fcntl(fd, get_sz))
+            except Exception:
+                return int(size)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _write_all(fh, data: bytes) -> None:
+        """Tulis seluruh buffer ke pipe blocking (rawvideo harus exact bytes)."""
         view = memoryview(data)
         offset = 0
         while offset < len(view):
@@ -2994,10 +3246,6 @@ class StreamBroadcaster:
         with self._lock:
             if self._closed or self._v_fh is None or self._a_fh is None:
                 return False
-            if getattr(self._v_fh, "closed", False) or getattr(
-                self._a_fh, "closed", False
-            ):
-                return False
             if not self.is_alive():
                 return False
 
@@ -3012,7 +3260,7 @@ class StreamBroadcaster:
                 return False
             if len(pcm) % (CHANNELS * BYTES_PER_SAMPLE):
                 raise ValueError(f"unaligned PCM packet: {len(pcm)} bytes")
-            expected = self.width * self.height * 3
+            expected = self._frame_bytes()
             buf = np.ascontiguousarray(frame, dtype=np.uint8).tobytes()
             if len(buf) != expected:
                 print(
@@ -3020,31 +3268,20 @@ class StreamBroadcaster:
                     flush=True,
                 )
                 return False
-            try:
-                self._write_all(self._v_fh, buf)
-                self._write_all(self._a_fh, pcm)
-                return True
-            except (BrokenPipeError, OSError, ValueError) as err:
-                print(f"[Broadcaster] RTMP pipe error: {err}", flush=True)
-                out_dir = self.output_folder
-                if out_dir:
-                    try:
-                        from rtmp_utils import write_rtmp_status
-
-                        write_rtmp_status(
-                            out_dir,
-                            "failed",
-                            "FFmpeg RTMP pipe putus — cek ai_worker_rtmp.log",
-                        )
-                    except Exception:
-                        pass
-                return False
+            return self._enqueue_av(buf, pcm, block=True)
 
     def shutdown(self) -> None:
         with self._lock:
             if self._closed:
                 return
             self._closed = True
+            self._pair_q.close()
+            for t in self._writer_threads:
+                try:
+                    t.join(timeout=1.0)
+                except Exception:
+                    pass
+            self._writer_threads = []
             for fh in (self._v_fh, self._a_fh):
                 if fh:
                     try:
@@ -3638,7 +3875,8 @@ class AIVisualWorker:
         self.assets_dir = assets_dir or os.path.join(self.base_dir, "assets", "3d")
         self.host = host
         self.rtmp_url = rtmp_url
-        self.output_folder = output_folder or os.path.join(self.base_dir, "output")
+        runtime_root = os.environ.get("WORKER_RUNTIME_ROOT", "/tmp/ai_live_worker")
+        self.output_folder = output_folder or os.path.join(runtime_root, "output")
         self.background_path = ""
         self.overlay_path = ""
         self.fps = TARGET_FPS
@@ -4184,6 +4422,9 @@ class AIVisualWorker:
     @property
     def broadcaster_running(self) -> bool:
         return bool(self._broadcaster and self._broadcaster.is_alive())
+
+    def encoder_has_progress(self) -> bool:
+        return bool(self._broadcaster is not None and self._broadcaster.has_progress())
 
     @property
     def prerender_status(self) -> dict:

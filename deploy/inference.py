@@ -8,6 +8,7 @@ import shutil
 import pickle
 import argparse
 import json
+import hashlib
 import numpy as np
 import subprocess
 import threading
@@ -530,9 +531,27 @@ def _load_models_cached(args=None):
     return _models_cache[cache_key]
 
 
-def _materials_disk_path(video_path: str) -> str:
+def _asset_cache_paths(video_path: str, suffix: str):
+    """Return read candidates and a safe write target for an avatar cache file."""
     input_basename = os.path.splitext(os.path.basename(video_path))[0]
-    return os.path.join(os.path.dirname(video_path), f"{input_basename}_materials.pt")
+    shared_path = os.path.join(os.path.dirname(video_path), f"{input_basename}{suffix}")
+    readonly_default = "1" if os.path.abspath(video_path).startswith("/workspace/") else "0"
+    shared_readonly = os.environ.get(
+        "MUSETALK_SHARED_CACHE_READONLY", readonly_default
+    ).strip().lower() not in ("0", "false", "no", "off")
+    if not shared_readonly:
+        return [shared_path], shared_path
+
+    runtime_root = os.environ.get(
+        "MUSETALK_RUNTIME_CACHE_ROOT",
+        os.path.join(
+            os.environ.get("WORKER_RUNTIME_ROOT", "/tmp/ai_live_worker"), "cache"
+        ),
+    )
+    os.makedirs(runtime_root, exist_ok=True)
+    digest = hashlib.sha256(os.path.abspath(video_path).encode("utf-8")).hexdigest()[:12]
+    local_path = os.path.join(runtime_root, f"{input_basename}_{digest}{suffix}")
+    return [shared_path, local_path], local_path
 
 
 def _latents_to_cpu(latents_list):
@@ -703,10 +722,12 @@ def _get_avatar_materials(
 
         # 2. Get landmarks / bounding boxes
         input_basename = os.path.splitext(os.path.basename(video_path))[0]
-        pkl_path = os.path.join(
-            os.path.dirname(video_path), f"{input_basename}_coords.pkl"
+        pkl_candidates, pkl_write_path = _asset_cache_paths(
+            video_path, "_coords.pkl"
         )
-        materials_path = _materials_disk_path(video_path)
+        materials_candidates, materials_write_path = _asset_cache_paths(
+            video_path, "_materials.pt"
+        )
 
         frame_h, frame_w = frame_list[0].shape[:2]
         cache_signature = {
@@ -734,7 +755,9 @@ def _get_avatar_materials(
         # validasi ini cache basi akan dipakai diam-diam dan wajah ter-crop di
         # posisi yang salah sepanjang siaran.
         coord_list = None
-        if os.path.exists(pkl_path):
+        for pkl_path in pkl_candidates:
+            if coord_list is not None or not os.path.exists(pkl_path):
+                continue
             try:
                 with open(pkl_path, "rb") as f:
                     cached = pickle.load(f)
@@ -756,7 +779,7 @@ def _get_avatar_materials(
                 frame_list, bbox_shift, bbox_shift_x
             )
             try:
-                with open(pkl_path, "wb") as f:
+                with open(pkl_write_path, "wb") as f:
                     pickle.dump({"signature": cache_signature, "coords": coord_list}, f)
             except Exception:
                 pass
@@ -779,9 +802,16 @@ def _get_avatar_materials(
             weight_dtype = next(getattr(vae, "vae", vae).parameters()).dtype
         except Exception:
             weight_dtype = None
-        disk_hit = _try_load_materials_disk(
-            materials_path, materials_signature, vae_device, dtype=weight_dtype
-        )
+        disk_hit = None
+        for materials_path in materials_candidates:
+            disk_hit = _try_load_materials_disk(
+                materials_path,
+                materials_signature,
+                vae_device,
+                dtype=weight_dtype,
+            )
+            if disk_hit is not None:
+                break
         if disk_hit is not None:
             input_latent_list, mask_materials = disk_hit
             if len(input_latent_list) != len(frame_list):
@@ -853,7 +883,10 @@ def _get_avatar_materials(
                         last_mat = mask_materials[i]
 
             _save_materials_disk(
-                materials_path, materials_signature, input_latent_list, mask_materials
+                materials_write_path,
+                materials_signature,
+                input_latent_list,
+                mask_materials,
             )
 
         # Continuous-only: one forward timeline. Reverse duplication caused

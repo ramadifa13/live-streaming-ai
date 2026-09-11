@@ -33,6 +33,8 @@ export interface RunPodBroadcastResult {
   success: boolean;
   status: string;
   error?: string;
+  rtmp_connected?: boolean;
+  pipeline_running?: boolean;
 }
 
 export interface RunPodQueueStatus {
@@ -63,6 +65,7 @@ export interface RunPodQueueStatus {
   broadcast_mode?: string;
   visual_worker_running?: boolean;
   visual_worker_initializing?: boolean;
+  pipeline_running?: boolean;
   broadcast_boot_state?: string;
   broadcast_boot_error?: string;
 }
@@ -208,25 +211,52 @@ function broadcastBootTimeoutMs(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 300_000;
 }
 
+export function isBroadcastPipelineRunning(
+  status:
+    | (RunPodBroadcastResult & {
+        boot_state?: string;
+        rtmp_connected?: boolean;
+        visual_worker_initializing?: boolean;
+        pipeline_running?: boolean;
+      })
+    | null,
+  queue: RunPodQueueStatus | null,
+): boolean {
+  return Boolean(
+    queue?.pipeline_running ||
+      queue?.visual_worker_running ||
+      queue?.broadcasting ||
+      status?.pipeline_running ||
+      status?.boot_state === "running" ||
+      status?.status === "connecting" ||
+      status?.status === "starting" ||
+      status?.status === "already_running",
+  );
+}
+
+export function isBroadcastRtmpReady(
+  status:
+    | (RunPodBroadcastResult & {
+        rtmp_connected?: boolean;
+      })
+    | null,
+  queue: RunPodQueueStatus | null,
+): boolean {
+  return Boolean(queue?.rtmp_connected === true || status?.rtmp_connected === true || queue?.rtmp_state === "connected");
+}
+
 function isBroadcastWorkerActive(
   status:
     | (RunPodBroadcastResult & {
         boot_state?: string;
         rtmp_connected?: boolean;
         visual_worker_initializing?: boolean;
+        pipeline_running?: boolean;
       })
     | null,
   queue: RunPodQueueStatus | null,
 ): boolean {
-  const rtmpReady = queue?.rtmp_connected === true || status?.rtmp_connected === true || queue?.rtmp_state === "connected";
-  return (
-    rtmpReady ||
-    queue?.visual_worker_running === true ||
-    queue?.broadcasting === true ||
-    status?.status === "streaming" ||
-    status?.status === "already_running" ||
-    status?.boot_state === "running"
-  );
+  return isBroadcastPipelineRunning(status, queue);
 }
 
 export async function startRunPodBroadcast(
@@ -397,6 +427,15 @@ export async function getRunPodQueueStatus(podId: string | null | undefined): Pr
   }));
 }
 
+export async function getRunPodBroadcastStatusOnce(podId: string | null | undefined): Promise<RunPodBroadcastResult | null> {
+  if (!podId && process.env.NODE_ENV === "production") return null;
+  try {
+    return await workerRequest(podId, "/stream/broadcast-status", { signal: AbortSignal.timeout(3_000) }, 3_000);
+  } catch {
+    return null;
+  }
+}
+
 export async function triggerWorkerPlayback(podId: string | null | undefined): Promise<void> {
   try {
     await workerRequestWithRetry(
@@ -439,10 +478,6 @@ export async function resumeRunPodBroadcast(podId: string | null | undefined): P
 }
 
 export async function warmupWorker(podId: string | null | undefined, maxWaitSeconds = 15): Promise<void> {
-  if (!podId) {
-    throw new Error("Worker GPU belum dialokasikan — broadcast dipanggil sebelum pod siap.");
-  }
-
   const workerUrl = getWorkerUrl(podId);
   if (!workerUrl) {
     throw new Error("URL worker RunPod tidak tersedia.");

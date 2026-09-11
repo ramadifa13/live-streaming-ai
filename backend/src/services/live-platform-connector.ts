@@ -59,11 +59,12 @@ interface SessionState {
 
 class LivePlatformConnector {
   private sessions = new Map<string, SessionState>();
-  private globalLiveDetectedCallback: LiveDetectedCallback | null = null;
+  private liveDetectedCallbacks = new Map<string, LiveDetectedCallback>();
   private globalSpeechCallback: SpeechCallback | null = null;
 
-  public setLiveDetectedCallback(callback: LiveDetectedCallback | null) {
-    this.globalLiveDetectedCallback = callback;
+  public setLiveDetectedCallback(sessionId: string, callback: LiveDetectedCallback | null) {
+    if (callback) this.liveDetectedCallbacks.set(sessionId, callback);
+    else this.liveDetectedCallbacks.delete(sessionId);
   }
 
   public setSpeechCallback(callback: SpeechCallback | null) {
@@ -113,6 +114,7 @@ class LivePlatformConnector {
       clearTimeout(state.pollerTimeout);
       state.pollerTimeout = null;
     }
+    this.liveDetectedCallbacks.delete(sessionId);
     this.sessions.delete(sessionId);
   }
 
@@ -229,11 +231,24 @@ class LivePlatformConnector {
     }
   }
 
+  public async notifyLiveDetected(sessionId: string): Promise<boolean> {
+    const state = this.sessions.get(sessionId);
+    const callback = this.liveDetectedCallbacks.get(sessionId);
+    if (!state || !callback) return false;
+    await callback(sessionId);
+    return true;
+  }
+
+  public hasLiveDetectedCallback(sessionId: string): boolean {
+    return this.liveDetectedCallbacks.has(sessionId);
+  }
+
   private async checkInstagramLiveStatus(sessionId: string, liveVideoId: string, accessToken: string): Promise<void> {
     const state = this.sessions.get(sessionId);
     if (!state || !state.isRunning) return;
 
-    if (this.globalLiveDetectedCallback && state.liveDetectionAttempts > 60) {
+    const callback = this.liveDetectedCallbacks.get(sessionId);
+    if (callback && state.liveDetectionAttempts > 60) {
       return;
     }
 
@@ -245,10 +260,10 @@ class LivePlatformConnector {
         const json = (await res.json()) as { status?: string };
         const isLive = json.status === "LIVE_NOW" || json.status === "live";
 
-        if (isLive && this.globalLiveDetectedCallback) {
+        if (isLive) {
           state.liveDetectionAttempts = 999;
           try {
-            await this.globalLiveDetectedCallback(sessionId);
+            await this.notifyLiveDetected(sessionId);
           } catch (err) {
             console.error("[LivePlatformConnector] Live detected callback failed:", err);
           }

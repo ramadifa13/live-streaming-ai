@@ -12,6 +12,7 @@ import { ttsRoutes } from "./routes/tts.js";
 import { avatarVideoRoutes } from "./routes/avatar-video.js";
 import { chatStreamRoutes } from "./routes/chat-stream.js";
 import { oauthRoutes } from "./routes/oauth.js";
+import { liveSessionManager } from "./services/live-session-manager.js";
 dotenv.config();
 
 const server = Fastify({
@@ -36,6 +37,35 @@ server.get("/health", async () => ({
   status: "healthy",
   timestamp: new Date().toISOString(),
 }));
+
+server.get("/api/health", async () => {
+  let db: "ok" | "error" = "ok";
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+  } catch {
+    db = "error";
+  }
+
+  let tts: "ok" | "warming" | "error" = "warming";
+  try {
+    const { isPocketTtsReady } = await import("./services/tts.js");
+    tts = isPocketTtsReady() ? "ok" : "warming";
+  } catch {
+    tts = "error";
+  }
+
+  const latest = liveSessionManager.getLatestActiveSession();
+  return {
+    ok: db === "ok",
+    status: db === "ok" ? "healthy" : "degraded",
+    timestamp: new Date().toISOString(),
+    db,
+    tts,
+    activeSession: latest
+      ? { sessionId: latest.sessionId, state: latest.state, podId: latest.podId || null }
+      : null,
+  };
+});
 
 await avatarsRoutes(server);
 await liveSessionRoutes(server);
@@ -100,6 +130,9 @@ try {
   }
   await server.listen({ port, host });
   console.log(`Backend ready at http://${host}:${port}`);
+  await liveSessionManager.rehydrateActiveSessions().catch((err) => {
+    console.error("[LiveSessionManager] Startup reconciliation failed:", err);
+  });
   console.log(`[TTS] Engine=Pocket TTS Indonesian voice_id=${process.env.VOICE_ID || "girl_cute_kids"} (backend)`);
 
   import("./services/runpod-manager.js").then((m) => m.startIdleMonitor());

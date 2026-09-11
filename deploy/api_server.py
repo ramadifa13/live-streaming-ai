@@ -187,8 +187,36 @@ def _session_encoder_alive() -> bool:
     return proc is not None and proc.poll() is None
 
 
+def _session_encoder_has_progress() -> bool:
+    vw = visual_worker
+    if vw is not None:
+        checker = getattr(vw, "encoder_has_progress", None)
+        if callable(checker):
+            try:
+                return bool(checker())
+            except Exception:
+                return False
+        br = getattr(vw, "_broadcaster", None)
+        if br is not None and hasattr(br, "has_progress"):
+            return bool(br.has_progress())
+    return False
+
+
 def _should_skip_start(rtmp_url: str, stream_key: str) -> bool:
-    return _session_encoder_alive() and _same_broadcast_target(rtmp_url, stream_key)
+    if not _same_broadcast_target(rtmp_url, stream_key):
+        return False
+    if not _session_encoder_alive():
+        return False
+    if not _session_encoder_has_progress():
+        print("[AI-Worker] Encoder hidup tanpa frame= — hentikan zombie lalu start ulang.")
+        try:
+            if stop_visual_broadcast is not None:
+                stop_visual_broadcast()
+        except Exception:
+            pass
+        _terminate_broadcaster()
+        return False
+    return True
 
 
 def _sweep_previous_session(idle_abs: str = "") -> None:
@@ -488,8 +516,9 @@ async def tts_health():
 async def get_logs():
     logs_output = []
     log_files = [
-        os.path.join(os.path.dirname(__file__), "api_server.log"),
+        os.path.join(worker.log_dir, "api_server.log"),
         os.path.join(output_dir, "broadcaster.log"),
+        os.path.join(output_dir, "ai_worker_rtmp.log"),
     ]
     for log_f in log_files:
         if os.path.exists(log_f):
@@ -906,6 +935,7 @@ async def get_queue_status():
         "stream_paused": stream_paused,
         "visual_worker_running": visual_worker_running,
         "visual_worker_pipeline_active": _visual_worker_pipeline_active(),
+        "pipeline_running": bool(is_broadcasting),
         "visual_worker_initializing": visual_worker_initializing,
         "broadcast_boot_state": _broadcast_boot_state,
         "broadcast_boot_error": _broadcast_boot_error,
@@ -1535,31 +1565,30 @@ async def broadcast_status():
     if read_rtmp_status is not None:
         rtmp_state, rtmp_error = read_rtmp_status(output_dir)
         rtmp_connected = running and rtmp_state == "connected"
+    if rtmp_connected:
+        status = "streaming"
+    elif running:
+        status = "connecting"
+    elif _broadcast_boot_state == "starting":
+        status = "starting"
+    else:
+        status = "stopped"
     if _broadcast_boot_state == "error" and _broadcast_boot_error:
         return {
             "success": False,
             "status": "error",
             "boot_state": "error",
             "error": _broadcast_boot_error,
+            "pipeline_running": running,
             "rtmp_connected": rtmp_connected,
             "rtmp_state": rtmp_state,
         }
-    if rtmp_connected or running:
-        return {
-            "success": True,
-            "status": "streaming",
-            "boot_state": "running",
-            "rtmp_connected": rtmp_connected,
-            "rtmp_state": rtmp_state,
-            "visual_worker_running": vw_running,
-            "visual_worker_pipeline_active": _visual_worker_pipeline_active(),
-            "visual_worker_initializing": vw_initializing,
-        }
-    if _broadcast_boot_state == "starting":
+    if _broadcast_boot_state == "starting" and not running:
         return {
             "success": True,
             "status": "starting",
             "boot_state": "starting",
+            "pipeline_running": False,
             "rtmp_connected": False,
             "rtmp_state": rtmp_state,
             "visual_worker_running": vw_running,
@@ -1568,11 +1597,15 @@ async def broadcast_status():
         }
     return {
         "success": True,
-        "status": "stopped",
-        "boot_state": _broadcast_boot_state,
-        "rtmp_connected": False,
+        "status": status,
+        "boot_state": "running" if running else _broadcast_boot_state,
+        "pipeline_running": running,
+        "rtmp_connected": rtmp_connected,
         "rtmp_state": rtmp_state,
-        "rtmp_error": rtmp_error,
+        "rtmp_error": rtmp_error if not rtmp_connected else "",
+        "visual_worker_running": vw_running,
+        "visual_worker_pipeline_active": _visual_worker_pipeline_active(),
+        "visual_worker_initializing": vw_initializing,
     }
 
 

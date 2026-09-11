@@ -421,16 +421,21 @@ class SpeechBridge:
     """
 
     # Opening buffer only. After utterance #1 starts, rolling producer = 1.
-    MIN_READY_UTTERANCES: int = 3
+    MIN_READY_UTTERANCES: int = max(
+        1, int(os.environ.get("AI_WORKER_GO_LIVE_MIN_UTTERANCES", "3"))
+    )
     MAX_PENDING_UTTERANCES: int = 12
     PREP_WORKERS: int = 2
     # MuseTalk jobs to start while the current READY segment is still playing.
     MAX_RENDER_AHEAD: int = 2
-    # 1s breath on the talk video before N+1 when the next sentence is already READY.
-    BETWEEN_UTTERANCE_GAP_FRAMES: int = TARGET_FPS
+    BETWEEN_UTTERANCE_GAP_FRAMES: int = max(
+        12,
+        min(24, int(os.environ.get("BETWEEN_UTTERANCE_GAP_FRAMES", "18"))),
+    )
 
     def __init__(self, output_folder: str = ""):
-        self.output_folder = output_folder or "/workspace/ai_live_worker/output"
+        runtime_root = os.environ.get("WORKER_RUNTIME_ROOT", "/tmp/ai_live_worker")
+        self.output_folder = output_folder or os.path.join(runtime_root, "output")
         self._pending: Deque[UtteranceJob] = deque()
         self._current: Optional[UtteranceJob] = None
         self._frame_cursor = 0
@@ -732,7 +737,7 @@ class SpeechBridge:
                 job.lipsync_ready.set()
 
     def _arm_between_gap(self) -> None:
-        """One 1s silence on talk before N+1. Skip if next is not READY yet."""
+        """Natural 0.5–1.0s silence (default 0.75s) before N+1."""
         if self._gap_played_for_current or self._between_gap_left > 0:
             return
         if self.ready_upcoming_count() <= 0:
@@ -743,9 +748,23 @@ class SpeechBridge:
         self._gap_played_for_current = True
         if self._between_gap_left > 0:
             print(
-                f"[SpeechBridge] Jeda {self._between_gap_left / float(TARGET_FPS):.1f}s "
-                "sebelum kalimat berikutnya"
+                f"[SpeechBridge] Jeda {self._between_gap_left / float(TARGET_FPS):.2f}s "
+                "sebelum kalimat berikutnya (INTER_GAP)"
             )
+
+    def _emit_gap_silence(self) -> Tuple[bytes, bool, Optional[int]]:
+        if self._between_gap_left > 0:
+            self._between_gap_left -= 1
+        size = bytes_for_frame(self._silence_frame_index)
+        self._silence_frame_index += 1
+        return b"\x00" * size, False, None
+
+    def current_audio_phase(self) -> str:
+        if self._between_gap_left > 0:
+            return "INTER_GAP"
+        if self._current is not None and self._frame_cursor < self._current.num_frames:
+            return "SPEECH"
+        return "SILENCE"
 
     def _emit_gap_silence(self) -> Tuple[bytes, bool, Optional[int]]:
         if self._between_gap_left > 0:

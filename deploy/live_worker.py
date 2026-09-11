@@ -12,17 +12,33 @@ from argparse import Namespace
 
 class AILiveWorker:
     def __init__(self):
-        # Konfigurasi Direktori Server RunPod (Dynamic with Fallback)
-        default_base = (
+        # Shared root is mounted from the network volume and is read-mostly.
+        # Every pod gets its own local runtime root so output/flags/temp from
+        # concurrent buyers can never collide on the shared volume.
+        default_shared = (
             "/workspace/ai_live_worker"
             if os.path.exists("/workspace/ai_live_worker")
             else os.path.dirname(os.path.abspath(__file__))
         )
-        self.base_dir = default_base
+        self.base_dir = os.environ.get("WORKER_SHARED_ROOT", default_shared).rstrip(
+            "/\\"
+        )
+        default_runtime = (
+            "/tmp/ai_live_worker"
+            if self.base_dir.startswith("/workspace/")
+            else os.path.join(self.base_dir, ".runtime")
+        )
+        self.runtime_root = os.environ.get(
+            "WORKER_RUNTIME_ROOT", default_runtime
+        ).rstrip("/\\")
         self.assets_2d = os.path.join(self.base_dir, "assets", "2d")
         self.assets_3d = os.path.join(self.base_dir, "assets", "3d")
-        self.temp_dir = os.path.join(self.base_dir, "temp")
-        self.output_dir = os.path.join(self.base_dir, "output")
+        self.temp_dir = os.path.join(self.runtime_root, "temp")
+        self.output_dir = os.path.join(self.runtime_root, "output")
+        self.log_dir = os.path.join(self.runtime_root, "logs")
+        os.makedirs(self.temp_dir, exist_ok=True)
+        os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(self.log_dir, exist_ok=True)
 
         # Konfigurasi MuseTalk
         self.musetalk_dir = os.path.join(self.base_dir, "MuseTalk")

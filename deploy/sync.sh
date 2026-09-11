@@ -16,6 +16,8 @@ set -euo pipefail
 REPO_DIR="${REPO_DIR:-/workspace/live-streaming-ai}"
 WORKER_DIR="${WORKER_DIR:-/workspace/ai_live_worker}"
 DEPLOY_DIR="${DEPLOY_DIR:-$REPO_DIR/deploy}"
+export WORKER_SHARED_ROOT="${WORKER_SHARED_ROOT:-$WORKER_DIR}"
+export WORKER_RUNTIME_ROOT="${WORKER_RUNTIME_ROOT:-/tmp/ai_live_worker}"
 REPO_URL="${REPO_URL:-https://github.com/ramadifa13/live-streaming-ai.git}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 # 0 = jangan timpa asset yang sudah ada, 1 = timpa semua asset

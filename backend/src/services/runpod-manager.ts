@@ -6,8 +6,9 @@ export interface PodStatus {
 
 let lastGpuActivityTimestamp = Date.now();
 let idleMonitorInterval: NodeJS.Timeout | null = null;
-let liveSessionActive = false;
+const activeLiveSessions = new Set<string>();
 let activeJobLeases = 0;
+const podOwners = new Map<string, string>();
 
 function isProdLike(): boolean {
   return (process.env.NODE_ENV || "").toLowerCase() === "production";
@@ -17,16 +18,17 @@ function resolveProvider(): string {
   return (process.env.GPU_PROVIDER ?? process.env.AVATAR_PROVIDER ?? "mock").toLowerCase();
 }
 
-export function setLiveSessionActive(active: boolean) {
-  liveSessionActive = active;
+export function setLiveSessionActive(active: boolean, sessionId = "legacy") {
+  if (active) activeLiveSessions.add(sessionId);
+  else activeLiveSessions.delete(sessionId);
   if (active) updateGpuActivity();
 }
 
 export function isLiveSessionActive(): boolean {
-  return liveSessionActive;
+  return activeLiveSessions.size > 0;
 }
 
-export async function acquireGpuForJob(): Promise<string | null> {
+export async function acquireGpuForJob(ownerId?: string): Promise<string | null> {
   activeJobLeases += 1;
   try {
     const provider = resolveProvider();
@@ -35,9 +37,10 @@ export async function acquireGpuForJob(): Promise<string | null> {
     }
     if (provider === "mock") {
       console.log("[RunPodManager] GPU/Avatar provider is mock. Skipping GPU acquisition.");
+      activeJobLeases = Math.max(0, activeJobLeases - 1);
       return null;
     }
-    return await startPodAndWait();
+    return await startPodAndWait(undefined, { sessionId: ownerId });
   } catch (error) {
     activeJobLeases = Math.max(0, activeJobLeases - 1);
     throw error;
@@ -63,10 +66,27 @@ export function isStaticPodId(podId?: string | null): boolean {
   return Boolean(staticId && id && staticId === id);
 }
 
-export async function releaseGpuForJob(podId?: string | null): Promise<void> {
+export function rememberPodOwner(podId: string, sessionId: string): void {
+  if (podId && sessionId) podOwners.set(podId, sessionId);
+}
+
+export function getPodOwner(podId: string): string | undefined {
+  return podOwners.get(podId);
+}
+
+export function assertPodReleaseAllowed(podId: string, ownerId?: string): void {
+  const registeredOwner = podOwners.get(podId);
+  if (ownerId && registeredOwner && registeredOwner !== ownerId) {
+    throw new Error(`Pod ${podId} dimiliki sesi lain; release ditolak.`);
+  }
+}
+
+export async function releaseGpuForJob(podId?: string | null, ownerId?: string): Promise<void> {
   activeJobLeases = Math.max(0, activeJobLeases - 1);
   if (podId) {
+    assertPodReleaseAllowed(podId, ownerId);
     await stopPod(podId);
+    podOwners.delete(podId);
   }
 }
 
@@ -177,7 +197,7 @@ const BUDGET_GPU_TIERS = [
   },
 ];
 
-export async function createPod(): Promise<string> {
+export async function createPod(sessionId?: string): Promise<string> {
   const volumeId = process.env.RUNPOD_NETWORK_VOLUME_ID;
   if (!volumeId) {
     throw new Error("RUNPOD_NETWORK_VOLUME_ID is not configured");
@@ -218,6 +238,7 @@ export async function createPod(): Promise<string> {
           console.log(`[RunPodManager] Mencoba alokasi GPU: ${gpuTier.label}...`);
         }
 
+        const sessionSlug = (sessionId || "adhoc").replace(/[^a-zA-Z0-9_-]/g, "").slice(-24) || "adhoc";
         const input: Record<string, unknown> = {
           cloudType: cloudType,
           gpuCount: 1,
@@ -227,10 +248,13 @@ export async function createPod(): Promise<string> {
           minVcpuCount: Number(process.env.RUNPOD_MIN_VCPU || "8"),
           minMemoryInGb: Number(process.env.RUNPOD_MIN_MEMORY_GB || "24"),
           gpuTypeId: gpuTier.id,
-          name: `LiveWorker-${gpuTier.id.replace(/\s+/g, "_")}`,
+          name: `LiveWorker-${sessionSlug}-${gpuTier.id.replace(/\s+/g, "_")}`.slice(0, 64),
           imageName: "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04",
           dockerArgs:
-            "bash -c 'for i in $(seq 1 30); do if [ -f /workspace/ai_live_worker/start.sh ]; then cd /workspace/ai_live_worker && bash start.sh; elif [ -f /workspace/live-streaming-ai/deploy/start.sh ]; then cd /workspace/live-streaming-ai/deploy && bash start.sh; fi; sleep 2; done; sleep infinity'",
+            `bash -c 'export LIVE_SESSION_ID=${sessionSlug} WORKER_SHARED_ROOT=/workspace/ai_live_worker ` +
+            "WORKER_RUNTIME_ROOT=/tmp/ai_live_worker WORKER_SHARED_IMMUTABLE=1 MUSETALK_SHARED_CACHE_READONLY=1; " +
+            "for i in $(seq 1 30); do if [ -f /workspace/ai_live_worker/start.sh ]; then cd /workspace/ai_live_worker && bash start.sh; " +
+            "elif [ -f /workspace/live-streaming-ai/deploy/start.sh ]; then cd /workspace/live-streaming-ai/deploy && bash start.sh; fi; sleep 2; done; sleep infinity'",
           ports: "8000/http",
           networkVolumeId: volumeId,
           volumeMountPath: "/workspace",
@@ -241,6 +265,7 @@ export async function createPod(): Promise<string> {
 
         if (data?.podFindAndDeployOnDemand?.id) {
           const createdPodId = data.podFindAndDeployOnDemand.id;
+          if (sessionId) rememberPodOwner(createdPodId, sessionId);
           console.log(`[RunPodManager] Sukses membuat Pod ${createdPodId} dengan ${gpuTier.label}!`);
           return createdPodId;
         }
@@ -300,6 +325,7 @@ export type StartPodOptions = {
 
   onPodCreated?: (podId: string) => void;
   shouldAbort?: () => boolean;
+  sessionId?: string;
 };
 
 function resolveStartPodOptions(onProgressOrOptions?: ((message: string) => void) | StartPodOptions): StartPodOptions {
@@ -412,7 +438,7 @@ export async function startPodAndWait(
   while (retries > 0) {
     try {
       if (process.env.RUNPOD_NETWORK_VOLUME_ID) {
-        currentPodId = await createPod();
+        currentPodId = await createPod(options.sessionId);
       }
       createSuccess = true;
       break;
@@ -523,13 +549,42 @@ export async function stopPod(podId: string): Promise<boolean> {
   }
 }
 
+export async function listManagedLivePods(): Promise<Array<{ id: string; name: string; desiredStatus?: string }>> {
+  const query = `
+    query myself {
+      myself {
+        pods {
+          id
+          name
+          desiredStatus
+        }
+      }
+    }
+  `;
+  try {
+    const data = await runpodGraphQL(query, {});
+    const pods = Array.isArray(data?.myself?.pods) ? data.myself.pods : [];
+    return pods
+      .filter((pod: { name?: string }) => String(pod?.name || "").startsWith("LiveWorker-"))
+      .map((pod: { id: string; name: string; desiredStatus?: string }) => ({
+        id: pod.id,
+        name: pod.name,
+        desiredStatus: pod.desiredStatus,
+      }));
+  } catch (err) {
+    console.warn("[RunPodManager] Gagal list pod LiveWorker:", err);
+    return [];
+  }
+}
+
 export async function getGpuControlStatus(podId: string | null) {
   const pod = podId ? await getPodStatus(podId) : null;
   return {
     configured: Boolean(process.env.RUNPOD_NETWORK_VOLUME_ID || getStaticPodId()),
     podId: podId || getStaticPodId() || null,
     desiredStatus: pod?.desiredStatus || "UNKNOWN",
-    liveSessionActive,
+    liveSessionActive: activeLiveSessions.size > 0,
+    activeLiveSessionCount: activeLiveSessions.size,
     activeJobLeases,
     workerUrl: getWorkerUrl(podId),
   };
@@ -539,18 +594,9 @@ export function getWorkerUrl(podId?: string | null): string | null {
   const staticPodId = getStaticPodId();
   const resolvedPodId = podId?.trim() || staticPodId || null;
   const configuredUrl = (process.env.RUNPOD_WORKER_URL || process.env.AVATAR_WORKER_URL || "").replace(/\/$/, "");
-  const configuredIsLocal = configuredUrl.includes("localhost") || configuredUrl.includes("127.0.0.1");
-
-  if (staticPodId && configuredUrl && !configuredIsLocal && (!resolvedPodId || resolvedPodId === staticPodId)) {
-    return configuredUrl;
-  }
 
   if (resolvedPodId) {
     return `https://${resolvedPodId}-8000.proxy.runpod.net`;
-  }
-
-  if (configuredUrl && !configuredIsLocal) {
-    return configuredUrl;
   }
 
   if (process.env.NODE_ENV !== "production") {
