@@ -23,10 +23,11 @@ MAX_PROMPT_SECONDS = 12
 # Aggressive band-pass ringing caused sudden buzz; keep native 24 kHz.
 AUDIO_FILTER_ENABLED = os.environ.get("POCKET_TTS_AUDIO_FILTER", "0") != "0"
 ONSET_FADE_MS = 20
-TRAIL_FADE_MS = 280
-TRAIL_PAD_MS = 40
-TRAIL_MAX_TRIM_SEC = 0.9
-TRAIL_RMS_FLOOR = 0.018
+TRAIL_FADE_MS = 400
+TRAIL_DECAY_MS = 220
+TRAIL_PLATEAU_MS = 160
+TRAIL_MAX_TRIM_SEC = 4.0
+TRAIL_MAX_TRIM_RATIO = 0.5
 
 
 def smooth_onset(samples: np.ndarray, sample_rate: int) -> np.ndarray:
@@ -39,38 +40,61 @@ def smooth_onset(samples: np.ndarray, sample_rate: int) -> np.ndarray:
 
 
 def trim_trailing_buzz(samples: np.ndarray, sample_rate: int) -> np.ndarray:
-    """Drop vocoder tail drone, then fade out. Never trim more than TRAIL_MAX_TRIM_SEC."""
+    """Cut a loud flat vocoder drone after the last speech peak, then fade out."""
     if samples.size < max(8, sample_rate // 4):
         return samples
-    win = max(1, int(sample_rate * 0.01))
+    win = max(1, int(sample_rate * 0.02))
     env = np.convolve(np.abs(samples), np.ones(win, dtype=np.float32) / win, mode="same")
     peak = float(np.max(env)) if env.size else 0.0
-    floor = max(TRAIL_RMS_FLOOR, peak * 0.04)
-    active = np.flatnonzero(env > floor)
-    if active.size == 0:
+    if peak <= 1e-5:
         return samples
-    pad = int(sample_rate * TRAIL_PAD_MS / 1000)
-    end = min(samples.size, int(active[-1]) + pad)
-    min_end = max(1, samples.size - int(sample_rate * TRAIL_MAX_TRIM_SEC))
-    end = max(end, min_end)
+    strong = max(0.06, peak * 0.22)
+    weak = max(0.02, peak * 0.07)
+    strong_idx = np.flatnonzero(env > strong)
+    if strong_idx.size == 0:
+        return samples
+    last_strong = int(strong_idx[-1])
+    search_from = min(samples.size, last_strong + int(sample_rate * TRAIL_DECAY_MS / 1000))
+    hop = max(1, win)
+    plateau_need = int(sample_rate * TRAIL_PLATEAU_MS / 1000)
+    end = samples.size
+    plateau_start = None
+    plateau_len = 0
+    i = search_from
+    while i + hop <= samples.size:
+        seg = env[i : i + hop]
+        mean = float(np.mean(seg))
+        std = float(np.std(seg))
+        cv = std / max(mean, 1e-6)
+        if mean < weak:
+            end = i
+            break
+        if mean < strong and cv < 0.28:
+            if plateau_start is None:
+                plateau_start = i
+            plateau_len += hop
+            if plateau_len >= plateau_need:
+                end = plateau_start
+                break
+        else:
+            plateau_start = None
+            plateau_len = 0
+        i += hop
+    max_trim = min(int(sample_rate * TRAIL_MAX_TRIM_SEC), int(samples.size * TRAIL_MAX_TRIM_RATIO))
+    min_end = max(int(sample_rate * 0.5), samples.size - max_trim)
+    end = max(min(end, samples.size), min_end)
     out = np.array(samples[:end], dtype=np.float32, copy=True)
-    fade = min(out.size, max(1, int(sample_rate * TRAIL_FADE_MS / 1000)))
+    fade = min(max(1, out.size // 3), max(1, int(sample_rate * TRAIL_FADE_MS / 1000)))
     if fade > 1:
         ramp = np.sin(np.linspace(np.pi / 2, 0, fade, dtype=np.float32)) ** 2
         out[-fade:] *= ramp
+    trimmed = (samples.size - out.size) / float(sample_rate)
+    if trimmed >= 0.08:
+        print(f"[PocketTTS] trimmed trailing buzz {trimmed:.2f}s", file=sys.stderr)
     return out
 
 model = TTSModel.load_model(config=CONFIG)
 prompt_cache: dict[str, tuple[int, object]] = {}
-
-
-def smooth_onset(samples: np.ndarray, sample_rate: int) -> np.ndarray:
-    fade_samples = min(samples.size, max(1, int(sample_rate * ONSET_FADE_MS / 1000)))
-    if fade_samples <= 1:
-        return samples
-    fade = np.sin(np.linspace(0, np.pi / 2, fade_samples, dtype=np.float32)) ** 2
-    samples[:fade_samples] *= fade
-    return samples
 
 
 def prepare_prompt_audio(reference_path: Path) -> torch.Tensor:

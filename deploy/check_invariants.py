@@ -148,6 +148,22 @@ def check_24fps_pacer() -> None:
         _fail("pacer 24fps (_advance_broadcast_clock) hilang")
     if "_broadcast_queue_wait" not in src:
         _fail("_broadcast_queue_wait hilang")
+    if "RAW_QUEUE_BLOCK_SEC = 0.25" in src:
+        _fail("raw queue block 0.25s — harus 1 tick 24fps")
+    fetcher = ""
+    if "def frame_fetcher_loop" in src:
+        fetcher = src.split("def frame_fetcher_loop", 1)[1].split(
+            "class StreamBroadcaster", 1
+        )[0]
+    if "_advance_broadcast_clock" not in fetcher:
+        _fail("frame_fetcher_loop tidak di-pace 24fps")
+    lipsync_loop = ""
+    if "def lipsync_worker_loop" in src:
+        lipsync_loop = src.split("def lipsync_worker_loop", 1)[1].split(
+            "def _put_raw_frame", 1
+        )[0]
+    if "timeout=0.25" in lipsync_loop:
+        _fail("lipsync_worker_loop put timeout 0.25s (lag spike)")
     print("[INVARIANT] 24fps pacer OK")
 
 
@@ -184,6 +200,12 @@ def check_audio_sample_rate_contract() -> None:
         _fail("SpeechBridge.set_visual_gate hilang")
     if "def enter_boot_idle" not in worker:
         _fail("enter_boot_idle hilang — Go Live harus loop namira_idle dulu")
+    if "BETWEEN_UTTERANCE_GAP_FRAMES: int = TARGET_FPS" not in bridge:
+        _fail("jeda 1s antar kalimat (BETWEEN_UTTERANCE_GAP_FRAMES) hilang")
+    if "def in_between_utterance_gap" not in bridge:
+        _fail("in_between_utterance_gap hilang — end_utterance bisa potong jeda 1s")
+    if "in_between_utterance_gap" not in worker:
+        _fail("frame_fetcher tidak menghormati jeda 1s sebelum end_utterance")
     if "MIN_READY_UTTERANCES: int = 3" not in bridge:
         _fail("SpeechBridge opening gate harus 3 kalimat READY, sekali di awal")
     idle_asset = ROOT / "assets" / "3d" / "namira_idle.mp4"

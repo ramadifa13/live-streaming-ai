@@ -13,12 +13,14 @@ from ai_worker import (
     BOOT_IDLE_CLIP_NAME,
     CONTINUOUS_CLIP_NAME,
     IDLE_CLIP_NAME,
+    QUEUE_WAIT_SEC,
     ClipAsset,
     LipSyncEngine,
     PlayState,
     RawFramePacket,
     VideoStateMachine,
     _MouthSlot,
+    _advance_broadcast_clock,
     _broadcast_queue_wait,
 )
 from speech_bridge import SpeechBridge, UtteranceJob
@@ -90,6 +92,27 @@ def test_broadcast_wait_never_stalls_past_one_frame():
     assert _broadcast_queue_wait(now - 1.0, period, now=now) == 0.0
     half = _broadcast_queue_wait(now + period * 0.5, period, now=now)
     assert 0.0 < half <= period
+    assert QUEUE_WAIT_SEC <= period + 1e-9
+
+
+def test_advance_broadcast_clock_late_rebases_without_catchup():
+    class _Metrics:
+        def __init__(self):
+            self.names = []
+
+        def inc(self, name):
+            self.names.append(name)
+
+    metrics = _Metrics()
+    period = 1.0 / 24.0
+    now = 100.0
+    on_time = _advance_broadcast_clock(now, period, metrics, now=now + period)
+    assert on_time == now + period
+    assert metrics.names == []
+    _advance_broadcast_clock(now, period, metrics, now=now + period * 4)
+    assert "broadcast_pacer_reset" in metrics.names
+    assert "broadcast_lag_catchup" not in metrics.names
+    assert "broadcast_seq_fast_forward" not in metrics.names
 
 
 def test_go_live_loops_idle_until_ready_then_talk():
@@ -269,11 +292,51 @@ def test_visual_gate_blocks_next_sentence_until_idle_done():
     assert list(bridge._pending)[0] is nxt
 
     gate["allow"] = True
+    silences = [bridge.get_audio_chunk() for _ in range(bridge.BETWEEN_UTTERANCE_GAP_FRAMES)]
+    assert all(item[1] is False for item in silences)
+    assert bridge._current is current or bridge._current is None
     pcm, is_speech, idx = bridge.get_audio_chunk()
     assert pcm == b"C"
     assert is_speech is True
     assert idx == 0
     assert bridge._current is nxt
+
+
+def test_ready_next_gets_one_second_talk_gap():
+    bridge = SpeechBridge(output_folder="/tmp/ai_live_worker_test")
+    assert bridge.BETWEEN_UTTERANCE_GAP_FRAMES == 24
+    current = UtteranceJob(task_id="task_n", audio_path="")
+    current.pcm_frames = [b"A"]
+    current.num_frames = 1
+    current.whisper_chunks = torch.zeros((1, 1))
+    current.ready.set()
+    current.lipsync_ready.set()
+    current.lipsync_primed = True
+    bridge._current = current
+    bridge._frame_cursor = 1
+    bridge._ever_started = True
+
+    nxt = UtteranceJob(task_id="task_n1", audio_path="")
+    nxt.pcm_frames = [b"C"]
+    nxt.num_frames = 1
+    nxt.whisper_chunks = torch.zeros((1, 1))
+    nxt.ready.set()
+    nxt.lipsync_ready.set()
+    nxt.lipsync_primed = True
+    bridge._pending.append(nxt)
+
+    first = bridge.get_audio_chunk()
+    assert first[1] is False
+    assert first[0] != b"C"
+    assert bridge.in_between_utterance_gap() is True
+    rest = [bridge.get_audio_chunk() for _ in range(23)]
+    assert all(item[1] is False for item in rest)
+    assert all(item[0] != b"C" for item in rest)
+    assert bridge.in_between_utterance_gap() is False
+    pcm, is_speech, idx = bridge.get_audio_chunk()
+    assert pcm == b"C"
+    assert is_speech is True
+    assert idx == 0
 
 
 def test_idle_gate_does_not_cut_remaining_pcm():

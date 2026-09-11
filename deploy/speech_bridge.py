@@ -358,7 +358,7 @@ def _split_pcm_frames(
 # Soften AAC clicks. Longer fade-out than fade-in so Pocket TTS tail buzz dies
 # without swallowing the first consonant. Sample count per frame stays identical.
 PCM_EDGE_FADE_IN_FRAMES = 2
-PCM_EDGE_FADE_OUT_FRAMES = 8
+PCM_EDGE_FADE_OUT_FRAMES = 12
 
 
 def _scale_pcm_frame(frame: bytes, gain: float) -> bytes:
@@ -426,6 +426,8 @@ class SpeechBridge:
     PREP_WORKERS: int = 2
     # MuseTalk jobs to start while the current READY segment is still playing.
     MAX_RENDER_AHEAD: int = 2
+    # 1s breath on the talk video before N+1 when the next sentence is already READY.
+    BETWEEN_UTTERANCE_GAP_FRAMES: int = TARGET_FPS
 
     def __init__(self, output_folder: str = ""):
         self.output_folder = output_folder or "/workspace/ai_live_worker/output"
@@ -450,6 +452,8 @@ class SpeechBridge:
         # Pre-queue gate: True selama belum ada utterance pertama yang dimulai.
         self._prequeue_gate_active: bool = self.MIN_READY_UTTERANCES > 1
         self._ever_started: bool = False  # False sampai utterance pertama mulai
+        self._between_gap_left: int = 0
+        self._gap_played_for_current: bool = False
 
     def set_models(self, models_bundle) -> None:
         self._models = models_bundle
@@ -727,10 +731,35 @@ class SpeechBridge:
                 job.error = str(err) or "prime failed"
                 job.lipsync_ready.set()
 
+    def _arm_between_gap(self) -> None:
+        """One 1s silence on talk before N+1. Skip if next is not READY yet."""
+        if self._gap_played_for_current or self._between_gap_left > 0:
+            return
+        if self.ready_upcoming_count() <= 0:
+            return
+        if not self._visual_allows_next_start():
+            return
+        self._between_gap_left = max(0, int(self.BETWEEN_UTTERANCE_GAP_FRAMES))
+        self._gap_played_for_current = True
+        if self._between_gap_left > 0:
+            print(
+                f"[SpeechBridge] Jeda {self._between_gap_left / float(TARGET_FPS):.1f}s "
+                "sebelum kalimat berikutnya"
+            )
+
+    def _emit_gap_silence(self) -> Tuple[bytes, bool, Optional[int]]:
+        if self._between_gap_left > 0:
+            self._between_gap_left -= 1
+        size = bytes_for_frame(self._silence_frame_index)
+        self._silence_frame_index += 1
+        return b"\x00" * size, False, None
+
     def _start_next_if_needed(self, *, allow_playback: bool = True) -> None:
         self._prime_upcoming_renders()
 
         if self._current is not None:
+            return
+        if self._between_gap_left > 0:
             return
 
         # Pre-queue gate: tunggu buffer cukup sebelum utterance pertama.
@@ -808,6 +837,8 @@ class SpeechBridge:
             # Gate selamanya off setelah utterance pertama mulai.
             self._ever_started = True
             self._prequeue_gate_active = False
+            self._between_gap_left = 0
+            self._gap_played_for_current = False
         if self._on_utterance_start:
             try:
                 self._on_utterance_start(candidate)
@@ -825,6 +856,8 @@ class SpeechBridge:
         self._awaiting_visual_tail = False
         self._visual_complete_signaled = False
         self._active_deadline = 0.0
+        if finished and self._ever_started:
+            self._arm_between_gap()
         if finished and self._on_utterance_end:
             try:
                 self._on_utterance_end(finished)
@@ -856,6 +889,8 @@ class SpeechBridge:
             # Reset gate untuk sesi Go Live berikutnya.
             self._ever_started = False
             self._prequeue_gate_active = self.MIN_READY_UTTERANCES > 1
+            self._between_gap_left = 0
+            self._gap_played_for_current = False
 
     def signal_visual_complete(self) -> None:
         """Dipanggil state machine setelah clip talk mencapai end_pose."""
@@ -873,6 +908,10 @@ class SpeechBridge:
 
     def is_utterance_active(self) -> bool:
         return self._current is not None
+
+    def in_between_utterance_gap(self) -> bool:
+        """True during the 1s talk-video breath before N+1."""
+        return self._between_gap_left > 0
 
     def is_audio_exhausted(self) -> bool:
         return self._audio_exhausted
@@ -923,6 +962,8 @@ class SpeechBridge:
             self._finish_current()
 
         armed = self.playback_active()
+        if self._between_gap_left > 0:
+            return self._emit_gap_silence()
         allow_new = armed and self._visual_allows_next_start()
         self._start_next_if_needed(allow_playback=allow_new)
         if not armed and not self._ever_started and self._current is None:
@@ -942,8 +983,14 @@ class SpeechBridge:
             self._frame_cursor += 1
             return pcm, True, idx
 
-        # Audio done. Start N+1 only when the visual is not mid-idle.
+        # Audio done. Breathe 1s on talk, then start N+1 when visual allows.
         if self.ready_upcoming_count() > 0 and self._visual_allows_next_start():
+            self._arm_between_gap()
+            if self._between_gap_left > 0:
+                if not self._audio_exhausted:
+                    self._audio_exhausted = True
+                    self._awaiting_visual_tail = True
+                return self._emit_gap_silence()
             self._finish_current()
             self._start_next_if_needed(allow_playback=allow_new)
             if self._current is not None and self._frame_cursor < self._current.num_frames:

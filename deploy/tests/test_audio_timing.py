@@ -191,6 +191,11 @@ def test_playback_takes_ready_next_without_waiting_for_visual_tail():
     nxt.lipsync_primed = True
     bridge._pending.append(nxt)
 
+    silences = [bridge.get_audio_chunk() for _ in range(bridge.BETWEEN_UTTERANCE_GAP_FRAMES)]
+    assert all(item[1] is False for item in silences)
+    assert all(item[2] is None for item in silences)
+    assert bridge._current is current
+
     pcm, is_speech, idx = bridge.get_audio_chunk()
 
     assert pcm == b"C"

@@ -48,7 +48,11 @@ BBOX_SMOOTH_WINDOW = max(3, _bbox_smooth)
 
 RAW_QUEUE_SIZE = 12
 RENDER_QUEUE_SIZE = 12
-RAW_QUEUE_BLOCK_SEC = 0.25
+# One 24 fps tick — never 250 ms stalls on the producer/lipsync queues.
+QUEUE_WAIT_SEC = 1.0 / float(TARGET_FPS)
+RAW_QUEUE_BLOCK_SEC = QUEUE_WAIT_SEC
+RENDER_QUEUE_BLOCK_SEC = QUEUE_WAIT_SEC
+BROADCAST_WRITE_FAIL_STOP_TICKS = int(TARGET_FPS)
 MASK_FEATHER_PX = 5
 SEAMLESS_THRESHOLD = 0.94
 AMBIENT_MIN_SEC = AMBIENT_MAX_SEC = 0.0
@@ -2436,7 +2440,7 @@ def lipsync_worker_loop(
             # and caused jumps, silent holes, and mouth/audio desync.
             while not stop_event.is_set():
                 try:
-                    render_q.put(out, timeout=0.25)
+                    render_q.put(out, timeout=RENDER_QUEUE_BLOCK_SEC)
                     break
                 except queue.Full:
                     metrics.inc(
@@ -2469,7 +2473,7 @@ def lipsync_worker_loop(
                 )
                 while not stop_event.is_set():
                     try:
-                        render_q.put(out, timeout=0.25)
+                        render_q.put(out, timeout=RENDER_QUEUE_BLOCK_SEC)
                         break
                     except queue.Full:
                         metrics.inc("render_queue_fatal_backpressure")
@@ -2514,6 +2518,8 @@ def frame_fetcher_loop(
 ) -> None:
     was_speaking = False
     metrics = get_telemetry()
+    period = 1.0 / float(TARGET_FPS)
+    deadline = time.perf_counter()
 
     while not stop_event.is_set():
         tick_start = time.perf_counter()
@@ -2528,15 +2534,26 @@ def frame_fetcher_loop(
             current_uid = getattr(current_job, "task_id", None) if current_job else None
 
         utterance_active = bridge is not None and bridge.is_utterance_active()
+        in_gap = bool(
+            bridge is not None
+            and hasattr(bridge, "in_between_utterance_gap")
+            and bridge.in_between_utterance_gap()
+        )
 
         if utterance_active:
             # begin_utterance() sudah dipanggil dari _on_utterance_start callback.
             # Di sini kita TIDAK memanggil begin_utterance() lagi untuk menghindari
             # double-call yang menyebabkan state machine tidak masuk TALK dengan benar.
             # Hanya tandai audio selesai dan trigger end_utterance saat visual tuntas.
-            if not is_speech and was_speaking and bridge.is_audio_exhausted():
+            # Jeda 1s antar kalimat masih di talk — jangan end_utterance di tengah napas.
+            if (
+                not is_speech
+                and was_speaking
+                and bridge.is_audio_exhausted()
+                and not in_gap
+            ):
                 sm.mark_utterance_audio_done()
-            if sm.utterance_visual_complete():
+            if sm.utterance_visual_complete() and not in_gap:
                 another_ready = (
                     bridge.has_upcoming_work()
                     if hasattr(bridge, "has_upcoming_work")
@@ -2602,6 +2619,7 @@ def frame_fetcher_loop(
         metrics.record_latency(
             "frame_fetch_tick_ms", (time.perf_counter() - tick_start) * 1000.0
         )
+        deadline = _advance_broadcast_clock(deadline, period, metrics)
 
 
 class StreamBroadcaster:
@@ -3485,49 +3503,83 @@ def continuous_broadcaster_loop(
     metrics.set_gauge("target_fps", float(TARGET_FPS))
     last_frame: Optional[np.ndarray] = None
     silence = b"\x00" * BYTES_PER_AUDIO_FRAME
+    pending_pkt: Optional[RenderedPacket] = None
+    pending_got = False
+    write_fail_streak = 0
 
     while not stop_event.is_set():
         pkt: Optional[RenderedPacket] = None
         got = False
-        wait = _broadcast_queue_wait(deadline, period)
+        if pending_pkt is not None:
+            pkt = pending_pkt
+            got = pending_got
+            pending_pkt = None
+            pending_got = False
+        else:
+            wait = _broadcast_queue_wait(deadline, period)
+            try:
+                if wait <= 0:
+                    pkt = render_q.get_nowait()
+                else:
+                    pkt = render_q.get(timeout=wait)
+                got = True
+            except queue.Empty:
+                metrics.inc("broadcast_source_wait")
         try:
-            if wait <= 0:
-                pkt = render_q.get_nowait()
-            else:
-                pkt = render_q.get(timeout=wait)
-            got = True
-        except queue.Empty:
-            metrics.inc("broadcast_source_wait")
-        try:
+            emitted = False
             if pkt is not None:
                 if pkt.seq != expected_seq:
-                    raise RuntimeError(
-                        f"non-contiguous render sequence: expected={expected_seq}, got={pkt.seq}"
+                    metrics.inc("broadcast_seq_mismatch")
+                    print(
+                        f"[Broadcaster] seq mismatch expected={expected_seq} got={pkt.seq} — hold, no skip",
+                        flush=True,
                     )
-                if bc is None or not bc.is_alive():
-                    raise RuntimeError("RTMP encoder is not alive")
+                    if pkt.seq > expected_seq:
+                        pending_pkt = pkt
+                        pending_got = got
+                        got = False
+                    pkt = None
+                elif bc is None or not bc.is_alive():
+                    write_fail_streak += 1
+                    metrics.inc("ffmpeg_write_fail")
+                    pending_pkt = pkt
+                    pending_got = got
+                    got = False
+                    pkt = None
+                else:
+                    frame = post.apply(pkt.frame, pkt.clip_name, pkt.frame_idx)
+                    started = time.perf_counter()
+                    if not bc.write(frame, pkt.audio_pcm):
+                        write_fail_streak += 1
+                        metrics.inc("ffmpeg_write_fail")
+                        pending_pkt = pkt
+                        pending_got = got
+                        got = False
+                        pkt = None
+                    else:
+                        write_fail_streak = 0
+                        metrics.record_latency(
+                            "ffmpeg_write_ms", (time.perf_counter() - started) * 1000.0
+                        )
+                        metrics.inc("frames_written")
+                        metrics.note_broadcast_frame()
+                        expected_seq += 1
+                        last_frame = frame
+                        emitted = True
+                        if expected_seq == 2 and output_folder:
+                            try:
+                                from rtmp_utils import write_rtmp_status
 
-                frame = post.apply(pkt.frame, pkt.clip_name, pkt.frame_idx)
-                started = time.perf_counter()
-                if not bc.write(frame, pkt.audio_pcm):
-                    raise RuntimeError("FFmpeg rejected continuous A/V packet")
-                metrics.record_latency(
-                    "ffmpeg_write_ms", (time.perf_counter() - started) * 1000.0
-                )
-                metrics.inc("frames_written")
-                metrics.note_broadcast_frame()
-                expected_seq += 1
-                last_frame = frame
-
-                if expected_seq == 2 and output_folder:
-                    try:
-                        from rtmp_utils import write_rtmp_status
-
-                        write_rtmp_status(output_folder, "connected")
-                    except Exception:
-                        pass
-            elif last_frame is not None and bc is not None and bc.is_alive():
-                # Keep 24 fps while lipsync is one tick late. Do not advance seq.
+                                write_rtmp_status(output_folder, "connected")
+                            except Exception:
+                                pass
+            if (
+                not emitted
+                and last_frame is not None
+                and bc is not None
+                and bc.is_alive()
+            ):
+                # Keep 24 fps while lipsync/write is one tick late. Do not advance seq.
                 try:
                     bc.write(last_frame, silence)
                     metrics.inc("broadcast_pace_hold")
@@ -3535,16 +3587,32 @@ def continuous_broadcaster_loop(
                     metrics.note_broadcast_frame()
                 except Exception:
                     metrics.inc("broadcast_pace_hold_failed")
-        except Exception as err:
-            print(f"[Broadcaster] fatal continuous pipeline error: {err}", flush=True)
-            if output_folder:
-                try:
-                    from rtmp_utils import write_rtmp_status
+            if write_fail_streak >= BROADCAST_WRITE_FAIL_STOP_TICKS:
+                print(
+                    "[Broadcaster] encoder dead for 1s — stopping after hold window",
+                    flush=True,
+                )
+                if output_folder:
+                    try:
+                        from rtmp_utils import write_rtmp_status
 
-                    write_rtmp_status(output_folder, "failed", str(err)[:240])
-                except Exception:
-                    pass
-            stop_event.set()
+                        write_rtmp_status(output_folder, "failed", "encoder dead 1s")
+                    except Exception:
+                        pass
+                stop_event.set()
+        except Exception as err:
+            write_fail_streak += 1
+            metrics.inc("broadcast_tick_error")
+            print(f"[Broadcaster] tick error (hold, no skip): {err}", flush=True)
+            if write_fail_streak >= BROADCAST_WRITE_FAIL_STOP_TICKS:
+                if output_folder:
+                    try:
+                        from rtmp_utils import write_rtmp_status
+
+                        write_rtmp_status(output_folder, "failed", str(err)[:240])
+                    except Exception:
+                        pass
+                stop_event.set()
         finally:
             if got:
                 render_q.task_done()
