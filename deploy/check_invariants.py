@@ -68,8 +68,17 @@ def check_seamless_contract() -> None:
         _fail("PIN_TALK_SCENE (continuous body timeline) hilang")
     if "MOUTH_MISS_BODY_ONLY" not in src:
         _fail("MOUTH_MISS_BODY_ONLY hilang")
+    if "if MOUTH_MISS_BODY_ONLY" not in src:
+        _fail("MOUTH_MISS_BODY_ONLY tidak dipakai — mouth miss mematikan pipeline")
     if "LIPSYNC_HARD_PREROLL" not in src:
         _fail("LIPSYNC_HARD_PREROLL hilang")
+    lipsync_loop = ""
+    if "def lipsync_worker_loop" in src:
+        lipsync_loop = src.split("def lipsync_worker_loop", 1)[1].split(
+            "def _put_raw_frame", 1
+        )[0]
+    if "stop_event.set()" in lipsync_loop:
+        _fail("lipsync_worker_loop tidak boleh stop_event.set() (stream freeze)")
     for needle in (
         'CONTINUOUS_CLIP_NAME = "continuous"',
         "target=continuous_broadcaster_loop",
@@ -124,6 +133,24 @@ def check_fps_lock() -> None:
     print("[INVARIANT] shared FPS clock OK")
 
 
+def check_24fps_pacer() -> None:
+    src = (ROOT / "ai_worker.py").read_text(encoding="utf-8", errors="replace")
+    loop = ""
+    if "def continuous_broadcaster_loop" in src:
+        loop = src.split("def continuous_broadcaster_loop", 1)[1].split(
+            "class AIVisualWorker", 1
+        )[0]
+    if "timeout=0.25" in loop:
+        _fail("continuous_broadcaster_loop wait 0.25s (lag spike)")
+    if "broadcast_pace_hold" not in loop:
+        _fail("24fps hold-on-late-packet hilang")
+    if "_advance_broadcast_clock" not in src:
+        _fail("pacer 24fps (_advance_broadcast_clock) hilang")
+    if "_broadcast_queue_wait" not in src:
+        _fail("_broadcast_queue_wait hilang")
+    print("[INVARIANT] 24fps pacer OK")
+
+
 def check_audio_sample_rate_contract() -> None:
     timing = (ROOT / "av_timing.py").read_text(encoding="utf-8", errors="replace")
     if "WHISPER_SAMPLE_RATE = 16_000" not in timing:
@@ -149,6 +176,8 @@ def check_audio_sample_rate_contract() -> None:
         _fail("visual gate allows_next_utterance_start hilang")
     if "set_visual_gate" not in bridge:
         _fail("SpeechBridge.set_visual_gate hilang")
+    if "def enter_boot_idle" not in worker:
+        _fail("enter_boot_idle hilang — Go Live harus loop idle_2s dulu")
     if "samples_for_frame" not in timing:
         _fail("av_timing tidak memiliki samples_for_frame")
     print("[INVARIANT] audio sample-rate contract OK")
@@ -161,6 +190,7 @@ def main() -> None:
     check_single_pipeline()
     check_validate_assets_script()
     check_fps_lock()
+    check_24fps_pacer()
     check_audio_sample_rate_contract()
     print("[INVARIANT] semua cek lolos")
 

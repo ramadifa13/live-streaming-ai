@@ -697,6 +697,7 @@ class SpeechBridge:
                 self._on_utterance_ready(job)
             except Exception as err:
                 print(f"[SpeechBridge] prime notice: {err}")
+                job.error = str(err) or "prime failed"
                 job.lipsync_ready.set()
 
     def _start_next_if_needed(self, *, allow_playback: bool = True) -> None:
@@ -750,6 +751,7 @@ class SpeechBridge:
                     self._on_utterance_ready(candidate)
                 except Exception as err:
                     print(f"[SpeechBridge] on_ready notice: {err}")
+                    candidate.error = str(err) or "on_ready failed"
                     candidate.lipsync_ready.set()
             else:
                 candidate.lipsync_ready.set()

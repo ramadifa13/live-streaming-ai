@@ -882,9 +882,6 @@ class VideoStateMachine:
     ):
         self.bank = bank
         self._face_registry = face_registry
-        self.state = PlayState.TALK
-        self.current_name = CONTINUOUS_CLIP_NAME
-        self.frame_idx = bank.get_clip(CONTINUOUS_CLIP_NAME).base_pose_frame
         self.pending_action: Optional[str] = None
         self._action_queue: deque = deque()
         self._overlap: Optional[_OverlapTransition] = None
@@ -900,7 +897,7 @@ class VideoStateMachine:
         self._ambient_names: List[str] = []
         self._idle_variants: List[str] = []
         self._next_ambient_at = 0.0
-        self._talk_pinned = True
+        self._talk_pinned = False
         self._hold_pose_for_infer = False
         self._talk_target: Optional[str] = CONTINUOUS_CLIP_NAME
         self._talk_sequence: List[str] = [CONTINUOUS_CLIP_NAME]
@@ -913,6 +910,7 @@ class VideoStateMachine:
         self._pending_begin_utterance = False
         self._begin_wait_since: Optional[float] = None
         self._talk_direction = 1
+        self._enter_boot_idle_locked()
 
     def _schedule_next_ambient(self) -> None:
 
@@ -1055,35 +1053,59 @@ class VideoStateMachine:
         self._talk_sequence_pos = (pos + 1) % len(self._talk_sequence)
         return nxt
 
-    def reset_after_stop(self) -> None:
-        """Reset speech state without resetting or changing the body timeline."""
+    def _boot_idle_clip(self) -> Optional[ClipAsset]:
+        idle_name = getattr(self.bank, "_idle_name", None) or IDLE_CLIP_NAME
+        if not _is_true_idle_name(idle_name):
+            return None
+        return self.bank.get_clip(idle_name)
+
+    def enter_boot_idle(self) -> None:
+        """Loop idle_2s until the first READY sentence can start on talk."""
         with self._lock:
-            self._utterance_active = False
-            self._utterance_audio_done = False
-            self._utterance_audio_done_at = None
-            self._post_speech_gesture_active = False
-            self._scheduled_gesture = None
-            self._playthrough_lock = False
-            self._talk_pinned = True
-            self._hold_pose_for_infer = False
-            self._talk_target = CONTINUOUS_CLIP_NAME
-            self._talk_sequence = [CONTINUOUS_CLIP_NAME]
-            self._talk_sequence_pos = 0
-            self._overlap = None
-            self._talk_loop_count = 0
-            self._seq = 0
-            self.pending_action = None
-            self._action_queue.clear()
-            self.state = PlayState.TALK
-            self.current_name = CONTINUOUS_CLIP_NAME
-            clip = self.bank.get_clip(CONTINUOUS_CLIP_NAME)
-            if clip is not None:
-                self.frame_idx = self._wrapped_index(clip, self.frame_idx)
-            if self._face_registry:
-                self._face_registry.release_lock()
-            self._pending_begin_utterance = False
-            self._begin_wait_since = None
-            self._talk_direction = 1
+            self._enter_boot_idle_locked()
+
+    def _enter_boot_idle_locked(self) -> None:
+        idle_clip = self._boot_idle_clip()
+        self._utterance_active = False
+        self._utterance_audio_done = False
+        self._utterance_audio_done_at = None
+        self._post_speech_gesture_active = False
+        self._scheduled_gesture = None
+        self._playthrough_lock = False
+        self._hold_pose_for_infer = False
+        self._talk_target = CONTINUOUS_CLIP_NAME
+        self._talk_sequence = [CONTINUOUS_CLIP_NAME]
+        self._talk_sequence_pos = 0
+        self._overlap = None
+        self._talk_loop_count = 0
+        self._seq = 0
+        self.pending_action = None
+        self._action_queue.clear()
+        self._pending_begin_utterance = False
+        self._begin_wait_since = None
+        self._talk_direction = 1
+        if self._face_registry:
+            self._face_registry.release_lock()
+        if idle_clip is not None:
+            self.state = PlayState.IDLE
+            self.current_name = idle_clip.name
+            self.frame_idx = int(idle_clip.base_pose_frame)
+            self._talk_pinned = False
+            print(
+                f"[StateMachine] Boot idle loop {idle_clip.name}@"
+                f"{self.frame_idx} (24fps, no talk until READY)"
+            )
+            return
+        self.state = PlayState.TALK
+        self.current_name = CONTINUOUS_CLIP_NAME
+        clip = self.bank.get_clip(CONTINUOUS_CLIP_NAME)
+        self.frame_idx = int(clip.base_pose_frame) if clip is not None else 0
+        self._talk_pinned = True
+
+    def reset_after_stop(self) -> None:
+        """Next Go Live starts on idle_2s, not the talk clip."""
+        with self._lock:
+            self._enter_boot_idle_locked()
 
     def set_utterance_gesture(self, tag: Optional[str]) -> None:
         del tag
@@ -1523,6 +1545,9 @@ class VideoStateMachine:
         on_idle = _is_true_idle_name(self.current_name)
 
         if on_idle:
+            # Boot: loop idle_2s at 24fps until a READY sentence exists, then
+            # switch to talk only at cycle end. Leftover speech stays on idle
+            # with lipsync — do not mute, do not cut the 2s clip.
             if want_talk:
                 self._switch_at_boundary(CONTINUOUS_CLIP_NAME, PlayState.TALK)
                 return
@@ -1624,6 +1649,9 @@ class LipSyncEngine:
         self._feather_cache: dict = {}
         self._square_pad = True
         self._gpu_lock = threading.Lock()
+        self._get_image_blending = None
+        self._resize_generated_to_bbox = None
+        self._mouth_miss_log_at = -1
         self.last_render_time_sec = 0.0
         self.last_speech_duration_sec = 0.0
         self.last_real_time_ratio = 0.0
@@ -1780,8 +1808,10 @@ class LipSyncEngine:
 
     def _slot_for(self, utterance_id: Optional[str] = None) -> Optional[_MouthSlot]:
         with self._lock:
-            if utterance_id and utterance_id in self._slots:
-                return self._slots[utterance_id]
+            if utterance_id:
+                # Never fall back to N+1's incomplete cache when a specific
+                # job was requested and already dropped or not yet stored.
+                return self._slots.get(utterance_id)
             if self._active_id and self._active_id in self._slots:
                 return self._slots[self._active_id]
             if self._utterance_id and self._utterance_id in self._slots:
@@ -1811,7 +1841,10 @@ class LipSyncEngine:
                 for uid, slot in self._slots.items()
                 if slot.retired and uid != self._active_id
             ]
-        while len(retired) > 1:
+        # Keep enough retired slots for packets still sitting in the
+        # bounded raw/render queues (~0.5s) plus one extra utterance.
+        keep = max(4, RAW_QUEUE_SIZE // 2)
+        while len(retired) > keep:
             self._drop_slot(retired.pop(0))
 
     def _latent_index(self, clip: ClipAsset, body_idx: int) -> int:
@@ -2026,16 +2059,14 @@ class LipSyncEngine:
     ) -> Optional[np.ndarray]:
         deadline = time.perf_counter() + max(0.0, float(timeout))
         metrics = get_telemetry()
-        target = slot or self._slot_for()
+        target = slot
+        if target is None:
+            metrics.inc("mouth_cache_miss")
+            return None
 
         while True:
-            if target is not None:
-                cached = target.mouths.get(int(idx))
-                cursor = int(target.infer_cursor)
-            else:
-                with self._lock:
-                    cached = self._mouths.get(int(idx))
-                    cursor = int(self._infer_cursor)
+            cached = target.mouths.get(int(idx))
+            cursor = int(target.infer_cursor)
 
             if cached is not None:
                 self._last_mouth_frame = cached
@@ -2170,8 +2201,18 @@ class LipSyncEngine:
         pcm: bytes,
         whisper_idx: Optional[int] = None,
     ) -> np.ndarray:
-        from musetalk.utils.blending import get_image_blending
-        from inference import resize_generated_to_bbox
+        if self._get_image_blending is None or self._resize_generated_to_bbox is None:
+            try:
+                from musetalk.utils.blending import get_image_blending
+                from inference import resize_generated_to_bbox
+
+                self._get_image_blending = get_image_blending
+                self._resize_generated_to_bbox = resize_generated_to_bbox
+            except Exception as err:
+                print(f"[LipSync] ERROR composing mouth: {err}")
+                return body
+        get_image_blending = self._get_image_blending
+        resize_generated_to_bbox = self._resize_generated_to_bbox
 
         mat = self._material_for(clip, cidx)
         if mat is None:
@@ -2221,7 +2262,7 @@ class LipSyncEngine:
 
             blend_mask = self._mouth_only_mask(mask_array, crop_box, face_box)
 
-            if whisper_idx is not None and int(whisper_idx) % 25 == 0:
+            if MUSE_DEBUG and whisper_idx is not None and int(whisper_idx) % 25 == 0:
                 print(
                     f"[LipSync] COMPOSE idx={whisper_idx} "
                     f"mouth={mouth_256.shape} bbox={face_box} "
@@ -2231,28 +2272,10 @@ class LipSyncEngine:
             blended = get_image_blending(
                 body, damped_256, list(face_box), blend_mask, crop_box
             )
-            if whisper_idx is not None and int(whisper_idx) % 25 == 0:
+            if MUSE_DEBUG and whisper_idx is not None and int(whisper_idx) % 25 == 0:
                 self._save_muse_debug(
                     body, mouth_256, blend_mask, crop_box, face_box, int(whisper_idx)
                 )
-
-            if whisper_idx is not None and int(whisper_idx) % 25 == 0:
-                try:
-                    bx1, by1, bx2, by2 = face_box
-                    before_roi = body[by1:by2, bx1:bx2].astype(np.float32)
-                    after_roi = blended[by1:by2, bx1:bx2].astype(np.float32)
-                    composite_delta = float(np.mean(np.abs(after_roi - before_roi)))
-                    m = np.asarray(blend_mask)
-                    print(
-                        f"[LipSync][DIAG] compose idx={whisper_idx} "
-                        f"composite_delta={composite_delta:.4f} "
-                        f"mask_shape={m.shape} mask_dtype={m.dtype} "
-                        f"mask_min={float(m.min()):.2f} mask_max={float(m.max()):.2f} "
-                        f"mask_mean={float(m.mean()):.2f} crop={crop_box} "
-                        f"mouth_gate={int(MOUTH_MASK_GATE)} center_y={MOUTH_MASK_CENTER_Y:.2f} rx={MOUTH_MASK_RX:.2f} ry={MOUTH_MASK_RY:.2f}"
-                    )
-                except Exception as diag_err:
-                    print(f"[LipSync][DIAG] compose diagnostic failed: {diag_err}")
 
             return blended
         except Exception as err:
@@ -2298,21 +2321,41 @@ class LipSyncEngine:
             return pkt.frame
 
         talk_name = slot.talk_clip_name if slot is not None else self._talk_clip_name
+        speaking_on_idle = bool(pkt.is_speech or pkt.needs_lipsync) and (
+            _is_true_idle_name(pkt.clip_name) or self.bank.clip_has_musetalk(pkt.clip_name)
+        )
         if (
             talk_name
             and pkt.clip_name != talk_name
+            and not speaking_on_idle
             and not self.bank.clip_has_musetalk(pkt.clip_name)
         ):
             metrics.inc("lipsync_skipped_wrong_clip")
             return pkt.frame
 
+        if slot is None:
+            metrics.inc("lipsync_skipped_no_slot")
+            return pkt.frame
+
         mouth_idx = int(pkt.whisper_idx) + LIPSYNC_SYNC_SHIFT
-        total = 0 if slot is None or slot.whisper_chunks is None else int(slot.whisper_chunks.shape[0])
+        total = 0 if slot.whisper_chunks is None else int(slot.whisper_chunks.shape[0])
         if total > 0:
             mouth_idx = max(0, min(mouth_idx, total - 1))
 
         mouth = self._wait_mouth(mouth_idx, timeout=MOUTH_WAIT_SEC, slot=slot)
         if mouth is None:
+            metrics.inc("lipsync_mouth_missing")
+            if mouth_idx != self._mouth_miss_log_at and (
+                self._mouth_miss_log_at < 0 or mouth_idx - self._mouth_miss_log_at >= 24
+            ):
+                self._mouth_miss_log_at = mouth_idx
+                print(
+                    f"[LipSync] full-prerender contract violated: mouth {mouth_idx} is missing"
+                )
+            if MOUTH_MISS_BODY_ONLY:
+                # Keep this packet's PCM. Never raise — that used to stop the
+                # 24 fps thread and cut the remaining sentence.
+                return pkt.frame
             raise RuntimeError(
                 f"full-prerender contract violated: mouth {mouth_idx} is missing"
             )
@@ -2383,7 +2426,24 @@ def lipsync_worker_loop(
             print(f"[LipSync] FATAL frame {pkt.seq}: {err}")
             traceback.print_exc()
             metrics.inc("lipsync_fatal")
-            stop_event.set()
+            # Keep the 24 fps clock alive. Stopping this thread starves
+            # FFmpeg and freezes the livestream on a single mouth miss.
+            try:
+                out = RenderedPacket(
+                    seq=pkt.seq,
+                    frame=fit_bgr(pkt.frame, CANVAS_W, CANVAS_H),
+                    audio_pcm=pkt.audio_pcm,
+                    clip_name=pkt.clip_name,
+                    frame_idx=pkt.frame_idx,
+                )
+                while not stop_event.is_set():
+                    try:
+                        render_q.put(out, timeout=0.25)
+                        break
+                    except queue.Full:
+                        metrics.inc("render_queue_fatal_backpressure")
+            except Exception:
+                pass
         finally:
             raw_q.task_done()
 
@@ -2427,14 +2487,14 @@ def frame_fetcher_loop(
     while not stop_event.is_set():
         tick_start = time.perf_counter()
         whisper_idx = None
-        current_uid = None
-        if bridge is not None:
-            current_job = bridge.current_utterance()
-            current_uid = getattr(current_job, "task_id", None) if current_job else None
         if audio_fn_ext is not None:
             pcm, is_speech, whisper_idx = audio_fn_ext()
         else:
             pcm, is_speech = audio_fn()
+        current_uid = None
+        if bridge is not None:
+            current_job = bridge.current_utterance()
+            current_uid = getattr(current_job, "task_id", None) if current_job else None
 
         utterance_active = bridge is not None and bridge.is_utterance_active()
 
@@ -2473,18 +2533,13 @@ def frame_fetcher_loop(
         if current_uid:
             pkt.utterance_id = current_uid
 
-        # FIX: needs_lipsync aktif selama utterance aktif DAN clip punya materials.
-        # Override agar pkt.needs_lipsync dari state machine tidak bisa False
-        # saat utterance berjalan dan whisper_idx tersedia.
-        if sm.bank.clip_has_musetalk(pkt.clip_name):
-            if whisper_idx is not None and (utterance_active or sm._utterance_active):
-                # Selama utterance aktif dan whisper data ada → paksa True
-                pkt.needs_lipsync = True
-            elif not utterance_active and not sm._utterance_active:
-                # Utterance benar-benar selesai → reset
-                pkt.needs_lipsync = False
-            # else: pertahankan nilai dari state machine (transisi)
-        else:
+        # Idle body may still carry leftover speech. Mouth index is whisper_idx,
+        # not the 48-frame idle clip length — keep lipsync on while PCM remains.
+        if whisper_idx is not None and (utterance_active or sm._utterance_active):
+            pkt.needs_lipsync = True
+        elif not utterance_active and not sm._utterance_active:
+            pkt.needs_lipsync = False
+        elif not sm.bank.clip_has_musetalk(pkt.clip_name):
             pkt.needs_lipsync = False
         metrics.set_gauge("raw_queue_depth", float(raw_q.qsize()))
         if bridge is not None:
@@ -3343,6 +3398,31 @@ def broadcaster_loop(
             pass
 
 
+def _broadcast_queue_wait(
+    deadline: float, period: float, now: Optional[float] = None
+) -> float:
+    """Block the render queue at most one 24 fps tick — never 250 ms stalls."""
+    now = time.perf_counter() if now is None else float(now)
+    return max(0.0, min(float(period), float(deadline) - now))
+
+
+def _advance_broadcast_clock(
+    deadline: float, period: float, metrics, now: Optional[float] = None
+) -> float:
+    """Sleep to 24 fps. Late ticks rebase; never dump queued packets faster."""
+    deadline = float(deadline) + float(period)
+    now = time.perf_counter() if now is None else float(now)
+    sleep_for = deadline - now
+    if sleep_for > 0:
+        time.sleep(sleep_for)
+    elif sleep_for < -period * 2:
+        metrics.inc("broadcast_pacer_reset")
+        # Resume spacing from now; do not add another period or the next
+        # tick waits 41ms extra after already being late.
+        deadline = time.perf_counter()
+    return deadline
+
+
 def continuous_broadcaster_loop(
     bank: AssetBank,
     render_q: queue.Queue,
@@ -3353,7 +3433,7 @@ def continuous_broadcaster_loop(
     background_path: str = "",
     overlay_path: str = "",
 ) -> None:
-    """Strict one-packet/one-tick emitter with no fallback, skip, or replay."""
+    """One A/V packet per 1/24s. No skip, no catch-up dump, no 250ms holes."""
     del bank, bridge
     period = 1.0 / float(TARGET_FPS)
     expected_seq = 0
@@ -3361,48 +3441,58 @@ def continuous_broadcaster_loop(
     post = FramePostProcessor(output_folder, background_path, overlay_path)
     metrics = get_telemetry()
     metrics.set_gauge("target_fps", float(TARGET_FPS))
+    last_frame: Optional[np.ndarray] = None
+    silence = b"\x00" * BYTES_PER_AUDIO_FRAME
 
     while not stop_event.is_set():
+        pkt: Optional[RenderedPacket] = None
+        got = False
+        wait = _broadcast_queue_wait(deadline, period)
         try:
-            pkt: RenderedPacket = render_q.get(timeout=0.25)
+            if wait <= 0:
+                pkt = render_q.get_nowait()
+            else:
+                pkt = render_q.get(timeout=wait)
+            got = True
         except queue.Empty:
             metrics.inc("broadcast_source_wait")
-            continue
         try:
-            if pkt.seq != expected_seq:
-                raise RuntimeError(
-                    f"non-contiguous render sequence: expected={expected_seq}, got={pkt.seq}"
+            if pkt is not None:
+                if pkt.seq != expected_seq:
+                    raise RuntimeError(
+                        f"non-contiguous render sequence: expected={expected_seq}, got={pkt.seq}"
+                    )
+                if bc is None or not bc.is_alive():
+                    raise RuntimeError("RTMP encoder is not alive")
+
+                frame = post.apply(pkt.frame, pkt.clip_name, pkt.frame_idx)
+                started = time.perf_counter()
+                if not bc.write(frame, pkt.audio_pcm):
+                    raise RuntimeError("FFmpeg rejected continuous A/V packet")
+                metrics.record_latency(
+                    "ffmpeg_write_ms", (time.perf_counter() - started) * 1000.0
                 )
-            if bc is None or not bc.is_alive():
-                raise RuntimeError("RTMP encoder is not alive")
+                metrics.inc("frames_written")
+                metrics.note_broadcast_frame()
+                expected_seq += 1
+                last_frame = frame
 
-            frame = post.apply(pkt.frame, pkt.clip_name, pkt.frame_idx)
-            started = time.perf_counter()
-            if not bc.write(frame, pkt.audio_pcm):
-                raise RuntimeError("FFmpeg rejected continuous A/V packet")
-            metrics.record_latency(
-                "ffmpeg_write_ms", (time.perf_counter() - started) * 1000.0
-            )
-            metrics.inc("frames_written")
-            metrics.note_broadcast_frame()
-            expected_seq += 1
+                if expected_seq == 2 and output_folder:
+                    try:
+                        from rtmp_utils import write_rtmp_status
 
-            if expected_seq == 2 and output_folder:
+                        write_rtmp_status(output_folder, "connected")
+                    except Exception:
+                        pass
+            elif last_frame is not None and bc is not None and bc.is_alive():
+                # Keep 24 fps while lipsync is one tick late. Do not advance seq.
                 try:
-                    from rtmp_utils import write_rtmp_status
-
-                    write_rtmp_status(output_folder, "connected")
+                    bc.write(last_frame, silence)
+                    metrics.inc("broadcast_pace_hold")
+                    metrics.inc("frames_written")
+                    metrics.note_broadcast_frame()
                 except Exception:
-                    pass
-
-            deadline += period
-            sleep_for = deadline - time.perf_counter()
-            if sleep_for > 0:
-                time.sleep(sleep_for)
-            elif sleep_for < -period * 2:
-                # Rebase wall clock only; never emit queued packets faster than FPS.
-                deadline = time.perf_counter()
-                metrics.inc("broadcast_pacer_reset")
+                    metrics.inc("broadcast_pace_hold_failed")
         except Exception as err:
             print(f"[Broadcaster] fatal continuous pipeline error: {err}", flush=True)
             if output_folder:
@@ -3414,7 +3504,9 @@ def continuous_broadcaster_loop(
                     pass
             stop_event.set()
         finally:
-            render_q.task_done()
+            if got:
+                render_q.task_done()
+        deadline = _advance_broadcast_clock(deadline, period, metrics)
 
 
 class AIVisualWorker:
@@ -3849,6 +3941,9 @@ class AIVisualWorker:
         if audio_fn_ext is None and self._bridge is not None:
             audio_fn_ext = self._bridge.get_audio_chunk
             action_fn = self._bridge.make_action_hook()
+
+        if self._sm is not None:
+            self._sm.enter_boot_idle()
 
         bridge_ref = self._bridge
         broadcaster_ref = self._broadcaster
