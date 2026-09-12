@@ -6,7 +6,7 @@ import { useProductStore, PRODUCT_STORAGE_QUOTA_EVENT } from "@/stores/useProduc
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { oauthService } from "@/services/oauthService";
-import { liveSessionService, toLiveProductSnapshot } from "@/services/liveSessionService";
+import { liveSessionService, parseLiveClockFromMetrics, toLiveProductSnapshot } from "@/services/liveSessionService";
 import { ChatMessage } from "./types";
 
 import { ToastNotification } from "@/components/dashboard/shared/ToastNotification";
@@ -40,6 +40,7 @@ export default function Dashboard() {
   const isConnectingLive = useLiveSessionStore((state) => state.isConnectingLive);
   const setLiveSessionPhase = useLiveSessionStore((state) => state.setLiveSessionPhase);
   const setLiveSeconds = useLiveSessionStore((state) => state.setLiveSeconds);
+  const applyLiveClock = useLiveSessionStore((state) => state.applyLiveClock);
   const setMetrics = useLiveSessionStore((state) => state.setMetrics);
   const addChatMessage = useLiveSessionStore((state) => state.addChatMessage);
   const setConnectedAccount = useLiveSessionStore((state) => state.setConnectedAccount);
@@ -83,9 +84,13 @@ export default function Dashboard() {
           liveSessionPhase: "idle",
           currentLiveSessionId: null,
           pipelineStatus: null,
+          liveSeconds: 0,
+          liveStartedAtMs: 0,
         });
         return;
       }
+
+      const clock = parseLiveClockFromMetrics(json?.data as Record<string, unknown> | undefined);
 
       if (sessionStatus === "starting" || sessionStatus === "pending") {
         useLiveSessionStore.setState({
@@ -106,6 +111,7 @@ export default function Dashboard() {
           isConnectingLive: false,
           isWaitingForGoLive: false,
         });
+        if (clock) applyLiveClock(clock);
       }
     });
   }, []);
@@ -211,32 +217,37 @@ export default function Dashboard() {
   useEffect(() => {
     if (!isLiveActive || isLivePaused) return;
     const maxAllowedSeconds = selectedDuration * 3600;
+    let expiryTriggered = false;
 
-    const timer = setInterval(() => {
-      setLiveSeconds((prev) => {
-        const nextSec = prev + 1;
-        if (nextSec >= maxAllowedSeconds) {
-          setIsLiveActive(false);
-          setIsLivePaused(false);
-          setLiveSessionPhase("ended");
-          setShowSummaryModal(true);
-          showToast(`Waktu siaran telah mencapai batas durasi ${selectedDuration} jam. Live streaming selesai!`);
+    const tick = () => {
+      const state = useLiveSessionStore.getState();
+      const nextSec = state.liveStartedAtMs
+        ? Math.max(0, Math.floor((Date.now() - state.liveStartedAtMs) / 1000))
+        : state.liveSeconds + 1;
+      if (nextSec >= maxAllowedSeconds) {
+        setLiveSeconds(maxAllowedSeconds);
+        if (expiryTriggered) return;
+        expiryTriggered = true;
+        setIsLiveActive(false);
+        setIsLivePaused(false);
+        setLiveSessionPhase("ended");
+        setShowSummaryModal(true);
+        showToast(`Waktu siaran telah mencapai batas durasi ${selectedDuration} jam. Live streaming selesai!`);
+        liveSessionService
+          .stopSession({
+            sessionId: currentLiveSessionId,
+            durationSeconds: maxAllowedSeconds,
+          })
+          .then((res) => {
+            if (res?.summary) setSessionSummary(res.summary);
+          });
+        return;
+      }
+      setLiveSeconds(nextSec);
+    };
 
-          liveSessionService
-            .stopSession({
-              sessionId: currentLiveSessionId,
-              durationSeconds: maxAllowedSeconds,
-            })
-            .then((res) => {
-              if (res?.summary) setSessionSummary(res.summary);
-            });
-
-          return maxAllowedSeconds;
-        }
-        return nextSec;
-      });
-    }, 1000);
-
+    tick();
+    const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
   }, [
     isLiveActive,
@@ -276,6 +287,11 @@ export default function Dashboard() {
           setLiveSessionPhase("ended");
           setIsLiveActive(false);
           setIsLivePaused(false);
+        }
+
+        const clock = parseLiveClockFromMetrics(json.data as Record<string, unknown> | undefined);
+        if (clock && (sessionStatus === "live" || currentPhase === "live")) {
+          applyLiveClock(clock);
         }
 
         if (backendMetrics) {
@@ -332,7 +348,7 @@ export default function Dashboard() {
       stopped = true;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [isLiveActive, isLivePaused, currentLiveSessionId, setIsLiveActive, setIsLivePaused, setLiveSessionPhase, setMetrics, addChatMessage]);
+  }, [isLiveActive, isLivePaused, currentLiveSessionId, setIsLiveActive, setIsLivePaused, setLiveSessionPhase, setMetrics, addChatMessage, applyLiveClock]);
 
   useEffect(() => {
     if (!isConnectingLive || !currentLiveSessionId) return;

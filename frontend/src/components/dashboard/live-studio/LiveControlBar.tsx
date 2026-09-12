@@ -319,6 +319,7 @@ export const LiveControlBar: React.FC = () => {
           isLiveActive: bcastJson.waitingForGoLive === false,
           isLivePaused: false,
           liveSeconds: 0,
+          liveStartedAtMs: Date.now(),
         });
         showToast(
           bcastJson.message ||

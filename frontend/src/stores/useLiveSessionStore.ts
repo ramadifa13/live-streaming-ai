@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { ChatMessage, SessionSummaryData } from "@/app/dashboard/types";
 import { ConnectedAccount } from "@/services/oauthService";
-import { liveSessionService } from "@/services/liveSessionService";
+import { liveSessionService, type LiveClockSnapshot } from "@/services/liveSessionService";
 
 const MAX_CHAT_MESSAGES = 200;
 
@@ -67,6 +67,7 @@ interface LiveSessionState {
 
   selectedDuration: number;
   liveSeconds: number;
+  liveStartedAtMs: number;
 
   selectedPlatform: string;
   connectMode: "1CLICK" | "MANUAL";
@@ -117,6 +118,7 @@ interface LiveSessionState {
   addChatMessage: (msg: ChatMessage) => void;
   setMetrics: (metrics: LiveMetrics | ((prev: LiveMetrics) => LiveMetrics)) => void;
   setLiveSeconds: (secs: number | ((prev: number) => number)) => void;
+  applyLiveClock: (clock: LiveClockSnapshot) => void;
   setSessionSummary: (sum: SessionSummaryData | null) => void;
   setPipelineStatus: (status: PipelineStatus | null) => void;
   setIsLiveActive: (active: boolean) => void;
@@ -144,6 +146,7 @@ export const useLiveSessionStore = create<LiveSessionState>()(
       connectingStageText: "Mengalokasikan Cloud GPU L40S...",
       selectedDuration: 1,
       liveSeconds: 0,
+      liveStartedAtMs: 0,
       selectedPlatform: "Instagram Live",
       connectMode: "1CLICK",
       customRtmpUrl: "",
@@ -198,6 +201,12 @@ export const useLiveSessionStore = create<LiveSessionState>()(
         set((state) => ({
           liveSeconds: typeof secs === "function" ? secs(state.liveSeconds) : secs,
         })),
+      applyLiveClock: (clock) =>
+        set((state) => ({
+          liveSeconds: clock.liveSeconds,
+          liveStartedAtMs: clock.liveStartedAtMs,
+          selectedDuration: clock.durationHours ?? state.selectedDuration,
+        })),
       setSessionSummary: (sum) => set({ sessionSummary: sum }),
       setPipelineStatus: (status) =>
         set((state) => {
@@ -237,6 +246,8 @@ export const useLiveSessionStore = create<LiveSessionState>()(
           pipelineStatus: null,
           hasConfirmedBroadcast: false,
           liveSessionPhase: "idle",
+          liveSeconds: 0,
+          liveStartedAtMs: 0,
           connectingStageIndex: 0,
           connectingStageText: "Mengalokasikan Cloud GPU L40S...",
         });
@@ -260,9 +271,12 @@ export const useLiveSessionStore = create<LiveSessionState>()(
         });
 
         // Satu panggilan saja — BE /stop menghentikan worker + ringkasan.
+        const durationSeconds = state.liveStartedAtMs
+          ? Math.max(0, Math.floor((Date.now() - state.liveStartedAtMs) / 1000))
+          : state.liveSeconds;
         const stopRes = await liveSessionService.stopSession({
           sessionId: state.currentLiveSessionId,
-          durationSeconds: state.liveSeconds,
+          durationSeconds,
           viewers: state.metrics.viewers,
           comments: state.metrics.comments,
           clicks: state.metrics.clicks,
@@ -275,15 +289,15 @@ export const useLiveSessionStore = create<LiveSessionState>()(
           return stopRes.summary;
         }
 
-        const estGpuCost = Math.round((state.liveSeconds / 3600) * 12500);
+        const estGpuCost = Math.round((durationSeconds / 3600) * 12500);
         const net = Math.max(0, state.metrics.sales - estGpuCost);
         const fallbackSummary: SessionSummaryData = {
-          durationSeconds: state.liveSeconds,
-          durationFormatted: `${Math.floor(state.liveSeconds / 3600)
+          durationSeconds,
+          durationFormatted: `${Math.floor(durationSeconds / 3600)
             .toString()
-            .padStart(2, "0")}:${Math.floor((state.liveSeconds % 3600) / 60)
+            .padStart(2, "0")}:${Math.floor((durationSeconds % 3600) / 60)
             .toString()
-            .padStart(2, "0")}:${Math.floor(state.liveSeconds % 60)
+            .padStart(2, "0")}:${Math.floor(durationSeconds % 60)
             .toString()
             .padStart(2, "0")}`,
           totalViewers: state.metrics.viewers,
@@ -315,6 +329,7 @@ export const useLiveSessionStore = create<LiveSessionState>()(
         isLivePaused: state.isLivePaused,
         liveSessionPhase: state.liveSessionPhase,
         liveSeconds: state.liveSeconds,
+        liveStartedAtMs: state.liveStartedAtMs,
         selectedDuration: state.selectedDuration,
         selectedPlatform: state.selectedPlatform,
         customRtmpUrl: state.customRtmpUrl,

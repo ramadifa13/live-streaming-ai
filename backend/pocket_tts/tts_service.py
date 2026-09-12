@@ -23,7 +23,7 @@ HOST = os.environ.get("POCKET_TTS_HOST", "127.0.0.1")
 PORT = int(os.environ.get("POCKET_TTS_PORT", "8092"))
 OUTPUT_SAMPLE_RATE = int(os.environ.get("POCKET_TTS_OUTPUT_RATE", "24000"))
 EOS_THRESHOLD = float(os.environ.get("POCKET_TTS_EOS_THRESHOLD", "-5.0"))
-FRAMES_AFTER_EOS = int(os.environ.get("POCKET_TTS_FRAMES_AFTER_EOS", "3"))
+FRAMES_AFTER_EOS = int(os.environ.get("POCKET_TTS_FRAMES_AFTER_EOS", "8"))
 os.environ.setdefault("KPOCKET_TTS_ERROR_WITHOUT_EOS", "1")
 
 print(f"[PocketTTS] loading config={CONFIG} eos={EOS_THRESHOLD}", flush=True)

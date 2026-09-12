@@ -2,6 +2,7 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,10 +48,21 @@ def test_default_fade_out_does_not_swallow_the_last_word():
     frames = [frame for _ in range(48)]
     faded = _apply_pcm_edge_fades(frames)
 
-    # Old 12-frame / 500 ms window must stay full level.
+    # Speech-level tails stay at full level — no fade-out on the last word.
     assert faded[-12] == frame
     assert faded[-4] == frame
-    assert faded[-1] != frame
+    assert faded[-2] == frame
+    assert faded[-1] == frame
+
+
+def test_live_path_does_not_add_a_second_fade_out():
+    loud = b"\x00\x40" * (2000 * 2)
+    quiet = (np.full(2000 * 2, 80, dtype=np.int16)).tobytes()
+    frames = [loud for _ in range(20)] + [quiet]
+    faded = _apply_pcm_edge_fades(frames)
+
+    assert faded[-2] == loud
+    assert faded[-1] == quiet
 
 
 def test_hard_deadline_does_not_cut_active_pcm():

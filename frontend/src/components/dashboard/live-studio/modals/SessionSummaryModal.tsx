@@ -72,6 +72,7 @@ export const SessionSummaryModal: React.FC = () => {
   const handleStartNewSession = () => {
     setShowSummaryModal(false);
     setLiveSeconds(0);
+    useLiveSessionStore.setState({ liveStartedAtMs: 0 });
     showToast(" Siap untuk memulai sesi siaran live baru!");
   };
 

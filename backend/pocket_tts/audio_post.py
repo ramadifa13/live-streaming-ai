@@ -9,17 +9,20 @@ from scipy.signal import butter, resample_poly, sosfiltfilt
 PROMPT_SAMPLE_RATE = 24000
 MAX_PROMPT_SECONDS = 8.0
 ONSET_FADE_MS = 20
-TRAIL_FADE_MS = 180
+TRAIL_FADE_MS = 8
+CLICK_FADE_MS = 8
 TRAIL_DECAY_MS = 220
-TRAIL_PLATEAU_MS = 280
+TRAIL_PLATEAU_MS = 800
 TRAIL_MAX_TRIM_SEC = 8.0
 TRAIL_MAX_TRIM_RATIO = 0.55
 PROMPT_EDGE_FADE_MS = 12
 WORDS_PER_SEC = 2.2
 DURATION_PAD_SEC = 1.6
 DURATION_HARD_MULT = 1.75
-MIN_KEEP_AFTER_STRONG_MS = 280
-MIN_TRIMMABLE_TAIL_SEC = 0.85
+MIN_KEEP_AFTER_STRONG_MS = 600
+MIN_TRIMMABLE_TAIL_SEC = 0.9
+DRONE_FLAT_SEC = 0.8
+DRONE_TONAL_SEC = 1.4
 
 
 def audio_filter_enabled() -> bool:
@@ -56,11 +59,52 @@ def smooth_onset(samples: np.ndarray, sample_rate: int, fade_ms: int = ONSET_FAD
 
 
 def fade_out(samples: np.ndarray, sample_rate: int, fade_ms: int = TRAIL_FADE_MS) -> np.ndarray:
-    fade = min(max(1, samples.size // 3), max(1, int(sample_rate * fade_ms / 1000)))
+    """Short click soften only — never eat a third of the clip or a final syllable."""
+    fade = min(samples.size, max(1, int(sample_rate * fade_ms / 1000)))
     if fade > 1:
         ramp = np.sin(np.linspace(np.pi / 2, 0, fade, dtype=np.float32)) ** 2
         samples[-fade:] *= ramp
     return samples
+
+
+def _keep_natural_ending(samples: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Keep last words at full level. Fade only a near-silent tip to avoid a click."""
+    out = np.array(samples, dtype=np.float32, copy=True)
+    if out.size < 16:
+        return out
+    peak = float(np.max(np.abs(out)))
+    if peak <= 1e-5:
+        return out
+    tip_n = max(1, int(sample_rate * 0.012))
+    tip_peak = float(np.max(np.abs(out[-tip_n:])))
+    if tip_peak < peak * 0.03:
+        return fade_out(out, sample_rate, CLICK_FADE_MS)
+    return out
+
+
+def _last_modulated_end(env: np.ndarray, strong: float, weak: float, sample_rate: int) -> int:
+    """Index just after the last syllabic (modulated) speech window."""
+    win = max(1, int(sample_rate * 0.04))
+    hop = max(1, win // 2)
+    # Convolution tapers the last window; that fake CV must not count as speech.
+    scan_end = max(0, env.size - win)
+    last = 0
+    i = 0
+    run = 0
+    quiet_floor = max(weak * 2.5, 0.012)
+    while i + win <= scan_end:
+        seg = env[i : i + win]
+        mean = float(np.mean(seg))
+        cv = float(np.std(seg)) / max(mean, 1e-6)
+        modulated = (mean > strong and cv > 0.11) or (mean > quiet_floor and cv > 0.18)
+        if modulated:
+            run += 1
+            if run >= 2:
+                last = i + win
+        else:
+            run = 0
+        i += hop
+    return last
 
 
 def _envelope(samples: np.ndarray, sample_rate: int, win_ms: float = 20.0) -> np.ndarray:
@@ -80,10 +124,10 @@ def _spectral_flatness(frame: np.ndarray) -> float:
 
 
 def trim_trailing_buzz(samples: np.ndarray, sample_rate: int) -> np.ndarray:
-    """Cut confirmed vocoder drone after speech — never nibble real sentence endings.
+    """Cut a confirmed vocoder drone after speech. Leave natural endings alone.
 
-    Only trims when there is a clear quiet/flat tail *after* the last strong peak
-    and that tail is long enough to be a drone (not a quieter syllable).
+    Long sentences get quieter and slower at the end. That decay is speech, not
+    a drone — never treat it as a plateau and never fade the last words down.
     """
     if samples.size < max(8, sample_rate // 4):
         return samples
@@ -92,104 +136,41 @@ def trim_trailing_buzz(samples: np.ndarray, sample_rate: int) -> np.ndarray:
     if peak <= 1e-5:
         return samples
 
-    # Higher bar so quieter phrase endings are not treated as drones.
-    strong = max(0.055, peak * 0.24)
-    weak = max(0.012, peak * 0.04)
-    strong_idx = np.flatnonzero(env > strong)
-    if strong_idx.size == 0:
-        return samples
+    strong = max(0.035, peak * 0.12)
+    weak = max(0.008, peak * 0.025)
+    last_speech = _last_modulated_end(env, strong, weak, sample_rate)
+    if last_speech <= 0:
+        return _keep_natural_ending(samples, sample_rate)
 
-    # Last *speech-like* strong peak (skip flat vocoder holds that also clear `strong`).
-    win = max(1, int(sample_rate * 0.02))
-    last_strong = int(strong_idx[-1])
-    for idx in reversed(strong_idx.tolist()):
-        lo = max(0, int(idx) - win * 3)
-        hi = min(env.size, int(idx) + win * 3)
-        local = env[lo:hi]
-        local_cv = float(np.std(local)) / max(float(np.mean(local)), 1e-6)
-        if local_cv > 0.14:
-            last_strong = int(idx)
-            break
-
-    remaining = samples.size - last_strong
+    remaining = samples.size - last_speech
     if remaining < int(sample_rate * MIN_TRIMMABLE_TAIL_SEC):
-        # Ending already short — keep full utterance to avoid hanging words.
-        return fade_out(np.array(samples, dtype=np.float32, copy=True), sample_rate, 120)
+        return _keep_natural_ending(samples, sample_rate)
 
-    min_keep = max(
-        int(sample_rate * 0.5),
-        last_strong + int(sample_rate * MIN_KEEP_AFTER_STRONG_MS / 1000),
-    )
-    search_from = min(samples.size, last_strong + int(sample_rate * TRAIL_DECAY_MS / 1000))
-    hop = max(1, win)
-    plateau_need = int(sample_rate * TRAIL_PLATEAU_MS / 1000)
-    flat_need = int(sample_rate * 0.4)
+    tail = env[last_speech:]
+    tail_mean = float(np.mean(tail))
+    tail_cv = float(np.std(tail)) / max(tail_mean, 1e-6)
+    # Decaying last words have a high CV (energy keeps falling / syllabic).
+    # A drone is a long, almost-constant hold after speech has already ended.
+    if tail_cv >= 0.13:
+        return _keep_natural_ending(samples, sample_rate)
+    if tail_mean <= weak:
+        # Already faded to near-silence — keep the words, soften the tip only.
+        return _keep_natural_ending(samples, sample_rate)
 
-    end = samples.size
-    plateau_start = None
-    plateau_len = 0
-    flat_start = None
-    flat_len = 0
-    i = search_from
-    while i + hop <= samples.size:
-        seg = env[i : i + hop]
-        mean = float(np.mean(seg))
-        std = float(np.std(seg))
-        cv = std / max(mean, 1e-6)
-        frame = samples[i : i + hop]
-        flatness = _spectral_flatness(frame)
+    tail_flat = _spectral_flatness(samples[last_speech:])
+    remaining_sec = remaining / float(sample_rate)
+    is_noisy_drone = tail_flat > 0.32 and remaining_sec >= DRONE_FLAT_SEC
+    is_tonal_drone = remaining_sec >= DRONE_TONAL_SEC
+    if not (is_noisy_drone or is_tonal_drone):
+        return _keep_natural_ending(samples, sample_rate)
 
-        if mean < weak:
-            end = i
-            break
-
-        # Steady mid-level hold (vocoder drone). Low CV matters more than flatness
-        # because some drones are tonal (low flatness) rather than noisy.
-        if mean <= strong * 1.05 and cv < 0.22 and (flatness > 0.35 or cv < 0.12):
-            if flat_start is None:
-                flat_start = i
-            flat_len += hop
-            if flat_len >= flat_need:
-                end = flat_start
-                break
-        else:
-            flat_start = None
-            flat_len = 0
-
-        if mean < strong and cv < 0.22:
-            if plateau_start is None:
-                plateau_start = i
-            plateau_len += hop
-            if plateau_len >= plateau_need:
-                end = plateau_start
-                break
-        else:
-            plateau_start = None
-            plateau_len = 0
-        i += hop
-
-    if end >= samples.size:
-        # Long flat overrun after last speech peak = classic no-EOS fill.
-        if remaining >= int(sample_rate * 1.5):
-            tail = env[search_from:]
-            if tail.size:
-                tail_cv = float(np.std(tail)) / max(float(np.mean(tail)), 1e-6)
-                if tail_cv < 0.30 and float(np.mean(tail)) > weak:
-                    end = max(min_keep, last_strong + int(sample_rate * 0.22))
-                else:
-                    return fade_out(np.array(samples, dtype=np.float32, copy=True), sample_rate, 120)
-            else:
-                return fade_out(np.array(samples, dtype=np.float32, copy=True), sample_rate, 120)
-        else:
-            return fade_out(np.array(samples, dtype=np.float32, copy=True), sample_rate, 120)
-    else:
-        end = max(min_keep, min(end, samples.size))
-        # Refuse tiny trims that only clip a syllable.
-        if samples.size - end < int(sample_rate * 0.35):
-            return fade_out(np.array(samples, dtype=np.float32, copy=True), sample_rate, 120)
-
+    pad = int(sample_rate * 0.08)
+    end = min(samples.size, last_speech + pad)
+    # Never pinch just after the last syllable; only drop the long hold.
+    if samples.size - end < int(sample_rate * 0.55):
+        return _keep_natural_ending(samples, sample_rate)
     out = np.array(samples[:end], dtype=np.float32, copy=True)
-    return fade_out(out, sample_rate)
+    return fade_out(out, sample_rate, CLICK_FADE_MS)
 
 
 def cap_duration(
@@ -213,7 +194,7 @@ def cap_duration(
         cut = max_n
     cut = max(int(sample_rate * 0.4), min(cut, max_n))
     out = np.array(samples[:cut], dtype=np.float32, copy=True)
-    return fade_out(out, sample_rate, 180)
+    return fade_out(out, sample_rate, CLICK_FADE_MS)
 
 
 def limit_peak(samples: np.ndarray, ceiling: float = 0.98) -> np.ndarray:

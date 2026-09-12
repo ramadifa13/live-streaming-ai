@@ -82,6 +82,7 @@ export const ConnectingOverlay: React.FC = () => {
       isLivePaused: false,
       liveSessionPhase: "live",
       liveSeconds: 0,
+      liveStartedAtMs: Date.now(),
       connectAbortController: null,
       isSubmittingGoLive: false,
     });

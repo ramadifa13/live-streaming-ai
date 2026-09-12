@@ -52,3 +52,18 @@ def test_trim_cuts_long_flat_drone_after_speech():
     out = trim_trailing_buzz(samples, sr)
     assert out.size / sr < 8.5
     assert out.size / sr > 5.0
+
+
+def test_trim_keeps_long_decaying_sentence_at_full_level():
+    sr = 24000
+    dur = 14.0
+    t = np.linspace(0, dur, int(sr * dur), dtype=np.float32)
+    envelope = (0.55 + 0.45 * np.sin(2 * np.pi * 3.2 * t)).astype(np.float32)
+    decay = np.clip(1.15 - 0.16 * t, 0.22, 1.0).astype(np.float32)
+    speech = (0.28 * np.sin(2 * np.pi * 175 * t) * envelope * decay).astype(np.float32)
+    out = trim_trailing_buzz(speech, sr)
+    assert out.size / sr >= 13.5
+    tail = out[-int(sr * 0.25) :]
+    src_tail = speech[-int(sr * 0.25) :]
+    assert float(np.max(np.abs(tail))) > 0.02
+    assert float(np.max(np.abs(tail))) >= float(np.max(np.abs(src_tail))) * 0.92

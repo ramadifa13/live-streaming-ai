@@ -847,6 +847,22 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     const metrics = livePlatformConnector.getMetricsSnapshot(sessionId);
 
     const sessionStatus = managedSession?.state || session?.status || "idle";
+    const liveAnchor =
+      session?.liveStartedAt ||
+      (managedSession?.liveStartedAt ? new Date(managedSession.liveStartedAt) : null) ||
+      null;
+    const liveStartedAt = liveAnchor
+      ? new Date(liveAnchor).toISOString()
+      : streamStatus.startedAt || null;
+    const startedAt =
+      (session?.createdAt ? new Date(session.createdAt).toISOString() : null) ||
+      liveStartedAt ||
+      streamStatus.startedAt ||
+      new Date().toISOString();
+    const elapsedSeconds = liveStartedAt
+      ? Math.max(0, Math.floor((Date.now() - Date.parse(liveStartedAt)) / 1000))
+      : 0;
+    const durationHours = managedSession?.durationHours || session?.durationHours || null;
 
     return {
       success: true,
@@ -858,7 +874,10 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         platform: session?.platform || "TikTok LIVE",
         product: managedSession?.product ?? null,
         avatar: session?.avatar || null,
-        startedAt: session?.createdAt || streamStatus.startedAt || new Date().toISOString(),
+        startedAt,
+        liveStartedAt,
+        elapsedSeconds,
+        durationHours,
         metrics,
         serverTimestamp: Date.now(),
       },

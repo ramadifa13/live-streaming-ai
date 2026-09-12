@@ -47,6 +47,35 @@ export function toLiveProductSnapshot(product: Product, options: boolean | { inc
   };
 }
 
+export type LiveClockSnapshot = {
+  liveStartedAtMs: number;
+  liveSeconds: number;
+  durationHours?: number;
+};
+
+/** Derive wall-clock elapsed from metrics so refresh does not reset the timer. */
+export function parseLiveClockFromMetrics(data: Record<string, unknown> | null | undefined): LiveClockSnapshot | null {
+  if (!data) return null;
+  const serverTs = Number(data.serverTimestamp);
+  const now = Number.isFinite(serverTs) && serverTs > 1_000_000_000_000 ? serverTs : Date.now();
+  const startedIso = data.liveStartedAt;
+  let startedMs = startedIso ? Date.parse(String(startedIso)) : Number.NaN;
+  let elapsed = Number(data.elapsedSeconds);
+  if (!Number.isFinite(elapsed) || elapsed < 0) {
+    if (!Number.isFinite(startedMs)) return null;
+    elapsed = Math.max(0, Math.floor((now - startedMs) / 1000));
+  }
+  if (!Number.isFinite(startedMs)) {
+    startedMs = now - elapsed * 1000;
+  }
+  const durationHours = Number(data.durationHours);
+  return {
+    liveStartedAtMs: startedMs,
+    liveSeconds: elapsed,
+    durationHours: Number.isFinite(durationHours) && durationHours >= 1 ? durationHours : undefined,
+  };
+}
+
 export interface StartSessionParams {
   productId: string;
   avatarId: string;

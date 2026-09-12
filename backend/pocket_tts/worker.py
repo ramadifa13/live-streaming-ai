@@ -31,7 +31,7 @@ DEBUG_TAP_DIR = os.environ.get("TTS_DEBUG_TAP_DIR", "").strip()
 # Milder than -6.5/-8.5: still helps EOS vs default -4.0, without chopping sentences.
 EOS_THRESHOLD = float(os.environ.get("POCKET_TTS_EOS_THRESHOLD", "-5.0"))
 EOS_RETRY_THRESHOLD = float(os.environ.get("POCKET_TTS_EOS_RETRY_THRESHOLD", "-6.0"))
-FRAMES_AFTER_EOS = int(os.environ.get("POCKET_TTS_FRAMES_AFTER_EOS", "3"))
+FRAMES_AFTER_EOS = int(os.environ.get("POCKET_TTS_FRAMES_AFTER_EOS", "8"))
 MAX_GENERATE_ATTEMPTS = max(1, int(os.environ.get("POCKET_TTS_MAX_ATTEMPTS", "2")))
 
 # Prefer raising on no-EOS so we can retry instead of shipping a vocoder drone.

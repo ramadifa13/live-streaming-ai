@@ -355,10 +355,10 @@ def _split_pcm_frames(
     return _apply_pcm_edge_fades(frames)
 
 
-# Soften AAC splice clicks only. Trailing vocoder buzz is already stripped in
-# backend audio_post — a long fade-out here swallows the last syllable.
+# Soften the AAC start click only. Ending fade lives in backend audio_post —
+# a second fade here stacked on top and made long sentences die out.
 PCM_EDGE_FADE_IN_FRAMES = 2
-PCM_EDGE_FADE_OUT_FRAMES = 3
+PCM_EDGE_FADE_OUT_FRAMES = 0
 
 
 def _scale_pcm_frame(frame: bytes, gain: float) -> bytes:
@@ -379,18 +379,22 @@ def _apply_pcm_edge_fades(
     n = len(frames)
     if n == 0:
         return frames
-    if fade_frames is not None:
+    explicit = fade_frames is not None
+    if explicit:
         fade_in_frames = fade_frames
         fade_out_frames = fade_frames
     fade_in = min(max(1, int(fade_in_frames)), max(1, n // 4))
-    fade_out = _click_fade_out_frames(frames, max(1, int(fade_out_frames)))
-    fade_out = min(fade_out, max(1, n // 4))
+    if explicit:
+        fade_out = min(max(1, int(fade_out_frames)), max(1, n // 4))
+    else:
+        fade_out = _click_fade_out_frames(frames, max(0, int(fade_out_frames)))
+        if fade_out > 0:
+            fade_out = min(fade_out, max(1, n // 4))
     out = list(frames)
     for i in range(fade_in):
         in_gain = ((i + 1) / float(fade_in)) ** 2
         out[i] = _scale_pcm_frame(out[i], in_gain)
     for i in range(fade_out):
-        # Late-weighted: stay near full level, drop only on the last 1–2 frames.
         t = (i + 1) / float(fade_out)
         out_gain = float(np.cos(0.5 * np.pi * (t ** 2)))
         out[n - fade_out + i] = _scale_pcm_frame(out[n - fade_out + i], out_gain)
@@ -407,21 +411,19 @@ def _frame_rms(frame: bytes) -> float:
 
 
 def _click_fade_out_frames(frames: List[bytes], requested: int) -> int:
-    """Use the shortest fade that still kills a splice click.
-
-    If the tail is still speech-level, fade 2 frames (~83 ms). Quiet tails
-    (already trimmed by audio_post) can take the requested click window.
-    """
-    requested = max(1, int(requested))
-    if not frames:
-        return requested
-    look = frames[-min(6, len(frames)) :]
+    """Fade only a quiet leftover tail. Never fade a speech-level ending."""
+    requested = max(0, int(requested))
+    if requested == 0 or not frames:
+        return 0
+    look = frames[-min(8, len(frames)) :]
     rms = [_frame_rms(item) for item in look]
     peak = max(rms) if rms else 0.0
     if peak <= 1.0:
         return requested
-    if rms[-1] > peak * 0.18:
-        return min(requested, 2)
+    if rms[-1] > peak * 0.10:
+        return 0
+    if len(rms) >= 2 and rms[-2] > peak * 0.15:
+        return 0
     return requested
 
 
