@@ -31,7 +31,7 @@ export const EndLiveConfirmModal: React.FC = () => {
         showToast("Siaran berakhir. Ringkasan siap.");
       }
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Gagal mengakhiri live session.", "error");
+      showToast(err instanceof Error ? err.message : "Gagal mengakhiri siaran.", "error");
     } finally {
       setIsEnding(false);
     }

@@ -54,7 +54,7 @@ export const VoiceToneSettings: React.FC = () => {
       showToast("Tidak ada suara untuk host ini.");
       return;
     }
-    showToast(`Preview backend · ${activeVoice.label}`);
+    showToast(`Pratinjau suara · ${activeVoice.label}`);
     try {
       // Preview uses the backend Pocket TTS endpoint.
       await speakText("__local_preview__", {
@@ -165,7 +165,7 @@ export const VoiceToneSettings: React.FC = () => {
 
         <div className="rounded-lg border border-white/5 bg-[#080e1a]/80 px-2 py-1.5">
           <p className="text-[9px] text-slate-500 leading-snug">
-            Preview memakai Pocket TTS backend dengan voice cloning dari reference audio.
+            Pratinjau memakai suara host yang sama dengan saat siaran.
           </p>
         </div>
 

@@ -183,7 +183,7 @@ export async function oauthRoutes(server: FastifyInstance) {
       reply.code(503);
       return {
         success: false,
-        error: `Client ID untuk ${platform} belum dikonfigurasi di .env`,
+        error: `Koneksi akun ${platform} belum tersedia. Gunakan isi manual, atau hubungi tim Livio.`,
         missingEnvKey: key ? keyMap[key] : "OAUTH_CLIENT_ID",
       };
     }

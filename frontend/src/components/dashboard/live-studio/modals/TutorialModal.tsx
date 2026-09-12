@@ -1,193 +1,213 @@
 "use client";
 
-import React, { useState } from "react";
-import { X, BookOpen, AlertTriangle } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { X, BookOpen, AlertTriangle, CheckCircle2, ExternalLink, MousePointerClick, Monitor, Sparkles } from "lucide-react";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
-import { dashboardPlatforms } from "@/lib/brand-assets";
+import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { PlatformIcon } from "@/components/shared/PlatformIcon";
+import { LIVE_PLATFORM_GUIDES, resolveLiveGuideId, type GuideClickStep } from "@/lib/live-platform-guide";
 
-const PLATFORM_TABS = dashboardPlatforms.filter((p) => p.key !== null);
+function StepCard({ step, index }: { step: GuideClickStep; index: number }) {
+  const inLivio = step.place === "livio";
+
+  return (
+    <article
+      className={`rounded-2xl border px-4 py-4 sm:px-5 ${
+        inLivio ? "border-cyan-400/40 bg-cyan-500/8" : "border-[#2a3550] bg-[#111827]"
+      }`}
+    >
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-black text-white">
+          {index + 1}
+        </span>
+        <h5 className="text-[15px] font-bold leading-snug text-white">{step.title}</h5>
+        <span
+          className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+            inLivio ? "bg-cyan-500/20 text-cyan-200" : "bg-white/8 text-slate-300"
+          }`}
+        >
+          {inLivio ? "Kerjakan di Livio" : "Kerjakan di komputer"}
+        </span>
+      </div>
+
+      {step.website ? (
+        <div className="mb-3 rounded-xl border border-blue-400/25 bg-blue-500/10 px-3 py-3">
+          <p className="text-[12px] font-semibold text-blue-100">Buka situs ini</p>
+          <p className="mt-0.5 font-mono text-[13px] text-white">{step.website.label}</p>
+          <a
+            href={step.website.url}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-[12px] font-bold text-white hover:brightness-110"
+          >
+            {step.website.buttonLabel}
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        </div>
+      ) : null}
+
+      <p className="mb-2 flex items-center gap-1.5 text-[12px] font-bold text-slate-200">
+        <MousePointerClick className="h-3.5 w-3.5 text-blue-300" />
+        Lakukan ini, satu per satu
+      </p>
+      <ol className="space-y-2">
+        {step.doThis.map((item, itemIndex) => (
+          <li key={item} className="flex gap-2 text-[13px] leading-relaxed text-slate-200">
+            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-white/10 text-[10px] font-bold text-slate-300">
+              {itemIndex + 1}
+            </span>
+            <span>{item}</span>
+          </li>
+        ))}
+      </ol>
+
+      {step.youWillSee ? (
+        <p className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/8 px-3 py-2 text-[12px] leading-relaxed text-emerald-100">
+          <span className="font-bold text-emerald-200">Yang muncul: </span>
+          {step.youWillSee}
+        </p>
+      ) : null}
+    </article>
+  );
+}
 
 export const TutorialModal: React.FC = () => {
   const showTutorialModal = useDashboardUIStore((state) => state.showTutorialModal);
   const setShowTutorialModal = useDashboardUIStore((state) => state.setShowTutorialModal);
+  const selectedPlatform = useLiveSessionStore((state) => state.selectedPlatform);
 
-  const [tutorialPlatformTab, setTutorialPlatformTab] = useState(PLATFORM_TABS[0]?.value ?? "TikTok LIVE");
+  const [activeId, setActiveId] = useState(resolveLiveGuideId(selectedPlatform));
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (showTutorialModal) {
+      setActiveId(resolveLiveGuideId(selectedPlatform));
+    }
+  }, [showTutorialModal, selectedPlatform]);
+
+  useEffect(() => {
+    bodyRef.current?.scrollTo({ top: 0 });
+  }, [activeId, showTutorialModal]);
 
   if (!showTutorialModal) return null;
 
+  const guide = LIVE_PLATFORM_GUIDES.find((item) => item.id === activeId) || LIVE_PLATFORM_GUIDES[0];
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm animate-fadeIn">
-      <div className="relative w-full max-w-2xl rounded-2xl border border-blue-500/40 bg-[#0c1221] p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 backdrop-blur-sm animate-fadeIn sm:p-4">
+      <div className="relative flex h-[94vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-blue-500/40 bg-[#0c1221] shadow-2xl">
         <button
           type="button"
           onClick={() => setShowTutorialModal(false)}
-          className="absolute right-4 top-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition cursor-pointer"
+          className="absolute right-4 top-4 z-10 rounded-lg p-1 text-slate-400 transition hover:bg-white/5 hover:text-white cursor-pointer"
         >
-          <X className="w-4 h-4" />
+          <X className="h-5 w-5" />
         </button>
 
-        <div className="flex items-center gap-3 mb-3 border-b border-[#232c42] pb-3">
-          <BookOpen className="w-6 h-6 text-blue-400" />
+        <div className="flex items-start gap-3 border-b border-[#232c42] px-5 py-4 pr-12 sm:px-6">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-500/15 text-blue-400">
+            <BookOpen className="h-5 w-5" />
+          </div>
           <div>
-            <h3 className="text-lg font-bold text-white">Panduan Koneksi &amp; Syarat Live Siaran</h3>
-            <p className="text-[11px] text-slate-400">
-              Pilih platform tujuan untuk melihat syarat kelayakan dan cara mengambil Stream Key.
+            <h3 className="text-lg font-bold text-white">Cara mengambil kode siaran</h3>
+            <p className="mt-1 text-[13px] leading-relaxed text-slate-300">
+              Ikuti seperti resep masak. Selesaikan satu langkah, baru lanjut ke langkah berikutnya. Kerjakan di komputer, bukan di HP.
             </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-1.5 mb-4 p-1 rounded-xl bg-[#111827] border border-[#232c42]">
-          {PLATFORM_TABS.map((p) => (
+        <div className="flex gap-1.5 overflow-x-auto border-b border-[#232c42] bg-[#0a101c] px-4 py-2">
+          {LIVE_PLATFORM_GUIDES.map((item) => {
+            const active = item.id === guide.id;
+            return (
               <button
-                key={p.value}
+                key={item.id}
                 type="button"
-                onClick={() => setTutorialPlatformTab(p.value)}
-                className={`flex-1 min-w-[100px] flex items-center justify-center gap-1.5 rounded-lg py-1.5 px-2 text-[10px] font-bold transition cursor-pointer ${
-                  tutorialPlatformTab === p.value
-                    ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow"
-                    : "text-slate-400 hover:text-white hover:bg-white/5"
+                onClick={() => setActiveId(item.id)}
+                className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] font-bold transition cursor-pointer ${
+                  active
+                    ? "bg-linear-to-r from-blue-600 to-indigo-600 text-white shadow"
+                    : "text-slate-400 hover:bg-white/5 hover:text-white"
                 }`}
               >
-                {p.key && <PlatformIcon name={p.key} size="sm" />}
-                <span>{"label" in p ? p.label : p.value}</span>
+                {item.platformKey ? <PlatformIcon name={item.platformKey} size="sm" /> : null}
+                <span>{item.shortLabel}</span>
               </button>
-            ))}
+            );
+          })}
         </div>
 
-        <div className="space-y-3.5 text-xs text-slate-200">
-          {tutorialPlatformTab === "TikTok LIVE" && (
-            <div className="space-y-3 animate-fadeIn">
-              <div className="rounded-xl bg-yellow-500/10 border border-yellow-500/30 p-3">
-                <p className="text-[11px] font-bold text-yellow-400 mb-1 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  <span>Syarat Kelayakan Live di TikTok:</span>
-                </p>
-                <ul className="list-disc list-inside text-[10px] text-slate-300 space-y-1">
-                  <li>
-                    <strong>Akun Kreator:</strong> Minimal memiliki 1.000 Followers.
-                  </li>
-                  <li>
-                    <strong>Akun TikTok Shop (Seller):</strong>{" "}
-                    <strong>Tanpa batas follower (0 follower bisa live)</strong> asalkan akun terdaftar resmi.
-                  </li>
-                  <li>
-                    <strong>Akses RTMP / PC:</strong> Menggunakan <em>TikTok LIVE Studio</em> atau akses Stream Key dari
-                    Seller Center.
-                  </li>
-                </ul>
-              </div>
-              <div className="rounded-xl bg-[#111827] border border-[#232c42] p-3.5">
-                <p className="text-[11px] font-bold text-white mb-2">📋 Langkah Mengambil RTMP URL &amp; Stream Key:</p>
-                <ol className="list-decimal list-inside text-[10.5px] text-slate-300 space-y-1.5">
-                  <li>
-                    Buka <strong>TikTok LIVE Studio</strong> di PC atau <strong>TikTok Live Center</strong> di browser.
-                  </li>
-                  <li>
-                    Pilih menu <strong>Pancarkan dari Komputer (Custom RTMP)</strong>.
-                  </li>
-                  <li>
-                    Salin <strong>Server URL</strong> dan <strong>Stream Key</strong> rahasia Anda ke kolom dashboard
-                    ini.
-                  </li>
-                  <li>
-                    Klik <strong>Mulai Live Sekarang</strong> di dashboard ini.
-                  </li>
-                </ol>
-              </div>
-            </div>
-          )}
+        <div ref={bodyRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4 text-slate-200 sm:px-6">
+          <div className={`rounded-xl border px-4 py-3 ${guide.accentSoft}`}>
+            <p className={`text-[13px] leading-relaxed font-medium ${guide.accent}`}>{guide.intro}</p>
+            <a
+              href={guide.officialUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-flex items-center gap-1 text-[12px] text-blue-300 hover:underline"
+            >
+              {guide.officialLabel}
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          </div>
 
-          {tutorialPlatformTab === "Shopee Live" && (
-            <div className="space-y-3 animate-fadeIn">
-              <div className="rounded-xl bg-orange-500/10 border border-orange-500/30 p-3">
-                <p className="text-[11px] font-bold text-orange-400 mb-1 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  <span>Syarat Kelayakan Live di Shopee:</span>
-                </p>
-                <ul className="list-disc list-inside text-[10px] text-slate-300 space-y-1">
-                  <li>
-                    Toko Shopee dalam status <strong>Aktif</strong>.
-                  </li>
-                  <li>Fitur Shopee Live sudah aktif pada akun toko Anda.</li>
-                </ul>
-              </div>
-              <div className="rounded-xl bg-[#111827] border border-[#232c42] p-3.5">
-                <p className="text-[11px] font-bold text-white mb-2">📋 Langkah Mengambil RTMP URL &amp; Stream Key:</p>
-                <ol className="list-decimal list-inside text-[10.5px] text-slate-300 space-y-1.5">
-                  <li>
-                    Login ke <strong>Shopee Seller Centre</strong> (seller.shopee.co.id).
-                  </li>
-                  <li>
-                    Masuk ke menu <strong>Promosi Saya ➔ Shopee Live ➔ Buat Siaran Langsung</strong>.
-                  </li>
-                  <li>
-                    Pilih <strong>Streaming Melalui Komputer (RTMP)</strong>, salin URL dan Stream Key.
-                  </li>
-                </ol>
-              </div>
-            </div>
-          )}
+          <p className="rounded-xl border border-[#2a3550] bg-[#101826] px-4 py-2.5 text-[13px] leading-relaxed text-slate-300">
+            <Monitor className="mr-1.5 inline h-4 w-4 text-blue-300" />
+            Cara menyalin: di situs platform klik <span className="font-semibold text-white">Salin</span> /{" "}
+            <span className="font-semibold text-white">Copy</span>, lalu di Livio klik kolom kosong dan tekan{" "}
+            <span className="font-semibold text-white">Ctrl</span> + <span className="font-semibold text-white">V</span>.
+            Jangan diketik satu per satu.
+          </p>
 
-          {tutorialPlatformTab === "Instagram Live" && (
-            <div className="space-y-3 animate-fadeIn">
-              <div className="rounded-xl bg-pink-500/10 border border-pink-500/30 p-3">
-                <p className="text-[11px] font-bold text-pink-400 mb-1 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  <span>Syarat Kelayakan Live di Instagram:</span>
-                </p>
-                <ul className="list-disc list-inside text-[10px] text-slate-300 space-y-1">
-                  <li>
-                    Akun bertipe <strong>Profesional (Bisnis atau Kreator)</strong>.
-                  </li>
-                  <li>
-                    Dapat diakses di <strong>instagram.com/live/producer/</strong>.
-                  </li>
-                </ul>
-              </div>
+          <section>
+            <h4 className="mb-3 flex items-center gap-1.5 text-[13px] font-bold text-white">
+              <Sparkles className="h-4 w-4 text-blue-400" />
+              Langkah 1 sampai selesai
+            </h4>
+            <div className="space-y-3">
+              {guide.steps.map((step, index) => (
+                <StepCard key={`${guide.id}-${step.title}`} step={step} index={index} />
+              ))}
             </div>
-          )}
+          </section>
 
-          {tutorialPlatformTab === "YouTube" && (
-            <div className="space-y-3 animate-fadeIn">
-              <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-3">
-                <p className="text-[11px] font-bold text-red-400 mb-1 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  <span>Syarat Kelayakan Live di YouTube:</span>
-                </p>
-                <ul className="list-disc list-inside text-[10px] text-slate-300 space-y-1">
-                  <li>Channel terverifikasi nomor telepon.</li>
-                  <li>Fitur Live Streaming aktif di YouTube Studio.</li>
-                </ul>
-              </div>
-            </div>
-          )}
+          <section>
+            <h4 className={`mb-2 flex items-center gap-1.5 text-[13px] font-bold ${guide.accent}`}>
+              <AlertTriangle className="h-4 w-4" />
+              Syarat akun, cek jika langkah di atas tidak muncul
+            </h4>
+            <ul className="space-y-2">
+              {guide.requirements.map((item) => (
+                <li
+                  key={item}
+                  className="flex gap-2 rounded-xl border border-[#232c42] bg-[#111827] px-3 py-2.5 text-[13px] leading-relaxed text-slate-200"
+                >
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
 
-          {tutorialPlatformTab === "Facebook Live" && (
-            <div className="space-y-3 animate-fadeIn">
-              <div className="rounded-xl bg-blue-500/10 border border-blue-500/30 p-3">
-                <p className="text-[11px] font-bold text-blue-400 mb-1 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  <span>Syarat Kelayakan Live di Facebook:</span>
-                </p>
-                <ul className="list-disc list-inside text-[10px] text-slate-300 space-y-1">
-                  <li>Halaman Facebook atau Mode Profesional.</li>
-                  <li>
-                    Akses di <strong>facebook.com/live/producer</strong>.
-                  </li>
-                </ul>
-              </div>
-            </div>
-          )}
+          {guide.warnings.length > 0 ? (
+            <section className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+              <p className="mb-2 text-[13px] font-bold text-amber-300">Perlu diingat</p>
+              <ul className="space-y-1.5 text-[13px] leading-relaxed text-amber-100/90">
+                {guide.warnings.map((item) => (
+                  <li key={item}>• {item}</li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
         </div>
 
-        <div className="mt-5 flex justify-end pt-3 border-t border-[#232c42]">
+        <div className="flex justify-end border-t border-[#232c42] px-5 py-3 sm:px-6">
           <button
             type="button"
             onClick={() => setShowTutorialModal(false)}
-            className="rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-xs font-bold text-white hover:brightness-110 shadow-md shadow-blue-600/30 transition active:scale-95 cursor-pointer"
+            className="cursor-pointer rounded-xl bg-linear-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-sm font-bold text-white shadow-md shadow-blue-600/30 transition hover:brightness-110 active:scale-95"
           >
-            Mengerti &amp; Tutup Panduan
+            Mengerti &amp; tutup
           </button>
         </div>
       </div>

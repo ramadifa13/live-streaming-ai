@@ -26,27 +26,27 @@ export const SettingsModal: React.FC = () => {
         </h3>
         <div className="space-y-3 text-xs">
           <div className="flex items-center justify-between p-2 rounded bg-[#111827] border border-[#232c42]">
-            <span>Resolusi Video Stream</span>
+            <span>Format siaran</span>
             <span className="text-blue-400 font-bold">
-              1080x1920 (Vertical 9:16)
+              Vertikal 9:16
             </span>
           </div>
           <div className="flex items-center justify-between p-2 rounded bg-[#111827] border border-[#232c42]">
-            <span>GPU Cloud Orchestrator</span>
+            <span>Studio AI</span>
             <span className="text-emerald-400 font-bold">
-              NVIDIA L40S (RunPod)
+              Siap
             </span>
           </div>
           <div className="flex items-center justify-between p-2 rounded bg-[#111827] border border-[#232c42]">
-            <span>AI Video Engine</span>
+            <span>Gerak bibir host</span>
             <span className="text-purple-400 font-bold">
-              MuseTalk Lip-Sync
+              Aktif
             </span>
           </div>
           <div className="flex items-center justify-between p-2 rounded bg-[#111827] border border-[#232c42]">
-            <span>Voice TTS Engine</span>
+            <span>Suara host</span>
             <span className="text-cyan-400 font-bold">
-              Pocket TTS Indonesian (Backend)
+              Bahasa Indonesia
             </span>
           </div>
         </div>

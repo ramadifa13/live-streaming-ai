@@ -35,7 +35,7 @@ export const dashboardPlatforms = [
   { value: "TikTok LIVE", key: "TikTok" as PlatformKey },
   { value: "Shopee Live", key: "Shopee" as PlatformKey },
   { value: "YouTube", key: "YouTube" as PlatformKey, label: "YouTube Live" },
-  { value: "Custom RTMP", key: null, label: "Custom RTMP Server" },
+  { value: "Custom RTMP", key: null, label: "Server siaran lain" },
 ] as const;
 
 export function resolvePlatformKey(platformName: string): PlatformKey | null {

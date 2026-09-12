@@ -2793,7 +2793,7 @@ class StreamBroadcaster:
         self._write_error = ""
         if not self.rtmp_url.lower().startswith(("rtmp://", "rtmps://")):
             raise ValueError(
-                f"RTMP URL tidak valid (harus rtmp:// atau rtmps://): {self.rtmp_url[:80]}"
+                "Alamat server siaran tidak valid. Salin persis dari aplikasi live Anda."
             )
         self._start_encoder()
 
@@ -3034,7 +3034,7 @@ class StreamBroadcaster:
                             write_rtmp_status(
                                 out_dir,
                                 "failed",
-                                "FFmpeg RTMP pipe putus — cek ai_worker_rtmp.log",
+                                "Siaran terputus. Coba kode siaran baru.",
                             )
                         except Exception:
                             pass
@@ -3159,7 +3159,7 @@ class StreamBroadcaster:
                 pass
             self._fail_start(
                 out_dir,
-                "FFmpeg RTMP gagal start — cek ai_worker_rtmp.log",
+                "Siaran gagal dimulai. Coba kode siaran baru.",
                 last_stderr,
             )
 
@@ -3167,7 +3167,7 @@ class StreamBroadcaster:
             os.close(video_r)
             os.close(audio_r)
             self._fail_start(
-                out_dir, "FFmpeg RTMP gagal start (proses tidak hidup)", last_stderr
+                out_dir, "Siaran gagal dimulai. Coba kode siaran baru.", last_stderr
             )
 
         if out_dir:
@@ -3657,7 +3657,7 @@ def broadcaster_loop(
                         _wrs(
                             out_dir,
                             "failed",
-                            "FFmpeg RTMP berhenti — cek ai_worker_rtmp.log",
+                            "Siaran terhenti. Coba kode siaran baru.",
                         )
                     except Exception:
                         pass
@@ -4240,7 +4240,7 @@ class AIVisualWorker:
                 state, err = read_rtmp_status(self.output_folder)
                 raise RuntimeError(
                     err
-                    or "FFmpeg RTMP berhenti saat handshake — gunakan Stream Key baru."
+                    or "Siaran gagal tersambung. Buat siaran baru, lalu tempel kode siaran yang baru."
                 )
             time.sleep(0.5)
 

@@ -287,7 +287,7 @@ export const BroadcastSettingsPanel: React.FC = () => {
                     <PlatformIcon name={platform.key} size="sm" />
                   ) : (
                     <span className="flex h-5 w-5 items-center justify-center rounded bg-slate-700 text-[8px] font-bold">
-                      RTMP
+                      Lain
                     </span>
                   )}
                   <span className="truncate">{label}</span>
@@ -300,7 +300,7 @@ export const BroadcastSettingsPanel: React.FC = () => {
 
       <div className="mb-3">
         <div className="mb-1.5 flex items-center justify-between">
-          <label className="text-[10.5px] font-semibold text-slate-300">Sistem Otomatisasi AI Otonom</label>
+          <label className="text-[10.5px] font-semibold text-slate-300">Otomatisasi host</label>
           {isLiveActive ? (
             <span className="text-[8.5px] text-amber-400 font-medium bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30 flex items-center gap-1">
               <Lock className="w-2.5 h-2.5" />

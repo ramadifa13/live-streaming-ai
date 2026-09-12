@@ -15,6 +15,7 @@ import { copyToClipboard } from "@/utils/clipboard";
 import { LiveRuntimePanel } from "@/components/dashboard/live-studio/LiveRuntimePanel";
 import { isValidRtmpUrl, normalizeRtmpInput } from "@/utils/rtmp";
 import { validateLivePreparation } from "@/lib/live-validation";
+import { toClientCopy } from "@/lib/client-copy";
 
 export const LiveControlBar: React.FC = () => {
   const currentStep = useDashboardUIStore((state) => state.currentStep);
@@ -56,7 +57,7 @@ export const LiveControlBar: React.FC = () => {
 
   const handleCopy = async (text: string, label: string) => {
     if (!text?.trim()) {
-      showToast(`${label} masih kosong — salin dari dashboard platform live Anda.`);
+      showToast(`${label} masih kosong — salin dari aplikasi live Anda.`);
       return;
     }
     const ok = await copyToClipboard(text);
@@ -130,18 +131,18 @@ export const LiveControlBar: React.FC = () => {
 
     if (!normalizedUrl.trim()) {
       showToast(
-        "Tempel Server / Stream URL dari platform live Anda. URL harus sesuai dengan yang ditampilkan di dashboard siaran.",
+        "Tempel alamat server siaran dari aplikasi live Anda.",
       );
       return;
     }
     if (!normalizedKey) {
       showToast(
-        "Tempel Stream Key dari platform dulu. Di Instagram, key lama yang sudah putus tidak bisa dipakai ulang — buat siaran baru.",
+        "Tempel kode siaran dari aplikasi live. Di Instagram, kode lama tidak bisa dipakai ulang — buat siaran baru.",
       );
       return;
     }
     if (!isValidRtmpUrl(normalizedUrl)) {
-      showToast("RTMP URL tidak valid. Harus diawali rtmp:// atau rtmps://");
+      showToast("Alamat server siaran tidak valid. Salin persis dari aplikasi live Anda.");
       return;
     }
     if (normalizedUrl !== customRtmpUrl || normalizedKey !== streamKey) {
@@ -197,7 +198,7 @@ export const LiveControlBar: React.FC = () => {
 
       const sessionId = sessionJson.data?.id;
       if (!sessionId) {
-        throw new Error("Sesi live tidak dibuat oleh server");
+        throw new Error("Siaran belum bisa dimulai. Coba lagi.");
       }
       createdSessionId = sessionId;
 
@@ -209,14 +210,14 @@ export const LiveControlBar: React.FC = () => {
       useLiveSessionStore.setState({
         currentLiveSessionId: sessionId,
         liveSessionPhase: "pending",
-        connectingStageText: "Menyalakan cloud AI… Mohon tunggu.",
+        connectingStageText: "Menyiapkan host AI… Mohon tunggu.",
       });
 
       await liveSessionService.waitForPodReady(sessionId, {
         signal: controller.signal,
         onProgress: (text) => {
           if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
-          useLiveSessionStore.setState({ connectingStageText: text });
+          useLiveSessionStore.setState({ connectingStageText: toClientCopy(text) });
         },
       });
 
@@ -226,7 +227,7 @@ export const LiveControlBar: React.FC = () => {
       }
 
       useLiveSessionStore.setState({
-        connectingStageText: "Menyambungkan siaran ke Instagram…",
+        connectingStageText: `Menyambungkan siaran ke ${selectedPlatform}…`,
       });
 
       // http(s), data:image, atau path relatif publik (/banner_atas_tengah.png)
@@ -288,7 +289,7 @@ export const LiveControlBar: React.FC = () => {
             maxWaitMs: 10 * 60_000,
             onProgress: (text) => {
               if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
-              useLiveSessionStore.setState({ connectingStageText: text });
+              useLiveSessionStore.setState({ connectingStageText: toClientCopy(text) });
             },
           });
           bcastJson = {
@@ -315,7 +316,7 @@ export const LiveControlBar: React.FC = () => {
           connectingStageText:
             bcastJson.waitingForGoLive !== false
               ? "Menyiapkan host AI… Pertama kali bisa 2–5 menit."
-              : "Menunggu Instagram siap siaran…",
+              : `Menunggu ${selectedPlatform} siap siaran…`,
           // Tetap buka overlay sampai user konfirmasi Go Live atau pipeline siap.
           isConnectingLive: bcastJson.waitingForGoLive !== false,
           isLiveActive: bcastJson.waitingForGoLive === false,
@@ -324,10 +325,12 @@ export const LiveControlBar: React.FC = () => {
           liveStartedAtMs: Date.now(),
         });
         showToast(
-          bcastJson.message ||
-            (bcastJson.waitingForGoLive !== false
-              ? "Siaran tersambung. Menyiapkan host AI — tunggu tombol hijau."
-              : `Tersambung! Menunggu ${selectedPlatform} siap siaran…`),
+          toClientCopy(
+            bcastJson.message ||
+              (bcastJson.waitingForGoLive !== false
+                ? "Siaran tersambung. Menyiapkan host AI — tunggu tombol hijau."
+                : `Tersambung! Menunggu ${selectedPlatform} siap siaran…`),
+          ),
         );
       } else {
         await liveSessionService.teardownSession(sessionId);
@@ -338,12 +341,12 @@ export const LiveControlBar: React.FC = () => {
           liveSessionPhase: "idle",
           pipelineStatus: null,
         });
-        showToast(`Belum berhasil ke ${selectedPlatform}. Cek Stream Key (sekali pakai), lalu Connect lagi.`);
+        showToast(`Belum berhasil ke ${selectedPlatform}. Periksa kode siaran (sekali pakai), lalu coba lagi.`);
       }
     } catch (err) {
       if (useLiveSessionStore.getState().connectAttemptId !== attemptId) return;
       if (connectingAbortRef.current?.signal.aborted) return;
-      const message = err instanceof Error ? err.message : "Error koneksi: Pastikan server backend online.";
+      const message = err instanceof Error ? err.message : "Koneksi gagal. Pastikan internet stabil dan coba lagi.";
       await liveSessionService.teardownSession(createdSessionId);
       useLiveSessionStore.setState({
         isConnectingLive: false,
@@ -357,7 +360,7 @@ export const LiveControlBar: React.FC = () => {
   };
 
   const handleOAuthConnect = async () => {
-    showToast(`Menghubungkan ke ${selectedPlatform} via OAuth 2.0...`);
+    showToast(`Menghubungkan akun ${selectedPlatform}…`);
     try {
       const json = await oauthService.getAuthorizeUrl(selectedPlatform);
       if (json?.authUrl) {
@@ -365,10 +368,10 @@ export const LiveControlBar: React.FC = () => {
         return;
       }
       if (json?.missingEnvKey) {
-        showToast(`Gagal: ${json.error} (${json.missingEnvKey})`);
+        showToast("Koneksi akun belum tersedia. Gunakan isi manual, atau hubungi tim Livio.");
       }
     } catch {
-      showToast("Tidak dapat terhubung ke backend. Pastikan server berjalan.");
+      showToast("Tidak dapat terhubung ke server. Coba muat ulang halaman.");
     }
   };
 
@@ -441,7 +444,7 @@ export const LiveControlBar: React.FC = () => {
             <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
               <p className="text-[11px] font-semibold text-slate-200 whitespace-nowrap truncate">
                 {selectedPlatform.toLowerCase().includes("custom")
-                  ? "Konfigurasi Server RTMP Custom"
+                  ? "Pengaturan server siaran"
                   : `Metode Koneksi (${selectedPlatform})`}
               </p>
               {!selectedPlatform.toLowerCase().includes("custom") && (
@@ -466,7 +469,7 @@ export const LiveControlBar: React.FC = () => {
                         : "text-slate-400 hover:text-white"
                     }`}
                   >
-                    Manual RTMP
+                    Isi manual
                   </button>
                 </div>
               )}
@@ -482,7 +485,7 @@ export const LiveControlBar: React.FC = () => {
                         Akun Terverifikasi
                       </span>
                       <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[8px] font-bold text-emerald-400 border border-emerald-500/20">
-                        OAuth 2.0 Connected
+                        Akun terhubung
                       </span>
                     </div>
 
@@ -522,14 +525,14 @@ export const LiveControlBar: React.FC = () => {
                   <div className="text-center py-2.5">
                     <p className="text-[10px] text-slate-200 font-bold mb-1">Hubungkan Akun {selectedPlatform}</p>
                     <p className="text-[8.5px] text-slate-400 mb-3">
-                      Hubungkan akun resmi toko Anda via OAuth 2.0 untuk auto-streaming tanpa input Stream Key manual.
+                      Hubungkan akun toko Anda agar siaran bisa dimulai tanpa mengisi kode secara manual.
                     </p>
 
                     {oauthConfigStatus[selectedPlatform] === false && (
                       <div className="mb-3 rounded-lg bg-amber-500/10 border border-amber-500/30 p-2 text-[8px] text-amber-300 text-left leading-relaxed">
-                        <span className="font-bold text-amber-400">[!] OAuth belum dikonfigurasi</span>
+                        <span className="font-bold text-amber-400">Koneksi cepat belum tersedia</span>
                         <br />
-                        Tambahkan credentials {selectedPlatform} ke file .env backend.
+                        Gunakan isi manual, atau hubungi tim Livio untuk mengaktifkan login akun.
                       </div>
                     )}
 
@@ -547,7 +550,7 @@ export const LiveControlBar: React.FC = () => {
               <div className="space-y-2.5 animate-fadeIn">
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <p className="text-[9px] text-slate-400">Server / Stream URL ({selectedPlatform})</p>
+                    <p className="text-[9px] text-slate-400">Alamat server siaran ({selectedPlatform})</p>
                     <p className="text-[8px] text-amber-400/90">Wajib salin dari platform</p>
                   </div>
                   <div className="flex rounded border border-[#232c42] bg-[#111827]">
@@ -560,7 +563,7 @@ export const LiveControlBar: React.FC = () => {
                     />
                     <button
                       type="button"
-                      onClick={() => handleCopy(customRtmpUrl, "RTMP URL")}
+                      onClick={() => handleCopy(customRtmpUrl, "Alamat server")}
                       className="border-l border-[#232c42] px-2.5 py-1.5 text-[9px] font-medium text-slate-300 hover:text-white bg-[#161f30] transition active:scale-95 shrink-0 cursor-pointer"
                     >
                       Salin
@@ -570,7 +573,7 @@ export const LiveControlBar: React.FC = () => {
 
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <p className="text-[9px] text-slate-400">Stream Key</p>
+                    <p className="text-[9px] text-slate-400">Kode siaran</p>
                   </div>
                   <div className="flex rounded border border-[#232c42] bg-[#111827]">
                     <input
@@ -578,12 +581,12 @@ export const LiveControlBar: React.FC = () => {
                       autoComplete="off"
                       value={streamKey}
                       onChange={(e) => setStreamKey(e.target.value)}
-                      placeholder={`Tempel Stream Key dari ${selectedPlatform}...`}
+                      placeholder={`Tempel kode siaran dari ${selectedPlatform}...`}
                       className="w-full bg-transparent p-1.5 text-[10px] text-slate-300 outline-none font-mono"
                     />
                     <button
                       type="button"
-                      onClick={() => handleCopy(streamKey, "Stream Key")}
+                      onClick={() => handleCopy(streamKey, "Kode siaran")}
                       className="border-l border-[#232c42] px-2.5 py-1.5 text-[9px] font-medium text-slate-300 hover:text-white bg-[#161f30] transition active:scale-95 shrink-0 cursor-pointer"
                     >
                       Salin
@@ -591,27 +594,25 @@ export const LiveControlBar: React.FC = () => {
                   </div>
                   {selectedPlatform.includes("Instagram") && (
                     <p className="mt-1 text-[8.5px] text-amber-400/90 leading-relaxed">
-                      Stream key Instagram sekali pakai. Kalau siaran putus, buat live baru di Instagram lalu tempel key
-                      yang baru.
+                      Kode siaran Instagram sekali pakai. Kalau siaran putus, buat live baru di Instagram lalu tempel
+                      kode yang baru.
                     </p>
                   )}
                 </div>
 
-                {!selectedPlatform.toLowerCase().includes("custom") && (
-                  <button
-                    type="button"
-                    onClick={() => setShowTutorialModal(true)}
-                    className="flex items-center justify-between w-full text-[9px] text-blue-400 hover:underline pt-1 cursor-pointer"
-                  >
-                    <span className="flex items-center gap-1">
-                      <BookOpen className="w-3 h-3" />
-                      Cara cari RTMP &amp; Stream Key di {selectedPlatform}
-                    </span>
-                    <span>Tutorial &gt;</span>
-                  </button>
-                )}
               </div>
             )}
+            <button
+              type="button"
+              onClick={() => setShowTutorialModal(true)}
+              className="mt-2 flex w-full items-center justify-between rounded-lg border border-blue-500/25 bg-blue-500/8 px-2.5 py-2 text-left text-[10px] text-blue-200 hover:bg-blue-500/15 cursor-pointer"
+            >
+              <span className="flex items-center gap-1.5">
+                <BookOpen className="w-3.5 h-3.5 shrink-0" />
+                Belum tahu situs mana yang dibuka? Ikuti panduan klik demi klik untuk {selectedPlatform}
+              </span>
+              <span className="shrink-0 font-bold">Buka &gt;</span>
+            </button>
           </div>
         </div>
 
@@ -628,7 +629,7 @@ export const LiveControlBar: React.FC = () => {
           {isConnectingLive ? (
             <div className="flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>{connectingStageText}</span>
+              <span>{toClientCopy(connectingStageText)}</span>
             </div>
           ) : (
             <>
@@ -660,7 +661,7 @@ export const LiveControlBar: React.FC = () => {
         <div className="flex items-center gap-2">
           <span className="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/30 flex items-center gap-1">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            GPU Active
+            Host AI Aktif
           </span>
           <span className="text-[9px] font-bold text-cyan-300 bg-cyan-950/60 px-2.5 py-0.5 rounded-full border border-cyan-500/30 flex items-center gap-1.5">
             <PlatformIcon platformName={selectedPlatform} size="sm" />
@@ -712,7 +713,7 @@ export const LiveControlBar: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => handleCopy(customRtmpUrl, "RTMP URL")}
+            onClick={() => handleCopy(customRtmpUrl, "Alamat server")}
             className="flex items-center justify-center gap-1 rounded-lg border border-[#232c42] bg-[#111827] px-3 py-2 text-[9.5px] font-medium text-slate-300 hover:bg-white/5 transition cursor-pointer"
           >
             <Copy className="w-3 h-3" />

@@ -41,7 +41,7 @@ export const SessionSummaryModal: React.FC = () => {
       `Total Klik Keranjang,${sessionSummary.totalClicks}\n` +
       `Total Produk Terjual,${sessionSummary.totalProductSold} pcs\n` +
       `Total Omzet Kotor (GMV),${sessionSummary.grossRevenueFormatted}\n` +
-      `Biaya Server GPU Cloud,${sessionSummary.estimatedGpuCostFormatted}\n` +
+      `Biaya Server Siaran,${sessionSummary.estimatedGpuCostFormatted}\n` +
       `Estimasi Laba Bersih,${sessionSummary.netProfitFormatted}\n` +
       `Return on Investment (ROI),${sessionSummary.roiPercentage}\n\n`;
 
@@ -143,7 +143,7 @@ export const SessionSummaryModal: React.FC = () => {
               <p className="text-xl font-black text-white mt-0.5">{sessionSummary.grossRevenueFormatted}</p>
             </div>
             <div>
-              <p className="text-slate-400 text-[11px]">Biaya Server GPU Cloud:</p>
+              <p className="text-slate-400 text-[11px]">Biaya server siaran:</p>
               <p className="text-lg font-bold text-red-400 mt-0.5">- {sessionSummary.estimatedGpuCostFormatted}</p>
               <span className="text-[9px] text-slate-500">~Rp12.500 / jam siaran</span>
             </div>

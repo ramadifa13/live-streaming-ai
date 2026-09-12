@@ -47,7 +47,7 @@ export function getScriptBankMeta(
     return {
       status: "local-only",
       lineCount: 0,
-      label: "Lokal saat live",
+      label: "Siap saat live",
       colorClass: "text-slate-300 bg-slate-500/15 border-slate-500/30",
     };
   }

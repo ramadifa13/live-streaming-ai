@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { toClientCopy } from "@/lib/client-copy";
 
 export type ToastType = "success" | "error" | "warning" | "info";
 
@@ -58,6 +59,7 @@ export const useDashboardUIStore = create<DashboardUIState>((set, get) => ({
   showToast: (msg, type) => {
     const prevTimeout = get().toastTimeout;
     if (prevTimeout) clearTimeout(prevTimeout);
+    msg = toClientCopy(msg, msg);
 
     let resolvedType: ToastType = type || "info";
     if (!type) {

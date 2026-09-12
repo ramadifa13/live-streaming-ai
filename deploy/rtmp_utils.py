@@ -36,27 +36,25 @@ DNS_FAILURE_MARKERS = (
 )
 
 USER_HINT_INVALIDATED = (
-    "Stream key sudah tidak valid. Di Instagram/Facebook, buat siaran baru "
-    "lalu tempel Stream Key yang baru — key lama tidak bisa dipakai ulang."
+    "Kode siaran sudah tidak valid. Buat siaran baru di aplikasi live, "
+    "lalu tempel kode siaran yang baru — kode lama tidak bisa dipakai ulang."
 )
 USER_HINT_PUBLISHING = (
-    "Masih ada proses lama yang memegang Stream Key yang sama. "
-    "Hentikan siaran sebelumnya, lalu coba lagi dengan key baru."
+    "Masih ada siaran lama yang memakai kode yang sama. "
+    "Hentikan siaran sebelumnya, lalu coba lagi dengan kode baru."
 )
 USER_HINT_REFUSED = (
-    "Server RTMP menolak koneksi. Cek RTMP URL, Stream Key, dan jaringan pod."
+    "Platform menolak koneksi. Periksa alamat server dan kode siaran."
 )
 USER_HINT_CONNECTING_SLOW = (
     "Masih menyambungkan siaran ke platform anda. Tunggu sebentar, "
     "lalu cek gambar preview di sebelah kiri layar platform anda."
 )
 USER_HINT_DNS = (
-    "Pod GPU tidak bisa resolve hostname platform anda (DNS gagal). "
-    "Di terminal pod: perbaiki /etc/resolv.conf (8.8.8.8, 1.1.1.1), "
-    "lalu bash deploy/sync.sh --pull --restart dan gunakan Stream Key baru."
+    "Tidak bisa menghubungi platform live. Tunggu sebentar, lalu coba lagi."
 )
 USER_HINT_FFMPEG = (
-    "FFmpeg tidak bisa start encoder RTMP — cek ai_worker_rtmp.log di pod."
+    "Siaran gagal disambungkan. Coba kode siaran baru."
 )
 
 

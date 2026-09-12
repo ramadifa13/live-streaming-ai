@@ -350,20 +350,20 @@ async function waitForWorkerHealth(currentPodId: string, healthTimeout = 300000,
         );
         return currentPodId;
       } else if (res.status === 502) {
-        const msg = `Memuat PyTorch CUDA ke GPU... (${elapsed}s)`;
+        const msg = `Menyiapkan host AI… (${elapsed}s)`;
         onProgress?.(msg);
         console.log(`[RunPodManager] [Pod ${currentPodId}] ⏳ Booting (${elapsed}s): Container sedang memuat PyTorch CUDA ke GPU...`);
       } else if (res.status === 404) {
-        const msg = `Menghubungkan RunPod Proxy Port 8000... (${elapsed}s)`;
+        const msg = `Menyiapkan host AI… (${elapsed}s)`;
         onProgress?.(msg);
         console.log(`[RunPodManager] [Pod ${currentPodId}] ⏳ Routing (${elapsed}s): Menghubungkan RunPod Proxy Port 8000...`);
       } else {
-        const msg = `Menunggu worker HTTP ${res.status}... (${elapsed}s)`;
+        const msg = `Menyiapkan host AI… (${elapsed}s)`;
         onProgress?.(msg);
         console.log(`[RunPodManager] [Pod ${currentPodId}] ⏳ Status HTTP ${res.status} (${elapsed}s)...`);
       }
     } catch (fetchErr: any) {
-      const msg = `Menunggu port 8000 terbuka... (${elapsed}s)`;
+      const msg = `Menyiapkan host AI… (${elapsed}s)`;
       onProgress?.(msg);
       console.log(`[RunPodManager] [Pod ${currentPodId}] ⏳ Menunggu port 8000 terbuka (${elapsed}s): ${fetchErr.message || "Connecting..."}`);
     }
@@ -386,7 +386,7 @@ export async function startPodAndWait(
   if (staticPodId) {
     console.log(`[RunPodManager] Mode pod statis — pakai ${staticPodId} langsung (tanpa find/create).`);
     options.onPodCreated?.(staticPodId);
-    onProgress?.("Menghubungkan ke pod GPU statis...");
+    onProgress?.("Menyiapkan studio AI…");
 
     const quickHealthMs = Math.min(24_000, timeoutMs);
     try {
@@ -435,7 +435,7 @@ export async function startPodAndWait(
             console.warn("[RunPodManager] Semua GPU penuh. Beralih ke fallback (tanpa GPU).");
             return null;
           }
-          throw new Error("Semua GPU di server sedang penuh. Silakan coba beberapa saat lagi.");
+          throw new Error("Kapasitas studio sedang penuh. Coba lagi nanti.");
         }
       } else {
         throw err;
@@ -444,7 +444,7 @@ export async function startPodAndWait(
   }
 
   if (!createSuccess || !currentPodId) {
-    throw new Error("Gagal menyalakan pod setelah beberapa kali percobaan.");
+    throw new Error("Gagal menyiapkan host AI. Coba lagi.");
   }
 
   options.onPodCreated?.(currentPodId);
@@ -465,7 +465,7 @@ export async function startPodAndWait(
     throw new Error(`[RunPodManager] Timeout waiting for pod ${currentPodId} to start after ${timeoutMs}ms`);
   }
 
-  onProgress?.("Pod RUNNING — menunggu AI Worker siap...");
+  onProgress?.("Host AI hampir siap…");
   return await waitForWorkerHealth(currentPodId, timeoutMs, options);
 }
 

@@ -36,7 +36,7 @@ export const ImportCsvModal: React.FC = () => {
     try {
       const count = await importCsvProducts();
       setShowCsvModal(false);
-      showToast(`${count} produk tersimpan. Script bank disiapkan di background (satu per satu).`);
+      showToast(`${count} produk tersimpan. Naskah host sedang disiapkan.`);
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal mengimpor produk CSV");
     } finally {
@@ -121,7 +121,7 @@ export const ImportCsvModal: React.FC = () => {
               onClick={handleImport}
               className="rounded-lg bg-blue-600 px-5 py-2 text-xs font-bold text-white hover:bg-blue-500 shadow-md shadow-blue-600/30 cursor-pointer disabled:opacity-70"
             >
-              {isImporting ? "Mengimpor..." : "Import ke RAG Database"}
+              {isImporting ? "Mengimpor..." : "Import produk"}
             </button>
           </div>
         </div>

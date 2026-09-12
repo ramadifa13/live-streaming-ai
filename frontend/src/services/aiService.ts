@@ -1,4 +1,5 @@
 import { LiveSalesScript, Product } from "@/app/dashboard/types";
+import { toClientCopy } from "@/lib/client-copy";
 
 export interface SynthesizeTTSOptions {
   text: string;
@@ -48,7 +49,7 @@ function resolveVoiceId(voiceOrName?: string): string {
 export const aiService = {
   async getTtsVoices(): Promise<BackendVoiceOption[]> {
     const res = await fetch("/api/tts/voices", { cache: "no-store" });
-    if (!res.ok) throw new Error(`Gagal memuat katalog voice (${res.status})`);
+    if (!res.ok) throw new Error("Gagal memuat daftar suara.");
     const body = (await res.json()) as { data?: BackendVoiceOption[] };
     return body.data || [];
   },
@@ -75,8 +76,7 @@ export const aiService = {
 
     if (!res.ok) {
       const errJson = await res.json().catch(() => null);
-      const errorMsg = errJson?.error || `HTTP ${res.status}: Gagal sintesis Pocket TTS.`;
-      throw new Error(errorMsg);
+      throw new Error(toClientCopy(errJson?.error, "Gagal menyiapkan suara host."));
     }
 
     const contentType = res.headers.get("content-type") || "";
@@ -130,7 +130,7 @@ export const aiService = {
       });
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        throw new Error("Timeout menyiapkan script bank (LLM terlalu lama)");
+        throw new Error("Penyiapan naskah terlalu lama. Coba lagi.");
       }
       throw err;
     } finally {
@@ -138,7 +138,7 @@ export const aiService = {
     }
     const json = await res.json().catch(() => null);
     if (!res.ok || !json?.success) {
-      throw new Error(json?.error || "Gagal menyiapkan script bank");
+      throw new Error(json?.error || "Gagal menyiapkan naskah host.");
     }
     return {
       scriptBank: json.data?.scriptBank || [],
@@ -181,14 +181,14 @@ export const aiService = {
       throw new Error(
         res.ok
           ? "Format data AI tidak valid"
-          : `Backend error (${res.status}): ${text.slice(0, 80) || "Internal Server Error"}`,
+          : "Layanan AI sedang sibuk. Coba lagi.",
       );
     }
 
     if (res.ok && json?.data) {
       return json.data;
     }
-    throw new Error(json?.error || "AI service offline");
+    throw new Error(json?.error || "Layanan AI tidak tersedia.");
   },
 
   async generateVideoScript(params: {
@@ -225,12 +225,12 @@ export const aiService = {
     });
 
     if (!res.ok) {
-      throw new Error(`Backend error: ${res.status}`);
+      throw new Error("Gagal membuat video. Coba lagi.");
     }
 
     const data = await res.json();
     const jobId = data.data?.jobId;
-    if (!jobId) throw new Error("No jobId returned from backend");
+    if (!jobId) throw new Error("Gagal memulai pembuatan video.");
 
     return { jobId, provider: data.data?.provider || "AI" };
   },

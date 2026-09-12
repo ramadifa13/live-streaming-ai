@@ -85,7 +85,7 @@ export const LiveChatPanel: React.FC = () => {
             "Komentar masuk antrian AI Host live — balasan akan tayang di stream.",
           time: now,
         });
-        showToast("Komentar dikirim ke pipeline live");
+        showToast("Komentar dikirim ke host AI.");
         return;
       }
 
@@ -153,8 +153,8 @@ export const LiveChatPanel: React.FC = () => {
             </span>
             <span className="text-[10px] text-slate-600 mt-0.5">
               {isLive
-                ? "Ketik untuk inject komentar ke AI Host live"
-                : "Prelive: uji respons LLM + Pocket TTS"}
+                ? "Ketik untuk menguji komentar ke host AI"
+                : "Uji balasan host sebelum siaran dimulai"}
             </span>
           </div>
         ) : (

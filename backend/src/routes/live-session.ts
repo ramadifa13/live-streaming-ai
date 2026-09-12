@@ -76,14 +76,14 @@ const liveStopSchema = z.object({
 const broadcastSchema = z.object({
   rtmpUrl: z
     .string()
-    .min(5, "RTMP URL tidak boleh kosong")
+    .min(5, "Alamat server siaran tidak boleh kosong")
     .transform((value) => value.trim())
-    .refine((value) => /^rtmps?:\/\/.+/i.test(value), "RTMP URL harus diawali rtmp:// atau rtmps://"),
+    .refine((value) => /^rtmps?:\/\/.+/i.test(value), "Alamat server siaran tidak valid. Salin persis dari aplikasi live Anda."),
   streamKey: z
     .string()
-    .min(1, "Stream key tidak boleh kosong")
+    .min(1, "Kode siaran tidak boleh kosong")
     .transform((value) => value.replace(/[\r\n\s]/g, ""))
-    .refine((value) => value.length > 0, "Stream key tidak boleh kosong"),
+    .refine((value) => value.length > 0, "Kode siaran tidak boleh kosong"),
   sessionId: z.string().optional(),
   avatarImage: z.string().optional(),
   avatarVideo: z.string().optional(),
@@ -151,7 +151,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     if (!avatar) {
       reply.code(404);
       return {
-        error: "Avatar tidak ditemukan. Jalankan seed DB atau kirim avatarName (mis. Namira).",
+        error: "Host AI tidak ditemukan. Pilih host lain, lalu coba lagi.",
       };
     }
     try {
@@ -203,7 +203,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       };
     } catch (err: any) {
       reply.code(500);
-      return { error: `Gagal memulai sesi live: ${err.message}` };
+      return { error: "Gagal memulai siaran. Coba lagi." };
     }
   });
 
@@ -289,7 +289,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       reply.code(400);
       return {
         success: false,
-        error: err instanceof Error ? err.message : "RTMP URL / Stream Key tidak valid.",
+        error: err instanceof Error ? err.message : "Alamat server atau kode siaran tidak valid.",
       };
     }
     const managedSession = parsed.data.sessionId ? liveSessionManager.getSession(parsed.data.sessionId) : null;
@@ -307,14 +307,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
           reply.code(502);
           return {
             success: false,
-            error: boot.stageText || "GPU RunPod gagal dihidupkan",
+            error: boot.stageText || "Gagal menyiapkan host AI.",
             podFailed: true,
           };
         }
         reply.code(409);
         return {
           success: false,
-          error: "GPU RunPod masih booting. Tunggu hingga siap (polling pipeline-status).",
+          error: "Host AI masih disiapkan. Tunggu sebentar, lalu coba lagi.",
           podBooting: true,
           stageText: boot.stageText,
         };
@@ -328,7 +328,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       reply.code(409);
       return {
         success: false,
-        error: "Pod GPU belum dialokasikan untuk sesi ini.",
+        error: "Host AI belum siap. Tunggu sebentar, lalu coba lagi.",
         podBooting: true,
       };
     }
@@ -340,7 +340,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         reply.code(502);
         return {
           success: false,
-          error: err instanceof Error ? err.message : "AI Worker RunPod belum merespons",
+          error: "Host AI belum merespons. Tunggu sebentar, lalu coba lagi.",
         };
       }
     }
@@ -439,11 +439,9 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       success: true,
       waitingForGoLive: true,
       message:
-        "Permintaan siaran diterima — RTMP dan host AI sedang disiapkan. " +
-        "Pipeline sedang generate V1+V2 di background. " +
-        "Silakan klik 'Siarkan Langsung' / 'Go Live' di " +
-        (platform || "platform") +
-        ", lalu konfirmasi di dashboard.",
+        "Siaran sedang disiapkan. Mulai live di " +
+        (platform || "aplikasi live Anda") +
+        ", lalu konfirmasi di Livio jika diminta.",
       data: result,
     };
   });
@@ -482,12 +480,9 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       const speechOk = !realtime || minSpeech <= 0 || speechSeconds >= minSpeech;
       if (playable < minUtt || !rtmpOk || !speechOk) {
         reply.code(409);
-        const bufferLabel = realtime
-          ? `ucapan siap ${playable}/${minUtt} · buffer ${Math.round(speechSeconds)}/${minSpeech}s`
-          : `video ${playable}/${minUtt}`;
         return {
           success: false,
-          error: `Belum siap untuk Go Live: pastikan RTMP terhubung dan ${bufferLabel} (RTMP: ${pipelineStatus.isRtmpConnected ? "Terhubung" : "Belum Terhubung"}, buffer: ${pipelineStatus.bufferSeconds ?? 0}s).`,
+          error: "Belum siap. Pastikan siaran terhubung dan host sudah menyiapkan sapaan pembuka.",
         };
       }
 
@@ -496,9 +491,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       console.log(`[GoLiveConfirm] ✅ Session ${sessionId}: AI Host aktif! Live streaming dimulai.`);
       return {
         success: true,
-        message: realtime
-          ? `AI Host aktif! ${playable} ucapan di antrian mulai diputar.`
-          : "AI Host aktif! Segmen pembuka mulai diputar, pipeline terus berjalan.",
+        message: "AI Host aktif! Siaran live dimulai.",
         sessionId,
         startedAt: new Date().toISOString(),
         pipelineStatus: await liveHostOrchestrator.getPipelineStatus(sessionId),
@@ -507,7 +500,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       reply.code(502);
       return {
         success: false,
-        error: `Gagal memulai AI Host: ${error instanceof Error ? error.message : String(error)}`,
+        error: "Gagal mengaktifkan host AI. Coba lagi.",
       };
     }
   });
@@ -574,7 +567,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         workerOffline: false,
         stageIndex: 1,
         stageText:
-          boot?.podReady === false ? boot.stageText || "Menghubungkan ke Cloud GPU..." : "Memulai broadcast RTMP — memuat model MuseTalk ke GPU...",
+          boot?.podReady === false ? boot.stageText || "Menyiapkan studio AI…" : "Menyiapkan host AI…",
         podReady: boot?.podReady ?? true,
         podBooting: boot?.podBooting ?? false,
         podFailed: boot?.podFailed ?? false,
@@ -630,8 +623,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return {
         success: result.success,
         data: result.success
-          ? { success: true, message: "AI worker soft-paused (speech hold)." }
-          : { success: false, error: result.error || "Pause worker gagal" },
+          ? { success: true, message: "Siaran dijeda." }
+          : { success: false, error: "Gagal menjeda siaran." },
       };
     }
 
@@ -639,7 +632,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       success: false,
       data: {
         success: false,
-        error: "Tidak ada stream aktif untuk di-pause.",
+        error: "Tidak ada siaran aktif untuk dijeda.",
       },
     };
   });
@@ -668,7 +661,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       }
       return {
         success: result.success,
-        data: result.success ? { success: true, message: "AI worker resumed." } : { success: false, error: result.error || "Resume worker gagal" },
+        data: result.success ? { success: true, message: "Siaran dilanjutkan." } : { success: false, error: "Gagal melanjutkan siaran." },
       };
     }
 
@@ -676,7 +669,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       success: false,
       data: {
         success: false,
-        error: "Tidak ada stream aktif untuk di-resume.",
+        error: "Tidak ada siaran aktif untuk dilanjutkan.",
       },
     };
   });
@@ -715,7 +708,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         mode: "live",
         data: {
           speech: null,
-          note: "Komentar diantrikan ke AI Host live (Pocket TTS backend + lipsync).",
+          note: "Komentar dikirim ke host AI.",
           commentId,
         },
       };
@@ -794,7 +787,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         return {
           success: false,
           overlayUpdated: false,
-          error: overlay.message || "Host AI sudah ganti produk, tetapi overlay worker gagal di-update.",
+          error: "Host sudah ganti produk, tetapi tampilan siaran belum berubah. Coba lagi.",
           activeProductId: parsed.data.productId,
         };
       }

@@ -1,4 +1,5 @@
 import { Product, SessionSummaryData } from "@/app/dashboard/types";
+import { toClientCopy } from "@/lib/client-copy";
 
 function isHttpUrl(value?: string): boolean {
   return Boolean(value && /^https?:\/\//i.test(value));
@@ -133,11 +134,9 @@ export const liveSessionService = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       if (res.status === 504 || res.status === 502) {
-        throw new Error(
-          "Server timeout saat memulai sesi. Deploy backend terbaru diperlukan — start session harus langsung balas, boot GPU dipolling terpisah.",
-        );
+        throw new Error("Server sibuk saat memulai siaran. Tunggu sebentar, lalu coba lagi.");
       }
-      throw new Error(err.error || `Gagal membuat sesi live (HTTP ${res.status})`);
+      throw new Error(toClientCopy(err.error, "Gagal memulai siaran. Coba lagi."));
     }
     return await res.json();
   },
@@ -153,12 +152,12 @@ export const liveSessionService = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       if (res.status === 409 && err.podBooting) {
-        throw new Error(err.stageText || "GPU masih booting. Tunggu sebentar lalu coba hubungkan lagi.");
+        throw new Error(toClientCopy(err.stageText, "Host AI masih disiapkan. Tunggu sebentar, lalu coba lagi."));
       }
       if (res.status === 504 || res.status === 502) {
-        throw new Error(err.error || "Server timeout saat menghubungkan RTMP. Pastikan GPU RunPod sudah siap.");
+        throw new Error(toClientCopy(err.error, "Koneksi siaran timeout. Tunggu sebentar, lalu coba lagi."));
       }
-      throw new Error(err.error || "Gagal broadcast stream");
+      throw new Error(toClientCopy(err.error, "Gagal memulai siaran."));
     }
     return await res.json();
   },
@@ -194,7 +193,7 @@ export const liveSessionService = {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok || json.success === false) {
-      throw new Error(json.error || `Gagal menghentikan sesi (HTTP ${res.status})`);
+      throw new Error(toClientCopy(json.error, "Gagal mengakhiri siaran."));
     }
     return {
       success: true,
@@ -218,7 +217,7 @@ export const liveSessionService = {
     });
     const json = await res.json();
     if (!res.ok || !json.success) {
-      throw new Error(json.data?.error || json.data?.message || json.error || "Pause stream gagal");
+      throw new Error(toClientCopy(json.data?.error || json.data?.message || json.error, "Gagal menjeda siaran."));
     }
     return true;
   },
@@ -231,7 +230,7 @@ export const liveSessionService = {
     });
     const json = await res.json();
     if (!res.ok || !json.success) {
-      throw new Error(json.data?.error || json.data?.message || json.error || "Resume stream gagal");
+      throw new Error(toClientCopy(json.data?.error || json.data?.message || json.error, "Gagal melanjutkan siaran."));
     }
     return true;
   },
@@ -268,7 +267,7 @@ export const liveSessionService = {
     const query = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
     const res = await fetch(`/api/live-session/metrics${query}`);
     if (!res.ok) {
-      throw new Error(`Gagal memuat metrics (HTTP ${res.status})`);
+      throw new Error("Gagal memuat statistik siaran.");
     }
     return await res.json();
   },
@@ -276,7 +275,7 @@ export const liveSessionService = {
   async fetchPipelineStatus(sessionId: string) {
     const res = await fetch(`/api/live-stream/pipeline-status?sessionId=${encodeURIComponent(sessionId)}`);
     if (!res.ok) {
-      throw new Error(`Gagal memuat status pipeline (HTTP ${res.status})`);
+      throw new Error("Gagal memuat status persiapan siaran.");
     }
     return await res.json();
   },
@@ -314,7 +313,7 @@ export const liveSessionService = {
       // Soft connecting hints bukan gagal — overlay tetap menunggu.
       const fatal = status?.rtmpFatal === true || (status?.rtmpState === "failed" && Boolean(status?.rtmpError));
       if (fatal) {
-        throw new Error(String(status?.rtmpError || "Siaran gagal tersambung. Coba Stream Key baru."));
+        throw new Error(toClientCopy(status?.rtmpError, "Siaran gagal tersambung. Buat siaran baru dan tempel kode siaran yang baru."));
       }
 
       await new Promise((r) => setTimeout(r, 2000));
@@ -350,14 +349,14 @@ export const liveSessionService = {
         options.onProgress(String(status.stageText));
       }
       if (status?.podFailed) {
-        throw new Error(status.stageText || "GPU RunPod gagal dihidupkan");
+        throw new Error(toClientCopy(status.stageText, "Host AI gagal disiapkan. Coba mulai lagi."));
       }
       if (status?.podReady) return;
 
       await new Promise((r) => setTimeout(r, 2500));
     }
 
-    throw new Error("Cloud AI belum siap setelah menunggu lama. Coba Connect lagi, atau pastikan koneksi internet stabil.");
+    throw new Error("Host AI belum siap setelah menunggu lama. Coba lagi, atau pastikan internet stabil.");
   },
 
   async confirmGoLive(sessionId: string) {
@@ -381,7 +380,7 @@ export const liveSessionService = {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok || json.success === false) {
-      throw new Error(json.error || `Gagal ganti produk (HTTP ${res.status})`);
+      throw new Error(toClientCopy(json.error, "Gagal ganti produk di siaran."));
     }
     return { overlayUpdated: json.overlayUpdated !== false };
   },

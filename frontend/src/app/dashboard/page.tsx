@@ -7,6 +7,7 @@ import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { oauthService } from "@/services/oauthService";
 import { liveSessionService, parseLiveClockFromMetrics, toLiveProductSnapshot } from "@/services/liveSessionService";
+import { toClientCopy } from "@/lib/client-copy";
 
 import { ToastNotification } from "@/components/dashboard/shared/ToastNotification";
 import { DashboardHeader } from "@/components/dashboard/header/DashboardHeader";
@@ -55,7 +56,7 @@ export default function Dashboard() {
   useEffect(() => {
     const onQuota = () => {
       showToast(
-        "Penyimpanan browser penuh. Hapus beberapa produk lama atau refresh setelah deploy terbaru. Data tetap dipakai sampai halaman ditutup.",
+        "Penyimpanan browser penuh. Hapus beberapa produk lama, lalu muat ulang halaman.",
         "warning",
       );
     };
@@ -147,21 +148,21 @@ export default function Dashboard() {
 
     if (oauthError) {
       const errMessages: Record<string, string> = {
-        invalid_state: "Sesi OAuth tidak valid atau kadaluarsa. Coba lagi.",
-        token_exchange_failed: "Gagal menukar kode otorisasi. Periksa Client ID/Secret di .env.",
-        missing_params: "Platform tidak mengirim kode otorisasi.",
-        server_error: "Server error saat proses OAuth. Cek backend log.",
-        access_denied: "Akses ditolak oleh pengguna.",
+        invalid_state: "Sesi login kedaluwarsa. Coba hubungkan lagi.",
+        token_exchange_failed: "Gagal menghubungkan akun. Coba lagi.",
+        missing_params: "Platform tidak mengirim kode login. Coba lagi.",
+        server_error: "Gangguan server saat menghubungkan akun.",
+        access_denied: "Akses akun ditolak.",
       };
-      const msg = errMessages[oauthError] || `OAuth error: ${oauthError}`;
-      showToast(`Gagal: ${msg}`);
+      const msg = errMessages[oauthError] || "Gagal menghubungkan akun.";
+      showToast(msg);
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, [setConnectedAccount, setSelectedPlatform, setStreamKey, showToast]);
 
   useEffect(() => {
     oauthService.fetchConfigStatus().then(setOauthConfigStatus).catch((err) => {
-      showToast(err instanceof Error ? err.message : "Gagal memuat status OAuth.", "warning");
+      showToast(err instanceof Error ? err.message : "Gagal memuat status koneksi akun.", "warning");
     });
   }, [setOauthConfigStatus, showToast]);
 
@@ -327,7 +328,7 @@ export default function Dashboard() {
       } catch (err) {
         failCount += 1;
         if (failCount === 3) {
-          showToast(err instanceof Error ? err.message : "Gagal memuat metrics live.", "warning");
+          showToast(err instanceof Error ? err.message : "Gagal memuat statistik siaran.", "warning");
         }
       } finally {
         if (!stopped) timeoutId = setTimeout(() => void pollMetrics(), 2500);
@@ -352,10 +353,13 @@ export default function Dashboard() {
         if (json.rtmpFatal || json.workerError || json.broadcastBootState === "error") {
           useLiveSessionStore.setState({
             connectingStageIndex: 3,
-            connectingStageText: String(json.rtmpError || json.workerError || json.stageText || "Host AI gagal tersambung."),
+            connectingStageText: toClientCopy(
+              json.rtmpError || json.workerError || json.stageText,
+              "Host AI gagal tersambung.",
+            ),
           });
         } else if (json.stageText) {
-          useLiveSessionStore.setState({ connectingStageText: String(json.stageText) });
+          useLiveSessionStore.setState({ connectingStageText: toClientCopy(json.stageText) });
         }
       } catch {
         // Cold start: pipeline belum siap. Overlay tetap menampilkan tahap terakhir.
@@ -390,7 +394,7 @@ export default function Dashboard() {
       } catch (err) {
         failCount += 1;
         if (failCount === 3) {
-          showToast(err instanceof Error ? err.message : "Gagal memuat status pipeline.", "warning");
+          showToast(err instanceof Error ? err.message : "Gagal memuat status persiapan siaran.", "warning");
         }
       }
     };

@@ -60,10 +60,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!product.id) return;
-    if (confirm("Apakah Anda yakin ingin menghapus produk ini secara permanen dari Database & RAG Knowledge Base?")) {
+    if (confirm("Hapus produk ini secara permanen?")) {
       try {
         await deleteProduct(product.id);
-        showToast("Produk telah dihapus dari database!");
+        showToast("Produk telah dihapus.");
       } catch (err) {
         showToast(err instanceof Error ? err.message : "Gagal menghapus produk");
       }
@@ -123,7 +123,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             </span>
             <span
               className={`text-[8px] font-bold px-1.5 py-0.5 rounded border truncate max-w-[90px] ${bankMeta.colorClass}`}
-              title="Script bank = ucapan otonom host saat live"
+              title="Naskah yang diucapkan host saat live"
             >
               {bankMeta.status === "preparing" ? (
                 <span className="inline-flex items-center gap-0.5">

@@ -201,7 +201,7 @@ export default function RealtimeLivePortraitView({
       {isGpuLive && (
         <div className="absolute top-3 right-3 z-30 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-400/40 backdrop-blur-md shadow-[0_0_20px_rgba(16,185,129,0.3)]">
           <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
-          <span className="text-[9px] font-black text-emerald-300 uppercase tracking-widest">GPU Live</span>
+          <span className="text-[9px] font-black text-emerald-300 uppercase tracking-widest">Live</span>
         </div>
       )}
 

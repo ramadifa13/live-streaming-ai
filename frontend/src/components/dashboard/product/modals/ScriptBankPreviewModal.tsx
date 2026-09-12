@@ -107,7 +107,7 @@ export const ScriptBankPreviewModal: React.FC = () => {
           {bankMeta.status === "preparing" ? (
             <div className="py-12 text-center">
               <Loader2 className="w-8 h-8 animate-spin mx-auto text-purple-400 mb-2" />
-              <p className="text-xs text-slate-400">Menyiapkan script bank...</p>
+              <p className="text-xs text-slate-400">Menyiapkan naskah host...</p>
             </div>
           ) : filtered.length > 0 ? (
             filtered.map((line, idx) => (
@@ -124,7 +124,7 @@ export const ScriptBankPreviewModal: React.FC = () => {
             ))
           ) : (
             <p className="text-center text-xs text-slate-500 py-8">
-              Belum ada naskah. Script bank otomatis dibuat saat tambah atau edit produk dengan deskripsi lengkap.
+              Belum ada naskah. Naskah host dibuat otomatis saat Anda menambah atau mengedit produk dengan deskripsi lengkap.
             </p>
           )}
         </div>

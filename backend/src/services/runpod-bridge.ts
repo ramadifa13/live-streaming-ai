@@ -153,7 +153,7 @@ function isDemoFallbackAllowed() {
 async function workerRequest(podId: string | null | undefined, path: string, init?: RequestInit, timeoutMs = 60_000) {
   const baseUrl = getWorkerUrl(podId);
   if (!baseUrl) {
-    throw new Error("Worker GPU belum siap (podId kosong). Tunggu boot RunPod selesai.");
+    throw new Error("Host AI belum siap. Tunggu sebentar, lalu coba lagi.");
   }
   const signal = init?.signal || AbortSignal.timeout(timeoutMs);
   const response = await fetch(`${baseUrl}${path}`, {
@@ -316,7 +316,7 @@ export async function startRunPodBroadcast(
     return {
       success: false,
       status: kickoff?.status || "error",
-      error: kickoff?.error || "Worker menolak start-broadcast",
+      error: "Host AI menolak memulai siaran. Coba lagi.",
     };
   }
 
@@ -348,7 +348,7 @@ export async function startRunPodBroadcast(
     ]);
 
     if (status?.status === "error" || status?.boot_state === "error") {
-      throw new Error(status?.error || "Broadcast worker gagal start (cek broadcaster.log)");
+      throw new Error("Host AI gagal memulai siaran. Coba lagi.");
     }
 
     if (isBroadcastWorkerActive(status, queue)) {
@@ -372,8 +372,7 @@ export async function startRunPodBroadcast(
     return { success: true, status: finalStatus?.status || "streaming" };
   }
 
-  const waitedSec = Math.round(bootTimeoutMs / 1000);
-  throw new Error(`Broadcast worker belum aktif setelah ${waitedSec}s — cek api_server.log di pod (MuseTalk init bisa 2–3 menit pertama kali)`);
+  throw new Error("Host AI belum siap. Pertama kali bisa 2–3 menit. Tetap di halaman ini, lalu coba lagi.");
 }
 
 export async function updateRunPodBroadcastProduct(
@@ -402,7 +401,7 @@ export async function updateRunPodBroadcastProduct(
   }).catch(() => ({
     success: false,
     status: "error",
-    message: "Failed to update overlay",
+    message: "Tampilan produk di siaran belum berubah. Coba lagi.",
   }));
 }
 
@@ -480,7 +479,7 @@ export async function resumeRunPodBroadcast(podId: string | null | undefined): P
 export async function warmupWorker(podId: string | null | undefined, maxWaitSeconds = 15): Promise<void> {
   const workerUrl = getWorkerUrl(podId);
   if (!workerUrl) {
-    throw new Error("URL worker RunPod tidak tersedia.");
+    throw new Error("Host AI belum siap. Tunggu sebentar, lalu coba lagi.");
   }
 
   console.log(`[RunPodBridge] Memeriksa kesiapan AI Worker di ${workerUrl}...`);
@@ -502,7 +501,7 @@ export async function warmupWorker(podId: string | null | undefined, maxWaitSeco
     }
     await new Promise((r) => setTimeout(r, 1500));
   }
-  throw new Error(`AI Worker belum merespons /health setelah ${maxWaitSeconds}s`);
+  throw new Error("Host AI belum merespons. Tunggu sebentar, lalu coba lagi.");
 }
 
 export async function ensureWorkerReachable(podId: string | null | undefined, maxWaitSeconds = 60): Promise<void> {

@@ -187,7 +187,7 @@ class LiveSessionManager {
       tone: params.tone || "Persuasif",
       podId: staticPodId || null,
       podBootStatus: "booting",
-      podBootMessage: staticPodId ? `Menghubungkan ke pod statis ${staticPodId}...` : "Mengalokasikan Cloud GPU (pod baru)...",
+      podBootMessage: "Menyiapkan studio AI…",
       liveDetectionAttempts: 0,
       onStateChange: undefined,
       product,
@@ -242,7 +242,7 @@ class LiveSessionManager {
 
     try {
       managed.podBootStatus = "booting";
-      managed.podBootMessage = getStaticPodId() ? `Menghubungkan ke pod statis ${getStaticPodId()}...` : "Mengalokasikan Cloud GPU (pod baru)...";
+      managed.podBootMessage = "Menyiapkan studio AI…";
       const podIdStr = await startPodAndWait(360_000, {
         sessionId,
         onProgress: (message) => {
@@ -283,18 +283,18 @@ class LiveSessionManager {
         if (localWorkerUrl) {
           managed.podId = null;
           managed.podBootStatus = "ready";
-          managed.podBootMessage = "Worker lokal siap (RUNPOD_WORKER_URL).";
+          managed.podBootMessage = "Host AI siap.";
         } else {
           managed.podId = null;
           managed.podBootStatus = "failed";
-          managed.podBootMessage = "GPU tidak tersedia (pod null). Cek RUNPOD_API_KEY / kuota GPU.";
+          managed.podBootMessage = "Kapasitas studio sedang penuh. Coba lagi nanti.";
           await this.transitionState("error", sessionId);
           return;
         }
       } else {
         managed.podId = podId;
         managed.podBootStatus = "ready";
-        managed.podBootMessage = "GPU siap — menghubungkan ke worker...";
+        managed.podBootMessage = "Host AI siap. Menyambungkan siaran…";
       }
       if (managed.podId) {
         await this.assignPodToSession(sessionId, managed.podId, { podStatus: "ready" });
@@ -322,7 +322,12 @@ class LiveSessionManager {
       await this.transitionState("pending", sessionId);
       this.startPlatformLivePoll(sessionId, connectorParams.liveVideoId, connectorParams.accessToken);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Gagal menghidupkan GPU RunPod";
+      const raw = err instanceof Error ? err.message : "Gagal menyiapkan host AI.";
+      const message = /penuh|kuota|capacity/i.test(raw)
+        ? "Kapasitas studio sedang penuh. Coba lagi nanti."
+        : /timeout|belum siap/i.test(raw)
+          ? "Host AI belum siap. Tunggu sebentar, lalu coba lagi."
+          : "Gagal menyiapkan host AI. Coba lagi.";
       if (message.includes("dibatalkan")) {
         console.log(`[LiveSessionManager] Pod bootstrap dibatalkan (${sessionId})`);
         return;
@@ -383,7 +388,7 @@ class LiveSessionManager {
       podReady,
       podBooting,
       podFailed,
-      stageText: session.podBootMessage || (podBooting ? "Memuat PyTorch CUDA ke GPU..." : podReady ? "GPU siap" : "Menyiapkan sesi..."),
+      stageText: session.podBootMessage || (podBooting ? "Menyiapkan host AI…" : podReady ? "Host AI siap" : "Menyiapkan siaran…"),
       podId: session.podId ?? null,
       state: session.state,
     };
@@ -421,9 +426,7 @@ class LiveSessionManager {
     const keepGpu = options?.keepGpu ?? keepWarmStatic;
     const podToTerminate = keepGpu ? null : sessionPodId;
     let gpuTerminated = !podToTerminate;
-    let gpuWarning: string | undefined = keepGpu
-      ? "Pod statis keep-warm tidak di-terminate (hanya untuk tes lokal)."
-      : undefined;
+    let gpuWarning: string | undefined = undefined;
 
     this.clearTimers(sessionId);
     liveHostOrchestrator.stop(sessionId);
@@ -471,7 +474,7 @@ class LiveSessionManager {
           console.log(`[LiveSessionManager] Pod ${podToTerminate} terminated untuk sesi ${sessionId}`);
         } catch (err) {
           gpuTerminated = false;
-          gpuWarning = "Sesi dihentikan, tetapi GPU pod gagal di-terminate. Cek RunPod console.";
+          gpuWarning = "Siaran berakhir. Penutupan studio sedang diproses.";
           await prisma.liveSession
             .update({ where: { id: sessionId }, data: { podStatus: "terminate_failed" } })
             .catch(() => {});
@@ -851,7 +854,7 @@ class LiveSessionManager {
         tone: String(config.tone || "Persuasif"),
         podId,
         podBootStatus: "ready",
-        podBootMessage: "Sesi dipulihkan setelah backend restart.",
+        podBootMessage: "Sesi dipulihkan setelah gangguan server.",
         liveDetectionAttempts: 0,
         product,
         catalog,

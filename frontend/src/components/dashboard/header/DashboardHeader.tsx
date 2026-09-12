@@ -65,7 +65,7 @@ export const DashboardHeader: React.FC = () => {
   };
 
   const handleSwitchToVideoGenerator = () => {
-    showToast("AI Video Ads Generator belum tersedia di MVP.", "warning");
+    showToast("Pembuat video iklan AI belum tersedia.", "warning");
   };
 
   return (

@@ -132,7 +132,7 @@ export async function ttsRoutes(server: FastifyInstance) {
     reply.code(502);
     return {
       success: false,
-      error: result.message || "TTS synthesis failed",
+      error: "Gagal menyiapkan suara host.",
       engine: "pocket-tts-indonesian",
       voiceId,
     };

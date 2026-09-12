@@ -2202,7 +2202,7 @@ class LiveHostOrchestrator {
         bufferSeconds: 0,
         workerOffline: true,
         stageIndex: 0,
-        stageText: "Session tidak ditemukan.",
+        stageText: "Sesi siaran tidak ditemukan.",
       };
     }
 
@@ -2257,9 +2257,7 @@ class LiveHostOrchestrator {
       offlineMs >= WORKER_OFFLINE_FAIL_MS &&
       (state.counters.failed > 0 || state.counters.submitted > 0 || (state.counters.generated === 0 && offlineMs >= 90_000));
     const workerError = workerStuck
-      ? state.lastWorkerError?.includes("502")
-        ? "Worker GPU crash atau tidak merespons (HTTP 502). Bukan masalah Stream Key  coba mulai ulang sesi."
-        : state.lastWorkerError || "Worker GPU tidak merespons. Coba mulai ulang sesi live."
+      ? "Host AI tidak merespons. Bukan masalah kode siaran — tutup lalu mulai siaran baru."
       : "";
 
     if (workerError) {
@@ -2273,16 +2271,16 @@ class LiveHostOrchestrator {
       stageText = workerError;
     } else if (fatalRtmp) {
       stageIndex = 3;
-      stageText = queue.rtmpError || "Siaran gagal tersambung. Buat Stream Key baru di Instagram, lalu coba lagi.";
+      stageText = queue.rtmpError || "Siaran gagal tersambung. Buat siaran baru di aplikasi live, lalu tempel kode siaran yang baru.";
     } else if (queue.broadcastBootState === "error" && !queue.visualWorkerRunning) {
       stageIndex = 2;
-      stageText = workerError || "Avatar AI gagal dinyalakan. Tekan batalkan, lalu coba Connect lagi.";
+      stageText = workerError || "Host AI gagal disiapkan. Batalkan, lalu coba lagi.";
     } else if (!queue.visualWorkerRunning && (queue.broadcastBootState === "starting" || queue.visualWorkerInitializing)) {
       stageIndex = 1;
-      stageText = "Menyiapkan wajah & gerak host Pertama kali bisa 3-7 menit. Tetap di halaman ini.";
+      stageText = "Menyiapkan wajah dan gerak host. Pertama kali bisa 3–7 menit. Tetap di halaman ini.";
     } else if (!queue.warmedUp && queue.queuedVideos === 0 && state.counters.submitted === 0) {
       stageIndex = 1;
-      stageText = "Menyalakan mesin AI di cloud Mohon tunggu.";
+      stageText = "Menyiapkan host AI. Mohon tunggu.";
     } else if (
       (aiWorker
         ? !playableReady
@@ -2291,17 +2289,17 @@ class LiveHostOrchestrator {
     ) {
       stageIndex = 2;
       stageText = aiWorker
-        ? `Menyiapkan buffer host (${queue.readyUtteranceCount}/${AI_WORKER_GO_LIVE_MIN_UTTERANCES} · ${Math.round(readySpeechSeconds)}/${LIVE_GO_LIVE_MIN_SPEECH_SECONDS}s)`
-        : "Menyiapkan video pembuka host";
+        ? `Menyiapkan sapaan host (${queue.readyUtteranceCount}/${AI_WORKER_GO_LIVE_MIN_UTTERANCES})`
+        : "Menyiapkan sapaan host";
     } else if (rtmpRequired && !queue.rtmpConnected) {
       stageIndex = 3;
-      stageText = queue.rtmpHint || "Menyambungkan siaran ke Instagram Tunggu sampai status jadi Terhubung.";
+      stageText = queue.rtmpHint || "Menyambungkan siaran. Tunggu sampai status menjadi Terhubung.";
     } else if (!state.isLive) {
       stageIndex = 4;
-      stageText = "Siap! Cek preview di Instagram, lalu tekan tombol hijau di bawah.";
+      stageText = "Siap! Cek preview di aplikasi live, lalu tekan tombol hijau di bawah.";
     } else {
       stageIndex = 5;
-      stageText = `Host sedang live  buffer ${Math.round(queue.bufferSeconds)} detik.`;
+      stageText = "Host sedang live.";
     }
 
     return {

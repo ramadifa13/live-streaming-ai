@@ -8,6 +8,7 @@ import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { liveSessionService } from "@/services/liveSessionService";
 import { isDeferredGoLivePlatform } from "@/lib/rtmpPlatform";
+import { toClientCopy } from "@/lib/client-copy";
 
 const PREP_STEPS = [
   { id: 0, label: "Studio" },
@@ -65,14 +66,7 @@ export const ConnectingOverlay: React.FC = () => {
           ? "Semua sudah siap. Mulai siaran dari aplikasi pilihan Anda."
           : "Siaran terhubung. Host AI akan mulai menyapa pembeli Anda."
         : "Kami sedang menyiapkan siaran Anda…");
-  const statusLine = rawStatusLine
-    .replace(/cloud\s+gpu\s+l40s?/gi, "studio AI")
-    .replace(/cloud\s+ai/gi, "studio AI")
-    .replace(/cloud/gi, "studio")
-    .replace(/rtmp/gi, "platform live")
-    .replace(/stream\s+key/gi, "kode siaran")
-    .replace(/\bpod\b/gi, "sistem")
-    .replace(/worker/gi, "host AI");
+  const statusLine = toClientCopy(rawStatusLine, "Kami sedang menyiapkan siaran Anda…");
 
   const finishGoLiveLocal = () => {
     useLiveSessionStore.setState({
@@ -108,7 +102,7 @@ export const ConnectingOverlay: React.FC = () => {
       finishGoLiveLocal();
       showToast("AI Host aktif! Siaran live dimulai.");
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Error koneksi saat konfirmasi.");
+      showToast(err instanceof Error ? err.message : "Gagal mengaktifkan host. Coba lagi.");
       useLiveSessionStore.setState({ isSubmittingGoLive: false });
     }
   };

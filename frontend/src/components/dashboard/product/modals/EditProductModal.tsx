@@ -38,7 +38,7 @@ export const EditProductModal: React.FC = () => {
       setIsSubmitting(false);
       void saveEditedProduct(updated)
         .then(() => {
-          showToast("Produk diperbarui. Script bank disiapkan ulang di background.");
+          showToast("Produk diperbarui. Naskah host sedang disiapkan ulang.");
         })
         .catch((err) => {
           showToast(err instanceof Error ? err.message : "Gagal memperbarui produk");
@@ -60,7 +60,7 @@ export const EditProductModal: React.FC = () => {
             <div>
               <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">Edit Data Produk</h3>
               <p className="text-[11px] text-slate-400">
-                Data tetap di perangkat Anda. Menyimpan akan menyiapkan ulang script bank host.
+                Data tetap di perangkat Anda. Menyimpan akan menyiapkan ulang naskah host.
               </p>
             </div>
           </div>
@@ -346,7 +346,7 @@ export const EditProductModal: React.FC = () => {
               <div className="flex items-center justify-between mb-2">
                 <label className="text-slate-200 font-bold text-[11px] flex items-center gap-1">
                   <span>11. Gambar Banner Promosi</span>
-                  <span className="text-slate-400 font-normal">(Opsional — overlay atas &amp; bawah host)</span>
+                  <span className="text-slate-400 font-normal">(Opsional — banner atas dan bawah di siaran)</span>
                 </label>
                 {selectedProductForEdit.bannerImage ? (
                   <div className="flex items-center gap-2">

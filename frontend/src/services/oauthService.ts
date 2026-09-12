@@ -19,11 +19,11 @@ export const oauthService = {
   async fetchConfigStatus(): Promise<Record<string, boolean>> {
     const res = await fetch("/api/oauth/config-status");
     if (!res.ok) {
-      throw new Error(`Gagal memuat status OAuth (HTTP ${res.status})`);
+      throw new Error("Gagal memuat status koneksi akun.");
     }
     const json = await res.json();
     if (!json.data) {
-      throw new Error("Backend tidak mengirim status OAuth.");
+      throw new Error("Server tidak merespons status koneksi akun.");
     }
     const map: Record<string, boolean> = {};
     (json.data as { platform: string; configured: boolean }[]).forEach((p) => {
@@ -64,7 +64,7 @@ export const oauthService = {
     );
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      return { error: err.error || `HTTP ${res.status}: Gagal mendapatkan URL autorisasi` };
+      return { error: err.error || "Gagal membuka halaman login platform." };
     }
     return await res.json();
   },

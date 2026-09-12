@@ -46,11 +46,11 @@ export function assertRtmpCredentials(rtmpUrl: string, streamKey: string) {
   const { rtmpUrl: url, streamKey: key } = normalizeRtmpInput(rtmpUrl, streamKey);
   if (!isValidRtmpUrl(url)) {
     throw new Error(
-      "RTMP URL tidak valid. Contoh Instagram: rtmps://live-upload.instagram.com:443/rtmp/",
+      "Alamat server siaran tidak valid. Salin persis dari aplikasi live Anda.",
     );
   }
   if (!key) {
-    throw new Error("Stream Key kosong — salin dari Instagram Producer / Live.");
+    throw new Error("Kode siaran masih kosong. Salin dari aplikasi live Anda.");
   }
   return { rtmpUrl: url, streamKey: key };
 }

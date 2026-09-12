@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import { ChatMessage, SessionSummaryData } from "@/app/dashboard/types";
 import { ConnectedAccount } from "@/services/oauthService";
 import { liveSessionService, type LiveClockSnapshot } from "@/services/liveSessionService";
+import { toClientCopy } from "@/lib/client-copy";
 
 const MAX_CHAT_MESSAGES = 200;
 
@@ -143,7 +144,7 @@ export const useLiveSessionStore = create<LiveSessionState>()(
       connectAttemptId: 0,
       connectAbortController: null,
       connectingStageIndex: 0,
-      connectingStageText: "Mengalokasikan Cloud GPU L40S...",
+      connectingStageText: "Menyiapkan studio AI…",
       selectedDuration: 1,
       liveSeconds: 0,
       liveStartedAtMs: 0,
@@ -214,7 +215,9 @@ export const useLiveSessionStore = create<LiveSessionState>()(
           return {
             pipelineStatus: status,
             connectingStageIndex: status?.stageIndex ?? state.connectingStageIndex,
-            connectingStageText: status?.stageText ?? state.connectingStageText,
+            connectingStageText: status?.stageText
+              ? toClientCopy(status.stageText, state.connectingStageText)
+              : state.connectingStageText,
           };
         }),
       setIsLiveActive: (active) => set({ isLiveActive: active }),
@@ -249,7 +252,7 @@ export const useLiveSessionStore = create<LiveSessionState>()(
           liveSeconds: 0,
           liveStartedAtMs: 0,
           connectingStageIndex: 0,
-          connectingStageText: "Mengalokasikan Cloud GPU L40S...",
+          connectingStageText: "Menyiapkan studio AI…",
         });
 
         if (sid) {
@@ -290,7 +293,10 @@ export const useLiveSessionStore = create<LiveSessionState>()(
           stopError = err instanceof Error ? err.message : "Gagal menghentikan sesi di server.";
         }
 
-        const gpuWarning = stopRes?.gpuWarning || (stopRes?.gpuTerminated === false ? "Sesi berakhir, tetapi GPU pod belum ter-terminate." : undefined) || stopError;
+        const gpuWarning = toClientCopy(
+          stopRes?.gpuWarning || (stopRes?.gpuTerminated === false ? "Siaran berakhir. Penutupan studio sedang diproses." : undefined) || stopError,
+          "",
+        ) || undefined;
 
         if (stopRes?.summary) {
           const summary = { ...stopRes.summary, gpuTerminated: stopRes.gpuTerminated, gpuWarning };

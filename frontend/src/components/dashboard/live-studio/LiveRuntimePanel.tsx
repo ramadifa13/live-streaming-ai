@@ -64,17 +64,17 @@ export const LiveRuntimePanel: React.FC<LiveRuntimePanelProps> = ({ activeFeatur
 
       {isLiveActive && pipelineStatus && (
         <div className="mb-3 flex items-center justify-between gap-2 rounded-xl border border-purple-500/20 bg-purple-950/20 px-2.5 py-2 text-[9px]">
-          <span className="font-semibold text-purple-300">Script Bank</span>
-          <span className="text-slate-300">{pipelineStatus.scriptBankRemaining ?? "-"} naskah tersisa</span>
+            <span className="font-semibold text-purple-300">Naskah host</span>
+          <span className="text-slate-300">{pipelineStatus.scriptBankRemaining ?? "-"} tersisa</span>
           <span className="text-slate-500">
             {pipelineStatus.scriptBankSource === "mixed"
-              ? "LLM+lokal"
+              ? "Siap"
               : pipelineStatus.scriptBankSource === "payload"
-                ? "prepared"
-                : "lokal"}
+                ? "Siap"
+                : "Otomatis"}
           </span>
           {(pipelineStatus.scriptBankRemaining ?? 99) <= 8 && (
-            <span className="font-bold text-amber-400">Refill...</span>
+            <span className="font-bold text-amber-400">Menambah…</span>
           )}
         </div>
       )}
