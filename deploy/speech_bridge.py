@@ -355,10 +355,10 @@ def _split_pcm_frames(
     return _apply_pcm_edge_fades(frames)
 
 
-# Soften AAC clicks. Longer fade-out than fade-in so Pocket TTS tail buzz dies
-# without swallowing the first consonant. Sample count per frame stays identical.
+# Soften AAC splice clicks only. Trailing vocoder buzz is already stripped in
+# backend audio_post — a long fade-out here swallows the last syllable.
 PCM_EDGE_FADE_IN_FRAMES = 2
-PCM_EDGE_FADE_OUT_FRAMES = 12
+PCM_EDGE_FADE_OUT_FRAMES = 3
 
 
 def _scale_pcm_frame(frame: bytes, gain: float) -> bytes:
@@ -383,15 +383,46 @@ def _apply_pcm_edge_fades(
         fade_in_frames = fade_frames
         fade_out_frames = fade_frames
     fade_in = min(max(1, int(fade_in_frames)), max(1, n // 4))
-    fade_out = min(max(1, int(fade_out_frames)), max(1, n // 4))
+    fade_out = _click_fade_out_frames(frames, max(1, int(fade_out_frames)))
+    fade_out = min(fade_out, max(1, n // 4))
     out = list(frames)
     for i in range(fade_in):
         in_gain = ((i + 1) / float(fade_in)) ** 2
         out[i] = _scale_pcm_frame(out[i], in_gain)
     for i in range(fade_out):
-        out_gain = ((fade_out - i) / float(fade_out)) ** 2
+        # Late-weighted: stay near full level, drop only on the last 1–2 frames.
+        t = (i + 1) / float(fade_out)
+        out_gain = float(np.cos(0.5 * np.pi * (t ** 2)))
         out[n - fade_out + i] = _scale_pcm_frame(out[n - fade_out + i], out_gain)
     return out
+
+
+def _frame_rms(frame: bytes) -> float:
+    if not frame:
+        return 0.0
+    samples = np.frombuffer(frame, dtype=np.int16).astype(np.float32)
+    if samples.size == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(samples * samples)))
+
+
+def _click_fade_out_frames(frames: List[bytes], requested: int) -> int:
+    """Use the shortest fade that still kills a splice click.
+
+    If the tail is still speech-level, fade 2 frames (~83 ms). Quiet tails
+    (already trimmed by audio_post) can take the requested click window.
+    """
+    requested = max(1, int(requested))
+    if not frames:
+        return requested
+    look = frames[-min(6, len(frames)) :]
+    rms = [_frame_rms(item) for item in look]
+    peak = max(rms) if rms else 0.0
+    if peak <= 1.0:
+        return requested
+    if rms[-1] > peak * 0.18:
+        return min(requested, 2)
+    return requested
 
 
 @dataclass

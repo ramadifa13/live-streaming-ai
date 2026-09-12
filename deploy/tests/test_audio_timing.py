@@ -42,6 +42,17 @@ def test_pcm_edge_fades_keep_frame_sizes_and_only_soften_edges():
     assert faded[-1] != frame
 
 
+def test_default_fade_out_does_not_swallow_the_last_word():
+    frame = b"\x00\x40" * (2000 * 2)
+    frames = [frame for _ in range(48)]
+    faded = _apply_pcm_edge_fades(frames)
+
+    # Old 12-frame / 500 ms window must stay full level.
+    assert faded[-12] == frame
+    assert faded[-4] == frame
+    assert faded[-1] != frame
+
+
 def test_hard_deadline_does_not_cut_active_pcm():
     bridge = SpeechBridge(output_folder="/tmp/ai_live_worker_test")
     bridge._current = type("Job", (), {})()
