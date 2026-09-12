@@ -170,32 +170,15 @@ export async function getPodStatus(podId: string): Promise<PodStatus | null> {
   return data?.pod || null;
 }
 
-const BUDGET_GPU_TIERS = [
-  {
-    id: "NVIDIA GeForce RTX 4090",
-    label: "RTX 4090 (Utama, Fast Lipsync)",
-  },
-  {
-    id: "NVIDIA GeForce RTX 3090",
-    label: "RTX 3090 (24GB VRAM)",
-  },
-  {
-    id: "NVIDIA L4",
-    label: "L4 (24GB, Datacenter)",
-  },
-  {
-    id: "NVIDIA RTX A5000",
-    label: "RTX A5000 (24GB VRAM)",
-  },
-  {
-    id: "NVIDIA RTX 4000 Ada Generation",
-    label: "RTX 4000 Ada (20GB VRAM)",
-  },
-  {
-    id: "NVIDIA RTX A4000",
-    label: "RTX A4000 (16GB VRAM)",
-  },
-];
+const PRIMARY_GPU = {
+  id: "NVIDIA GeForce RTX 4090",
+  label: "RTX 4090 (Utama, Fast Lipsync)",
+};
+const FALLBACK_GPU = {
+  id: "NVIDIA L40S",
+  label: "L40S (Cadangan Ada, 48GB)",
+};
+const BUDGET_GPU_TIERS = [PRIMARY_GPU, FALLBACK_GPU];
 
 export async function createPod(sessionId?: string): Promise<string> {
   const volumeId = process.env.RUNPOD_NETWORK_VOLUME_ID;
@@ -214,10 +197,8 @@ export async function createPod(sessionId?: string): Promise<string> {
 
   let lastGpuError: any = null;
 
-  const preferredGpu = process.env.RUNPOD_GPU_TYPE;
-  const tiersToTry = preferredGpu
-    ? [{ id: preferredGpu, label: preferredGpu }, ...BUDGET_GPU_TIERS.filter((t) => t.id !== preferredGpu)]
-    : BUDGET_GPU_TIERS;
+  // 4090 selalu dicoba dulu. L40S hanya jika 4090 penuh / tidak ada di DC volume.
+  const tiersToTry = BUDGET_GPU_TIERS;
 
   const cloudType = process.env.RUNPOD_CLOUD_TYPE || "ALL";
   const strictGpu = process.env.RUNPOD_GPU_STRICT === "1";
@@ -294,7 +275,7 @@ export async function createPod(sessionId?: string): Promise<string> {
     if (strictGpu) break;
   }
 
-  console.warn(`[RunPodManager] Semua GPU dalam daftar hemat sedang penuh.`);
+  console.warn(`[RunPodManager] RTX 4090 dan cadangan L40S sedang penuh.`);
   throw new Error("GPU_HOST_FULL");
 }
 

@@ -888,7 +888,12 @@ class AssetBank:
 
 
 class VideoStateMachine:
-    """Talk + idle_2s playthrough. Switch clips only at cycle boundaries."""
+    """Stable continuous body after first speech.
+
+    Boot may loop namira_idle / idle_2s until the first PCM arrives. After that
+    the body stays on the compiled continuous clip — silence no longer hard-cuts
+    to idle_2s between sentences (that jump is what looked like video cuts).
+    """
 
     def __init__(
         self,
@@ -1559,6 +1564,16 @@ class VideoStateMachine:
             f"{to_name}@{self.frame_idx} ({new_state.name})"
         )
 
+    def _advance_continuous_body(self, clip: ClipAsset) -> None:
+        """Keep a single forward body timeline — wrap only at end_pose."""
+        if self.frame_idx < clip.end_pose:
+            self.frame_idx += 1
+        else:
+            self.frame_idx = int(clip.base_pose_frame)
+        self._continuous_idx = int(self.frame_idx)
+        self.state = PlayState.TALK
+        self._talk_pinned = True
+
     def _advance_frame_index(
         self,
         clip: ClipAsset,
@@ -1576,16 +1591,34 @@ class VideoStateMachine:
 
         if talking:
             if not _is_talk_clip_name(self.current_name):
+                # One-time leave from boot idle when speech actually starts.
                 self._switch_at_boundary(CONTINUOUS_CLIP_NAME, PlayState.TALK)
                 return
-            if self.frame_idx < clip.end_pose:
-                self.frame_idx += 1
-            else:
-                self.frame_idx = int(clip.base_pose_frame)
-            self._continuous_idx = int(self.frame_idx)
+            self._advance_continuous_body(clip)
             self._ever_spoken = True
             return
 
+        # After first speech (or explicitly pinned talk body): never hard-cut
+        # to idle_2s. Between-sentence silence keeps the continuous timeline.
+        # Do NOT key off PIN_TALK_SCENE alone — boot must stay on namira_idle
+        # until the first PCM arrives.
+        if self._ever_spoken or self._talk_pinned:
+            cont = self.bank.get_clip(CONTINUOUS_CLIP_NAME)
+            if cont is None:
+                cont = clip
+            if not _is_talk_clip_name(self.current_name):
+                # Recover onto continuous without bouncing through idle_2s.
+                self.current_name = CONTINUOUS_CLIP_NAME
+                self.frame_idx = int(self._continuous_idx)
+                if self.frame_idx < cont.base_pose_frame or self.frame_idx > cont.end_pose:
+                    self.frame_idx = int(cont.base_pose_frame)
+                clip = cont
+            elif clip.name != CONTINUOUS_CLIP_NAME:
+                clip = cont
+            self._advance_continuous_body(clip)
+            return
+
+        # Pre-speech only: loop boot idle / idle_2s until the first PCM.
         target_idle = (
             BOOT_IDLE_CLIP_NAME
             if (not self._ever_spoken and self.bank.get_clip(BOOT_IDLE_CLIP_NAME) is not None)
@@ -2906,7 +2939,10 @@ class StreamBroadcaster:
                 "2500k",
                 "-bufsize",
                 "2500k",
-                "-fps_mode",
+                # FFmpeg 4.4 (Ubuntu 22.04 / RunPod) tidak kenal -fps_mode (5.1+).
+                # -vsync cfr tetap valid di 4.4–7.x; -fps_mode mematikan RTMP dengan
+                # "Error splitting the argument list: Option not found".
+                "-vsync",
                 "cfr",
                 "-c:a",
                 "aac",

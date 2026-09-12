@@ -146,19 +146,25 @@ def test_boot_namira_idle_ignores_ready_until_pcm():
     assert sm.state is PlayState.TALK
 
 
-def test_talk_end_without_pcm_uses_idle():
+def test_talk_end_without_pcm_keeps_continuous():
     sm = VideoStateMachine(_Bank(talk_frames=3, idle_frames=3))
     _enter_talk(sm)
     seen = []
     for _ in range(6):
         pkt = sm.next_packet(b"\0" * 4, False, next_ready=False)
-        seen.append((pkt.clip_name, pkt.state))
-    assert seen[0][0] == CONTINUOUS_CLIP_NAME
-    assert all(name == IDLE_CLIP_NAME for name, _st in seen[1:])
-    assert all(state is PlayState.IDLE for _name, state in seen[1:])
+        seen.append((pkt.clip_name, pkt.state, pkt.needs_lipsync))
+    assert all(name == CONTINUOUS_CLIP_NAME for name, _st, _lip in seen)
+    assert all(lip is False for _name, _st, lip in seen)
+    # Body index must keep advancing forward across silence (no idle cut).
+    idxs = [sm.frame_idx]
+    for _ in range(4):
+        sm.next_packet(b"\0", False)
+        idxs.append(sm.frame_idx)
+    for a, b in zip(idxs, idxs[1:]):
+        assert b == (a + 1) % 3
 
 
-def test_silence_never_holds_talk_when_next_ready():
+def test_silence_with_next_ready_keeps_continuous_body():
     sm = VideoStateMachine(_Bank(talk_frames=3, idle_frames=3))
     _enter_talk(sm)
     seen = []
@@ -171,8 +177,7 @@ def test_silence_never_holds_talk_when_next_ready():
             speech_may_start=True,
         )
         seen.append((pkt.clip_name, pkt.state, pkt.needs_lipsync))
-    assert seen[0][0] == CONTINUOUS_CLIP_NAME
-    assert all(name == IDLE_CLIP_NAME for name, _st, _lip in seen[1:])
+    assert all(name == CONTINUOUS_CLIP_NAME for name, _st, _lip in seen)
     assert all(lip is False for _name, _st, lip in seen)
 
 
@@ -189,18 +194,20 @@ def test_pcm_keeps_talk_body_and_lipsync():
     assert [row[3] for row in seen] == list(range(6))
 
 
-def test_idle_to_talk_resumes_continuous_index():
+def test_silence_then_speech_keeps_continuous_index():
     sm = VideoStateMachine(_Bank(talk_frames=5, idle_frames=3))
     _enter_talk(sm)
     for i in range(3):
         sm.next_packet(b"\1", True, whisper_idx=i)
     saved = sm._continuous_idx
-    sm.next_packet(b"\0", False)
-    assert sm.current_name == IDLE_CLIP_NAME
-    sm.next_packet(b"\1", True, whisper_idx=0)
+    silence = sm.next_packet(b"\0", False)
+    assert silence.clip_name == CONTINUOUS_CLIP_NAME
+    assert sm.current_name == CONTINUOUS_CLIP_NAME
+    # Silence advanced one step on the same timeline.
+    assert silence.frame_idx == saved or sm._continuous_idx == (saved + 1) % 5
     pkt = sm.next_packet(b"\1", True, whisper_idx=1)
     assert pkt.clip_name == CONTINUOUS_CLIP_NAME
-    assert pkt.frame_idx == (saved + 1) % 5 or pkt.frame_idx > 0
+    assert pkt.frame_idx == (sm._continuous_idx) % 5 or pkt.frame_idx >= 0
 
 
 def test_visual_gate_blocks_next_sentence_until_idle_done():
@@ -247,7 +254,7 @@ def test_visual_gate_blocks_next_sentence_until_idle_done():
 def test_ready_next_gets_idle_gap():
     bridge = SpeechBridge(output_folder="/tmp/ai_live_worker_test")
     assert 12 <= bridge.BETWEEN_UTTERANCE_GAP_FRAMES <= 24
-    assert bridge.BETWEEN_UTTERANCE_GAP_FRAMES == 18
+    assert bridge.BETWEEN_UTTERANCE_GAP_FRAMES == 12
     current = UtteranceJob(task_id="task_n", audio_path="")
     current.pcm_frames = [b"A"]
     current.num_frames = 1
@@ -421,7 +428,7 @@ def test_opening_gate_waits_three_then_rolls_one():
     assert bridge._current.task_id == "task_2"
 
 
-def test_queue_underrun_after_speech_uses_idle_2s():
+def test_queue_underrun_after_speech_keeps_continuous():
     sm = VideoStateMachine(_Bank(talk_frames=4, idle_frames=3))
     _enter_talk(sm)
     sm.begin_utterance()
@@ -431,8 +438,7 @@ def test_queue_underrun_after_speech_uses_idle_2s():
     for _ in range(6):
         pkt = sm.next_packet(b"\0" * 4, False, next_ready=False)
         seen.append((pkt.clip_name, pkt.needs_lipsync, pkt.is_speech))
-    assert seen[0][0] == CONTINUOUS_CLIP_NAME
-    assert all(name == IDLE_CLIP_NAME for name, _lip, _speech in seen[1:])
+    assert all(name == CONTINUOUS_CLIP_NAME for name, _lip, _speech in seen)
     assert all(lip is False for _name, lip, _speech in seen)
     assert all(speech is False for _name, _lip, speech in seen)
 

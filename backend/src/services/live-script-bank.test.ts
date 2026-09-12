@@ -5,6 +5,7 @@ import {
   emptyProductMemory,
   emptySalesRuleMemory,
   emptyScriptBank,
+  emergencyScriptLines,
   fitScriptBankSpeech,
   inferSemanticKey,
   isExactRepeat,
@@ -15,6 +16,7 @@ import {
   productReference,
   recordSpeechUsage,
   recycleLocalScriptBank,
+  remainingScriptLines,
   salesRuleGuard,
   seedLocalScriptBank,
   takeScriptLine,
@@ -330,5 +332,108 @@ describe("memory bounds + smoke", () => {
     }
     assert.ok(spoken.length >= 30, `expected >=30 speeches, got ${spoken.length}`);
     assert.equal(exactHits, 0);
+  });
+});
+
+describe("per-product LLM bank helpers", () => {
+  it("keeps separate banks per productId and merges without cross-talk", () => {
+    const bankA = emptyScriptBank("prod-a");
+    const bankB = emptyScriptBank("prod-b");
+    const line = (speech: string, productId: string) =>
+      ({
+        speech,
+        action: "IDLE",
+        emotion: "warm",
+        intent: "SELL",
+        mode: "ENGAGE",
+        topic: "benefit",
+        ctaType: "NONE",
+        target_product_id: productId,
+        interruptible: true,
+        claims: [],
+      }) as any;
+
+    mergeScriptLines(bankA, [line("Manfaat serum A ringan dipakai setiap hari untuk kulit kering pemula sekali.", "prod-a")], []);
+    mergeScriptLines(bankB, [line("Manfaat serum B bantu jaga kelembapan wajah sepanjang hari tanpa lengket.", "prod-b")], []);
+
+    assert.equal(bankA.productId, "prod-a");
+    assert.equal(bankB.productId, "prod-b");
+    assert.equal(remainingScriptLines(bankA), 1);
+    assert.equal(remainingScriptLines(bankB), 1);
+    assert.match(bankA.lines[0]!.speech, /serum A/i);
+    assert.match(bankB.lines[0]!.speech, /serum B/i);
+  });
+
+  it("treats remaining <= 8 as refill threshold signal", async () => {
+    const prev = process.env.LIVE_LLM_REFILL_AT;
+    process.env.LIVE_LLM_REFILL_AT = "8";
+    const { liveLlmRefillAt, liveLlmBatchSize } = await import("./llm.js");
+    assert.equal(liveLlmRefillAt(), 8);
+    assert.equal(liveLlmBatchSize(), Number(process.env.LIVE_LLM_BATCH_SIZE || 30));
+
+    const bank = emptyScriptBank("low");
+    for (let i = 0; i < 8; i++) {
+      bank.lines.push({
+        speech: `Kalimat cadangan nomor ${i} untuk menguji ambang refill bank produk aktif sekarang.`,
+        action: "IDLE",
+        emotion: "warm",
+        intent: "SELL",
+        mode: "ENGAGE",
+        topic: "filler",
+        ctaType: "NONE",
+        target_product_id: "low",
+        interruptible: true,
+        claims: [],
+      } as any);
+    }
+    assert.equal(remainingScriptLines(bank) <= liveLlmRefillAt(), true);
+    bank.lines.push({
+      speech: "Satu baris tambahan supaya bank berada di atas ambang refill delapan baris.",
+      action: "IDLE",
+      emotion: "warm",
+      intent: "SELL",
+      mode: "ENGAGE",
+      topic: "filler",
+      ctaType: "NONE",
+      target_product_id: "low",
+      interruptible: true,
+      claims: [],
+    } as any);
+    assert.equal(remainingScriptLines(bank) > liveLlmRefillAt(), true);
+    if (prev === undefined) delete process.env.LIVE_LLM_REFILL_AT;
+    else process.env.LIVE_LLM_REFILL_AT = prev;
+  });
+
+  it("emergency lines are only 1–2 generic utterances", () => {
+    const lines = emergencyScriptLines(sampleProduct("e1", "Serum Darurat"));
+    assert.ok(lines.length >= 1 && lines.length <= 2);
+    assert.ok(lines.every((l) => l.speech.split(/\s+/).length >= 8));
+  });
+
+  it("mock LLM batch of 30 prepends into product bank once at low threshold", () => {
+    const bank = emptyScriptBank("mock-30");
+    const mockLines = Array.from({ length: 30 }, (_, i) => ({
+      speech: `Ucapan mock nomor ${i} tentang manfaat produk ringan nyaman dipakai setiap hari untuk pemula.`,
+      action: "IDLE" as const,
+      emotion: "warm" as const,
+      intent: "SELL" as const,
+      mode: "ENGAGE" as const,
+      topic: "benefit",
+      ctaType: "NONE" as const,
+      target_product_id: "mock-30",
+      interruptible: true,
+      claims: [] as string[],
+    }));
+
+    // Simulate remaining at refill threshold then one LLM fill.
+    for (let i = 0; i < 8; i++) {
+      bank.lines.push({ ...mockLines[i]!, speech: `Sisa awal ${i} masih di bank aktif sebelum refill dipicu sekarang.` });
+    }
+    assert.equal(remainingScriptLines(bank), 8);
+    const added = mergeScriptLines(bank, mockLines, [], { prepend: true, cap: 160 });
+    assert.equal(added, 30);
+    assert.ok(remainingScriptLines(bank) >= 30);
+    bank.llmRefillCount = 1;
+    assert.equal(bank.llmRefillCount, 1);
   });
 });

@@ -710,7 +710,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       };
     }
 
-    const { generateLunaResponse } = await import("../services/groq-brain.js");
+    const { generateLunaResponse } = await import("../services/llm.js");
     const { resolveHostId } = await import("../services/tts.js");
     const luna = await generateLunaResponse(comment, managed?.product || null, avatarName, tone);
     const host = resolveHostId(voice, avatarName);

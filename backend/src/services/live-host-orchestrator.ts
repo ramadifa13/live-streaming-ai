@@ -5,40 +5,38 @@ import {
   getBrainBackoffMs,
   liveBrainCommentWhenNeeded,
   liveBrainDuringLive,
-  liveBrainRefillOnExhaust,
-  liveBrainRefillWhenLow,
+  liveLlmRefillAt,
   normalizeLunaAction,
   splitSpeechIntoGestureSegments,
   type HostIntent,
   type HostMode,
   type HostResponse,
   type SalesBrainInput,
-} from "./groq-brain.js";
+} from "./llm.js";
 import {
   buildDefaultFaqPack,
   buildLocalCommentResponse,
   commentNeedsLlm,
-  countFreshScriptLines,
   detectGreetingClass,
   emptyHostConversationMemory,
   emptyScriptBank,
+  emergencyScriptLines,
   FILLER_TOPICS,
   getOrCreateProductMemory,
   hasRecentGreetingClass,
   marathonCycleId,
   mergeScriptLines,
+  trimScriptBankToCap,
+  SCRIPT_BANK_ACTIVE_CAP,
   nextRhythmTopic,
   phasePreferTopics,
   recordSpeechUsage,
-  recycleLocalScriptBank,
   remainingScriptLines,
   RHYTHM_SLOTS,
-  seedLocalScriptBank,
   mergeProductKnowledge,
   pickScriptBankCommentLine,
   stripLeadingGreeting,
   takeScriptLine,
-  fitScriptBankSpeech,
   touchProductVisit,
   shouldUseLlmForComment,
   type FaqPackEntry,
@@ -211,6 +209,8 @@ interface HostRuntimeState {
   counters: RuntimeCounters;
   lastQueue: QueueMetrics;
   estimatedBufferSeconds: number;
+  /** Per-product LLM script banks; `scriptBank` is the active product view. */
+  productBanks: Map<string, ScriptBankState>;
   scriptBank: ScriptBankState;
   rtmpFailedAt: number;
   rtmpFailStopping: boolean;
@@ -221,6 +221,8 @@ interface HostRuntimeState {
   workerFailedAt: number;
   broadcastRetryAt: number;
   broadcastRetryCount: number;
+  /** Concurrent generateAndQueueNext jobs (TTS+submit). Caps keep MuseTalk ahead of realtime. */
+  generationInFlight: number;
 }
 interface PlanPolicy {
   durationMs: number;
@@ -254,8 +256,8 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   "1H": {
     durationMs: 60 * 60 * 1000,
     minBufferSeconds: LIVE_MIN_BUFFER,
-    targetBufferSeconds: 22,
-    maxBufferSeconds: 40,
+    targetBufferSeconds: 28,
+    maxBufferSeconds: 45,
     commentTtlMs: 20_000,
     maxPendingComments: 6,
     memoryUtterances: 20,
@@ -271,8 +273,8 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   "2H": {
     durationMs: 2 * 60 * 60 * 1000,
     minBufferSeconds: LIVE_MIN_BUFFER,
-    targetBufferSeconds: 22,
-    maxBufferSeconds: 40,
+    targetBufferSeconds: 28,
+    maxBufferSeconds: 45,
     commentTtlMs: 25_000,
     maxPendingComments: 8,
     memoryUtterances: 30,
@@ -288,7 +290,7 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   "8H": {
     durationMs: 8 * 60 * 60 * 1000,
     minBufferSeconds: 14,
-    targetBufferSeconds: 30,
+    targetBufferSeconds: 32,
     maxBufferSeconds: 55,
     commentTtlMs: 35_000,
     maxPendingComments: 10,
@@ -305,7 +307,7 @@ const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
   "24H": {
     durationMs: 24 * 60 * 60 * 1000,
     minBufferSeconds: 18,
-    targetBufferSeconds: 38,
+    targetBufferSeconds: 40,
     maxBufferSeconds: 70,
     commentTtlMs: 45_000,
     maxPendingComments: 14,
@@ -325,12 +327,32 @@ const IN_FLIGHT_RENDER_SECONDS = 10;
 const LIVE_CONTINUITY_BUFFER_SECONDS = 8;
 const LIVE_CONTINUITY_MIN_UTTERANCES = 3;
 const MIN_PLAYABLE_UTTERANCES = LIVE_CONTINUITY_MIN_UTTERANCES;
-const LIVE_ONAIR_MIN_READY_UTTERANCES = 2;
-const LIVE_ONAIR_MIN_SPEECH_SECONDS = 12;
-const LIVE_ONAIR_MAX_SPEECH_SECONDS = 22;
+// Keep ~20–36s of READY speech so TTS latency (6–10s) never drains the queue to silence.
+const LIVE_ONAIR_MIN_READY_UTTERANCES = Math.max(
+  2,
+  Number(process.env.LIVE_ONAIR_MIN_READY_UTTERANCES || 3),
+);
+const LIVE_ONAIR_MIN_SPEECH_SECONDS = Math.max(
+  12,
+  Number(process.env.LIVE_ONAIR_MIN_SPEECH_SECONDS || 20),
+);
+const LIVE_ONAIR_MAX_SPEECH_SECONDS = Math.max(
+  LIVE_ONAIR_MIN_SPEECH_SECONDS + 8,
+  Number(process.env.LIVE_ONAIR_MAX_SPEECH_SECONDS || 36),
+);
 const MAX_WORKER_UTTERANCE_QUEUE = Math.max(
+  4,
+  Number(process.env.LIVE_MAX_WORKER_UTTERANCE_QUEUE || 8),
+);
+/** Parallel TTS/submit jobs. Keep small so MuseTalk stays realtime (no FPS hit). */
+const LIVE_PARALLEL_PRODUCTION = Math.max(
   1,
-  Number(process.env.LIVE_MAX_WORKER_UTTERANCE_QUEUE || 6),
+  Math.min(3, Number(process.env.LIVE_PARALLEL_PRODUCTION || 2)),
+);
+/** Only pause production when lipsync render queue is truly backed up. */
+const LIVE_ONAIR_RENDER_QUEUE_CAP = Math.max(
+  4,
+  Number(process.env.LIVE_ONAIR_RENDER_QUEUE_CAP || 8),
 );
 
 export function hostResponseDelivered(submittedSegments: number): boolean {
@@ -346,16 +368,23 @@ export function decideOnAirStep(input: {
   visualWorkerInitializing?: boolean;
   hasComment: boolean;
   commentPriority?: number;
+  generationInFlight?: number;
 }): "skip_init_or_cap" | "comment" | "wait" | "generate" {
-  if (input.visualWorkerInitializing || input.workerPending >= MAX_WORKER_UTTERANCE_QUEUE) {
+  const inFlight = Math.max(0, Number(input.generationInFlight || 0));
+  const pendingAll = input.workerPending + inFlight;
+  if (input.visualWorkerInitializing || pendingAll >= MAX_WORKER_UTTERANCE_QUEUE) {
     return "skip_init_or_cap";
   }
+  if (inFlight >= LIVE_PARALLEL_PRODUCTION) {
+    return "wait";
+  }
   const bufferCritical =
-    input.readyCount < LIVE_ONAIR_MIN_READY_UTTERANCES || input.readySpeechSeconds < LIVE_ONAIR_MIN_SPEECH_SECONDS;
+    input.readyCount < LIVE_ONAIR_MIN_READY_UTTERANCES ||
+    input.readySpeechSeconds < LIVE_ONAIR_MIN_SPEECH_SECONDS;
   const bufferFull =
-    input.workerPending >= MAX_WORKER_UTTERANCE_QUEUE ||
+    pendingAll >= MAX_WORKER_UTTERANCE_QUEUE ||
     input.readySpeechSeconds >= LIVE_ONAIR_MAX_SPEECH_SECONDS ||
-    input.renderQueue >= 2;
+    input.renderQueue >= LIVE_ONAIR_RENDER_QUEUE_CAP;
   const gpuSlow = input.realTimeRatio > 0 && input.realTimeRatio < 1;
   const commentSafe =
     input.hasComment &&
@@ -364,6 +393,7 @@ export function decideOnAirStep(input: {
     input.readySpeechSeconds >= LIVE_ONAIR_MIN_SPEECH_SECONDS;
   const urgentComment = input.hasComment && (input.commentPriority || 0) >= 45 && input.readyCount >= 1 && !gpuSlow;
   if (input.hasComment && (commentSafe || urgentComment)) return "comment";
+  // GPU slower than realtime: keep generating only while speech buffer is critical.
   if (bufferFull || (gpuSlow && !bufferCritical)) return "wait";
   return "generate";
 }
@@ -433,10 +463,6 @@ const WORKER_FAIL_STOP_MS = 120_000;
 const GENERATION_BACKOFF_MS = 800;
 export const MAX_ONAIR_IDLE_SECONDS = LIVE_CONTINUITY_BUFFER_SECONDS;
 const SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS = Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS || 90_000);
-const SCRIPT_BANK_LLM_REFILL_MAX = Number(process.env.LIVE_SCRIPT_BANK_LLM_REFILL_MAX || 16);
-const SCRIPT_BANK_LOW = Number(process.env.LIVE_SCRIPT_BANK_LOW || 12);
-const SCRIPT_BANK_LLM_EXHAUST_BONUS = Number(process.env.LIVE_SCRIPT_BANK_LLM_EXHAUST_BONUS || 6);
-const SCRIPT_BANK_FRESH_LOW = Number(process.env.LIVE_SCRIPT_BANK_FRESH_LOW || 8);
 const RHYTHM_SLOT_ATTEMPTS = RHYTHM_SLOTS.length;
 
 function topicModesFor(topic: string): HostMode[] {
@@ -741,11 +767,9 @@ class LiveHostOrchestrator {
     const cycleId = marathonCycleId(elapsedMinutes);
     state.conversation.currentCycle = cycleId;
 
-    state.scriptBank = emptyScriptBank(productId);
-    if (found?.scriptBank?.length) {
-      state.scriptBank.lines = found.scriptBank.slice();
-    } else if (state.product) {
-      this.seedScriptBank(state, state.product);
+    this.setActiveProductBank(state, productId);
+    if (state.product) {
+      void this.ensureProductBank(state, state.product);
     }
     state.memory.topics.push("product_switch");
     state.currentMode = "ENGAGE";
@@ -832,7 +856,13 @@ class LiveHostOrchestrator {
       },
       lastQueue: emptyQueueMetrics(),
       estimatedBufferSeconds: 0,
-      scriptBank: emptyScriptBank(config.productId),
+      ...(() => {
+        const bank = emptyScriptBank(config.productId);
+        return {
+          productBanks: new Map([[config.productId, bank]]),
+          scriptBank: bank,
+        };
+      })(),
       rtmpFailedAt: 0,
       rtmpFailStopping: false,
       workerOfflineSince: 0,
@@ -842,6 +872,7 @@ class LiveHostOrchestrator {
       workerFailedAt: 0,
       broadcastRetryAt: 0,
       broadcastRetryCount: 0,
+      generationInFlight: 0,
     };
 
     this.sessions.set(config.sessionId, state);
@@ -971,16 +1002,38 @@ class LiveHostOrchestrator {
         const policy = this.getPolicy(s);
         const aiWorkerQueue = isAiWorkerBroadcastMode(queue.broadcastMode);
         const playableDepth = aiWorkerQueue ? queue.readyUtteranceCount : queue.queuedVideos;
+        const readySpeech = Number(queue.readySpeechSeconds || queue.bufferSeconds || 0);
         const minPlayableDepth = aiWorkerQueue ? AI_WORKER_GO_LIVE_MIN_UTTERANCES : GO_LIVE_MIN_UTTERANCES;
-        const minBufferSeconds = aiWorkerQueue ? Math.min(policy.minBufferSeconds, 8) : policy.minBufferSeconds;
-        if (playableDepth >= minPlayableDepth && queue.bufferSeconds >= minBufferSeconds) {
+        const targetSpeech = aiWorkerQueue
+          ? Math.min(policy.targetBufferSeconds, LIVE_ONAIR_MIN_SPEECH_SECONDS)
+          : policy.minBufferSeconds;
+        const openingReady =
+          playableDepth >= minPlayableDepth &&
+          (aiWorkerQueue ? readySpeech >= Math.min(8, targetSpeech) : queue.bufferSeconds >= policy.minBufferSeconds);
+        // Keep topping up toward on-air min speech so Go Live starts with a deep buffer.
+        if (openingReady && (!aiWorkerQueue || readySpeech >= targetSpeech || playableDepth >= LIVE_ONAIR_MIN_READY_UTTERANCES + 1)) {
           await sleep(1200);
+          continue;
+        }
+        if (aiWorkerQueue && (s.generationInFlight || 0) >= LIVE_PARALLEL_PRODUCTION) {
+          await sleep(400);
           continue;
         }
 
         try {
-          await this.generateAndQueueNext(sessionId, "prelive");
-          await sleep(450);
+          s.generationInFlight = (s.generationInFlight || 0) + 1;
+          void this.generateAndQueueNext(sessionId, "prelive")
+            .catch((err: any) => {
+              const current = this.sessions.get(sessionId);
+              if (!current || current.abortController.signal.aborted) return;
+              current.counters.failed++;
+              console.warn(`[LiveHost] Pre-live generation: ${err?.message || err}`);
+            })
+            .finally(() => {
+              const current = this.sessions.get(sessionId);
+              if (current) current.generationInFlight = Math.max(0, (current.generationInFlight || 1) - 1);
+            });
+          await sleep(350);
         } catch (err: any) {
           const current = this.sessions.get(sessionId);
           if (!current || current.abortController.signal.aborted) break;
@@ -1047,6 +1100,7 @@ class LiveHostOrchestrator {
             visualWorkerInitializing: s.lastQueue.visualWorkerInitializing,
             hasComment: Boolean(comment),
             commentPriority: comment?.priority,
+            generationInFlight: s.generationInFlight || 0,
           });
           if (step === "skip_init_or_cap" || step === "wait") {
             await sleep(COMMENT_SCAN_MS);
@@ -1056,15 +1110,24 @@ class LiveHostOrchestrator {
             await this.generateAndQueueCommentResponse(sessionId, comment);
             continue;
           }
-          try {
-            await this.generateAndQueueNext(sessionId, "live");
-          } catch (err: any) {
-            if (/429/.test(String(err?.message || err))) {
-              await sleep(COMMENT_SCAN_MS);
-              continue;
-            }
-            throw err;
-          }
+          // Fire TTS/submit without awaiting — N+1 fills while N plays (capped).
+          s.generationInFlight = (s.generationInFlight || 0) + 1;
+          void this.generateAndQueueNext(sessionId, "live")
+            .catch((err: any) => {
+              const msg = String(err?.message || err);
+              if (/429/.test(msg)) {
+                console.warn(`[LiveHost] Worker queue penuh (429) — rolling producer backoff`);
+                return;
+              }
+              const current = this.sessions.get(sessionId);
+              if (current) current.counters.failed++;
+              console.warn(`[LiveHost] Live generation: ${msg}`);
+            })
+            .finally(() => {
+              const current = this.sessions.get(sessionId);
+              if (current) current.generationInFlight = Math.max(0, (current.generationInFlight || 1) - 1);
+            });
+          await sleep(Math.min(COMMENT_SCAN_MS, 250));
           continue;
         }
 
@@ -1224,11 +1287,26 @@ class LiveHostOrchestrator {
     };
   }
 
-  private seedScriptBank(state: HostRuntimeState, product: ProductSnapshot): void {
-    if (state.scriptBank.productId !== product.id) {
-      state.scriptBank = emptyScriptBank(product.id);
+  private getOrCreateProductBank(state: HostRuntimeState, productId: string): ScriptBankState {
+    let bank = state.productBanks.get(productId);
+    if (!bank) {
+      bank = emptyScriptBank(productId);
+      state.productBanks.set(productId, bank);
     }
-    if (remainingScriptLines(state.scriptBank) > 0) return;
+    return bank;
+  }
+
+  private setActiveProductBank(state: HostRuntimeState, productId: string): void {
+    state.scriptBank = this.getOrCreateProductBank(state, productId);
+  }
+
+  /** Lazy LLM fill for a product bank. No-op when remaining > refill threshold. */
+  private async ensureProductBank(state: HostRuntimeState, product: ProductSnapshot): Promise<void> {
+    this.setActiveProductBank(state, product.id);
+    const bank = state.scriptBank;
+    const refillAt = liveLlmRefillAt();
+    if (remainingScriptLines(bank) > refillAt) return;
+    if (bank.refillInFlight) return;
 
     const productMemory = getOrCreateProductMemory(state.productMemories, product.id);
     if (productMemory.visitCount === 0) {
@@ -1237,76 +1315,53 @@ class LiveHostOrchestrator {
     const elapsedMinutes = Math.round(this.elapsedMs(state) / 60_000);
     const cycleId = marathonCycleId(elapsedMinutes);
     state.conversation.currentCycle = cycleId;
-    const seedOpts = {
-      entryMode: productMemory.entryMode,
-      productMemory,
-      cycleId,
-    };
 
-    if (product.scriptBank && product.scriptBank.length > 0) {
-      state.scriptBank.lines = product.scriptBank
-        .map((item) => ({ ...item, speech: fitScriptBankSpeech(item.speech) }))
-        .filter((item) => item.speech.split(/\s+/).filter(Boolean).length >= 8);
-      mergeScriptLines(
-        state.scriptBank,
-        recycleLocalScriptBank(this.toScriptFacts(product), state.catalog, [], {
-          ...seedOpts,
-          salesMemory: state.conversation.sales,
-        }).filter((l) => FILLER_TOPICS.has(l.topic)),
-        state.memory.utterances.slice(-12),
+    bank.refillInFlight = true;
+    try {
+      await awaitBrainReady(`${state.config.sessionId}:bank-${product.id}`);
+      const lines = await generateScriptBankLines(
+        this.toBrainInput(state, product, {
+          sessionId: `${state.config.sessionId}:bank-${product.id}`,
+          userQuestion:
+            "Isi bank ucapan otonom untuk produk ini. Bahasa natural host live, jangan kaku/robot, jangan mengarang fakta.",
+          requestedMode: state.currentMode,
+          requestedIntent: "SELL",
+          mode: state.currentMode,
+          avoidTopics: state.memory.topics.slice(-8),
+          recentUtterances: state.memory.utterances.slice(-20),
+        }),
       );
-    } else {
-      state.scriptBank.lines = seedLocalScriptBank(this.toScriptFacts(product), state.catalog, seedOpts);
+      const recent = state.memory.utterances.slice(-24);
+      if (lines.length > 0) {
+        mergeScriptLines(bank, lines, recent, { prepend: true, cap: SCRIPT_BANK_ACTIVE_CAP });
+        trimScriptBankToCap(bank, SCRIPT_BANK_ACTIVE_CAP);
+        bank.lastLlmRefillAt = Date.now();
+        bank.lastRefillAt = Date.now();
+        bank.llmRefillCount = (bank.llmRefillCount || 0) + 1;
+        console.log(
+          `[LLM] bank fill product=${product.id} count=${lines.length} remaining=${remainingScriptLines(bank)} session=${state.config.sessionId}`,
+        );
+      } else if (remainingScriptLines(bank) === 0) {
+        const emergency = emergencyScriptLines(this.toScriptFacts(product));
+        mergeScriptLines(bank, emergency, recent, { prepend: true, cap: SCRIPT_BANK_ACTIVE_CAP });
+        console.warn(
+          `[LLM] bank fill failed — emergency ${emergency.length} line(s) product=${product.id} session=${state.config.sessionId}`,
+        );
+      }
+    } finally {
+      bank.refillInFlight = false;
     }
-    console.log(
-      `[LiveHost] Script bank seeded: session=${state.config.sessionId} lines=${state.scriptBank.lines.length} entry=${productMemory.entryMode} cycle=${cycleId} source=${product.scriptBank?.length ? "payload+local-filler" : "local"}`,
-    );
   }
 
   private maybeRefillScriptBank(sessionId: string): void {
     const state = this.sessions.get(sessionId);
     if (!state || !state.product || state.scriptBank.refillInFlight) return;
 
-    const policy = this.getPolicy(state);
-    const scriptBankLow = policy.scriptBankLow || SCRIPT_BANK_LOW;
-    const llmRefillMax = policy.scriptBankLlmRefillMax || SCRIPT_BANK_LLM_REFILL_MAX;
-    const llmRefillCooldownMs = policy.scriptBankLlmRefillCooldownMs || SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS;
-
-    const recentWindow = policy.memoryUtterances >= 55 ? 36 : 24;
-    const recent = state.memory.utterances.slice(-recentWindow);
-    const productMemory = state.product ? getOrCreateProductMemory(state.productMemories, state.product.id) : undefined;
-    const elapsedMinutes = Math.round(this.elapsedMs(state) / 60_000);
-    const cycleId = marathonCycleId(elapsedMinutes);
-    const recycleOpts = {
-      entryMode: productMemory?.entryMode,
-      productMemory,
-      cycleId,
-      salesMemory: state.conversation.sales,
-    };
-
     const remaining = remainingScriptLines(state.scriptBank);
-    const freshCount = countFreshScriptLines(state.scriptBank, recent);
-    if (remaining >= scriptBankLow && freshCount > SCRIPT_BANK_FRESH_LOW) return;
+    if (remaining > liveLlmRefillAt()) return;
 
-    const recycled = recycleLocalScriptBank(this.toScriptFacts(state.product), state.catalog, recent, recycleOpts);
-    const addedLocal = mergeScriptLines(state.scriptBank, recycled, recent);
-    state.scriptBank.lastRefillAt = Date.now();
-    if (addedLocal > 0) {
-      console.log(`[LiveHost] Script bank local recycle +${addedLocal} (now ${remainingScriptLines(state.scriptBank)}) session=${sessionId}`);
-    } else if (remaining === 0) {
-      this.seedScriptBank(state, state.product);
-    }
-
-    const stillLow = remainingScriptLines(state.scriptBank) <= Math.max(4, Math.floor(scriptBankLow / 2));
-    const localExhausted = freshCount <= SCRIPT_BANK_FRESH_LOW || (addedLocal === 0 && recycled.length === 0 && remaining <= scriptBankLow * 2);
-    const allowLlm = liveBrainDuringLive() || (liveBrainRefillWhenLow() && stillLow) || (liveBrainRefillOnExhaust() && localExhausted);
-    if (!allowLlm) return;
-
-    const bank = state.scriptBank;
-    const cooled = Date.now() - (bank.lastLlmRefillAt || 0) >= llmRefillCooldownMs;
-    const effectiveMax = localExhausted ? llmRefillMax + SCRIPT_BANK_LLM_EXHAUST_BONUS : llmRefillMax;
-    const underCap = (bank.llmRefillCount || 0) < effectiveMax;
-    if (!cooled || !underCap) return;
+    const cooled = Date.now() - (state.scriptBank.lastLlmRefillAt || 0) >= SCRIPT_BANK_LLM_REFILL_COOLDOWN_MS;
+    if (!cooled && remaining > 0) return;
 
     state.scriptBank.refillInFlight = true;
     void this.refillScriptBank(sessionId).finally(() => {
@@ -1320,44 +1375,9 @@ class LiveHostOrchestrator {
     if (!state) return;
     const product = state.product || (await this.ensureProductSnapshot(state));
     if (!product) return;
-
-    const policy = this.getPolicy(state);
-    const scriptBankLow = policy.scriptBankLow || SCRIPT_BANK_LOW;
-    const recent = state.memory.utterances.slice(-24);
-    const freshCount = countFreshScriptLines(state.scriptBank, recent);
-    const remaining = remainingScriptLines(state.scriptBank);
-    const localExhausted = freshCount <= SCRIPT_BANK_FRESH_LOW || remaining <= Math.max(4, Math.floor(scriptBankLow / 2));
-
-    await awaitBrainReady(sessionId);
-    const lines = await generateScriptBankLines(
-      this.toBrainInput(state, product, {
-        userQuestion: localExhausted
-          ? "Variasi bank ucapan hampir habis  buat baris BARU dengan angle/topik berbeda. Jangan ulang pembuka atau poin yang sama. Bahasa natural host live, jangan mengarang fakta."
-          : "Isi ulang bank ucapan otonom. Bahasa natural host live, jangan kaku/robot, jangan mengarang fakta.",
-        requestedMode: state.currentMode,
-        requestedIntent: "SELL",
-        mode: state.currentMode,
-        avoidTopics: state.memory.topics.slice(-8),
-        recentUtterances: state.memory.utterances.slice(-20),
-      }),
-    );
-    const localBoost = recycleLocalScriptBank(this.toScriptFacts(product), state.catalog, state.memory.utterances.slice(-24), {
-      entryMode: getOrCreateProductMemory(state.productMemories, product.id).entryMode,
-      productMemory: getOrCreateProductMemory(state.productMemories, product.id),
-      cycleId: marathonCycleId(Math.round(this.elapsedMs(state) / 60_000)),
-      salesMemory: state.conversation.sales,
-    });
-    const added = mergeScriptLines(state.scriptBank, [...lines, ...localBoost], state.memory.utterances.slice(-24));
-    state.scriptBank.lastRefillAt = Date.now();
-    if (lines.length > 0) {
-      state.scriptBank.llmRefillCount = (state.scriptBank.llmRefillCount || 0) + 1;
-      state.scriptBank.lastLlmRefillAt = Date.now();
-    }
-    if (added > 0) {
-      console.log(
-        `[LiveHost] Script bank refill +${added} llm=${lines.length} exhausted=${localExhausted} (now ${remainingScriptLines(state.scriptBank)}) session=${sessionId}`,
-      );
-    }
+    // Clear in-flight so ensureProductBank can run (caller set the flag for dedupe).
+    state.scriptBank.refillInFlight = false;
+    await this.ensureProductBank(state, product);
   }
 
   private async generateAndQueueNext(sessionId: string, source: "prelive" | "live"): Promise<void> {
@@ -1367,25 +1387,13 @@ class LiveHostOrchestrator {
     const product = await this.ensureProductSnapshot(state);
     if (!product) throw new Error("Product aktif tidak ditemukan");
 
-    this.seedScriptBank(state, product);
+    this.setActiveProductBank(state, product.id);
+    await this.ensureProductBank(state, product);
     this.maybeRefillScriptBank(sessionId);
     const productMemory = getOrCreateProductMemory(state.productMemories, product.id);
     const elapsedMinutes = Math.round(this.elapsedMs(state) / 60_000);
     const cycleId = marathonCycleId(elapsedMinutes);
     state.conversation.currentCycle = cycleId;
-    const memoryOpts = {
-      entryMode: productMemory.entryMode,
-      productMemory,
-      cycleId,
-      salesMemory: state.conversation.sales,
-    };
-    if (remainingScriptLines(state.scriptBank) < 8) {
-      const boost = recycleLocalScriptBank(this.toScriptFacts(product), state.catalog, state.memory.utterances.slice(-16), memoryOpts);
-      mergeScriptLines(state.scriptBank, boost, state.memory.utterances.slice(-16));
-      if (remainingScriptLines(state.scriptBank) === 0) {
-        state.scriptBank.lines = seedLocalScriptBank(this.toScriptFacts(product), state.catalog, memoryOpts);
-      }
-    }
 
     const topic = this.chooseAutonomousTopic(state);
     const requestedMode = this.resolveModeForTopic(state, topic.modes);
@@ -1398,6 +1406,8 @@ class LiveHostOrchestrator {
     const avoidCta = recentCtas.filter((c) => c && c !== "NONE").length >= 1;
     const bufferCritical =
       state.lastQueue.queuedVideos === 0 ||
+      (state.lastQueue.readyUtteranceCount || 0) < LIVE_ONAIR_MIN_READY_UTTERANCES ||
+      Number(state.lastQueue.readySpeechSeconds || state.lastQueue.bufferSeconds || 0) < LIVE_ONAIR_MIN_SPEECH_SECONDS ||
       (state.lastQueue.bufferSeconds > 0 && state.lastQueue.bufferSeconds <= LIVE_CONTINUITY_BUFFER_SECONDS) ||
       state.lastQueue.bufferSeconds < policy.minBufferSeconds;
     const preferFiller = bufferCritical;
@@ -1428,18 +1438,17 @@ class LiveHostOrchestrator {
         preferFiller: false,
         avoidCta,
       }) ||
-      takeScriptLine(state.scriptBank, recent, takeOptsBase) ||
-      recycleLocalScriptBank(this.toScriptFacts(product), state.catalog, recent, memoryOpts)[0];
+      takeScriptLine(state.scriptBank, recent, takeOptsBase);
 
     if (!hostResponse) {
-      const facts = this.toScriptFacts(product);
-      const emergencySeed = seedLocalScriptBank(facts, state.catalog, memoryOpts);
-      mergeScriptLines(state.scriptBank, emergencySeed, recent);
-      hostResponse = takeScriptLine(state.scriptBank, recent, {
-        ...takeOptsBase,
-        preferFiller: true,
-      }) ||
-        emergencySeed[0] || {
+      const emergency = emergencyScriptLines(this.toScriptFacts(product));
+      mergeScriptLines(state.scriptBank, emergency, recent, { prepend: true });
+      hostResponse =
+        takeScriptLine(state.scriptBank, recent, {
+          ...takeOptsBase,
+          preferFiller: true,
+        }) ||
+        emergency[0] || {
           speech: `${product.name || "Produk ini"} masih tersedia di live, cek etalase ya.`,
           action: "IDLE" as const,
           emotion: "warm" as const,
@@ -1480,7 +1489,7 @@ class LiveHostOrchestrator {
           ...takeOptsBase,
           preferFiller: true,
         }) ||
-        recycleLocalScriptBank(this.toScriptFacts(product), state.catalog, recent, memoryOpts)[0];
+        emergencyScriptLines(this.toScriptFacts(product))[0];
       if (retry) {
         const retryAccepted = await this.processHostResponse(sessionId, retry, source, retry.topic || topic.topic, {
           allowRepeatWhenCritical: true,
@@ -2330,7 +2339,7 @@ class LiveHostOrchestrator {
       duplicateResponsesPrevented: state.counters.duplicateResponsesPrevented,
       scriptBankRemaining: remainingScriptLines(state.scriptBank),
       scriptBankLlmRefillCount: state.scriptBank.llmRefillCount || 0,
-      scriptBankSource: state.product?.scriptBank?.length ? (state.scriptBank.llmRefillCount > 0 ? "mixed" : "payload") : "local",
+      scriptBankSource: state.scriptBank.llmRefillCount > 0 ? "llm" : remainingScriptLines(state.scriptBank) > 0 ? "emergency" : "empty",
       stageIndex,
       stageText,
     };

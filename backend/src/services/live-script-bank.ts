@@ -1,5 +1,5 @@
-import type { HostIntent, HostMode, HostResponse, LunaEmotion } from "./groq-brain.js";
-import { inferCtaPointAction, normalizeLunaAction } from "./groq-brain.js";
+import type { HostIntent, HostMode, HostResponse, LunaEmotion } from "./llm.js";
+import { inferCtaPointAction, normalizeLunaAction } from "./llm.js";
 import { sanitizeForLiveTTS } from "./tts.js";
 import {
   BANNER_CTA_COOLDOWN_MS,
@@ -189,6 +189,8 @@ export const RHYTHM_SLOTS: string[] = [
 export const FILLER_TOPICS = new Set(["filler", "energy_reset"]);
 
 export const SCRIPT_BANK_CAP = Number(process.env.LIVE_SCRIPT_BANK_CAP || 900);
+/** Working set while live — oversized payload banks sound repetitive if left intact. */
+export const SCRIPT_BANK_ACTIVE_CAP = Number(process.env.LIVE_SCRIPT_BANK_ACTIVE_CAP || 160);
 const RECYCLE_BATCH = Number(process.env.LIVE_SCRIPT_BANK_RECYCLE_BATCH || 220);
 const RECYCLE_ROUNDS = Number(process.env.LIVE_SCRIPT_BANK_RECYCLE_ROUNDS || 3);
 
@@ -207,7 +209,7 @@ const PARAPHRASE_OPENERS = [
   "Yang perlu dicatat — ",
 ];
 
-const PARAPHRASE_VARIANT_RATE = Number(process.env.LIVE_PARAPHRASE_VARIANT_RATE || 0.18);
+const PARAPHRASE_VARIANT_RATE = Number(process.env.LIVE_PARAPHRASE_VARIANT_RATE || 0.4);
 
 const LLM_COMMENT_INTENTS = new Set<HostIntent>(["OBJECTION", "BUYING_INTENT", "COMPLAINT", "ANSWER", "ANNOUNCEMENT"]);
 
@@ -1026,6 +1028,37 @@ export function emptyScriptBank(productId = ""): ScriptBankState {
   };
 }
 
+/** 1–2 generic lines only when LLM bank fill fails completely — not a local sentence factory. */
+export function emergencyScriptLines(product: ScriptProductFacts): HostResponse[] {
+  const name = String(product.name || "Produk ini").trim() || "Produk ini";
+  return [
+    {
+      speech: `${name} masih tersedia di live sekarang, silakan cek detailnya di etalase ya.`,
+      action: "IDLE",
+      emotion: "warm",
+      intent: "SELL",
+      mode: "SELL",
+      topic: "filler",
+      ctaType: "SOFT",
+      target_product_id: product.id || null,
+      interruptible: true,
+      claims: [],
+    },
+    {
+      speech: `Kalau masih ragu soal ${name}, tulis pertanyaan di komentar biar aku bantu jawab pelan-pelan.`,
+      action: "IDLE",
+      emotion: "warm",
+      intent: "SOCIAL",
+      mode: "ENGAGE",
+      topic: "filler",
+      ctaType: "COMMENT",
+      target_product_id: product.id || null,
+      interruptible: true,
+      claims: [],
+    },
+  ];
+}
+
 export function remainingScriptLines(bank: ScriptBankState): number {
   return bank.lines.length;
 }
@@ -1039,6 +1072,49 @@ export function commentNeedsLlm(intent: HostIntent, text: string): boolean {
 
 export function countFreshScriptLines(bank: ScriptBankState, recent: string[] = []): number {
   return bank.lines.filter((item) => !similarToAny(item.speech, recent) && !sharesOpening(item.speech, recent)).length;
+}
+
+/** Keep a topic-diverse working set so live talk is not trapped in 800+ near-duplicate payload lines. */
+export function diversifyCapScriptLines(lines: HostResponse[], cap = SCRIPT_BANK_ACTIVE_CAP): HostResponse[] {
+  if (cap <= 0 || lines.length <= cap) return lines;
+  const byTopic = new Map<string, HostResponse[]>();
+  for (const line of lines) {
+    const key = normalize(String(line.topic || "other")) || "other";
+    const bucket = byTopic.get(key) || [];
+    bucket.push(line);
+    byTopic.set(key, bucket);
+  }
+  for (const bucket of byTopic.values()) {
+    for (let i = bucket.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = bucket[i]!;
+      bucket[i] = bucket[j]!;
+      bucket[j] = tmp;
+    }
+  }
+  const keys = Array.from(byTopic.keys());
+  const out: HostResponse[] = [];
+  let depth = 0;
+  while (out.length < cap) {
+    let progressed = false;
+    for (const key of keys) {
+      const bucket = byTopic.get(key);
+      if (!bucket || depth >= bucket.length) continue;
+      out.push(bucket[depth]!);
+      progressed = true;
+      if (out.length >= cap) break;
+    }
+    if (!progressed) break;
+    depth += 1;
+  }
+  return out;
+}
+
+export function trimScriptBankToCap(bank: ScriptBankState, cap = SCRIPT_BANK_ACTIVE_CAP): number {
+  if (cap <= 0 || bank.lines.length <= cap) return 0;
+  const before = bank.lines.length;
+  bank.lines = diversifyCapScriptLines(bank.lines, cap);
+  return before - bank.lines.length;
 }
 
 function commentKeywordOverlap(commentText: string, corpus: string): number {
@@ -1526,9 +1602,15 @@ export function takeScriptLine(
   return picked || null;
 }
 
-export function mergeScriptLines(bank: ScriptBankState, incoming: HostResponse[], recent: string[]): number {
+export function mergeScriptLines(
+  bank: ScriptBankState,
+  incoming: HostResponse[],
+  recent: string[],
+  options?: { prepend?: boolean; cap?: number },
+): number {
   const seen = new Set(bank.lines.map((item) => normalize(item.speech)));
   let added = 0;
+  const prepared: HostResponse[] = [];
   for (const item of incoming) {
     const speech = clampSpeech(item.speech || "", SCRIPT_BANK_MAX_WORDS);
     const key = normalize(speech);
@@ -1536,7 +1618,7 @@ export function mergeScriptLines(bank: ScriptBankState, incoming: HostResponse[]
     if (!key || seen.has(key) || similarToAny(speech, recent)) continue;
     if (speech.split(" ").length < minWords) continue;
     const mode = (TOPIC_MODES[item.topic]?.[0] || item.mode || "ENGAGE") as HostMode;
-    bank.lines.push({
+    prepared.push({
       ...item,
       speech,
       action: normalizeLunaAction(item.action) !== "IDLE" ? normalizeLunaAction(item.action) : inferCtaPointAction(speech, item.topic),
@@ -1548,6 +1630,13 @@ export function mergeScriptLines(bank: ScriptBankState, incoming: HostResponse[]
     });
     seen.add(key);
     added++;
+  }
+  if (prepared.length) {
+    bank.lines = options?.prepend ? [...prepared, ...bank.lines] : [...bank.lines, ...prepared];
+  }
+  const cap = options?.cap ?? SCRIPT_BANK_ACTIVE_CAP;
+  if (cap > 0 && bank.lines.length > cap) {
+    bank.lines = options?.prepend ? bank.lines.slice(0, cap) : diversifyCapScriptLines(bank.lines, cap);
   }
   return added;
 }

@@ -41,6 +41,11 @@ export function shouldTerminateOrphanPod(podId: string, knownPodIds: Set<string>
   return !knownPodIds.has(podId) && !isStaticPodId(podId);
 }
 
+/** Unique `runpodPodId` is exclusive. Warm/static pods must detach from ended rows first. */
+export function exclusivePodClaimWhere(podId: string, sessionId: string) {
+  return { runpodPodId: podId, NOT: { id: sessionId } };
+}
+
 export interface ManagedSession {
   sessionId: string;
   state: SessionState;
@@ -242,16 +247,10 @@ class LiveSessionManager {
         onPodCreated: (podId) => {
           const current = this.activeSessions.get(sessionId);
           if (current) current.podId = podId;
-          void prisma.liveSession
-            .update({
-              where: { id: sessionId },
-              data: {
-                runpodPodId: podId,
-                podStatus: "provisioning",
-                podCreatedAt: new Date(),
-              },
-            })
-            .catch((err) => console.error(`[LiveSessionManager] Gagal menyimpan pod ${podId}:`, err));
+          void this.assignPodToSession(sessionId, podId, {
+            podStatus: "provisioning",
+            podCreatedAt: new Date(),
+          }).catch((err) => console.error(`[LiveSessionManager] Gagal menyimpan pod ${podId}:`, err));
         },
         shouldAbort: () => {
           const current = this.activeSessions.get(sessionId);
@@ -292,13 +291,14 @@ class LiveSessionManager {
         managed.podBootStatus = "ready";
         managed.podBootMessage = "GPU siap — menghubungkan ke worker...";
       }
-      await prisma.liveSession.update({
-        where: { id: sessionId },
-        data: {
-          runpodPodId: managed.podId || undefined,
-          podStatus: "ready",
-        },
-      });
+      if (managed.podId) {
+        await this.assignPodToSession(sessionId, managed.podId, { podStatus: "ready" });
+      } else {
+        await prisma.liveSession.update({
+          where: { id: sessionId },
+          data: { podStatus: "ready" },
+        });
+      }
 
       livePlatformConnector.startSession({
         sessionId,
@@ -336,6 +336,25 @@ class LiveSessionManager {
         await this.transitionState("error", sessionId);
       }
     }
+  }
+
+  private async assignPodToSession(
+    sessionId: string,
+    podId: string,
+    extra: { podStatus: string; podCreatedAt?: Date },
+  ): Promise<void> {
+    await prisma.liveSession.updateMany({
+      where: exclusivePodClaimWhere(podId, sessionId),
+      data: { runpodPodId: null },
+    });
+    await prisma.liveSession.update({
+      where: { id: sessionId },
+      data: {
+        runpodPodId: podId,
+        podStatus: extra.podStatus,
+        ...(extra.podCreatedAt ? { podCreatedAt: extra.podCreatedAt } : {}),
+      },
+    });
   }
 
   public getSessionBootStatus(sessionId: string): {
@@ -408,7 +427,12 @@ class LiveSessionManager {
       data: {
         status: "ended",
         endedReason: options?.endedReason || "user_stop",
+        runpodPodId: null,
       },
+    });
+    await prisma.liveSession.updateMany({
+      where: { id: sessionId, runpodPodId: { not: null } },
+      data: { runpodPodId: null },
     });
 
     if (podToTerminate) {

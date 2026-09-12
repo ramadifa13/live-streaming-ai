@@ -6,6 +6,7 @@ import { sanitizeForLiveTTS } from "./tts.js";
 import { decideOnAirStep, hostResponseDelivered } from "./live-host-orchestrator.js";
 import {
   canTransitionPlatformLive,
+  exclusivePodClaimWhere,
   reuseExistingLiveStart,
   shouldRehydrateRow,
   shouldTerminateOrphanPod,
@@ -82,8 +83,8 @@ test("TTS false-success does not count as delivered speech", () => {
 test("on-air refill waits when GPU is slower than realtime unless buffer is critical", () => {
   assert.equal(
     decideOnAirStep({
-      readyCount: 3,
-      readySpeechSeconds: 16,
+      readyCount: 4,
+      readySpeechSeconds: 24,
       workerPending: 3,
       renderQueue: 0,
       realTimeRatio: 0.7,
@@ -104,8 +105,8 @@ test("on-air refill waits when GPU is slower than realtime unless buffer is crit
   );
   assert.equal(
     decideOnAirStep({
-      readyCount: 3,
-      readySpeechSeconds: 16,
+      readyCount: 4,
+      readySpeechSeconds: 24,
       workerPending: 2,
       renderQueue: 0,
       realTimeRatio: 1.2,
@@ -113,6 +114,18 @@ test("on-air refill waits when GPU is slower than realtime unless buffer is crit
       commentPriority: 10,
     }),
     "comment",
+  );
+  assert.equal(
+    decideOnAirStep({
+      readyCount: 2,
+      readySpeechSeconds: 10,
+      workerPending: 1,
+      renderQueue: 0,
+      realTimeRatio: 1.5,
+      hasComment: false,
+      generationInFlight: 2,
+    }),
+    "wait",
   );
 });
 
@@ -157,4 +170,11 @@ test("rehydration attaches healthy rows and leaves foreign pods alone", () => {
   assert.equal(shouldRehydrateRow({ runpodPodId: null }, false), false);
   assert.equal(shouldTerminateOrphanPod("orphan-1", new Set(["owned-1"])), true);
   assert.equal(shouldTerminateOrphanPod("owned-1", new Set(["owned-1"])), false);
+});
+
+test("exclusive pod claim detaches other sessions holding the same runpodPodId", () => {
+  assert.deepEqual(exclusivePodClaimWhere("qx940wv0vf0nvu", "sess-new"), {
+    runpodPodId: "qx940wv0vf0nvu",
+    NOT: { id: "sess-new" },
+  });
 });

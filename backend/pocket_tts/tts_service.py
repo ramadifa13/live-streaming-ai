@@ -22,9 +22,12 @@ VOICE_ROOT = Path(os.environ.get("POCKET_TTS_VOICE_ROOT", "../voices")).resolve(
 HOST = os.environ.get("POCKET_TTS_HOST", "127.0.0.1")
 PORT = int(os.environ.get("POCKET_TTS_PORT", "8092"))
 OUTPUT_SAMPLE_RATE = int(os.environ.get("POCKET_TTS_OUTPUT_RATE", "24000"))
+EOS_THRESHOLD = float(os.environ.get("POCKET_TTS_EOS_THRESHOLD", "-5.0"))
+FRAMES_AFTER_EOS = int(os.environ.get("POCKET_TTS_FRAMES_AFTER_EOS", "3"))
+os.environ.setdefault("KPOCKET_TTS_ERROR_WITHOUT_EOS", "1")
 
-print(f"[PocketTTS] loading config={CONFIG}", flush=True)
-MODEL = TTSModel.load_model(config=CONFIG)
+print(f"[PocketTTS] loading config={CONFIG} eos={EOS_THRESHOLD}", flush=True)
+MODEL = TTSModel.load_model(config=CONFIG, eos_threshold=EOS_THRESHOLD)
 VOICE_STATES: dict[str, Any] = {}
 VOICE_LOCK = threading.Lock()
 
@@ -53,13 +56,37 @@ def get_voice_state(voice_id: str) -> Any:
 
 
 def synthesize(text: str, voice_id: str) -> bytes:
-    audio = MODEL.generate_audio(get_voice_state(voice_id), text)
+    try:
+        audio = MODEL.generate_audio(
+            get_voice_state(voice_id),
+            text,
+            frames_after_eos=FRAMES_AFTER_EOS,
+            copy_state=True,
+        )
+    except RuntimeError as exc:
+        if "without EOS" not in str(exc):
+            raise
+        # Soft regenerate once so postprocess can strip the drone instead of failing hard.
+        prev = os.environ.get("KPOCKET_TTS_ERROR_WITHOUT_EOS", "1")
+        os.environ["KPOCKET_TTS_ERROR_WITHOUT_EOS"] = "0"
+        MODEL.eos_threshold = min(MODEL.eos_threshold, EOS_THRESHOLD - 2.0)
+        try:
+            audio = MODEL.generate_audio(
+                get_voice_state(voice_id),
+                text,
+                frames_after_eos=FRAMES_AFTER_EOS,
+                copy_state=True,
+            )
+        finally:
+            os.environ["KPOCKET_TTS_ERROR_WITHOUT_EOS"] = prev
+            MODEL.eos_threshold = EOS_THRESHOLD
     if hasattr(audio, "detach"):
         audio = audio.detach().cpu().numpy()
     samples, out_rate = postprocess_generated(
         np.asarray(audio, dtype=np.float32),
         int(getattr(MODEL, "sample_rate", OUTPUT_SAMPLE_RATE) or OUTPUT_SAMPLE_RATE),
         OUTPUT_SAMPLE_RATE,
+        text=text,
     )
     output = io.BytesIO()
     sf.write(output, samples, out_rate, format="WAV", subtype="PCM_16")

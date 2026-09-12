@@ -113,6 +113,12 @@ function startPocketTts(): Promise<void> {
         ...process.env,
         POCKET_TTS_CONFIG,
         POCKET_TTS_VOICE_DIR: process.env.POCKET_TTS_VOICE_DIR || path.resolve(process.cwd(), "voices"),
+        // Kill vocoder drones: fire EOS earlier + strip residual buzz in audio_post.
+        POCKET_TTS_EOS_THRESHOLD: process.env.POCKET_TTS_EOS_THRESHOLD || "-5.0",
+        POCKET_TTS_EOS_RETRY_THRESHOLD: process.env.POCKET_TTS_EOS_RETRY_THRESHOLD || "-6.0",
+        POCKET_TTS_FRAMES_AFTER_EOS: process.env.POCKET_TTS_FRAMES_AFTER_EOS || "3",
+        POCKET_TTS_AUDIO_FILTER: process.env.POCKET_TTS_AUDIO_FILTER || "1",
+        KPOCKET_TTS_ERROR_WITHOUT_EOS: process.env.KPOCKET_TTS_ERROR_WITHOUT_EOS || "1",
       },
       stdio: ["pipe", "pipe", "pipe"],
     });

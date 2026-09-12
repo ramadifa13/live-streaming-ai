@@ -210,7 +210,9 @@ def check_audio_sample_rate_contract() -> None:
     if "def enter_boot_idle" not in worker:
         _fail("enter_boot_idle hilang — Go Live harus loop namira_idle dulu")
     if "BETWEEN_UTTERANCE_GAP_FRAMES: int = max(" not in bridge:
-        _fail("jeda antar kalimat harus 12–24 frame (default 18 / 0.75s)")
+        _fail("jeda antar kalimat harus 12–24 frame (default 12 / 0.5s)")
+    if 'os.environ.get("BETWEEN_UTTERANCE_GAP_FRAMES", "12")' not in bridge:
+        _fail("default BETWEEN_UTTERANCE_GAP_FRAMES harus 12 (0.5s)")
     if 'return "INTER_GAP"' not in bridge and "INTER_GAP" not in bridge:
         _fail("fase INTER_GAP hilang dari SpeechBridge")
     if "def in_between_utterance_gap" not in bridge:
@@ -283,6 +285,15 @@ def check_paired_av() -> None:
     print("[INVARIANT] paired A/V OK")
 
 
+def check_ffmpeg_rtmp_compat() -> None:
+    worker = (ROOT / "ai_worker.py").read_text(encoding="utf-8", errors="replace")
+    if '"-fps_mode"' in worker or "'-fps_mode'" in worker:
+        _fail("FFmpeg RTMP tidak boleh pakai -fps_mode (FFmpeg 4.4 Option not found)")
+    if '"-vsync"' not in worker:
+        _fail("FFmpeg RTMP harus pakai -vsync cfr agar kompatibel Ubuntu 22.04")
+    print("[INVARIANT] ffmpeg RTMP compat OK")
+
+
 def main() -> None:
     check_rtmp_utils()
     check_lipsync_not_forced_on_any_clip()
@@ -295,6 +306,7 @@ def main() -> None:
     check_start_sweeps_previous_session()
     check_runtime_isolation()
     check_paired_av()
+    check_ffmpeg_rtmp_compat()
     print("[INVARIANT] semua cek lolos")
 
 

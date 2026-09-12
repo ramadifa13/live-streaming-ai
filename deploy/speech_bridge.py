@@ -430,7 +430,7 @@ class SpeechBridge:
     MAX_RENDER_AHEAD: int = 2
     BETWEEN_UTTERANCE_GAP_FRAMES: int = max(
         12,
-        min(24, int(os.environ.get("BETWEEN_UTTERANCE_GAP_FRAMES", "18"))),
+        min(24, int(os.environ.get("BETWEEN_UTTERANCE_GAP_FRAMES", "12"))),
     )
 
     def __init__(self, output_folder: str = ""):
@@ -737,7 +737,7 @@ class SpeechBridge:
                 job.lipsync_ready.set()
 
     def _arm_between_gap(self) -> None:
-        """Natural 0.5–1.0s silence (default 0.75s) before N+1."""
+        """Natural 0.5–1.0s silence (default 0.50s) before N+1."""
         if self._gap_played_for_current or self._between_gap_left > 0:
             return
         if self.ready_upcoming_count() <= 0:

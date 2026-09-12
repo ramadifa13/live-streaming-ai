@@ -7,7 +7,7 @@ import {
   generateLiveSalesPitchFromAIGroq,
   prepareProductScriptPack,
   checkGroqHealth,
-} from "../services/groq-brain.js";
+} from "../services/llm.js";
 
 const salesResponseSchema = z.object({
   productId: z.string().optional(),
