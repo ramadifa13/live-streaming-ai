@@ -6,6 +6,8 @@ import { Pencil, Trash2, ShoppingBag } from "lucide-react";
 import { Product } from "@/app/dashboard/types";
 import { useProductStore } from "@/stores/useProductStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
+import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
+import { liveSessionService, toLiveProductSnapshot } from "@/services/liveSessionService";
 import { getScriptBankMeta } from "@/lib/script-bank";
 
 interface ProductCardProps {
@@ -21,13 +23,32 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
 
   const setShowEditProductModal = useDashboardUIStore((state) => state.setShowEditProductModal);
   const showToast = useDashboardUIStore((state) => state.showToast);
+  const isLiveActive = useLiveSessionStore((state) => state.isLiveActive);
+  const currentLiveSessionId = useLiveSessionStore((state) => state.currentLiveSessionId);
 
   const isSelected = activeFeaturedProduct.id === product.id || activeFeaturedProduct.name === product.name;
   const bankMeta = getScriptBankMeta(product, scriptBankPreparingIds);
 
-  const handleSelect = () => {
+  const handleSelect = async () => {
+    if (isSelected) return;
+    const previous = activeFeaturedProduct;
     setActiveFeaturedProduct(product);
-    showToast(` Produk live dialihkan ke: ${product.name}`);
+    if (!isLiveActive) {
+      showToast(` Produk live dialihkan ke: ${product.name}`);
+      return;
+    }
+    try {
+      await liveSessionService.switchProduct(
+        product.id || "1",
+        product.name,
+        toLiveProductSnapshot(product, { includeMedia: true, includeScriptBank: true }),
+        currentLiveSessionId || undefined,
+      );
+      showToast(`Produk live dialihkan ke: ${product.name}`);
+    } catch (err) {
+      setActiveFeaturedProduct(previous);
+      showToast(err instanceof Error ? err.message : "Gagal ganti produk di siaran.", "error");
+    }
   };
 
   const handleEdit = (e: React.MouseEvent) => {

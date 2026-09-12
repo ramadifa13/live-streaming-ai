@@ -248,9 +248,15 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       productSold: parsed.data.productSold,
     });
 
+    if (!result.success) {
+      reply.code(404);
+      return { error: "Sesi live tidak ditemukan." };
+    }
     return {
-      success: result.success,
+      success: true,
       summary: result.summary,
+      gpuTerminated: result.gpuTerminated,
+      gpuWarning: result.gpuWarning,
     };
   });
 
@@ -744,46 +750,59 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
-    try {
-      const latestSession = parsed.data.sessionId
-        ? await prisma.liveSession.findFirst({
-            where: { id: parsed.data.sessionId },
-          })
-        : await prisma.liveSession.findFirst({
-            where: { status: "live" },
-            orderBy: { createdAt: "desc" },
-          });
-      if (latestSession) {
-        await prisma.liveSession.update({
-          where: { id: latestSession.id },
-          data: { productId: parsed.data.productId },
+    const latestSession = parsed.data.sessionId
+      ? await prisma.liveSession.findFirst({
+          where: { id: parsed.data.sessionId },
+        })
+      : await prisma.liveSession.findFirst({
+          where: { status: { in: ["live", "pending", "starting"] } },
+          orderBy: { createdAt: "desc" },
         });
-        const snapshot = normalizeClientProduct(parsed.data.product);
-        liveHostOrchestrator.switchProduct(latestSession.id, parsed.data.productId, snapshot || undefined);
+    if (!latestSession) {
+      reply.code(404);
+      return { error: "Tidak ada sesi live untuk ganti produk." };
+    }
 
-        const managedSession = liveSessionManager.getSession(latestSession.id);
-        if (snapshot && managedSession) {
-          managedSession.product = snapshot;
-          const exists = managedSession.catalog.some((item) => item.id === snapshot.id);
-          if (!exists) managedSession.catalog.push(snapshot);
-        }
-        const switchedProd = snapshot || managedSession?.product;
-        if (switchedProd) {
-          const podId = managedSession?.podId;
-          const overlayMedia = (url?: string) => resolveMediaAsDataUrl(url);
-          updateRunPodBroadcastProduct(podId, {
-            productName: switchedProd.name,
-            productPrice: String(switchedProd.price),
-            productImageUrl: overlayMedia(switchedProd.image),
-            bannerImageUrl: overlayMedia(switchedProd.bannerImage),
-            backgroundImage: overlayMedia(managedSession?.backgroundImage),
-          }).catch(() => {});
-        }
+    await prisma.liveSession.update({
+      where: { id: latestSession.id },
+      data: { productId: parsed.data.productId },
+    });
+    const snapshot = normalizeClientProduct(parsed.data.product);
+    liveHostOrchestrator.switchProduct(latestSession.id, parsed.data.productId, snapshot || undefined);
+
+    const managedSession = liveSessionManager.getSession(latestSession.id);
+    if (snapshot && managedSession) {
+      managedSession.product = snapshot;
+      const exists = managedSession.catalog.some((item) => item.id === snapshot.id);
+      if (!exists) managedSession.catalog.push(snapshot);
+    }
+    const switchedProd = snapshot || managedSession?.product;
+    let overlayUpdated = false;
+    if (switchedProd) {
+      const podId = managedSession?.podId;
+      const overlayMedia = (url?: string) => resolveMediaAsDataUrl(url);
+      const overlay = await updateRunPodBroadcastProduct(podId, {
+        productName: switchedProd.name,
+        productPrice: String(switchedProd.price),
+        productImageUrl: overlayMedia(switchedProd.image),
+        bannerImageUrl: overlayMedia(switchedProd.bannerImage),
+        backgroundImage: overlayMedia(managedSession?.backgroundImage),
+      });
+      overlayUpdated = overlay.success === true;
+      if (!overlayUpdated && podId) {
+        reply.code(502);
+        return {
+          success: false,
+          overlayUpdated: false,
+          error: overlay.message || "Host AI sudah ganti produk, tetapi overlay worker gagal di-update.",
+          activeProductId: parsed.data.productId,
+        };
       }
-    } catch {}
+    }
 
     return {
       success: true,
+      overlayUpdated,
       activeProductId: parsed.data.productId,
       message: `Active live product switched to ${parsed.data.productName || parsed.data.productId}`,
     };

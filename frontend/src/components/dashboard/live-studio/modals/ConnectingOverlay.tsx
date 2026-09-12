@@ -97,8 +97,12 @@ export const ConnectingOverlay: React.FC = () => {
       // Poll singkat sampai playback_armed (max ~3s) agar host langsung bicara.
       const armedDeadline = Date.now() + 3000;
       while (Date.now() < armedDeadline) {
-        const st = await liveSessionService.fetchPipelineStatus(currentLiveSessionId);
-        if (st?.playbackArmed || st?.isLive) break;
+        try {
+          const st = await liveSessionService.fetchPipelineStatus(currentLiveSessionId);
+          if (st?.playbackArmed || st?.isLive) break;
+        } catch {
+          break;
+        }
         await new Promise((r) => setTimeout(r, 250));
       }
       finishGoLiveLocal();

@@ -17,20 +17,19 @@ export interface ConnectedAccount {
 
 export const oauthService = {
   async fetchConfigStatus(): Promise<Record<string, boolean>> {
-    try {
-      const res = await fetch("/api/oauth/config-status");
-      const json = await res.json();
-      if (json.data) {
-        const map: Record<string, boolean> = {};
-        (json.data as { platform: string; configured: boolean }[]).forEach(
-          (p) => {
-            map[p.platform] = p.configured;
-          },
-        );
-        return map;
-      }
-    } catch {}
-    return {};
+    const res = await fetch("/api/oauth/config-status");
+    if (!res.ok) {
+      throw new Error(`Gagal memuat status OAuth (HTTP ${res.status})`);
+    }
+    const json = await res.json();
+    if (!json.data) {
+      throw new Error("Backend tidak mengirim status OAuth.");
+    }
+    const map: Record<string, boolean> = {};
+    (json.data as { platform: string; configured: boolean }[]).forEach((p) => {
+      map[p.platform] = p.configured;
+    });
+    return map;
   },
 
   async fetchProfile(platform: string): Promise<ConnectedAccount | null> {

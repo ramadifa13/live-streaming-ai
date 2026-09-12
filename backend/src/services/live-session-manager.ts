@@ -403,6 +403,8 @@ class LiveSessionManager {
   ): Promise<{
     success: boolean;
     summary?: Record<string, unknown>;
+    gpuTerminated?: boolean;
+    gpuWarning?: string;
   }> {
     const session = this.activeSessions.get(sessionId);
     const persisted = await prisma.liveSession.findUnique({ where: { id: sessionId } });
@@ -411,9 +413,17 @@ class LiveSessionManager {
     }
 
     if (session) session.bootstrapAbort = true;
+    const sessionPodId = session?.podId || persisted?.runpodPodId || null;
     const staticPodId = getStaticPodId();
-    const keepGpu = options?.keepGpu ?? isPodKeepWarm();
-    const podToTerminate = keepGpu ? null : session?.podId || persisted?.runpodPodId || staticPodId || null;
+    // Keep-warm hanya untuk pod statis di .env. Pod sesi (dynamic) selalu di-terminate
+    // saat user stop / habis durasi — live berikutnya = bayar lagi = pod baru.
+    const keepWarmStatic = Boolean(isPodKeepWarm() && staticPodId && sessionPodId && sessionPodId === staticPodId);
+    const keepGpu = options?.keepGpu ?? keepWarmStatic;
+    const podToTerminate = keepGpu ? null : sessionPodId;
+    let gpuTerminated = !podToTerminate;
+    let gpuWarning: string | undefined = keepGpu
+      ? "Pod statis keep-warm tidak di-terminate (hanya untuk tes lokal)."
+      : undefined;
 
     this.clearTimers(sessionId);
     liveHostOrchestrator.stop(sessionId);
@@ -456,8 +466,12 @@ class LiveSessionManager {
             where: { id: sessionId },
             data: { podStatus: "terminated", podTerminatedAt: new Date() },
           });
+          gpuTerminated = true;
+          gpuWarning = undefined;
           console.log(`[LiveSessionManager] Pod ${podToTerminate} terminated untuk sesi ${sessionId}`);
         } catch (err) {
+          gpuTerminated = false;
+          gpuWarning = "Sesi dihentikan, tetapi GPU pod gagal di-terminate. Cek RunPod console.";
           await prisma.liveSession
             .update({ where: { id: sessionId }, data: { podStatus: "terminate_failed" } })
             .catch(() => {});
@@ -484,6 +498,8 @@ class LiveSessionManager {
 
     return {
       success: true,
+      gpuTerminated,
+      gpuWarning,
       summary: {
         durationSeconds,
         durationFormatted: `${Math.floor(durationSeconds / 3600)}j ${Math.floor((durationSeconds % 3600) / 60)}m ${durationSeconds % 60}d`,
@@ -599,7 +615,7 @@ class LiveSessionManager {
     const session = this.activeSessions.get(sessionId);
     if (!session) return;
 
-    const checkMs = 5000;
+    const checkMs = 1000;
     session.watchdogTimer = setInterval(async () => {
       const s = this.activeSessions.get(sessionId);
       if (!s) return;

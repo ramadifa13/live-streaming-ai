@@ -274,19 +274,28 @@ export const useLiveSessionStore = create<LiveSessionState>()(
         const durationSeconds = state.liveStartedAtMs
           ? Math.max(0, Math.floor((Date.now() - state.liveStartedAtMs) / 1000))
           : state.liveSeconds;
-        const stopRes = await liveSessionService.stopSession({
-          sessionId: state.currentLiveSessionId,
-          durationSeconds,
-          viewers: state.metrics.viewers,
-          comments: state.metrics.comments,
-          clicks: state.metrics.clicks,
-          sales: state.metrics.sales,
-          productSold: state.metrics.activeProductSold,
-        });
+        let stopRes: Awaited<ReturnType<typeof liveSessionService.stopSession>> | null = null;
+        let stopError: string | undefined;
+        try {
+          stopRes = await liveSessionService.stopSession({
+            sessionId: state.currentLiveSessionId,
+            durationSeconds,
+            viewers: state.metrics.viewers,
+            comments: state.metrics.comments,
+            clicks: state.metrics.clicks,
+            sales: state.metrics.sales,
+            productSold: state.metrics.activeProductSold,
+          });
+        } catch (err) {
+          stopError = err instanceof Error ? err.message : "Gagal menghentikan sesi di server.";
+        }
+
+        const gpuWarning = stopRes?.gpuWarning || (stopRes?.gpuTerminated === false ? "Sesi berakhir, tetapi GPU pod belum ter-terminate." : undefined) || stopError;
 
         if (stopRes?.summary) {
-          set({ sessionSummary: stopRes.summary });
-          return stopRes.summary;
+          const summary = { ...stopRes.summary, gpuTerminated: stopRes.gpuTerminated, gpuWarning };
+          set({ sessionSummary: summary });
+          return summary;
         }
 
         const estGpuCost = Math.round((durationSeconds / 3600) * 12500);
@@ -314,6 +323,8 @@ export const useLiveSessionStore = create<LiveSessionState>()(
           netProfitFormatted: `Rp${net.toLocaleString("id-ID")}`,
           roiPercentage: `${estGpuCost > 0 ? Math.round((net / estGpuCost) * 100) : 0}%`,
           endedAt: new Date().toISOString(),
+          gpuTerminated: stopRes?.gpuTerminated,
+          gpuWarning,
         };
 
         set({ sessionSummary: fallbackSummary });

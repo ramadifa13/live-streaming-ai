@@ -14,7 +14,6 @@ import { oauthService } from "@/services/oauthService";
 import { copyToClipboard } from "@/utils/clipboard";
 import { LiveRuntimePanel } from "@/components/dashboard/live-studio/LiveRuntimePanel";
 import { isValidRtmpUrl, normalizeRtmpInput } from "@/utils/rtmp";
-import { ChatMessage } from "@/app/dashboard/types";
 import { validateLivePreparation } from "@/lib/live-validation";
 
 export const LiveControlBar: React.FC = () => {
@@ -78,31 +77,34 @@ export const LiveControlBar: React.FC = () => {
 
   const handleSwitchNextProduct = async () => {
     if (products.length === 0) return;
-    const nextIdx = (products.findIndex((p) => p.id === activeFeaturedProduct.id) + 1) % products.length;
+    const previous = activeFeaturedProduct;
+    const nextIdx = (products.findIndex((p) => p.id === previous.id) + 1) % products.length;
     const nextProd = products[nextIdx];
-    if (!nextProd) return;
+    if (!nextProd || nextProd.id === previous.id) return;
     setActiveFeaturedProduct(nextProd);
-    showToast(`Produk aktif siaran diubah ke: ${nextProd.name}`);
-
-    const switchMsg: ChatMessage = {
-      id: String(Date.now()),
-      sender: `AI Host (${selectedAvatar.name})`,
-      isAi: true,
-      avatarColor: "bg-[#4148e2]",
-      text: `Sekarang kita beralih ke ${nextProd.name} ya kakak! Harganya spesial cuma ${nextProd.price}! Yuk langsung diamankan di keranjang kuning ya!`,
-      time: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    };
-    addChatMessage(switchMsg);
-
-    await liveSessionService.switchProduct(
-      nextProd.id || "1",
-      nextProd.name,
-      toLiveProductSnapshot(nextProd, { includeMedia: true, includeScriptBank: true }),
-      currentLiveSessionId || undefined,
-    );
+    try {
+      await liveSessionService.switchProduct(
+        nextProd.id || "1",
+        nextProd.name,
+        toLiveProductSnapshot(nextProd, { includeMedia: true, includeScriptBank: true }),
+        currentLiveSessionId || undefined,
+      );
+      showToast(`Produk aktif siaran diubah ke: ${nextProd.name}`);
+      addChatMessage({
+        id: String(Date.now()),
+        sender: `AI Host (${selectedAvatar.name})`,
+        isAi: true,
+        avatarColor: "bg-[#4148e2]",
+        text: `Sekarang kita beralih ke ${nextProd.name} ya kakak! Harganya spesial cuma ${nextProd.price}! Yuk langsung diamankan di keranjang kuning ya!`,
+        time: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      });
+    } catch (err) {
+      setActiveFeaturedProduct(previous);
+      showToast(err instanceof Error ? err.message : "Gagal ganti produk di siaran.", "error");
+    }
   };
 
   const handleStartLive = async () => {

@@ -181,18 +181,27 @@ export const liveSessionService = {
     clicks?: number;
     sales?: number;
     productSold?: number;
-  }): Promise<{ summary?: SessionSummaryData } | null> {
-    try {
-      const res = await fetch("/api/live-session/stop", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(params),
-      });
-      if (res.ok) {
-        return await res.json();
-      }
-    } catch {}
-    return null;
+  }): Promise<{
+    success: boolean;
+    summary?: SessionSummaryData;
+    gpuTerminated?: boolean;
+    gpuWarning?: string;
+  }> {
+    const res = await fetch("/api/live-session/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.success === false) {
+      throw new Error(json.error || `Gagal menghentikan sesi (HTTP ${res.status})`);
+    }
+    return {
+      success: true,
+      summary: json.summary,
+      gpuTerminated: json.gpuTerminated,
+      gpuWarning: json.gpuWarning,
+    };
   },
 
   async teardownSession(sessionId?: string | null) {
@@ -259,24 +268,17 @@ export const liveSessionService = {
     const query = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
     const res = await fetch(`/api/live-session/metrics${query}`);
     if (!res.ok) {
-      return null;
+      throw new Error(`Gagal memuat metrics (HTTP ${res.status})`);
     }
     return await res.json();
   },
 
   async fetchPipelineStatus(sessionId: string) {
-    try {
-      const res = await fetch(`/api/live-stream/pipeline-status?sessionId=${encodeURIComponent(sessionId)}`);
-      if (!res.ok) {
-        return null;
-      }
-      return await res.json();
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        return null;
-      }
-      return null;
+    const res = await fetch(`/api/live-stream/pipeline-status?sessionId=${encodeURIComponent(sessionId)}`);
+    if (!res.ok) {
+      throw new Error(`Gagal memuat status pipeline (HTTP ${res.status})`);
     }
+    return await res.json();
   },
 
   async waitForRtmpConnected(
@@ -296,7 +298,13 @@ export const liveSessionService = {
         throw new DOMException("Inisialisasi dibatalkan", "AbortError");
       }
 
-      const status = await this.fetchPipelineStatus(sessionId);
+      let status: Awaited<ReturnType<typeof this.fetchPipelineStatus>> | null = null;
+      try {
+        status = await this.fetchPipelineStatus(sessionId);
+      } catch {
+        await new Promise((r) => setTimeout(r, 2000));
+        continue;
+      }
       const progressText = status?.stageText || status?.rtmpHint || status?.rtmpError;
       if (progressText && options?.onProgress) {
         options.onProgress(String(progressText));
@@ -331,7 +339,13 @@ export const liveSessionService = {
         throw new DOMException("Inisialisasi dibatalkan", "AbortError");
       }
 
-      const status = await this.fetchPipelineStatus(sessionId);
+      let status: Awaited<ReturnType<typeof this.fetchPipelineStatus>> | null = null;
+      try {
+        status = await this.fetchPipelineStatus(sessionId);
+      } catch {
+        await new Promise((r) => setTimeout(r, 2500));
+        continue;
+      }
       if (status?.stageText && options?.onProgress) {
         options.onProgress(String(status.stageText));
       }
@@ -365,9 +379,10 @@ export const liveSessionService = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ productId, productName, product, sessionId }),
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      console.warn("[switchProduct] Failed:", err.error || `HTTP ${res.status}`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.success === false) {
+      throw new Error(json.error || `Gagal ganti produk (HTTP ${res.status})`);
     }
+    return { overlayUpdated: json.overlayUpdated !== false };
   },
 };

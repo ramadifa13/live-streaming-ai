@@ -87,6 +87,12 @@ export const SessionSummaryModal: React.FC = () => {
           <X className="w-4 h-4" />
         </button>
 
+        {sessionSummary.gpuWarning && (
+          <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            {sessionSummary.gpuWarning}
+          </div>
+        )}
+
         <div className="flex items-center gap-3 mb-4">
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white text-2xl shadow-lg shadow-emerald-600/30">
             <BarChart2 className="w-6 h-6" />

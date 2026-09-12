@@ -496,17 +496,12 @@ export async function pausePod(podId: string): Promise<boolean> {
 export async function stopPod(podId: string): Promise<boolean> {
   if (!podId) return true;
 
-  if (isStaticPodId(podId)) {
-    if (isPodKeepWarm()) {
-      console.warn(
-        `[RunPodManager] Pod statis ${podId} DIBIARKAN MENYALA (RUNPOD_KEEP_POD_WARM=${process.env.RUNPOD_KEEP_POD_WARM}). ` +
-          `GPU tetap ditagih walau tidak ada siaran.`,
-      );
-      return true;
-    }
-
-    console.log(`[RunPodManager] Pod ${podId} statis — mengirim STOP agar tagihan GPU berhenti.`);
-    return await pausePod(podId);
+  if (isStaticPodId(podId) && isPodKeepWarm()) {
+    console.warn(
+      `[RunPodManager] Pod statis ${podId} DIBIARKAN MENYALA (RUNPOD_KEEP_POD_WARM=${process.env.RUNPOD_KEEP_POD_WARM}). ` +
+        `Hanya untuk tes lokal. Sesi production harus RUNPOD_POD_ID kosong agar pod di-terminate.`,
+    );
+    return true;
   }
 
   const mutation = `

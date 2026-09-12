@@ -80,6 +80,8 @@ export interface SessionSummaryData {
   activeProductSold?: number;
   totalProductSold: number;
   endedAt: string;
+  gpuTerminated?: boolean;
+  gpuWarning?: string;
 }
 
 export interface Avatar {

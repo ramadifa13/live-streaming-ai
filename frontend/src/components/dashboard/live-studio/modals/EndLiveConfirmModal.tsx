@@ -22,12 +22,16 @@ export const EndLiveConfirmModal: React.FC = () => {
     setIsEnding(true);
     showToast("Mengakhiri siaran…");
     try {
-      await endLiveSession();
+      const summary = await endLiveSession();
       setShowEndLiveConfirm(false);
       setShowSummaryModal(true);
-      showToast("Siaran berakhir. Ringkasan siap.");
-    } catch {
-      showToast("Gagal mengakhiri live session.");
+      if (summary.gpuWarning) {
+        showToast(summary.gpuWarning, "warning");
+      } else {
+        showToast("Siaran berakhir. Ringkasan siap.");
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Gagal mengakhiri live session.", "error");
     } finally {
       setIsEnding(false);
     }

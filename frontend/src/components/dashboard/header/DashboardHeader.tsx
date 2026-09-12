@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Radio, Clapperboard, Sparkles } from "lucide-react";
+import { Radio, Clapperboard } from "lucide-react";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
@@ -25,7 +25,6 @@ export const DashboardHeader: React.FC = () => {
 
   const isLiveActive = useLiveSessionStore((state) => state.isLiveActive);
   const activeFeaturedProduct = useProductStore((state) => state.activeFeaturedProduct);
-  const fetchVideoScript = useAiHostStore((state) => state.fetchVideoScript);
   const products = useProductStore((state) => state.products);
   const selectedAvatar = useAiHostStore((state) => state.selectedAvatar);
   const selectedVoice = useAiHostStore((state) => state.selectedVoice);
@@ -66,8 +65,7 @@ export const DashboardHeader: React.FC = () => {
   };
 
   const handleSwitchToVideoGenerator = () => {
-    setAppMode("VIDEO_GENERATOR");
-    fetchVideoScript(activeFeaturedProduct);
+    showToast("AI Video Ads Generator belum tersedia di MVP.", "warning");
   };
 
   return (
@@ -91,17 +89,14 @@ export const DashboardHeader: React.FC = () => {
           <button
             type="button"
             onClick={handleSwitchToVideoGenerator}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-bold transition active:scale-95 cursor-pointer ${
-              appMode === "VIDEO_GENERATOR"
-                ? "bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md shadow-purple-600/30"
-                : "text-slate-400 hover:text-white"
-            }`}
+            aria-disabled="true"
+            title="Belum tersedia di MVP"
+            className="flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-bold text-slate-500 cursor-not-allowed opacity-60"
           >
-            <Clapperboard className="w-3 h-3 text-pink-400" />
+            <Clapperboard className="w-3 h-3 text-slate-500" />
             <span>AI Video Ads Generator</span>
-            <span className="rounded bg-pink-500/20 text-[8px] text-pink-300 px-1 py-0.1 border border-pink-500/30 flex items-center gap-0.5">
-              <Sparkles className="w-2 h-2" />
-              Hot
+            <span className="rounded bg-slate-500/20 text-[8px] text-slate-400 px-1 py-0.1 border border-slate-500/30">
+              Soon
             </span>
           </button>
         </div>

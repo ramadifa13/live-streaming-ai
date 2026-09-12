@@ -7,7 +7,6 @@ import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { oauthService } from "@/services/oauthService";
 import { liveSessionService, parseLiveClockFromMetrics, toLiveProductSnapshot } from "@/services/liveSessionService";
-import { ChatMessage } from "./types";
 
 import { ToastNotification } from "@/components/dashboard/shared/ToastNotification";
 import { DashboardHeader } from "@/components/dashboard/header/DashboardHeader";
@@ -16,11 +15,9 @@ import { AiHostPanel } from "@/components/dashboard/ai-host/AiHostPanel";
 import { BroadcastSettingsPanel } from "@/components/dashboard/broadcast/BroadcastSettingsPanel";
 import { LivePreviewBoard } from "@/components/dashboard/live-studio/LivePreviewBoard";
 import { LiveControlBar } from "@/components/dashboard/live-studio/LiveControlBar";
-import { VideoAdsGeneratorPanel } from "@/components/dashboard/video-ads/VideoAdsGeneratorPanel";
 import { DashboardModals } from "@/components/dashboard/DashboardModals";
 
 export default function Dashboard() {
-  const appMode = useDashboardUIStore((state) => state.appMode);
   const showToast = useDashboardUIStore((state) => state.showToast);
   const setShowSummaryModal = useDashboardUIStore((state) => state.setShowSummaryModal);
   const loadProducts = useProductStore((state) => state.loadProducts);
@@ -47,7 +44,7 @@ export default function Dashboard() {
   const setStreamKey = useLiveSessionStore((state) => state.setStreamKey);
   const setOauthConfigStatus = useLiveSessionStore((state) => state.setOauthConfigStatus);
   const setPipelineStatus = useLiveSessionStore((state) => state.setPipelineStatus);
-  const setSessionSummary = useLiveSessionStore((state) => state.setSessionSummary);
+  const endLiveSession = useLiveSessionStore((state) => state.endLiveSession);
 
   const isMountedRef = useRef(false);
 
@@ -113,8 +110,10 @@ export default function Dashboard() {
         });
         if (clock) applyLiveClock(clock);
       }
+    }).catch((err) => {
+      showToast(err instanceof Error ? err.message : "Gagal menyambung ulang sesi live.", "warning");
     });
-  }, []);
+  }, [applyLiveClock, showToast]);
 
   useEffect(() => {
     return () => {
@@ -161,8 +160,10 @@ export default function Dashboard() {
   }, [setConnectedAccount, setSelectedPlatform, setStreamKey, showToast]);
 
   useEffect(() => {
-    oauthService.fetchConfigStatus().then(setOauthConfigStatus);
-  }, [setOauthConfigStatus]);
+    oauthService.fetchConfigStatus().then(setOauthConfigStatus).catch((err) => {
+      showToast(err instanceof Error ? err.message : "Gagal memuat status OAuth.", "warning");
+    });
+  }, [setOauthConfigStatus, showToast]);
 
   useEffect(() => {
     oauthService.fetchProfile(selectedPlatform).then((acc) => {
@@ -179,43 +180,40 @@ export default function Dashboard() {
   useEffect(() => {
     if (!isLiveActive || products.length <= 1 || !automations.autoPin) return;
 
-    const interval = setInterval(
-      () => {
-        setActiveFeaturedProduct((current) => {
-          const nextIdx = (products.findIndex((p) => p.id === current.id) + 1) % products.length;
-          const nextProd = products[nextIdx];
-
-          const switchMsg: ChatMessage = {
-            id: String(Date.now()),
-            sender: `AI Host (${selectedAvatar.name})`,
-            isAi: true,
-            avatarColor: "bg-[#4148e2]",
-            text: `Sekarang kita beralih ke ${nextProd.name} ya kakak! Harganya spesial cuma ${nextProd.price}! Yuk langsung diamankan di keranjang kuning ya!`,
-            time: new Date().toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-          };
-          addChatMessage(switchMsg);
-
-          liveSessionService.switchProduct(
-            nextProd.id || "1",
-            nextProd.name,
-            toLiveProductSnapshot(nextProd, { includeMedia: true, includeScriptBank: true }),
-            useLiveSessionStore.getState().currentLiveSessionId || undefined,
-          );
-
-          return nextProd;
+    const interval = setInterval(async () => {
+      const current = useProductStore.getState().activeFeaturedProduct;
+      const nextIdx = (products.findIndex((p) => p.id === current.id) + 1) % products.length;
+      const nextProd = products[nextIdx];
+      if (!nextProd || nextProd.id === current.id) return;
+      try {
+        await liveSessionService.switchProduct(
+          nextProd.id || "1",
+          nextProd.name,
+          toLiveProductSnapshot(nextProd, { includeMedia: true, includeScriptBank: true }),
+          useLiveSessionStore.getState().currentLiveSessionId || undefined,
+        );
+        setActiveFeaturedProduct(nextProd);
+        addChatMessage({
+          id: String(Date.now()),
+          sender: `AI Host (${selectedAvatar.name})`,
+          isAi: true,
+          avatarColor: "bg-[#4148e2]",
+          text: `Sekarang kita beralih ke ${nextProd.name} ya kakak! Harganya spesial cuma ${nextProd.price}! Yuk langsung diamankan di keranjang kuning ya!`,
+          time: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
         });
-      },
-      10 * 60 * 1000,
-    );
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "Gagal ganti produk otomatis.", "error");
+      }
+    }, 10 * 60 * 1000);
 
     return () => clearInterval(interval);
-  }, [isLiveActive, products, automations.autoPin, selectedAvatar.name, setActiveFeaturedProduct, addChatMessage]);
+  }, [isLiveActive, products, automations.autoPin, selectedAvatar.name, setActiveFeaturedProduct, addChatMessage, showToast]);
 
   useEffect(() => {
-    if (!isLiveActive || isLivePaused) return;
+    if (!isLiveActive) return;
     const maxAllowedSeconds = selectedDuration * 3600;
     let expiryTriggered = false;
 
@@ -228,19 +226,11 @@ export default function Dashboard() {
         setLiveSeconds(maxAllowedSeconds);
         if (expiryTriggered) return;
         expiryTriggered = true;
-        setIsLiveActive(false);
-        setIsLivePaused(false);
-        setLiveSessionPhase("ended");
         setShowSummaryModal(true);
         showToast(`Waktu siaran telah mencapai batas durasi ${selectedDuration} jam. Live streaming selesai!`);
-        liveSessionService
-          .stopSession({
-            sessionId: currentLiveSessionId,
-            durationSeconds: maxAllowedSeconds,
-          })
-          .then((res) => {
-            if (res?.summary) setSessionSummary(res.summary);
-          });
+        void endLiveSession().then((summary) => {
+          if (summary.gpuWarning) showToast(summary.gpuWarning, "warning");
+        });
         return;
       }
       setLiveSeconds(nextSec);
@@ -253,13 +243,9 @@ export default function Dashboard() {
     isLiveActive,
     isLivePaused,
     selectedDuration,
-    currentLiveSessionId,
-    setIsLiveActive,
-    setIsLivePaused,
-    setLiveSessionPhase,
     setShowSummaryModal,
     showToast,
-    setSessionSummary,
+    endLiveSession,
     setLiveSeconds,
   ]);
 
@@ -268,12 +254,14 @@ export default function Dashboard() {
 
     let stopped = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let failCount = 0;
 
     const pollMetrics = async () => {
       if (stopped) return;
       try {
         const json = await liveSessionService.fetchMetrics(currentLiveSessionId);
         if (!json || stopped) return;
+        failCount = 0;
 
         const backendMetrics = json.data?.metrics;
         const sessionStatus = json.data?.sessionStatus;
@@ -336,8 +324,11 @@ export default function Dashboard() {
             }
           }
         }
-      } catch {
-        // Retry on the next cycle; a transient metrics failure should not stop live mode.
+      } catch (err) {
+        failCount += 1;
+        if (failCount === 3) {
+          showToast(err instanceof Error ? err.message : "Gagal memuat metrics live.", "warning");
+        }
       } finally {
         if (!stopped) timeoutId = setTimeout(() => void pollMetrics(), 2500);
       }
@@ -348,22 +339,26 @@ export default function Dashboard() {
       stopped = true;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [isLiveActive, isLivePaused, currentLiveSessionId, setIsLiveActive, setIsLivePaused, setLiveSessionPhase, setMetrics, addChatMessage, applyLiveClock]);
+  }, [isLiveActive, isLivePaused, currentLiveSessionId, setIsLiveActive, setIsLivePaused, setLiveSessionPhase, setMetrics, addChatMessage, applyLiveClock, showToast]);
 
   useEffect(() => {
     if (!isConnectingLive || !currentLiveSessionId) return;
 
     const pollPipeline = async () => {
-      const json = await liveSessionService.fetchPipelineStatus(currentLiveSessionId);
-      if (!json) return;
-      setPipelineStatus(json);
-      if (json.rtmpFatal || json.workerError || json.broadcastBootState === "error") {
-        useLiveSessionStore.setState({
-          connectingStageIndex: 3,
-          connectingStageText: String(json.rtmpError || json.workerError || json.stageText || "Host AI gagal tersambung."),
-        });
-      } else if (json.stageText) {
-        useLiveSessionStore.setState({ connectingStageText: String(json.stageText) });
+      try {
+        const json = await liveSessionService.fetchPipelineStatus(currentLiveSessionId);
+        if (!json) return;
+        setPipelineStatus(json);
+        if (json.rtmpFatal || json.workerError || json.broadcastBootState === "error") {
+          useLiveSessionStore.setState({
+            connectingStageIndex: 3,
+            connectingStageText: String(json.rtmpError || json.workerError || json.stageText || "Host AI gagal tersambung."),
+          });
+        } else if (json.stageText) {
+          useLiveSessionStore.setState({ connectingStageText: String(json.stageText) });
+        }
+      } catch {
+        // Cold start: pipeline belum siap. Overlay tetap menampilkan tahap terakhir.
       }
     };
 
@@ -385,10 +380,19 @@ export default function Dashboard() {
   useEffect(() => {
     if (!isLiveActive || isLivePaused || !currentLiveSessionId) return;
 
+    let failCount = 0;
     const pollPipeline = async () => {
-      const json = await liveSessionService.fetchPipelineStatus(currentLiveSessionId);
-      if (!json) return;
-      setPipelineStatus(json);
+      try {
+        const json = await liveSessionService.fetchPipelineStatus(currentLiveSessionId);
+        if (!json) return;
+        failCount = 0;
+        setPipelineStatus(json);
+      } catch (err) {
+        failCount += 1;
+        if (failCount === 3) {
+          showToast(err instanceof Error ? err.message : "Gagal memuat status pipeline.", "warning");
+        }
+      }
     };
 
     let stopped = false;
@@ -404,7 +408,7 @@ export default function Dashboard() {
       stopped = true;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [isLiveActive, isLivePaused, currentLiveSessionId, setPipelineStatus]);
+  }, [isLiveActive, isLivePaused, currentLiveSessionId, setPipelineStatus, showToast]);
 
   return (
     <div className="min-h-screen bg-[#060a14] text-white p-4 font-sans selection:bg-blue-500/30">
@@ -412,28 +416,24 @@ export default function Dashboard() {
 
       <div className="mx-auto w-full max-w-[1600px]">
         <DashboardHeader />
-        {appMode === "LIVE_STUDIO" ? (
-          <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-3 xl:items-stretch">
-              <div className="min-h-0 min-w-0 xl:h-full">
-                <ProductPanel />
-              </div>
-              <div className="min-h-0 min-w-0 xl:h-full">
-                <AiHostPanel />
-              </div>
-              <div className="min-h-0 min-w-0 xl:h-full">
-                <BroadcastSettingsPanel />
-              </div>
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3 xl:items-stretch">
+            <div className="min-h-0 min-w-0 xl:h-full">
+              <ProductPanel />
             </div>
-
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.3fr_1.1fr]">
-              <LivePreviewBoard />
-              <LiveControlBar />
+            <div className="min-h-0 min-w-0 xl:h-full">
+              <AiHostPanel />
+            </div>
+            <div className="min-h-0 min-w-0 xl:h-full">
+              <BroadcastSettingsPanel />
             </div>
           </div>
-        ) : (
-          <VideoAdsGeneratorPanel />
-        )}
+
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.3fr_1.1fr]">
+            <LivePreviewBoard />
+            <LiveControlBar />
+          </div>
+        </div>
 
         <DashboardModals />
       </div>
