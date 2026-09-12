@@ -75,6 +75,39 @@ test("readiness gate requires RTMP plus opening buffer", () => {
   assert.equal(canTransitionPlatformLive({ isRtmpConnected: true, playable: 2, minReady: 3 }), false);
 });
 
+test("Go Live gate requires speech seconds when minSpeechSeconds is set", () => {
+  assert.equal(
+    canTransitionPlatformLive({
+      isRtmpConnected: true,
+      playable: 4,
+      minReady: 4,
+      speechSeconds: 18,
+      minSpeechSeconds: 28,
+    }),
+    false,
+  );
+  assert.equal(
+    canTransitionPlatformLive({
+      isRtmpConnected: true,
+      playable: 4,
+      minReady: 4,
+      speechSeconds: 28,
+      minSpeechSeconds: 28,
+    }),
+    true,
+  );
+  assert.equal(
+    canTransitionPlatformLive({
+      isRtmpConnected: true,
+      playable: 3,
+      minReady: 4,
+      speechSeconds: 40,
+      minSpeechSeconds: 28,
+    }),
+    false,
+  );
+});
+
 test("TTS false-success does not count as delivered speech", () => {
   assert.equal(hostResponseDelivered(0), false);
   assert.equal(hostResponseDelivered(1), true);
@@ -124,6 +157,17 @@ test("on-air refill waits when GPU is slower than realtime unless buffer is crit
       realTimeRatio: 1.5,
       hasComment: false,
       generationInFlight: 2,
+    }),
+    "wait",
+  );
+  assert.equal(
+    decideOnAirStep({
+      readyCount: 4,
+      readySpeechSeconds: 24,
+      workerPending: 2,
+      renderQueue: 8,
+      realTimeRatio: 1.5,
+      hasComment: false,
     }),
     "wait",
   );

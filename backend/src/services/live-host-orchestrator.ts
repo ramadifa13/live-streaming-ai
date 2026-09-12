@@ -249,7 +249,12 @@ const GO_LIVE_MIN_UTTERANCES = Number(process.env.GO_LIVE_MIN_UTTERANCES || 1);
 // Opening buffer only (overlay / first arm). Live loop still queues 1-by-1.
 const AI_WORKER_GO_LIVE_MIN_UTTERANCES = Math.max(
   1,
-  Number(process.env.AI_WORKER_GO_LIVE_MIN_UTTERANCES || 3),
+  Number(process.env.AI_WORKER_GO_LIVE_MIN_UTTERANCES || 4),
+);
+/** Go Live requires ready speech seconds (thicker than count-only gate). */
+export const LIVE_GO_LIVE_MIN_SPEECH_SECONDS = Math.max(
+  16,
+  Number(process.env.LIVE_GO_LIVE_MIN_SPEECH_SECONDS || 28),
 );
 
 const PLAN_POLICIES: Record<StreamPlan, PlanPolicy> = {
@@ -1004,14 +1009,11 @@ class LiveHostOrchestrator {
         const playableDepth = aiWorkerQueue ? queue.readyUtteranceCount : queue.queuedVideos;
         const readySpeech = Number(queue.readySpeechSeconds || queue.bufferSeconds || 0);
         const minPlayableDepth = aiWorkerQueue ? AI_WORKER_GO_LIVE_MIN_UTTERANCES : GO_LIVE_MIN_UTTERANCES;
-        const targetSpeech = aiWorkerQueue
-          ? Math.min(policy.targetBufferSeconds, LIVE_ONAIR_MIN_SPEECH_SECONDS)
-          : policy.minBufferSeconds;
-        const openingReady =
-          playableDepth >= minPlayableDepth &&
-          (aiWorkerQueue ? readySpeech >= Math.min(8, targetSpeech) : queue.bufferSeconds >= policy.minBufferSeconds);
-        // Keep topping up toward on-air min speech so Go Live starts with a deep buffer.
-        if (openingReady && (!aiWorkerQueue || readySpeech >= targetSpeech || playableDepth >= LIVE_ONAIR_MIN_READY_UTTERANCES + 1)) {
+        const openingReady = aiWorkerQueue
+          ? playableDepth >= minPlayableDepth && readySpeech >= LIVE_GO_LIVE_MIN_SPEECH_SECONDS
+          : playableDepth >= minPlayableDepth && queue.bufferSeconds >= policy.minBufferSeconds;
+        // Stop topping once Go Live thresholds are met (count + speech).
+        if (openingReady) {
           await sleep(1200);
           continue;
         }
@@ -2209,10 +2211,12 @@ class LiveHostOrchestrator {
     const rtmpRequired = Boolean(state.config.rtmpUrl);
     const rtmpOk = !rtmpRequired || queue.rtmpConnected;
     const aiWorker = isAiWorkerBroadcastMode(queue.broadcastMode);
-    // Opening: wait until 3 prerendered sentences exist. After Go Live the
+    const readySpeechSeconds = Number(queue.readySpeechSeconds || queue.bufferSeconds || 0);
+    // Opening: wait until count + speech thresholds. After Go Live the
     // rolling producer keeps filling one-by-one up to the queue cap.
     const playableReady = aiWorker
-      ? queue.readyUtteranceCount >= AI_WORKER_GO_LIVE_MIN_UTTERANCES
+      ? queue.readyUtteranceCount >= AI_WORKER_GO_LIVE_MIN_UTTERANCES &&
+        readySpeechSeconds >= LIVE_GO_LIVE_MIN_SPEECH_SECONDS
       : queue.queuedVideos >= GO_LIVE_MIN_UTTERANCES && queue.bufferSeconds >= policy.minBufferSeconds;
     const bufferReady = playableReady;
 
@@ -2281,14 +2285,13 @@ class LiveHostOrchestrator {
       stageText = "Menyalakan mesin AI di cloud Mohon tunggu.";
     } else if (
       (aiWorker
-        ? queue.utteranceQueueCount < AI_WORKER_GO_LIVE_MIN_UTTERANCES &&
-          queue.readyUtteranceCount < AI_WORKER_GO_LIVE_MIN_UTTERANCES
+        ? !playableReady
         : queue.bufferSeconds < policy.minBufferSeconds && queue.queuedVideos < GO_LIVE_MIN_UTTERANCES) &&
       !state.pipelineReady
     ) {
       stageIndex = 2;
       stageText = aiWorker
-        ? `Menyiapkan kata pembuka host (${queue.readyUtteranceCount}/${AI_WORKER_GO_LIVE_MIN_UTTERANCES})`
+        ? `Menyiapkan buffer host (${queue.readyUtteranceCount}/${AI_WORKER_GO_LIVE_MIN_UTTERANCES} · ${Math.round(readySpeechSeconds)}/${LIVE_GO_LIVE_MIN_SPEECH_SECONDS}s)`
         : "Menyiapkan video pembuka host";
     } else if (rtmpRequired && !queue.rtmpConnected) {
       stageIndex = 3;
@@ -2308,8 +2311,10 @@ class LiveHostOrchestrator {
       videosQueued: queue.queuedVideos,
       utteranceQueueCount: queue.utteranceQueueCount,
       readyUtteranceCount: queue.readyUtteranceCount,
+      readySpeechSeconds: Math.round(readySpeechSeconds),
       playbackArmed: queue.playbackArmed,
       goLiveMinUtterances: aiWorker ? AI_WORKER_GO_LIVE_MIN_UTTERANCES : GO_LIVE_MIN_UTTERANCES,
+      goLiveMinSpeechSeconds: aiWorker ? LIVE_GO_LIVE_MIN_SPEECH_SECONDS : 0,
       broadcastMode: queue.broadcastMode,
       visualWorkerRunning: queue.visualWorkerRunning,
       visualWorkerInitializing: queue.visualWorkerInitializing,

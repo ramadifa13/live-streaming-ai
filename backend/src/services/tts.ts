@@ -52,13 +52,32 @@ const POCKET_TTS_CONFIG =
 type PocketRequest = { id: string; text: string; voice_id: string };
 type PocketResponse = { id: string; audio?: string; error?: string };
 
-let pocketProcess: ChildProcessWithoutNullStreams | null = null;
-let pocketReady: Promise<void> | null = null;
-let pocketStdout: ReturnType<typeof createInterface> | null = null;
-const pocketPending = new Map<
-  string,
-  { resolve: (audio: Buffer) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
->();
+type PocketPending = {
+  resolve: (audio: Buffer) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+  workerIndex: number;
+};
+
+type PocketWorker = {
+  index: number;
+  process: ChildProcessWithoutNullStreams | null;
+  ready: Promise<void> | null;
+  stdout: ReturnType<typeof createInterface> | null;
+  pendingCount: number;
+  starting: boolean;
+};
+
+const POCKET_TTS_WORKERS = Math.max(1, Math.min(4, Number(process.env.POCKET_TTS_WORKERS || 2)));
+const pocketWorkers: PocketWorker[] = Array.from({ length: POCKET_TTS_WORKERS }, (_, index) => ({
+  index,
+  process: null,
+  ready: null,
+  stdout: null,
+  pendingCount: 0,
+  starting: false,
+}));
+const pocketPending = new Map<string, PocketPending>();
 const POCKET_REQUEST_TIMEOUT_MS = Math.max(8_000, Number(process.env.POCKET_TTS_TIMEOUT_MS || 45_000));
 
 function pocketPythonScript(): string {
@@ -74,15 +93,27 @@ function pocketPythonCommand(): string {
   return fs.existsSync(envPython) ? envPython : "python";
 }
 
+function failWorkerPending(workerIndex: number, error: Error) {
+  for (const [id, pending] of pocketPending.entries()) {
+    if (pending.workerIndex !== workerIndex) continue;
+    clearTimeout(pending.timer);
+    pending.reject(error);
+    pocketPending.delete(id);
+  }
+  const worker = pocketWorkers[workerIndex];
+  if (worker) worker.pendingCount = 0;
+}
+
 function failAllPocketPending(error: Error) {
   for (const [id, pending] of pocketPending.entries()) {
     clearTimeout(pending.timer);
     pending.reject(error);
     pocketPending.delete(id);
   }
+  for (const worker of pocketWorkers) worker.pendingCount = 0;
 }
 
-function dispatchPocketLine(line: string) {
+function dispatchPocketLine(workerIndex: number, line: string) {
   let payload: PocketResponse & { ready?: boolean };
   try {
     payload = JSON.parse(line) as PocketResponse & { ready?: boolean };
@@ -91,95 +122,143 @@ function dispatchPocketLine(line: string) {
   }
   if (payload.ready) return;
   const pending = payload.id ? pocketPending.get(payload.id) : undefined;
-  if (!pending) return;
+  if (!pending || pending.workerIndex !== workerIndex) return;
   clearTimeout(pending.timer);
   pocketPending.delete(payload.id);
+  const worker = pocketWorkers[workerIndex];
+  if (worker) worker.pendingCount = Math.max(0, worker.pendingCount - 1);
   if (payload.error) pending.reject(new Error(payload.error));
   else if (!payload.audio) pending.reject(new Error("Pocket TTS tidak mengembalikan audio"));
   else pending.resolve(Buffer.from(payload.audio, "base64"));
 }
 
 export function isPocketTtsReady(): boolean {
-  return Boolean(pocketProcess && pocketReady);
+  return pocketWorkers.some((w) => Boolean(w.process && w.ready));
 }
 
-function startPocketTts(): Promise<void> {
-  if (pocketReady) return pocketReady;
-  pocketReady = new Promise((resolve, reject) => {
+export function getPocketTtsWorkerCount(): number {
+  return POCKET_TTS_WORKERS;
+}
+
+function pocketWorkerEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    POCKET_TTS_CONFIG,
+    POCKET_TTS_VOICE_DIR: process.env.POCKET_TTS_VOICE_DIR || path.resolve(process.cwd(), "voices"),
+    // Kill vocoder drones: fire EOS earlier + strip residual buzz in audio_post.
+    POCKET_TTS_EOS_THRESHOLD: process.env.POCKET_TTS_EOS_THRESHOLD || "-5.0",
+    POCKET_TTS_EOS_RETRY_THRESHOLD: process.env.POCKET_TTS_EOS_RETRY_THRESHOLD || "-6.0",
+    POCKET_TTS_FRAMES_AFTER_EOS: process.env.POCKET_TTS_FRAMES_AFTER_EOS || "3",
+    POCKET_TTS_AUDIO_FILTER: process.env.POCKET_TTS_AUDIO_FILTER || "1",
+    KPOCKET_TTS_ERROR_WITHOUT_EOS: process.env.KPOCKET_TTS_ERROR_WITHOUT_EOS || "1",
+  };
+}
+
+function startPocketWorker(workerIndex: number): Promise<void> {
+  const worker = pocketWorkers[workerIndex];
+  if (!worker) return Promise.reject(new Error(`Pocket TTS lane ${workerIndex} tidak ada`));
+  if (worker.ready) return worker.ready;
+
+  worker.ready = new Promise((resolve, reject) => {
+    worker.starting = true;
     const python = pocketPythonCommand();
     const child = spawn(python, [pocketPythonScript()], {
       cwd: path.resolve(process.cwd(), "pocket_tts"),
-      env: {
-        ...process.env,
-        POCKET_TTS_CONFIG,
-        POCKET_TTS_VOICE_DIR: process.env.POCKET_TTS_VOICE_DIR || path.resolve(process.cwd(), "voices"),
-        // Kill vocoder drones: fire EOS earlier + strip residual buzz in audio_post.
-        POCKET_TTS_EOS_THRESHOLD: process.env.POCKET_TTS_EOS_THRESHOLD || "-5.0",
-        POCKET_TTS_EOS_RETRY_THRESHOLD: process.env.POCKET_TTS_EOS_RETRY_THRESHOLD || "-6.0",
-        POCKET_TTS_FRAMES_AFTER_EOS: process.env.POCKET_TTS_FRAMES_AFTER_EOS || "3",
-        POCKET_TTS_AUDIO_FILTER: process.env.POCKET_TTS_AUDIO_FILTER || "1",
-        KPOCKET_TTS_ERROR_WITHOUT_EOS: process.env.KPOCKET_TTS_ERROR_WITHOUT_EOS || "1",
-      },
+      env: pocketWorkerEnv(),
       stdio: ["pipe", "pipe", "pipe"],
     });
-    pocketProcess = child;
-    pocketStdout = createInterface({ input: child.stdout });
-    pocketStdout.on("line", dispatchPocketLine);
+    worker.process = child;
+    worker.stdout = createInterface({ input: child.stdout });
+    worker.stdout.on("line", (line) => dispatchPocketLine(workerIndex, line));
     const onReady = (line: string) => {
       try {
         if (JSON.parse(line).ready) {
-          pocketStdout?.off("line", onReady);
+          worker.stdout?.off("line", onReady);
+          worker.starting = false;
+          console.log(`[PocketTTS] lane=${workerIndex} ready pid=${child.pid}`);
           resolve();
         }
       } catch {}
     };
-    pocketStdout.on("line", onReady);
-    child.stderr.on("data", (chunk) => console.warn(`[PocketTTS] ${chunk.toString().trim()}`));
+    worker.stdout.on("line", onReady);
+    child.stderr.on("data", (chunk) =>
+      console.warn(`[PocketTTS:${workerIndex}] ${chunk.toString().trim()}`),
+    );
     child.once("error", (error) => {
-      pocketReady = null;
-      pocketStdout = null;
-      failAllPocketPending(error);
+      worker.ready = null;
+      worker.process = null;
+      worker.stdout = null;
+      worker.starting = false;
+      failWorkerPending(workerIndex, error);
       reject(error);
     });
     child.once("exit", (code) => {
-      pocketProcess = null;
-      pocketReady = null;
-      pocketStdout = null;
-      const err = new Error(`Pocket TTS runner berhenti (${code ?? "unknown"})`);
-      failAllPocketPending(err);
+      worker.process = null;
+      worker.ready = null;
+      worker.stdout = null;
+      worker.starting = false;
+      const err = new Error(`Pocket TTS lane ${workerIndex} berhenti (${code ?? "unknown"})`);
+      failWorkerPending(workerIndex, err);
       if (code !== 0) reject(err);
     });
   });
-  return pocketReady;
+  return worker.ready;
+}
+
+function startPocketTts(): Promise<void> {
+  return Promise.all(pocketWorkers.map((_, index) => startPocketWorker(index))).then(() => undefined);
+}
+
+function pickLeastPendingWorker(): PocketWorker {
+  const ready = pocketWorkers.filter((w) => Boolean(w.process?.stdin));
+  const pool = ready.length > 0 ? ready : pocketWorkers;
+  let best = pool[0]!;
+  for (let i = 1; i < pool.length; i++) {
+    const candidate = pool[i]!;
+    if (candidate.pendingCount < best.pendingCount) best = candidate;
+  }
+  return best;
 }
 
 export function stopTTS() {
   failAllPocketPending(new Error("Pocket TTS dihentikan"));
-  try {
-    pocketStdout?.close();
-  } catch {}
-  pocketStdout = null;
-  if (pocketProcess && !pocketProcess.killed) {
-    pocketProcess.kill();
+  for (const worker of pocketWorkers) {
+    try {
+      worker.stdout?.close();
+    } catch {}
+    worker.stdout = null;
+    if (worker.process && !worker.process.killed) {
+      worker.process.kill();
+    }
+    worker.process = null;
+    worker.ready = null;
+    worker.pendingCount = 0;
+    worker.starting = false;
   }
-  pocketProcess = null;
-  pocketReady = null;
 }
 
 function synthesizeWithPocketTts(text: string, voiceId: string): Promise<Buffer> {
   return (async () => {
     await startPocketTts();
-    if (!pocketProcess?.stdin) throw new Error("Pocket TTS runner tidak tersedia");
+    const worker = pickLeastPendingWorker();
+    if (!worker.process?.stdin) throw new Error("Pocket TTS runner tidak tersedia");
     const id = randomBytes(8).toString("hex");
     return new Promise<Buffer>((resolve, reject) => {
       const timer = setTimeout(() => {
-        pocketPending.delete(id);
+        const pending = pocketPending.get(id);
+        if (pending) {
+          pocketPending.delete(id);
+          worker.pendingCount = Math.max(0, worker.pendingCount - 1);
+        }
         reject(new Error(`Pocket TTS timeout setelah ${POCKET_REQUEST_TIMEOUT_MS}ms`));
       }, POCKET_REQUEST_TIMEOUT_MS);
-      pocketPending.set(id, { resolve, reject, timer });
-      const ok = pocketProcess!.stdin.write(`${JSON.stringify({ id, text, voice_id: voiceId } satisfies PocketRequest)}\n`);
+      worker.pendingCount += 1;
+      pocketPending.set(id, { resolve, reject, timer, workerIndex: worker.index });
+      const ok = worker.process!.stdin!.write(
+        `${JSON.stringify({ id, text, voice_id: voiceId } satisfies PocketRequest)}\n`,
+      );
       if (!ok) {
-        pocketProcess!.stdin.once("drain", () => undefined);
+        worker.process!.stdin!.once("drain", () => undefined);
       }
     });
   })();
@@ -755,5 +834,7 @@ export async function synthesizeSpeech(req: SynthesizeRequest): Promise<Synthesi
 
 export async function warmUpTTS(): Promise<void> {
   await startPocketTts();
-  console.log(`[TTS] Engine=Pocket TTS Indonesian voice_id=${DEFAULT_VOICE_ID}`);
+  console.log(
+    `[TTS] Engine=Pocket TTS Indonesian workers=${POCKET_TTS_WORKERS} voice_id=${DEFAULT_VOICE_ID}`,
+  );
 }

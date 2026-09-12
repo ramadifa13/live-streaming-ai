@@ -469,11 +469,16 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       const pipelineStatus = await liveHostOrchestrator.getPipelineStatus(sessionId);
       const realtime = /ai_worker|ai-worker|realtime|visual_worker/i.test(String(pipelineStatus.broadcastMode || ""));
       const minUtt = Number(pipelineStatus.goLiveMinUtterances || 1);
+      const minSpeech = Number(pipelineStatus.goLiveMinSpeechSeconds || 0);
       const playable = realtime ? Number(pipelineStatus.readyUtteranceCount || 0) : Number(pipelineStatus.videosQueued || 0);
+      const speechSeconds = Number(pipelineStatus.readySpeechSeconds ?? pipelineStatus.bufferSeconds ?? 0);
       const rtmpOk = pipelineStatus.isRtmpConnected === true;
-      if (playable < minUtt || !rtmpOk) {
+      const speechOk = !realtime || minSpeech <= 0 || speechSeconds >= minSpeech;
+      if (playable < minUtt || !rtmpOk || !speechOk) {
         reply.code(409);
-        const bufferLabel = realtime ? `ucapan siap ${playable}/${minUtt}` : `video ${playable}/${minUtt}`;
+        const bufferLabel = realtime
+          ? `ucapan siap ${playable}/${minUtt} · buffer ${Math.round(speechSeconds)}/${minSpeech}s`
+          : `video ${playable}/${minUtt}`;
         return {
           success: false,
           error: `Belum siap untuk Go Live: pastikan RTMP terhubung dan ${bufferLabel} (RTMP: ${pipelineStatus.isRtmpConnected ? "Terhubung" : "Belum Terhubung"}, buffer: ${pipelineStatus.bufferSeconds ?? 0}s).`,

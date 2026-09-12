@@ -29,8 +29,13 @@ export function canTransitionPlatformLive(input: {
   isRtmpConnected: boolean;
   playable: number;
   minReady: number;
+  speechSeconds?: number;
+  minSpeechSeconds?: number;
 }): boolean {
-  return input.isRtmpConnected === true && input.playable >= input.minReady;
+  if (input.isRtmpConnected !== true || input.playable < input.minReady) return false;
+  const minSpeech = Number(input.minSpeechSeconds || 0);
+  if (minSpeech > 0 && Number(input.speechSeconds || 0) < minSpeech) return false;
+  return true;
 }
 
 export function shouldRehydrateRow(row: { runpodPodId: string | null }, alreadyActive: boolean): boolean {
@@ -711,16 +716,20 @@ class LiveSessionManager {
   private async tryTransitionPlatformLive(sessionId: string): Promise<boolean> {
     const status = await liveHostOrchestrator.getPipelineStatus(sessionId);
     const minReady = Number(status.goLiveMinUtterances || 1);
+    const minSpeech = Number(status.goLiveMinSpeechSeconds || 0);
     const realtime = /ai_worker|ai-worker|realtime|visual_worker/i.test(String(status.broadcastMode || ""));
     const playable = realtime ? Number(status.readyUtteranceCount || 0) : Number(status.videosQueued || 0);
+    const speechSeconds = Number(status.readySpeechSeconds ?? status.bufferSeconds ?? 0);
     if (!canTransitionPlatformLive({
       isRtmpConnected: status.isRtmpConnected === true,
       playable,
       minReady,
+      speechSeconds: realtime ? speechSeconds : undefined,
+      minSpeechSeconds: realtime ? minSpeech : 0,
     })) {
       console.log(
         `[LiveSessionManager] Platform live ${sessionId}, tetapi pipeline belum siap ` +
-          `(rtmp=${status.isRtmpConnected === true}, ready=${playable}/${minReady}).`,
+          `(rtmp=${status.isRtmpConnected === true}, ready=${playable}/${minReady}, speech=${Math.round(speechSeconds)}/${minSpeech}s).`,
       );
       return false;
     }
