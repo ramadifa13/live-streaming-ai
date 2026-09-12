@@ -1,75 +1,13 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
-import { X, BookOpen, AlertTriangle, CheckCircle2, ExternalLink, MousePointerClick, Monitor, Sparkles } from "lucide-react";
+import React, { useState } from "react";
+import { X, ArrowLeft, ArrowRight, ExternalLink, Check } from "lucide-react";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { PlatformIcon } from "@/components/shared/PlatformIcon";
-import { LIVE_PLATFORM_GUIDES, resolveLiveGuideId, type GuideClickStep } from "@/lib/live-platform-guide";
+import { LIVE_PLATFORM_GUIDES, resolveLiveGuideId } from "@/lib/live-platform-guide";
 
-function StepCard({ step, index }: { step: GuideClickStep; index: number }) {
-  const inLivio = step.place === "livio";
-
-  return (
-    <article
-      className={`rounded-2xl border px-4 py-4 sm:px-5 ${
-        inLivio ? "border-cyan-400/40 bg-cyan-500/8" : "border-[#2a3550] bg-[#111827]"
-      }`}
-    >
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-black text-white">
-          {index + 1}
-        </span>
-        <h5 className="text-[15px] font-bold leading-snug text-white">{step.title}</h5>
-        <span
-          className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-            inLivio ? "bg-cyan-500/20 text-cyan-200" : "bg-white/8 text-slate-300"
-          }`}
-        >
-          {inLivio ? "Kerjakan di Livio" : "Kerjakan di komputer"}
-        </span>
-      </div>
-
-      {step.website ? (
-        <div className="mb-3 rounded-xl border border-blue-400/25 bg-blue-500/10 px-3 py-3">
-          <p className="text-[12px] font-semibold text-blue-100">Buka situs ini</p>
-          <p className="mt-0.5 font-mono text-[13px] text-white">{step.website.label}</p>
-          <a
-            href={step.website.url}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-[12px] font-bold text-white hover:brightness-110"
-          >
-            {step.website.buttonLabel}
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
-        </div>
-      ) : null}
-
-      <p className="mb-2 flex items-center gap-1.5 text-[12px] font-bold text-slate-200">
-        <MousePointerClick className="h-3.5 w-3.5 text-blue-300" />
-        Lakukan ini, satu per satu
-      </p>
-      <ol className="space-y-2">
-        {step.doThis.map((item, itemIndex) => (
-          <li key={item} className="flex gap-2 text-[13px] leading-relaxed text-slate-200">
-            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-white/10 text-[10px] font-bold text-slate-300">
-              {itemIndex + 1}
-            </span>
-            <span>{item}</span>
-          </li>
-        ))}
-      </ol>
-
-      {step.youWillSee ? (
-        <p className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/8 px-3 py-2 text-[12px] leading-relaxed text-emerald-100">
-          <span className="font-bold text-emerald-200">Yang muncul: </span>
-          {step.youWillSee}
-        </p>
-      ) : null}
-    </article>
-  );
-}
+type GuideView = "steps" | "syarat";
 
 export const TutorialModal: React.FC = () => {
   const showTutorialModal = useDashboardUIStore((state) => state.showTutorialModal);
@@ -77,138 +15,240 @@ export const TutorialModal: React.FC = () => {
   const selectedPlatform = useLiveSessionStore((state) => state.selectedPlatform);
 
   const [activeId, setActiveId] = useState(resolveLiveGuideId(selectedPlatform));
-  const bodyRef = useRef<HTMLDivElement>(null);
+  const [stepIndex, setStepIndex] = useState(0);
+  const [view, setView] = useState<GuideView>("steps");
+  const [openedFor, setOpenedFor] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (showTutorialModal) {
-      setActiveId(resolveLiveGuideId(selectedPlatform));
+  const openKey = showTutorialModal ? selectedPlatform : null;
+  if (openKey !== openedFor) {
+    setOpenedFor(openKey);
+    if (openKey) {
+      setActiveId(resolveLiveGuideId(openKey));
+      setStepIndex(0);
+      setView("steps");
     }
-  }, [showTutorialModal, selectedPlatform]);
-
-  useEffect(() => {
-    bodyRef.current?.scrollTo({ top: 0 });
-  }, [activeId, showTutorialModal]);
+  }
 
   if (!showTutorialModal) return null;
 
   const guide = LIVE_PLATFORM_GUIDES.find((item) => item.id === activeId) || LIVE_PLATFORM_GUIDES[0];
+  const totalSteps = guide.steps.length;
+  const safeIndex = Math.min(stepIndex, Math.max(totalSteps - 1, 0));
+  const step = guide.steps[safeIndex];
+  const isFirst = safeIndex === 0;
+  const isLast = safeIndex === totalSteps - 1;
+  const progress = totalSteps > 0 ? ((safeIndex + 1) / totalSteps) * 100 : 0;
+
+  const switchPlatform = (id: string) => {
+    setActiveId(id);
+    setStepIndex(0);
+    setView("steps");
+  };
+
+  const close = () => setShowTutorialModal(false);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 backdrop-blur-sm animate-fadeIn sm:p-4">
-      <div className="relative flex h-[94vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-blue-500/40 bg-[#0c1221] shadow-2xl">
-        <button
-          type="button"
-          onClick={() => setShowTutorialModal(false)}
-          className="absolute right-4 top-4 z-10 rounded-lg p-1 text-slate-400 transition hover:bg-white/5 hover:text-white cursor-pointer"
-        >
-          <X className="h-5 w-5" />
-        </button>
-
-        <div className="flex items-start gap-3 border-b border-[#232c42] px-5 py-4 pr-12 sm:px-6">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-500/15 text-blue-400">
-            <BookOpen className="h-5 w-5" />
-          </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md animate-fadeIn">
+      <div className="relative flex max-h-[90vh] w-full max-w-130 flex-col overflow-hidden rounded-3xl border border-white/8 bg-[#0b1220] shadow-[0_24px_80px_rgba(0,0,0,0.55)]">
+        <div className="flex items-center justify-between px-6 pt-5 pb-4">
           <div>
-            <h3 className="text-lg font-bold text-white">Cara mengambil kode siaran</h3>
-            <p className="mt-1 text-[13px] leading-relaxed text-slate-300">
-              Ikuti seperti resep masak. Selesaikan satu langkah, baru lanjut ke langkah berikutnya. Kerjakan di komputer, bukan di HP.
-            </p>
+            <p className="text-[11px] font-medium tracking-wide text-slate-500 uppercase">Panduan</p>
+            <h3 className="mt-0.5 text-[17px] font-semibold text-white">Ambil kode siaran</h3>
           </div>
-        </div>
-
-        <div className="flex gap-1.5 overflow-x-auto border-b border-[#232c42] bg-[#0a101c] px-4 py-2">
-          {LIVE_PLATFORM_GUIDES.map((item) => {
-            const active = item.id === guide.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setActiveId(item.id)}
-                className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] font-bold transition cursor-pointer ${
-                  active
-                    ? "bg-linear-to-r from-blue-600 to-indigo-600 text-white shadow"
-                    : "text-slate-400 hover:bg-white/5 hover:text-white"
-                }`}
-              >
-                {item.platformKey ? <PlatformIcon name={item.platformKey} size="sm" /> : null}
-                <span>{item.shortLabel}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div ref={bodyRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4 text-slate-200 sm:px-6">
-          <div className={`rounded-xl border px-4 py-3 ${guide.accentSoft}`}>
-            <p className={`text-[13px] leading-relaxed font-medium ${guide.accent}`}>{guide.intro}</p>
-            <a
-              href={guide.officialUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-2 inline-flex items-center gap-1 text-[12px] text-blue-300 hover:underline"
-            >
-              {guide.officialLabel}
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          </div>
-
-          <p className="rounded-xl border border-[#2a3550] bg-[#101826] px-4 py-2.5 text-[13px] leading-relaxed text-slate-300">
-            <Monitor className="mr-1.5 inline h-4 w-4 text-blue-300" />
-            Cara menyalin: di situs platform klik <span className="font-semibold text-white">Salin</span> /{" "}
-            <span className="font-semibold text-white">Copy</span>, lalu di Livio klik kolom kosong dan tekan{" "}
-            <span className="font-semibold text-white">Ctrl</span> + <span className="font-semibold text-white">V</span>.
-            Jangan diketik satu per satu.
-          </p>
-
-          <section>
-            <h4 className="mb-3 flex items-center gap-1.5 text-[13px] font-bold text-white">
-              <Sparkles className="h-4 w-4 text-blue-400" />
-              Langkah 1 sampai selesai
-            </h4>
-            <div className="space-y-3">
-              {guide.steps.map((step, index) => (
-                <StepCard key={`${guide.id}-${step.title}`} step={step} index={index} />
-              ))}
-            </div>
-          </section>
-
-          <section>
-            <h4 className={`mb-2 flex items-center gap-1.5 text-[13px] font-bold ${guide.accent}`}>
-              <AlertTriangle className="h-4 w-4" />
-              Syarat akun, cek jika langkah di atas tidak muncul
-            </h4>
-            <ul className="space-y-2">
-              {guide.requirements.map((item) => (
-                <li
-                  key={item}
-                  className="flex gap-2 rounded-xl border border-[#232c42] bg-[#111827] px-3 py-2.5 text-[13px] leading-relaxed text-slate-200"
-                >
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          {guide.warnings.length > 0 ? (
-            <section className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-              <p className="mb-2 text-[13px] font-bold text-amber-300">Perlu diingat</p>
-              <ul className="space-y-1.5 text-[13px] leading-relaxed text-amber-100/90">
-                {guide.warnings.map((item) => (
-                  <li key={item}>• {item}</li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-        </div>
-
-        <div className="flex justify-end border-t border-[#232c42] px-5 py-3 sm:px-6">
           <button
             type="button"
-            onClick={() => setShowTutorialModal(false)}
-            className="cursor-pointer rounded-xl bg-linear-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-sm font-bold text-white shadow-md shadow-blue-600/30 transition hover:brightness-110 active:scale-95"
+            onClick={close}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-white/6 hover:text-white cursor-pointer"
+            aria-label="Tutup"
           >
-            Mengerti &amp; tutup
+            <X className="h-4 w-4" />
           </button>
+        </div>
+
+        <div className="px-6">
+          <div className="flex gap-1 overflow-x-auto pb-1">
+            {LIVE_PLATFORM_GUIDES.map((item) => {
+              const active = item.id === guide.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => switchPlatform(item.id)}
+                  className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-medium transition cursor-pointer ${
+                    active
+                      ? "bg-white text-slate-900"
+                      : "bg-white/5 text-slate-400 hover:bg-white/8 hover:text-slate-200"
+                  }`}
+                >
+                  {item.platformKey ? <PlatformIcon name={item.platformKey} size="sm" /> : null}
+                  {item.shortLabel}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="mt-4 flex gap-6 px-6">
+          <button
+            type="button"
+            onClick={() => setView("steps")}
+            className={`pb-2 text-[13px] font-medium transition cursor-pointer ${
+              view === "steps" ? "border-b-2 border-white text-white" : "border-b-2 border-transparent text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            Langkah
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("syarat")}
+            className={`pb-2 text-[13px] font-medium transition cursor-pointer ${
+              view === "syarat" ? "border-b-2 border-white text-white" : "border-b-2 border-transparent text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            Syarat akun
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          {view === "steps" && step ? (
+            <div className="flex flex-col">
+              <div className="mb-5">
+                <div className="mb-2 flex items-center justify-between text-[11px] text-slate-500">
+                  <span>
+                    {safeIndex + 1} / {totalSteps}
+                  </span>
+                  <span>{step.place === "livio" ? "Di Livio" : "Di komputer"}</span>
+                </div>
+                <div className="h-1 overflow-hidden rounded-full bg-white/8">
+                  <div className="h-full rounded-full bg-white/70 transition-all duration-300" style={{ width: `${progress}%` }} />
+                </div>
+              </div>
+
+              <h4 className="text-[22px] font-semibold leading-snug tracking-tight text-white">{step.title}</h4>
+
+              {isFirst ? <p className="mt-2 text-[13px] leading-relaxed text-slate-400">{guide.intro}</p> : null}
+
+              {step.website ? (
+                <a
+                  href={step.website.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-5 flex items-center justify-between rounded-2xl bg-white px-4 py-3 text-slate-900 transition hover:bg-slate-100"
+                >
+                  <div>
+                    <p className="text-[11px] font-medium text-slate-500">Buka situs</p>
+                    <p className="text-[14px] font-semibold">{step.website.label}</p>
+                  </div>
+                  <span className="inline-flex items-center gap-1 text-[12px] font-semibold">
+                    {step.website.buttonLabel}
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </span>
+                </a>
+              ) : null}
+
+              <ol className="mt-6 space-y-4">
+                {step.doThis.map((item, itemIndex) => (
+                  <li key={item} className="flex gap-3">
+                    <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/8 text-[11px] font-semibold text-slate-300">
+                      {itemIndex + 1}
+                    </span>
+                    <p className="text-[14px] leading-relaxed text-slate-200">{item}</p>
+                  </li>
+                ))}
+              </ol>
+
+              {step.youWillSee ? (
+                <p className="mt-6 text-[13px] leading-relaxed text-slate-500">
+                  Lalu Anda akan melihat: {step.youWillSee}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div>
+                <h4 className="text-[15px] font-semibold text-white">Akun harus memenuhi ini</h4>
+                <ul className="mt-3 space-y-3">
+                  {guide.requirements.map((item) => (
+                    <li key={item} className="flex gap-3 text-[13px] leading-relaxed text-slate-300">
+                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {guide.warnings.length > 0 ? (
+                <div>
+                  <h4 className="text-[15px] font-semibold text-white">Kalau gagal, biasanya karena ini</h4>
+                  <ul className="mt-3 space-y-3">
+                    {guide.warnings.map((item) => (
+                      <li key={item} className="text-[13px] leading-relaxed text-slate-400">
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              <a
+                href={guide.officialUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-[12px] text-slate-500 hover:text-slate-300"
+              >
+                {guide.officialLabel}
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 border-t border-white/6 px-6 py-4">
+          {view === "steps" ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setStepIndex((value) => Math.max(0, value - 1))}
+                disabled={isFirst}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-[13px] font-medium text-slate-400 transition hover:text-white disabled:invisible cursor-pointer"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Kembali
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isLast) {
+                    close();
+                    return;
+                  }
+                  setStepIndex((value) => Math.min(totalSteps - 1, value + 1));
+                }}
+                className="inline-flex items-center gap-1.5 rounded-full bg-white px-5 py-2.5 text-[13px] font-semibold text-slate-900 transition hover:bg-slate-100 cursor-pointer"
+              >
+                {isLast ? "Selesai" : "Lanjut"}
+                {!isLast ? <ArrowRight className="h-4 w-4" /> : null}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => setView("steps")}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-[13px] font-medium text-slate-400 transition hover:text-white cursor-pointer"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Ke langkah
+              </button>
+              <button
+                type="button"
+                onClick={close}
+                className="rounded-full bg-white px-5 py-2.5 text-[13px] font-semibold text-slate-900 transition hover:bg-slate-100 cursor-pointer"
+              >
+                Tutup
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
