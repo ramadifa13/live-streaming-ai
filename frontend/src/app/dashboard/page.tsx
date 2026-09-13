@@ -7,7 +7,9 @@ import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { oauthService } from "@/services/oauthService";
 import { liveSessionService, parseLiveClockFromMetrics, toLiveProductSnapshot } from "@/services/liveSessionService";
+import { isUsableOrderTicket, orderService, type OrderTicket } from "@/services/orderService";
 import { toClientCopy } from "@/lib/client-copy";
+import { readStoredResumeCode, storeResumeCode } from "@/lib/api";
 
 import { ToastNotification } from "@/components/dashboard/shared/ToastNotification";
 import { DashboardHeader } from "@/components/dashboard/header/DashboardHeader";
@@ -31,6 +33,7 @@ export default function Dashboard() {
   const isLivePaused = useLiveSessionStore((state) => state.isLivePaused);
   const setIsLivePaused = useLiveSessionStore((state) => state.setIsLivePaused);
   const selectedDuration = useLiveSessionStore((state) => state.selectedDuration);
+  const setPlans = useLiveSessionStore((state) => state.setPlans);
   const selectedPlatform = useLiveSessionStore((state) => state.selectedPlatform);
   const setSelectedPlatform = useLiveSessionStore((state) => state.setSelectedPlatform);
   const automations = useLiveSessionStore((state) => state.automations);
@@ -52,6 +55,17 @@ export default function Dashboard() {
   useEffect(() => {
     loadProducts();
   }, [loadProducts]);
+
+  useEffect(() => {
+    void orderService
+      .listPlans()
+      .then((items) => {
+        if (items.length) setPlans(items);
+      })
+      .catch(() => {
+        showToast("Gagal memuat paket. Paket default tetap bisa dipilih.", "warning");
+      });
+  }, [setPlans, showToast]);
 
   useEffect(() => {
     const onQuota = () => {
@@ -112,9 +126,67 @@ export default function Dashboard() {
         if (clock) applyLiveClock(clock);
       }
     }).catch((err) => {
-      showToast(err instanceof Error ? err.message : "Gagal menyambung ulang sesi live.", "warning");
+      const message = err instanceof Error ? err.message : "";
+      if (/401|403|pembayaran|kode/i.test(message)) return;
+      showToast(message || "Gagal menyambung ulang sesi live.", "warning");
     });
   }, [applyLiveClock, showToast]);
+
+  useEffect(() => {
+    const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+    const paidCode = params?.get("paid");
+    const stored = paidCode || useLiveSessionStore.getState().resumeCode || readStoredResumeCode();
+    if (!stored) {
+      void orderService.lookupMine().then((ticket) => {
+        if (!ticket) return;
+        applyOrderTicket(ticket);
+      }).catch(() => {});
+      return;
+    }
+
+    void orderService.lookup(stored).then((ticket) => {
+      applyOrderTicket(ticket);
+      if (paidCode) {
+        window.history.replaceState({}, "", window.location.pathname);
+        if (ticket.canPrepare || ticket.canReconnect) {
+          showToast("Pembayaran terverifikasi. Simpan kode LIV Anda.");
+        } else if (ticket.status === "pending_payment") {
+          showToast("Menunggu konfirmasi pembayaran…");
+        } else {
+          showToast(ticket.message, "warning");
+        }
+      }
+    }).catch(() => {
+      if (paidCode) {
+        showToast("Tidak bisa cek pembayaran. Masukkan kode LIV di Lanjutkan siaran.", "warning");
+      }
+    });
+
+    function applyOrderTicket(ticket: OrderTicket) {
+      const usable = isUsableOrderTicket(ticket);
+      storeResumeCode(usable ? ticket.resumeCode : null);
+      useLiveSessionStore.setState({
+        orderId: usable ? ticket.orderId : null,
+        resumeCode: usable ? ticket.resumeCode : null,
+        selectedDuration: ticket.durationHours,
+        selectedPlanId: ticket.planId,
+        ...(ticket.automations ? { automations: ticket.automations } : {}),
+      });
+      if (ticket.canReconnect && ticket.sessionId) {
+        const live = ticket.sessionState === "live" || ticket.status === "live";
+        useLiveSessionStore.setState({
+          currentLiveSessionId: ticket.sessionId,
+          liveSessionPhase: live ? "live" : "pending",
+          isLiveActive: live,
+          isConnectingLive: !live,
+          isWaitingForGoLive: !live,
+        });
+        if (live) {
+          showToast("Siaran Anda masih berjalan. Menyambungkan kembali.");
+        }
+      }
+    }
+  }, [showToast]);
 
   useEffect(() => {
     return () => {

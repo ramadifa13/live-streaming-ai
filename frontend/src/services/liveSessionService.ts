@@ -1,4 +1,5 @@
 import { Product, SessionSummaryData } from "@/app/dashboard/types";
+import { apiFetch } from "@/lib/api";
 import { toClientCopy } from "@/lib/client-copy";
 
 function isHttpUrl(value?: string): boolean {
@@ -100,6 +101,8 @@ export interface StartSessionParams {
   products?: unknown[];
   backgroundImage?: string;
   clientRequestId?: string;
+  orderId: string;
+  resumeCode?: string;
 }
 
 export interface BroadcastParams {
@@ -121,12 +124,13 @@ export interface BroadcastParams {
 
 export const liveSessionService = {
   async startSession(params: StartSessionParams, signal?: AbortSignal) {
-    const res = await fetch("/api/live-session/start", {
+    const res = await apiFetch("/api/live-session/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal,
       body: JSON.stringify({
         ...params,
+        accessToken: undefined,
         clientRequestId: params.clientRequestId || crypto.randomUUID(),
       }),
     });
@@ -142,7 +146,7 @@ export const liveSessionService = {
   },
 
   async startBroadcast(params: BroadcastParams, signal?: AbortSignal) {
-    const res = await fetch("/api/live-stream/broadcast", {
+    const res = await apiFetch("/api/live-stream/broadcast", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal,
@@ -164,7 +168,7 @@ export const liveSessionService = {
 
   async stopBroadcast(sessionId?: string | null) {
     try {
-      await fetch("/api/live-stream/stop-broadcast", {
+      await apiFetch("/api/live-stream/stop-broadcast", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId }),
@@ -174,6 +178,7 @@ export const liveSessionService = {
 
   async stopSession(params: {
     sessionId?: string | null;
+    endedReason?: "user_ended" | "prepare_failed";
     durationSeconds?: number;
     viewers?: number;
     comments?: number;
@@ -186,7 +191,7 @@ export const liveSessionService = {
     gpuTerminated?: boolean;
     gpuWarning?: string;
   }> {
-    const res = await fetch("/api/live-session/stop", {
+    const res = await apiFetch("/api/live-session/stop", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
@@ -203,14 +208,13 @@ export const liveSessionService = {
     };
   },
 
-  async teardownSession(sessionId?: string | null) {
+  async teardownSession(sessionId?: string | null, endedReason: "user_ended" | "prepare_failed" = "prepare_failed") {
     if (!sessionId) return;
-    // Single end path — /stop already stops worker broadcast.
-    await this.stopSession({ sessionId });
+    await this.stopSession({ sessionId, endedReason });
   },
 
   async pauseStream(sessionId?: string | null): Promise<boolean> {
-    const res = await fetch("/api/live-stream/pause", {
+    const res = await apiFetch("/api/live-stream/pause", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionId: sessionId || undefined }),
@@ -223,7 +227,7 @@ export const liveSessionService = {
   },
 
   async resumeStream(sessionId?: string | null): Promise<boolean> {
-    const res = await fetch("/api/live-stream/resume", {
+    const res = await apiFetch("/api/live-stream/resume", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionId: sessionId || undefined }),
@@ -247,7 +251,7 @@ export const liveSessionService = {
     speech?: string;
     note?: string;
   }> {
-    const res = await fetch("/api/live-session/test-comment", {
+    const res = await apiFetch("/api/live-session/test-comment", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
@@ -265,7 +269,7 @@ export const liveSessionService = {
 
   async fetchMetrics(sessionId?: string | null) {
     const query = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
-    const res = await fetch(`/api/live-session/metrics${query}`);
+    const res = await apiFetch(`/api/live-session/metrics${query}`);
     if (!res.ok) {
       throw new Error("Gagal memuat statistik siaran.");
     }
@@ -273,7 +277,7 @@ export const liveSessionService = {
   },
 
   async fetchPipelineStatus(sessionId: string) {
-    const res = await fetch(`/api/live-stream/pipeline-status?sessionId=${encodeURIComponent(sessionId)}`);
+    const res = await apiFetch(`/api/live-stream/pipeline-status?sessionId=${encodeURIComponent(sessionId)}`);
     if (!res.ok) {
       throw new Error("Gagal memuat status persiapan siaran.");
     }
@@ -360,7 +364,7 @@ export const liveSessionService = {
   },
 
   async confirmGoLive(sessionId: string) {
-    const res = await fetch("/api/live-stream/go-live-confirm", {
+    const res = await apiFetch("/api/live-stream/go-live-confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionId }),
@@ -373,7 +377,7 @@ export const liveSessionService = {
   },
 
   async switchProduct(productId: string, productName: string, product?: unknown, sessionId?: string) {
-    const res = await fetch("/api/live-session/switch-product", {
+    const res = await apiFetch("/api/live-session/switch-product", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ productId, productName, product, sessionId }),

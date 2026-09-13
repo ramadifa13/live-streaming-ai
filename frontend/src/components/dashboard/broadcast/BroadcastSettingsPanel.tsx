@@ -9,61 +9,51 @@ import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { dashboardPlatforms } from "@/lib/brand-assets";
 import { PlatformIcon } from "@/components/shared/PlatformIcon";
 import { getScriptBankMeta } from "@/lib/script-bank";
+import { orderService, type PublicPlan } from "@/services/orderService";
 
-// Preset otomatisasi ikut di sini supaya menambah paket baru tidak menuntut
-// perubahan pada logika tombol. Nilainya harus konsisten dengan `minHours`
-// pada automationItems di bawah.
-const DURATIONS = [
+const FALLBACK_PLANS: PublicPlan[] = [
   {
+    id: "trial-1h",
     hours: 1,
     label: "1 Jam",
     tag: "Trial",
-    price: "Rp59.000 (Trial)",
-    automations: {
-      autoReply: true,
-      autoPin: true,
-      autoPromo: true,
-      autoModeration: true,
-    },
+    amount: 59000,
+    currency: "IDR",
+    priceLabel: "Rp59.000 (Trial)",
+    automations: { autoReply: true, autoPin: true, autoPromo: true, autoModeration: true },
     toast: "Paket Trial (1 Jam): Auto-Reply aktif",
   },
   {
+    id: "express-2h",
     hours: 2,
     label: "2 Jam",
     tag: "Express",
-    price: "Rp99.000 (Express)",
-    automations: {
-      autoReply: true,
-      autoPin: true,
-      autoPromo: false,
-      autoModeration: false,
-    },
+    amount: 99000,
+    currency: "IDR",
+    priceLabel: "Rp99.000 (Express)",
+    automations: { autoReply: true, autoPin: true, autoPromo: false, autoModeration: false },
     toast: "Paket Express (2 Jam): Auto-Reply & Auto-Pin aktif",
   },
   {
+    id: "shift-8h",
     hours: 8,
     label: "8 Jam",
     tag: "Shift",
-    price: "Rp299.000 (Shift)",
-    automations: {
-      autoReply: true,
-      autoPin: true,
-      autoPromo: true,
-      autoModeration: true,
-    },
+    amount: 299000,
+    currency: "IDR",
+    priceLabel: "Rp299.000 (Shift)",
+    automations: { autoReply: true, autoPin: true, autoPromo: true, autoModeration: true },
     toast: "Paket Shift (8 Jam): Semua otomatisasi aktif",
   },
   {
+    id: "marathon-24h",
     hours: 24,
     label: "24 Jam",
     tag: "24/7",
-    price: "Rp699.000 (Marathon)",
-    automations: {
-      autoReply: true,
-      autoPin: true,
-      autoPromo: true,
-      autoModeration: true,
-    },
+    amount: 699000,
+    currency: "IDR",
+    priceLabel: "Rp699.000 (Marathon)",
+    automations: { autoReply: true, autoPin: true, autoPromo: true, autoModeration: true },
     toast: "Paket Marathon (24 Jam): Semua otomatisasi aktif",
   },
 ];
@@ -75,7 +65,24 @@ export const BroadcastSettingsPanel: React.FC = () => {
 
   const isLiveActive = useLiveSessionStore((state) => state.isLiveActive);
   const selectedDuration = useLiveSessionStore((state) => state.selectedDuration);
+  const selectedPlanId = useLiveSessionStore((state) => state.selectedPlanId);
   const setSelectedDuration = useLiveSessionStore((state) => state.setSelectedDuration);
+  const setSelectedPlanId = useLiveSessionStore((state) => state.setSelectedPlanId);
+  const plans = useLiveSessionStore((state) => state.plans);
+  const setPlans = useLiveSessionStore((state) => state.setPlans);
+  const catalog = plans.length ? plans : FALLBACK_PLANS;
+
+  React.useEffect(() => {
+    if (plans.length) return;
+    void orderService
+      .listPlans()
+      .then((items) => {
+        if (items.length) setPlans(items);
+      })
+      .catch(() => {
+        setPlans(FALLBACK_PLANS);
+      });
+  }, [plans.length, setPlans]);
   const selectedPlatform = useLiveSessionStore((state) => state.selectedPlatform);
   const handlePlatformSelect = useLiveSessionStore((state) => state.handlePlatformSelect);
   const automations = useLiveSessionStore((state) => state.automations);
@@ -234,13 +241,13 @@ export const BroadcastSettingsPanel: React.FC = () => {
           <div className="mb-1 flex items-center justify-between">
             <label className="text-[10.5px] font-semibold text-slate-300">Durasi Live Siaran</label>
             <span className="text-[9px] font-mono text-cyan-400">
-              {DURATIONS.find((d) => d.hours === selectedDuration)?.price}
+              {catalog.find((d) => d.id === selectedPlanId || d.hours === selectedDuration)?.priceLabel}
             </span>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {DURATIONS.map((item) => (
+            {catalog.map((item) => (
               <button
-                key={item.hours}
+                key={item.id}
                 type="button"
                 disabled={isLiveActive}
                 onClick={() => {
@@ -248,12 +255,13 @@ export const BroadcastSettingsPanel: React.FC = () => {
                     showToast("Peringatan: Durasi tidak dapat diubah saat siaran sedang aktif!");
                     return;
                   }
+                  setSelectedPlanId(item.id);
                   setSelectedDuration(item.hours);
                   setAutomations(item.automations);
                   showToast(item.toast);
                 }}
                 className={`rounded-lg py-1 text-[10px] font-semibold border transition active:scale-95 flex flex-col items-center justify-center cursor-pointer ${
-                  selectedDuration === item.hours
+                  selectedPlanId === item.id || selectedDuration === item.hours
                     ? "border-blue-500 bg-blue-500/25 text-white shadow-sm font-bold ring-1 ring-blue-500/50"
                     : "border-[#232c42] bg-[#111827] text-slate-400 hover:text-slate-200 hover:border-slate-600"
                 } ${isLiveActive ? "cursor-not-allowed opacity-70" : ""}`}

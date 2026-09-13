@@ -47,8 +47,8 @@ export const EndLiveConfirmModal: React.FC = () => {
           Akhiri Live Streaming?
         </h3>
         <p className="text-xs text-slate-400 mb-6">
-          AI Host akan menghentikan siaran di platform {selectedPlatform}.
-          Seluruh ringkasan analitik dan omzet penjualan akan dihitung otomatis.
+          AI Host akan menghentikan siaran di platform {selectedPlatform}. Kode pembayaran ini
+          langsung habis dipakai dan tidak bisa dilanjutkan. Siaran berikutnya perlu paket baru.
         </p>
         <div className="flex justify-center gap-3">
           <button

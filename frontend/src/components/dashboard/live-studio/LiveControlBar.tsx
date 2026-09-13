@@ -9,19 +9,25 @@ import { useProductStore } from "@/stores/useProductStore";
 import { useAiHostStore } from "@/stores/useAiHostStore";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { liveSessionService, toLiveProductSnapshot } from "@/services/liveSessionService";
+import { isDeadOrderStatus, orderService, type OrderTicket } from "@/services/orderService";
 import { avatarIdleVideoPath } from "@/app/dashboard/constants";
 import { oauthService } from "@/services/oauthService";
 import { copyToClipboard } from "@/utils/clipboard";
 import { LiveRuntimePanel } from "@/components/dashboard/live-studio/LiveRuntimePanel";
+import { PaymentModal } from "@/components/dashboard/live-studio/modals/PaymentModal";
+import { ResumeOrderModal } from "@/components/dashboard/live-studio/modals/ResumeOrderModal";
 import { isValidRtmpUrl, normalizeRtmpInput } from "@/utils/rtmp";
 import { validateLivePreparation } from "@/lib/live-validation";
 import { toClientCopy } from "@/lib/client-copy";
+import { readStoredResumeCode, storeResumeCode } from "@/lib/api";
 
 export const LiveControlBar: React.FC = () => {
   const currentStep = useDashboardUIStore((state) => state.currentStep);
   const showToast = useDashboardUIStore((state) => state.showToast);
   const setShowTutorialModal = useDashboardUIStore((state) => state.setShowTutorialModal);
   const setShowEndLiveConfirm = useDashboardUIStore((state) => state.setShowEndLiveConfirm);
+  const setShowPaymentModal = useDashboardUIStore((state) => state.setShowPaymentModal);
+  const setShowResumeOrderModal = useDashboardUIStore((state) => state.setShowResumeOrderModal);
 
   const selectedAvatar = useAiHostStore((state) => state.selectedAvatar);
   const selectedTone = useAiHostStore((state) => state.selectedTone);
@@ -38,6 +44,8 @@ export const LiveControlBar: React.FC = () => {
   const setIsLivePaused = useLiveSessionStore((state) => state.setIsLivePaused);
   const isConnectingLive = useLiveSessionStore((state) => state.isConnectingLive);
   const selectedDuration = useLiveSessionStore((state) => state.selectedDuration);
+  const orderId = useLiveSessionStore((state) => state.orderId);
+  const resumeCode = useLiveSessionStore((state) => state.resumeCode);
   const selectedPlatform = useLiveSessionStore((state) => state.selectedPlatform);
   const connectMode = useLiveSessionStore((state) => state.connectMode);
   const setConnectMode = useLiveSessionStore((state) => state.setConnectMode);
@@ -108,6 +116,40 @@ export const LiveControlBar: React.FC = () => {
     }
   };
 
+  const rememberTicket = (ticket: OrderTicket) => {
+    useLiveSessionStore.setState({
+      orderId: ticket.orderId,
+      resumeCode: ticket.resumeCode,
+      selectedDuration: ticket.durationHours,
+      selectedPlanId: ticket.planId,
+      ...(ticket.automations ? { automations: ticket.automations } : {}),
+    });
+  };
+
+  const reconnectRunningLive = (ticket: OrderTicket) => {
+    rememberTicket(ticket);
+    const live = ticket.sessionState === "live" || ticket.status === "live";
+    useLiveSessionStore.setState({
+      currentLiveSessionId: ticket.sessionId,
+      liveSessionPhase: live ? "live" : "pending",
+      isLiveActive: live,
+      isConnectingLive: !live,
+      isWaitingForGoLive: !live,
+    });
+    showToast(live ? "Menyambungkan kembali ke siaran yang sedang berjalan." : "Melanjutkan persiapan siaran yang belum selesai.");
+  };
+
+  const handleTicketResolved = async (ticket: OrderTicket) => {
+    rememberTicket(ticket);
+    if (ticket.canReconnect) {
+      reconnectRunningLive(ticket);
+      return;
+    }
+    if (ticket.canPrepare) {
+      await beginPrepareAfterPaid(ticket);
+    }
+  };
+
   const handleStartLive = async () => {
     if (useLiveSessionStore.getState().isConnectingLive) return;
     const validation = validateLivePreparation({
@@ -122,6 +164,47 @@ export const LiveControlBar: React.FC = () => {
     });
     if (!validation.valid) {
       showToast(validation.message || "Lengkapi pengaturan live terlebih dahulu.", "warning");
+      return;
+    }
+
+    const { rtmpUrl: previewUrl, streamKey: previewKey } = normalizeRtmpInput(customRtmpUrl, streamKey);
+    if (!previewUrl.trim() || !previewKey || !isValidRtmpUrl(previewUrl)) {
+      showToast("Tempel alamat server dan kode siaran dari aplikasi live Anda.", "warning");
+      return;
+    }
+
+    try {
+      const existingCode = resumeCode || readStoredResumeCode();
+      const existing = existingCode ? await orderService.lookup(existingCode).catch(() => null) : await orderService.lookupMine().catch(() => null);
+      if (existing?.canReconnect) {
+        reconnectRunningLive(existing);
+        return;
+      }
+      if (existing?.canPrepare) {
+        await beginPrepareAfterPaid(existing);
+        return;
+      }
+      if (existing?.status === "pending_payment") {
+        rememberTicket(existing);
+        setShowPaymentModal(true);
+        return;
+      }
+      if (existing && isDeadOrderStatus(existing.status)) {
+        storeResumeCode(null);
+        useLiveSessionStore.setState({ orderId: null, resumeCode: null });
+      }
+    } catch {
+      // lanjut ke pembayaran baru
+    }
+
+    setShowPaymentModal(true);
+  };
+
+  const beginPrepareAfterPaid = async (ticket: OrderTicket) => {
+    if (useLiveSessionStore.getState().isConnectingLive) return;
+    rememberTicket(ticket);
+    if (ticket.canReconnect) {
+      reconnectRunningLive(ticket);
       return;
     }
 
@@ -168,7 +251,9 @@ export const LiveControlBar: React.FC = () => {
           productId: activeFeaturedProduct.id || "1",
           avatarId: selectedAvatar.id || "1",
           platform: selectedPlatform,
-          durationHours: selectedDuration,
+          durationHours: ticket.durationHours || selectedDuration,
+          orderId: ticket.orderId,
+          resumeCode: ticket.resumeCode,
           autoReply: automations.autoReply,
           autoPin: automations.autoPin,
           autoPromotion: automations.autoPromo,
@@ -179,7 +264,6 @@ export const LiveControlBar: React.FC = () => {
           voiceId: selectedVoice || selectedAvatar.voice || "girl_cute_kids",
           lang: selectedLang,
           backgroundImage: selectedBackground || undefined,
-          accessToken: connectedAccount?.accessToken,
           liveChatId: connectedAccount?.liveChatId,
           liveVideoId: connectedAccount?.liveVideoId,
           product: toLiveProductSnapshot(activeFeaturedProduct, {
@@ -355,9 +439,16 @@ export const LiveControlBar: React.FC = () => {
         liveSessionPhase: "idle",
         pipelineStatus: null,
       });
-      showToast(message);
+      showToast(toClientCopy(message), "error");
     }
   };
+
+  const orderModals = (
+    <>
+      <PaymentModal onPaid={(paid) => void handleTicketResolved(paid)} />
+      <ResumeOrderModal onResolved={(paid) => void handleTicketResolved(paid)} />
+    </>
+  );
 
   const handleOAuthConnect = async () => {
     showToast(`Menghubungkan akun ${selectedPlatform}…`);
@@ -377,6 +468,8 @@ export const LiveControlBar: React.FC = () => {
 
   if (!isLiveActive) {
     return (
+      <>
+      {orderModals}
       <div
         className={`flex flex-col rounded-xl border p-4 transition ${
           currentStep === 5
@@ -643,11 +736,27 @@ export const LiveControlBar: React.FC = () => {
             </>
           )}
         </button>
+        <button
+          type="button"
+          disabled={isConnectingLive}
+          onClick={() => setShowResumeOrderModal(true)}
+          className="mt-2 w-full rounded-lg border border-blue-500/25 bg-blue-500/8 px-3 py-2 text-[11px] font-semibold text-blue-100 hover:bg-blue-500/15 cursor-pointer disabled:opacity-60"
+        >
+          Lanjutkan siaran tanpa bayar ulang
+        </button>
+        {(resumeCode || orderId) && (
+          <p className="mt-2 text-center font-mono text-[10px] tracking-wider text-slate-500">
+            Kode tersimpan: {resumeCode || "cookie browser"}
+          </p>
+        )}
       </div>
+      </>
     );
   }
 
   return (
+    <>
+    {orderModals}
     <div className="flex flex-col rounded-2xl border border-red-500/40 bg-[#0e1222] ring-1 ring-red-500/20 p-5 relative overflow-hidden transition animate-fadeIn shadow-2xl shadow-red-900/10">
       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-600 via-red-400 to-red-600 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.6)]" />
 
@@ -722,5 +831,6 @@ export const LiveControlBar: React.FC = () => {
         </div>
       </div>
     </div>
+    </>
   );
 };

@@ -23,6 +23,29 @@ model Avatar {
   liveSessions LiveSession[]
 }
 
+model Order {
+  id               String    @id @default(cuid())
+  resumeCode       String    @unique
+  xenditInvoiceId  String?   @unique
+  xenditExternalId String    @unique
+  planId           String
+  durationHours    Int
+  amount           Int
+  currency         String    @default("IDR")
+  status           String    @default("pending_payment")
+  sessionId        String?
+  expiresAt        DateTime?
+  paidAt           DateTime?
+  consumedAt       DateTime?
+  consumedReason   String?
+  prepareAttempts  Int       @default(0)
+  lastPrepareAt    DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  liveSessions LiveSession[]
+}
+
 model LiveSession {
   id              String   @id @default(cuid())
   productId       String
@@ -46,10 +69,12 @@ model LiveSession {
   endedReason      String?
   clientRequestId  String?  @unique
   runtimeConfig    String?
+  orderId         String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  avatar  Avatar  @relation(fields: [avatarId], references: [id])
+  avatar Avatar @relation(fields: [avatarId], references: [id])
+  order  Order? @relation(fields: [orderId], references: [id])
 }
 
 model CostBenchmark {

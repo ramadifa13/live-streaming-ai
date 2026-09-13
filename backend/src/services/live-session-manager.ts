@@ -12,6 +12,7 @@ import {
 import { livePlatformConnector } from "./live-platform-connector.js";
 import { durationHoursToPlan, liveHostOrchestrator, type ProductSnapshot } from "./live-host-orchestrator.js";
 import { stopRunPodBroadcast, triggerWorkerPlayback } from "./runpod-bridge.js";
+import { canRetryPrepare, consumeOrderForSession, markOrderFailed, markOrderLive, markOrderPreparing } from "./order-service.js";
 
 export type SessionState = "starting" | "pending" | "live" | "ended" | "error";
 
@@ -78,6 +79,7 @@ export interface ManagedSession {
   product?: ProductSnapshot;
   catalog: ProductSnapshot[];
   backgroundImage?: string;
+  orderId?: string;
 }
 
 const PENDING_TIMEOUT_MS = Math.max(60_000, Number(process.env.LIVE_PENDING_TIMEOUT_MS || "1800000"));
@@ -121,7 +123,29 @@ class LiveSessionManager {
     catalog?: ProductSnapshot[];
     backgroundImage?: string;
     clientRequestId?: string;
+    orderId: string;
   }): Promise<{ sessionId: string; state: SessionState }> {
+    const order = await prisma.order.findUnique({ where: { id: params.orderId } });
+    if (!order) {
+      throw new Error("Order pembayaran tidak ditemukan.");
+    }
+    const durationHours = order.durationHours;
+
+    if (order.sessionId) {
+      const existingForOrder = await prisma.liveSession.findUnique({ where: { id: order.sessionId } });
+      const managedForOrder = this.activeSessions.get(order.sessionId);
+      const reusedOrder = reuseExistingLiveStart(existingForOrder, managedForOrder);
+      if (reusedOrder) return reusedOrder;
+      if (existingForOrder && existingForOrder.status === "live") {
+        return { sessionId: existingForOrder.id, state: managedForOrder?.state || "live" };
+      }
+    }
+
+    const retry = canRetryPrepare(order);
+    if (!retry.ok) {
+      throw new Error(retry.message);
+    }
+
     if (params.clientRequestId) {
       const existing = await prisma.liveSession.findUnique({
         where: { clientRequestId: params.clientRequestId },
@@ -137,7 +161,7 @@ class LiveSessionManager {
         avatarId: params.avatarId,
         voice: params.voice,
         platform: params.platform,
-        durationHours: params.durationHours,
+        durationHours,
         autoReply: params.autoReply ?? true,
         autoPin: params.autoPin ?? true,
         autoPromotion: params.autoPromotion ?? true,
@@ -145,12 +169,13 @@ class LiveSessionManager {
         status: "starting",
         podStatus: "provisioning",
         clientRequestId: params.clientRequestId,
-        deadlineAt: new Date(Date.now() + params.durationHours * 3600 * 1000),
+        orderId: order.id,
+        deadlineAt: new Date(Date.now() + durationHours * 3600 * 1000),
         runtimeConfig: JSON.stringify({
           productId: params.productId,
           avatarId: params.avatarId,
           platform: params.platform,
-          durationHours: params.durationHours,
+          durationHours,
           avatarName: params.avatarName,
           voice: params.voice,
           voiceId: params.voiceId,
@@ -162,9 +187,10 @@ class LiveSessionManager {
           catalog: params.catalog,
           backgroundImage: params.backgroundImage,
         }),
-        estimatedCost: Math.round(params.durationHours * 12500),
+        estimatedCost: Math.round(durationHours * 12500),
       },
     });
+    await markOrderPreparing(order.id, session.id);
     setLiveSessionActive(true, session.id);
 
     const staticPodId = getStaticPodId();
@@ -175,9 +201,10 @@ class LiveSessionManager {
       sessionId: session.id,
       state: "starting",
       platform: params.platform,
-      durationHours: params.durationHours,
+      durationHours,
       startedAt: Date.now(),
-      deadlineAt: Date.now() + params.durationHours * 3600 * 1000,
+      deadlineAt: Date.now() + durationHours * 3600 * 1000,
+      orderId: order.id,
       avatarName: params.avatarName || "Namira",
       voice: params.voice || this.pendingVoicePreference || undefined,
       voiceId: params.voiceId || process.env.VOICE_ID || "girl_cute_kids",
@@ -343,6 +370,9 @@ class LiveSessionManager {
             data: { podStatus: "failed", endedReason: "pod_boot_failed" },
           })
           .catch(() => {});
+        if (current.orderId) {
+          await markOrderFailed(current.orderId).catch(() => {});
+        }
         await this.transitionState("error", sessionId);
       }
     }
@@ -418,6 +448,9 @@ class LiveSessionManager {
     }
 
     if (session) session.bootstrapAbort = true;
+    await consumeOrderForSession(sessionId, options?.endedReason).catch((err) =>
+      console.error(`[LiveSessionManager] Gagal memperbarui order untuk sesi ${sessionId}:`, err),
+    );
     const sessionPodId = session?.podId || persisted?.runpodPodId || null;
     const staticPodId = getStaticPodId();
     // Keep-warm hanya untuk pod statis di .env. Pod sesi (dynamic) selalu di-terminate
@@ -464,7 +497,7 @@ class LiveSessionManager {
       if (claim.count > 0) {
         await stopRunPodBroadcast(podToTerminate).catch(() => {});
         try {
-          await releaseGpuForJob(podToTerminate, sessionId);
+          await this.terminatePodWithRetry(podToTerminate, sessionId);
           await prisma.liveSession.update({
             where: { id: sessionId },
             data: { podStatus: "terminated", podTerminatedAt: new Date() },
@@ -479,6 +512,7 @@ class LiveSessionManager {
             .update({ where: { id: sessionId }, data: { podStatus: "terminate_failed" } })
             .catch(() => {});
           console.error("Failed to stop GPU Pod:", err);
+          this.scheduleTerminateRetry(podToTerminate, sessionId);
         }
       }
     }
@@ -553,6 +587,35 @@ class LiveSessionManager {
     if (this.activeSessions.get(sessionId)?.state === "pending") {
       await this.transitionState("live", sessionId);
     }
+    const persisted = await prisma.liveSession.findUnique({ where: { id: sessionId }, select: { orderId: true } });
+    const orderId = this.activeSessions.get(sessionId)?.orderId || persisted?.orderId;
+    if (orderId) {
+      await markOrderLive(orderId, sessionId).catch((err) =>
+        console.error(`[LiveSessionManager] Gagal menandai order live ${orderId}:`, err),
+      );
+    }
+  }
+
+  private async terminatePodWithRetry(podId: string, sessionId: string, attempts = 3): Promise<void> {
+    let lastError: unknown;
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        await releaseGpuForJob(podId, sessionId);
+        return;
+      } catch (err) {
+        lastError = err;
+        await new Promise((resolve) => setTimeout(resolve, 1500 * (i + 1)));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("Gagal mematikan studio.");
+  }
+
+  private scheduleTerminateRetry(podId: string, sessionId: string) {
+    setTimeout(() => {
+      void releaseGpuForJob(podId, sessionId).catch((err) =>
+        console.error(`[LiveSessionManager] Retry terminate pod ${podId} gagal:`, err),
+      );
+    }, 15_000);
   }
 
   public getRemainingDurationSeconds(sessionId: string): number {
@@ -859,6 +922,7 @@ class LiveSessionManager {
         product,
         catalog,
         backgroundImage: config.backgroundImage ? String(config.backgroundImage) : undefined,
+        orderId: row.orderId || undefined,
       };
       this.activeSessions.set(row.id, managed);
       setLiveSessionActive(true, row.id);

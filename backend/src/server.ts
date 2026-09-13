@@ -4,8 +4,10 @@ import multipart from "@fastify/multipart";
 import dotenv from "dotenv";
 import prisma from "./lib/prisma.js";
 
+import { corsAllowlist, isAllowedOrigin } from "./lib/cors.js";
 import { avatarsRoutes } from "./routes/avatars.js";
 import { liveSessionRoutes } from "./routes/live-session.js";
+import { orderRoutes } from "./routes/orders.js";
 import { providersRoutes } from "./routes/providers.js";
 import { aiBrainRoutes } from "./routes/ai-brain.js";
 import { ttsRoutes } from "./routes/tts.js";
@@ -20,8 +22,11 @@ const server = Fastify({
   bodyLimit: 25 * 1024 * 1024,
 });
 
+const allowedOrigins = corsAllowlist();
 await server.register(cors, {
-  origin: true,
+  origin: (origin, callback) => {
+    callback(null, isAllowedOrigin(origin, allowedOrigins));
+  },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   credentials: true,
 });
@@ -61,13 +66,12 @@ server.get("/api/health", async () => {
     timestamp: new Date().toISOString(),
     db,
     tts,
-    activeSession: latest
-      ? { sessionId: latest.sessionId, state: latest.state, podId: latest.podId || null }
-      : null,
+    liveActive: Boolean(latest),
   };
 });
 
 await avatarsRoutes(server);
+await orderRoutes(server);
 await liveSessionRoutes(server);
 await providersRoutes(server);
 await aiBrainRoutes(server);

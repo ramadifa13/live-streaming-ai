@@ -1,4 +1,5 @@
 import { LiveSalesScript, Product } from "@/app/dashboard/types";
+import { apiFetch } from "@/lib/api";
 import { toClientCopy } from "@/lib/client-copy";
 
 export interface SynthesizeTTSOptions {
@@ -57,7 +58,7 @@ export const aiService = {
   /** Pocket TTS Indonesian — preview dan live melalui backend yang sama. */
   async synthesizeTTS(options: SynthesizeTTSOptions): Promise<Blob> {
     const voiceId = resolveVoiceId(options.voiceId || options.voice || options.avatarName);
-    const res = await fetch("/api/tts/synthesize", {
+    const res = await apiFetch("/api/tts/synthesize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -155,7 +156,7 @@ export const aiService = {
     tone: string;
   }): Promise<LiveSalesScript> {
     const { activeProduct, avatarName, tone } = params;
-    const res = await fetch("/api/ai/live-sales-script", {
+    const res = await apiFetch("/api/ai/live-sales-script", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

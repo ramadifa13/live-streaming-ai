@@ -1,6 +1,11 @@
+import { createHmac } from "node:crypto";
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import prisma from "../lib/prisma.js";
+import { getPlanById } from "../config/plans.js";
+import { requireOrderForSession, requireStartableOrder, sendEntitlementError } from "../lib/entitlement.js";
+import { EntitlementError, safeEqualString } from "../lib/order-ticket.js";
+import { rateLimitPreHandler } from "../lib/rate-limit.js";
 import { stopBroadcast, pauseBroadcast, resumeBroadcast, getStreamStatus } from "../services/rtmp-streamer.js";
 import {
   getRunPodBroadcastStatusOnce,
@@ -12,11 +17,19 @@ import {
   resumeRunPodBroadcast,
   resolveMediaAsDataUrl,
 } from "../services/runpod-bridge.js";
-import { getStaticPodId } from "../services/runpod-manager.js";
 import { livePlatformConnector } from "../services/live-platform-connector.js";
 import { liveSessionManager } from "../services/live-session-manager.js";
 import { liveHostOrchestrator, durationHoursToPlan, normalizeClientProduct } from "../services/live-host-orchestrator.js";
 import { assertRtmpCredentials } from "../utils/rtmp.js";
+
+function verifyPlatformWebhook(request: { headers: Record<string, unknown>; body: unknown }): boolean {
+  const secret = (process.env.PLATFORM_WEBHOOK_SECRET || "").trim();
+  if (!secret) return process.env.NODE_ENV !== "production";
+  const header = request.headers["x-livio-signature"];
+  if (typeof header !== "string" || !header) return false;
+  const expected = createHmac("sha256", secret).update(JSON.stringify(request.body || {})).digest("hex");
+  return safeEqualString(header, expected);
+}
 
 const productSnapshotSchema = z.object({
   id: z.string().optional(),
@@ -46,13 +59,14 @@ const liveSessionSchema = z.object({
   lang: z.string().optional(),
   speechSpeed: z.number().optional(),
   platform: z.string().min(1),
-  durationHours: z.number().int().min(1).default(1),
+  orderId: z.string().optional(),
+  resumeCode: z.string().optional(),
+  durationHours: z.number().int().min(1).optional(),
   autoReply: z.boolean().optional(),
   autoPin: z.boolean().optional(),
   autoPromotion: z.boolean().optional(),
   autoPromo: z.boolean().optional(),
   autoModeration: z.boolean().optional(),
-  accessToken: z.string().optional(),
   liveChatId: z.string().optional(),
   liveVideoId: z.string().optional(),
   avatarName: z.string().optional(),
@@ -65,6 +79,9 @@ const liveSessionSchema = z.object({
 
 const liveStopSchema = z.object({
   sessionId: z.string().min(1),
+  orderId: z.string().optional(),
+  resumeCode: z.string().optional(),
+  endedReason: z.enum(["user_ended", "prepare_failed"]).optional(),
   durationSeconds: z.number().optional().default(0),
   viewers: z.number().optional().default(0),
   comments: z.number().optional().default(0),
@@ -99,27 +116,27 @@ const broadcastSchema = z.object({
 });
 
 export async function liveSessionRoutes(server: FastifyInstance) {
-  server.get("/api/live-session", async () => {
-    const session = await prisma.liveSession.findFirst({
-      orderBy: { createdAt: "desc" },
-      include: {
-        avatar: true,
-      },
-    });
-
-    const managedSession = session?.id ? liveSessionManager.getSession(session.id) : null;
-    const effectiveStatus = managedSession?.state || session?.status || "ready";
-
-    return {
-      data: session
-        ? session
-        : {
-            status: effectiveStatus,
-          },
-    };
+  server.get("/api/live-session", { preHandler: rateLimitPreHandler("live-session-get", 30, 60_000) }, async (request, reply) => {
+    try {
+      const order = await requireStartableOrder(request);
+      const session = order.sessionId
+        ? await prisma.liveSession.findUnique({
+            where: { id: order.sessionId },
+            include: { avatar: true },
+          })
+        : null;
+      const managedSession = session?.id ? liveSessionManager.getSession(session.id) : null;
+      return {
+        data: session
+          ? { ...session, status: managedSession?.state || session.status }
+          : { status: "ready", orderId: order.id },
+      };
+    } catch (err) {
+      return sendEntitlementError(reply, err);
+    }
   });
 
-  server.post("/api/live-session/start", async (request, reply) => {
+  server.post("/api/live-session/start", { preHandler: rateLimitPreHandler("live-session-start", 6, 10 * 60_000) }, async (request, reply) => {
     const parsed = liveSessionSchema.safeParse(request.body);
 
     if (!parsed.success) {
@@ -155,6 +172,12 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       };
     }
     try {
+      const order = await requireStartableOrder(request);
+      const plan = getPlanById(order.planId);
+      if (!plan) {
+        reply.code(409);
+        return { error: "Paket order tidak valid." };
+      }
       const catalog = (parsed.data.products || [])
         .map((item) => normalizeClientProduct(item))
         .filter((item): item is NonNullable<typeof item> => Boolean(item));
@@ -164,14 +187,14 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         productId: parsed.data.productId,
         avatarId: avatar.id,
         platform: parsed.data.platform,
-        durationHours: parsed.data.durationHours,
-        autoReply: parsed.data.autoReply ?? true,
-        autoPin: parsed.data.autoPin ?? true,
-        autoPromotion: parsed.data.autoPromotion ?? parsed.data.autoPromo ?? true,
-        autoModeration: parsed.data.autoModeration ?? true,
-        accessToken: parsed.data.accessToken,
+        durationHours: order.durationHours,
+        autoReply: plan.automations.autoReply,
+        autoPin: plan.automations.autoPin,
+        autoPromotion: plan.automations.autoPromo,
+        autoModeration: plan.automations.autoModeration,
         liveChatId: parsed.data.liveChatId,
         liveVideoId: parsed.data.liveVideoId,
+        orderId: order.id,
         avatarName: avatar.name,
         voice: parsed.data.voice || avatar.voice || undefined,
         voiceId: parsed.data.voiceId || process.env.VOICE_ID || "girl_cute_kids",
@@ -194,16 +217,20 @@ export async function liveSessionRoutes(server: FastifyInstance) {
           podBooting: true,
           platform: parsed.data.platform,
           voice: parsed.data.voice || avatar.voice || null,
-          durationHours: parsed.data.durationHours,
-          maxDurationSeconds: parsed.data.durationHours * 3600,
-          estimatedCost: Math.round(parsed.data.durationHours * 12500),
-          gpuMode: "on-demand (NVIDIA RTX 4090)",
+          durationHours: order.durationHours,
+          maxDurationSeconds: order.durationHours * 3600,
+          estimatedCost: Math.round(order.durationHours * 12500),
+          orderId: order.id,
+          resumeCode: order.resumeCode,
           startedAt: new Date().toISOString(),
         },
       };
     } catch (err: any) {
+      if (err instanceof EntitlementError) {
+        return sendEntitlementError(reply, err);
+      }
       reply.code(500);
-      return { error: "Gagal memulai siaran. Coba lagi." };
+      return { error: err instanceof Error ? err.message : "Gagal memulai siaran. Coba lagi." };
     }
   });
 
@@ -226,12 +253,18 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  server.post("/api/live-session/stop", async (request, reply) => {
+  server.post("/api/live-session/stop", { preHandler: rateLimitPreHandler("live-session-stop", 20, 60_000) }, async (request, reply) => {
     const parsed = liveStopSchema.safeParse(request.body);
 
     if (!parsed.success) {
       reply.code(400);
       return { error: parsed.error.flatten() };
+    }
+
+    try {
+      await requireOrderForSession(request, parsed.data.sessionId);
+    } catch (err) {
+      return sendEntitlementError(reply, err);
     }
 
     const sessionId = parsed.data.sessionId;
@@ -246,6 +279,8 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       clicks: parsed.data.clicks,
       sales: parsed.data.sales,
       productSold: parsed.data.productSold,
+    }, {
+      endedReason: parsed.data.endedReason === "prepare_failed" ? "prepare_failed" : parsed.data.endedReason || "user_ended",
     });
 
     if (!result.success) {
@@ -260,12 +295,23 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  server.post("/api/live-stream/broadcast", async (request, reply) => {
+  server.post("/api/live-stream/broadcast", { preHandler: rateLimitPreHandler("live-broadcast", 10, 60_000) }, async (request, reply) => {
     const parsed = broadcastSchema.safeParse(request.body);
 
     if (!parsed.success) {
       reply.code(400);
       return { error: parsed.error.flatten() };
+    }
+
+    try {
+      await requireOrderForSession(request, parsed.data.sessionId);
+    } catch (err) {
+      return sendEntitlementError(reply, err);
+    }
+
+    if (!parsed.data.sessionId) {
+      reply.code(401);
+      return { success: false, error: "Sesi pembayaran tidak valid." };
     }
 
     const {
@@ -321,10 +367,10 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       }
     }
 
-    const podId = managedSession?.podId ?? (getStaticPodId() || null);
+    const podId = managedSession?.podId ?? null;
     const configuredWorkerUrl =
       process.env.NODE_ENV === "production" ? "" : (process.env.RUNPOD_WORKER_URL || process.env.AVATAR_WORKER_URL || "").trim();
-    if (managedSession && !podId && !configuredWorkerUrl) {
+    if (!managedSession || (!podId && !configuredWorkerUrl)) {
       reply.code(409);
       return {
         success: false,
@@ -446,7 +492,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  server.post("/api/live-stream/go-live-confirm", async (request, reply) => {
+  server.post("/api/live-stream/go-live-confirm", { preHandler: rateLimitPreHandler("go-live", 20, 60_000) }, async (request, reply) => {
     const schema = z.object({
       sessionId: z.string().min(1),
       rtmpUrl: z.string().optional(),
@@ -459,6 +505,11 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
 
     const { sessionId } = parsed.data;
+    try {
+      await requireOrderForSession(request, sessionId);
+    } catch (err) {
+      return sendEntitlementError(reply, err);
+    }
     const managedSession = liveSessionManager.getSession(sessionId);
     const liveSession = await prisma.liveSession.findUnique({
       where: { id: sessionId },
@@ -505,7 +556,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     }
   });
 
-  server.get("/api/live-stream/pipeline-status", async (request) => {
+  server.get("/api/live-stream/pipeline-status", { preHandler: rateLimitPreHandler("pipeline-status", 60, 60_000) }, async (request, reply) => {
     const { sessionId } = request.query as { sessionId?: string };
     if (!sessionId) {
       return {
@@ -516,6 +567,12 @@ export async function liveSessionRoutes(server: FastifyInstance) {
         isLive: false,
         isBroadcasting: false,
       };
+    }
+
+    try {
+      await requireOrderForSession(request, sessionId);
+    } catch (err) {
+      return sendEntitlementError(reply, err);
     }
 
     const status = await liveHostOrchestrator.getPipelineStatus(sessionId);
@@ -581,11 +638,16 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  server.post("/api/live-stream/stop-broadcast", async (request, reply) => {
+  server.post("/api/live-stream/stop-broadcast", { preHandler: rateLimitPreHandler("stop-broadcast", 20, 60_000) }, async (request, reply) => {
     const parsed = liveStopSchema.safeParse(request.body);
     if (!parsed.success) {
       reply.code(400);
       return { error: parsed.error.flatten() };
+    }
+    try {
+      await requireOrderForSession(request, parsed.data.sessionId);
+    } catch (err) {
+      return sendEntitlementError(reply, err);
     }
     const sessionId = parsed.data.sessionId;
     if (sessionId) liveHostOrchestrator.stop(sessionId);
@@ -598,11 +660,16 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  server.post("/api/live-stream/pause", async (request, reply) => {
-    const parsedBody = z.object({ sessionId: z.string().min(1) }).safeParse(request.body || {});
+  server.post("/api/live-stream/pause", { preHandler: rateLimitPreHandler("live-pause", 20, 60_000) }, async (request, reply) => {
+    const parsedBody = z.object({ sessionId: z.string().min(1), orderId: z.string().optional(), resumeCode: z.string().optional() }).safeParse(request.body || {});
     if (!parsedBody.success) {
       reply.code(400);
       return { success: false, error: "sessionId wajib diisi." };
+    }
+    try {
+      await requireOrderForSession(request, parsedBody.data.sessionId);
+    } catch (err) {
+      return sendEntitlementError(reply, err);
     }
     const body = parsedBody.data;
     const managed = liveSessionManager.getSession(body.sessionId);
@@ -614,7 +681,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { success: result.success, data: result };
     }
 
-    const podId = managed?.podId || process.env.RUNPOD_POD_ID || null;
+    const podId = managed?.podId || null;
     if (podId) {
       const result = await pauseRunPodBroadcast(podId);
       if (result.success && managed?.sessionId) {
@@ -637,11 +704,16 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  server.post("/api/live-stream/resume", async (request, reply) => {
-    const parsedBody = z.object({ sessionId: z.string().min(1) }).safeParse(request.body || {});
+  server.post("/api/live-stream/resume", { preHandler: rateLimitPreHandler("live-resume", 20, 60_000) }, async (request, reply) => {
+    const parsedBody = z.object({ sessionId: z.string().min(1), orderId: z.string().optional(), resumeCode: z.string().optional() }).safeParse(request.body || {});
     if (!parsedBody.success) {
       reply.code(400);
       return { success: false, error: "sessionId wajib diisi." };
+    }
+    try {
+      await requireOrderForSession(request, parsedBody.data.sessionId);
+    } catch (err) {
+      return sendEntitlementError(reply, err);
     }
     const body = parsedBody.data;
     const managed = liveSessionManager.getSession(body.sessionId);
@@ -653,7 +725,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { success: result.success, data: result };
     }
 
-    const podId = managed?.podId || process.env.RUNPOD_POD_ID || null;
+    const podId = managed?.podId || null;
     if (podId) {
       const result = await resumeRunPodBroadcast(podId);
       if (result.success && managed?.sessionId) {
@@ -674,7 +746,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  server.post("/api/live-session/test-comment", async (request, reply) => {
+  server.post("/api/live-session/test-comment", { preHandler: rateLimitPreHandler("test-comment", 20, 60_000) }, async (request, reply) => {
     const schema = z.object({
       comment: z.string().min(1),
       sessionId: z.string().optional(),
@@ -689,8 +761,19 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { success: false, error: parsed.error.flatten() };
     }
 
+    let commentOrder;
+    try {
+      commentOrder = await requireStartableOrder(request);
+    } catch (err) {
+      return sendEntitlementError(reply, err);
+    }
+
     const { comment, sender, avatarName, tone, voice } = parsed.data;
-    const managed = parsed.data.sessionId ? liveSessionManager.getSession(parsed.data.sessionId) : liveSessionManager.getLatestActiveSession();
+    const managed = parsed.data.sessionId
+      ? liveSessionManager.getSession(parsed.data.sessionId)
+      : commentOrder.sessionId
+        ? liveSessionManager.getSession(commentOrder.sessionId)
+        : null;
     const sessionId = managed?.sessionId || parsed.data.sessionId || "";
     const isLive = managed?.state === "live";
 
@@ -730,7 +813,7 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  server.post("/api/live-session/switch-product", async (request, reply) => {
+  server.post("/api/live-session/switch-product", { preHandler: rateLimitPreHandler("switch-product", 20, 60_000) }, async (request, reply) => {
     const bodySchema = z.object({
       productId: z.string().min(1),
       productName: z.string().optional(),
@@ -743,14 +826,22 @@ export async function liveSessionRoutes(server: FastifyInstance) {
       return { error: parsed.error.flatten() };
     }
 
+    let order;
+    try {
+      order = await requireOrderForSession(request, parsed.data.sessionId);
+    } catch (err) {
+      return sendEntitlementError(reply, err);
+    }
+
     const latestSession = parsed.data.sessionId
       ? await prisma.liveSession.findFirst({
-          where: { id: parsed.data.sessionId },
+          where: { id: parsed.data.sessionId, orderId: order.id },
         })
-      : await prisma.liveSession.findFirst({
-          where: { status: { in: ["live", "pending", "starting"] } },
-          orderBy: { createdAt: "desc" },
-        });
+      : order.sessionId
+        ? await prisma.liveSession.findFirst({
+            where: { id: order.sessionId },
+          })
+        : null;
     if (!latestSession) {
       reply.code(404);
       return { error: "Tidak ada sesi live untuk ganti produk." };
@@ -802,6 +893,10 @@ export async function liveSessionRoutes(server: FastifyInstance) {
   });
 
   server.post("/api/webhooks/platform-events", async (request, reply) => {
+    if (!verifyPlatformWebhook(request)) {
+      reply.code(401);
+      return { error: "Tanda tangan webhook tidak valid." };
+    }
     const sessionId = (request.query as any).sessionId;
     if (!sessionId) {
       reply.code(400);
@@ -836,18 +931,30 @@ export async function liveSessionRoutes(server: FastifyInstance) {
     };
   });
 
-  server.get("/api/live-session/metrics", async (request) => {
-    const querySessionId = (request.query as any).sessionId;
+  server.get("/api/live-session/metrics", { preHandler: rateLimitPreHandler("live-metrics", 60, 60_000) }, async (request, reply) => {
+    let order;
+    try {
+      order = await requireStartableOrder(request);
+    } catch (err) {
+      return sendEntitlementError(reply, err);
+    }
+    const querySessionId = (request.query as any).sessionId || order.sessionId;
+    if (querySessionId && order.sessionId && querySessionId !== order.sessionId) {
+      const linked = await prisma.liveSession.findFirst({
+        where: { id: querySessionId, orderId: order.id },
+        select: { id: true },
+      });
+      if (!linked) {
+        reply.code(403);
+        return { error: "Sesi ini bukan milik kode pembayaran Anda." };
+      }
+    }
     const session = querySessionId
       ? await prisma.liveSession.findUnique({
           where: { id: querySessionId },
           include: { avatar: true },
         })
-      : await prisma.liveSession.findFirst({
-          where: { status: { in: ["starting", "pending", "live"] } },
-          orderBy: { createdAt: "desc" },
-          include: { avatar: true },
-        });
+      : null;
 
     const sessionId = session?.id || "";
     const managedSession = sessionId ? liveSessionManager.getSession(sessionId) : null;

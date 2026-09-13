@@ -1,5 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { requireStartableOrder, sendEntitlementError } from "../lib/entitlement.js";
+import { rateLimitPreHandler } from "../lib/rate-limit.js";
 
 import {
   generateDynamicSalesResponseGroq,
@@ -50,7 +52,12 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     }
   });
 
-  server.post("/api/ai/sales-response", async (request, reply) => {
+  server.post("/api/ai/sales-response", { preHandler: rateLimitPreHandler("ai-sales", 20, 60_000) }, async (request, reply) => {
+    try {
+      await requireStartableOrder(request);
+    } catch (err) {
+      return sendEntitlementError(reply, err);
+    }
     const parsed = salesResponseSchema.safeParse(request.body);
 
     if (!parsed.success) {
@@ -122,7 +129,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     }
   });
 
-  server.post("/api/ai/video-script", async (request, reply) => {
+  server.post("/api/ai/video-script", { preHandler: rateLimitPreHandler("ai-video", 10, 60_000) }, async (request, reply) => {
     const parsed = videoScriptSchema.safeParse(request.body);
 
     if (!parsed.success) {
@@ -168,7 +175,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     }
   });
 
-  server.post("/api/ai/prepare-product", async (request, reply) => {
+  server.post("/api/ai/prepare-product", { preHandler: rateLimitPreHandler("ai-prepare", 12, 60_000) }, async (request, reply) => {
     const schema = z.object({
       name: z.string().min(1),
       price: z.union([z.string(), z.number()]).optional(),
@@ -210,7 +217,7 @@ export async function aiBrainRoutes(server: FastifyInstance) {
     }
   });
 
-  server.post("/api/ai/live-sales-script", async (request, reply) => {
+  server.post("/api/ai/live-sales-script", { preHandler: rateLimitPreHandler("ai-live-script", 20, 60_000) }, async (request, reply) => {
     const body = request.body as {
       productId?: string;
       productName?: string;
@@ -244,6 +251,12 @@ export async function aiBrainRoutes(server: FastifyInstance) {
       usage = p.usage || usage;
       faq = p.faq || faq;
       stock = p.stock || stock;
+    }
+
+    try {
+      await requireStartableOrder(request);
+    } catch (err) {
+      return sendEntitlementError(reply, err);
     }
 
     const hostName = body.avatarName || "Namira";

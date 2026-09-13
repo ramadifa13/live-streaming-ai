@@ -2,6 +2,8 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import fs from "fs/promises";
 import path from "path";
+import { requireStartableOrder, sendEntitlementError } from "../lib/entitlement.js";
+import { rateLimitPreHandler } from "../lib/rate-limit.js";
 import { HOST_VOICES, resolveVoiceId, synthesizeSpeech } from "../services/tts.js";
 
 const synthesizeSchema = z.object({
@@ -90,12 +92,20 @@ export async function ttsRoutes(server: FastifyInstance) {
     return { success: true, voiceId, engine: "pocket-tts-indonesian" };
   });
 
-  server.post("/api/tts/synthesize", async (request, reply) => {
+  server.post("/api/tts/synthesize", { preHandler: rateLimitPreHandler("tts-synth", 20, 60_000) }, async (request, reply) => {
     const parsed = synthesizeSchema.safeParse(request.body);
 
     if (!parsed.success) {
       reply.code(400);
       return { error: parsed.error.flatten() };
+    }
+
+    if (parsed.data.sessionId) {
+      try {
+        await requireStartableOrder(request);
+      } catch (err) {
+        return sendEntitlementError(reply, err);
+      }
     }
 
     const voiceId = resolveVoiceId(

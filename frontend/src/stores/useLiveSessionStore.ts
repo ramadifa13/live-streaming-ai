@@ -4,6 +4,8 @@ import { ChatMessage, SessionSummaryData } from "@/app/dashboard/types";
 import { ConnectedAccount } from "@/services/oauthService";
 import { liveSessionService, type LiveClockSnapshot } from "@/services/liveSessionService";
 import { toClientCopy } from "@/lib/client-copy";
+import { storeResumeCode } from "@/lib/api";
+import type { PublicPlan } from "@/services/orderService";
 
 const MAX_CHAT_MESSAGES = 200;
 
@@ -67,6 +69,10 @@ interface LiveSessionState {
   connectingStageText: string;
 
   selectedDuration: number;
+  selectedPlanId: string;
+  plans: PublicPlan[];
+  orderId: string | null;
+  resumeCode: string | null;
   liveSeconds: number;
   liveStartedAtMs: number;
 
@@ -93,6 +99,8 @@ interface LiveSessionState {
   pipelineStatus: PipelineStatus | null;
 
   setSelectedDuration: (hours: number) => void;
+  setSelectedPlanId: (planId: string) => void;
+  setPlans: (plans: PublicPlan[]) => void;
   setSelectedPlatform: (plat: string) => void;
   setConnectMode: (mode: "1CLICK" | "MANUAL") => void;
   setCustomRtmpUrl: (url: string) => void;
@@ -146,6 +154,10 @@ export const useLiveSessionStore = create<LiveSessionState>()(
       connectingStageIndex: 0,
       connectingStageText: "Menyiapkan studio AI…",
       selectedDuration: 1,
+      selectedPlanId: "trial-1h",
+      plans: [],
+      orderId: null,
+      resumeCode: null,
       liveSeconds: 0,
       liveStartedAtMs: 0,
       selectedPlatform: "Instagram Live",
@@ -178,6 +190,8 @@ export const useLiveSessionStore = create<LiveSessionState>()(
       pipelineStatus: null,
 
       setSelectedDuration: (hours) => set({ selectedDuration: hours }),
+      setSelectedPlanId: (planId) => set({ selectedPlanId: planId }),
+      setPlans: (plans) => set({ plans }),
       setSelectedPlatform: (plat) => set({ selectedPlatform: plat }),
       setConnectMode: (mode) => set({ connectMode: mode }),
       setCustomRtmpUrl: (url) => set({ customRtmpUrl: url }),
@@ -256,7 +270,7 @@ export const useLiveSessionStore = create<LiveSessionState>()(
         });
 
         if (sid) {
-          await liveSessionService.teardownSession(sid);
+          await liveSessionService.teardownSession(sid, "prepare_failed");
         }
       },
 
@@ -282,6 +296,7 @@ export const useLiveSessionStore = create<LiveSessionState>()(
         try {
           stopRes = await liveSessionService.stopSession({
             sessionId: state.currentLiveSessionId,
+            endedReason: "user_ended",
             durationSeconds,
             viewers: state.metrics.viewers,
             comments: state.metrics.comments,
@@ -292,6 +307,9 @@ export const useLiveSessionStore = create<LiveSessionState>()(
         } catch (err) {
           stopError = err instanceof Error ? err.message : "Gagal menghentikan sesi di server.";
         }
+
+        storeResumeCode(null);
+        set({ orderId: null, resumeCode: null });
 
         const gpuWarning = toClientCopy(
           stopRes?.gpuWarning || (stopRes?.gpuTerminated === false ? "Siaran berakhir. Penutupan studio sedang diproses." : undefined) || stopError,
@@ -342,6 +360,9 @@ export const useLiveSessionStore = create<LiveSessionState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         currentLiveSessionId: state.currentLiveSessionId,
+        orderId: state.orderId,
+        resumeCode: state.resumeCode,
+        selectedPlanId: state.selectedPlanId,
         isLiveActive: state.isLiveActive,
         isLivePaused: state.isLivePaused,
         liveSessionPhase: state.liveSessionPhase,
