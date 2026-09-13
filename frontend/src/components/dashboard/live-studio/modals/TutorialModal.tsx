@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { X, ArrowLeft, ArrowRight, ExternalLink, Check } from "lucide-react";
+import { X, ArrowLeft, ArrowRight, ExternalLink, Check, BookOpen } from "lucide-react";
 import { useDashboardUIStore } from "@/stores/useDashboardUIStore";
 import { useLiveSessionStore } from "@/stores/useLiveSessionStore";
 import { PlatformIcon } from "@/components/shared/PlatformIcon";
@@ -48,25 +48,30 @@ export const TutorialModal: React.FC = () => {
   const close = () => setShowTutorialModal(false);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md animate-fadeIn">
-      <div className="relative flex max-h-[90vh] w-full max-w-130 flex-col overflow-hidden rounded-3xl border border-white/8 bg-[#0b1220] shadow-[0_24px_80px_rgba(0,0,0,0.55)]">
-        <div className="flex items-center justify-between px-6 pt-5 pb-4">
-          <div>
-            <p className="text-[11px] font-medium tracking-wide text-slate-500 uppercase">Panduan</p>
-            <h3 className="mt-0.5 text-[17px] font-semibold text-white">Ambil kode siaran</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 backdrop-blur-md animate-fadeIn sm:p-4">
+      <div className="relative flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-[#22314e] bg-[#0c1221] shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between border-b border-[#1e293b] px-5 py-4 sm:px-6">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-400">
+              <BookOpen className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold tracking-tight text-white sm:text-lg">Ambil kode siaran</h3>
+              <p className="text-[11px] text-slate-400">Ikuti satu langkah, lalu tekan Lanjut.</p>
+            </div>
           </div>
           <button
             type="button"
             onClick={close}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-white/6 hover:text-white cursor-pointer"
+            className="rounded-xl p-2 text-slate-400 transition hover:bg-white/10 hover:text-white cursor-pointer"
             aria-label="Tutup"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="px-6">
-          <div className="flex gap-1 overflow-x-auto pb-1">
+        <div className="shrink-0 border-b border-[#1e293b] bg-[#0a101c] px-5 py-2.5 sm:px-6">
+          <div className="flex flex-wrap gap-1.5">
             {LIVE_PLATFORM_GUIDES.map((item) => {
               const active = item.id === guide.id;
               return (
@@ -74,10 +79,10 @@ export const TutorialModal: React.FC = () => {
                   key={item.id}
                   type="button"
                   onClick={() => switchPlatform(item.id)}
-                  className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-medium transition cursor-pointer ${
+                  className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold transition cursor-pointer ${
                     active
-                      ? "bg-white text-slate-900"
-                      : "bg-white/5 text-slate-400 hover:bg-white/8 hover:text-slate-200"
+                      ? "bg-linear-to-r from-blue-600 to-indigo-600 text-white shadow"
+                      : "text-slate-400 hover:bg-white/5 hover:text-white"
                   }`}
                 >
                   {item.platformKey ? <PlatformIcon name={item.platformKey} size="sm" /> : null}
@@ -88,12 +93,14 @@ export const TutorialModal: React.FC = () => {
           </div>
         </div>
 
-        <div className="mt-4 flex gap-6 px-6">
+        <div className="flex shrink-0 gap-5 border-b border-[#232c42] px-5 sm:px-6">
           <button
             type="button"
             onClick={() => setView("steps")}
-            className={`pb-2 text-[13px] font-medium transition cursor-pointer ${
-              view === "steps" ? "border-b-2 border-white text-white" : "border-b-2 border-transparent text-slate-500 hover:text-slate-300"
+            className={`py-2.5 text-[12px] font-bold transition cursor-pointer ${
+              view === "steps"
+                ? "border-b-2 border-blue-500 text-blue-300"
+                : "border-b-2 border-transparent text-slate-500 hover:text-slate-300"
             }`}
           >
             Langkah
@@ -101,30 +108,37 @@ export const TutorialModal: React.FC = () => {
           <button
             type="button"
             onClick={() => setView("syarat")}
-            className={`pb-2 text-[13px] font-medium transition cursor-pointer ${
-              view === "syarat" ? "border-b-2 border-white text-white" : "border-b-2 border-transparent text-slate-500 hover:text-slate-300"
+            className={`py-2.5 text-[12px] font-bold transition cursor-pointer ${
+              view === "syarat"
+                ? "border-b-2 border-blue-500 text-blue-300"
+                : "border-b-2 border-transparent text-slate-500 hover:text-slate-300"
             }`}
           >
             Syarat akun
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+        <div className="guide-modal-scrollbar min-h-70 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
           {view === "steps" && step ? (
             <div className="flex flex-col">
               <div className="mb-5">
-                <div className="mb-2 flex items-center justify-between text-[11px] text-slate-500">
+                <div className="mb-2 flex items-center justify-between text-[11px] font-medium text-slate-500">
                   <span>
                     {safeIndex + 1} / {totalSteps}
                   </span>
-                  <span>{step.place === "livio" ? "Di Livio" : "Di komputer"}</span>
+                  <span className={step.place === "livio" ? "text-cyan-300" : "text-blue-300"}>
+                    {step.place === "livio" ? "Di Livio" : "Di komputer"}
+                  </span>
                 </div>
-                <div className="h-1 overflow-hidden rounded-full bg-white/8">
-                  <div className="h-full rounded-full bg-white/70 transition-all duration-300" style={{ width: `${progress}%` }} />
+                <div className="h-1 overflow-hidden rounded-full bg-[#111827]">
+                  <div
+                    className="h-full rounded-full bg-linear-to-r from-blue-500 to-indigo-500 transition-all duration-300"
+                    style={{ width: `${progress}%` }}
+                  />
                 </div>
               </div>
 
-              <h4 className="text-[22px] font-semibold leading-snug tracking-tight text-white">{step.title}</h4>
+              <h4 className="text-xl font-bold leading-snug tracking-tight text-white">{step.title}</h4>
 
               {isFirst ? <p className="mt-2 text-[13px] leading-relaxed text-slate-400">{guide.intro}</p> : null}
 
@@ -133,32 +147,32 @@ export const TutorialModal: React.FC = () => {
                   href={step.website.url}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-5 flex items-center justify-between rounded-2xl bg-white px-4 py-3 text-slate-900 transition hover:bg-slate-100"
+                  className="mt-5 flex items-center justify-between rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 transition hover:bg-blue-500/15"
                 >
                   <div>
-                    <p className="text-[11px] font-medium text-slate-500">Buka situs</p>
-                    <p className="text-[14px] font-semibold">{step.website.label}</p>
+                    <p className="text-[11px] font-medium text-blue-300/80">Buka situs</p>
+                    <p className="text-[13px] font-semibold text-white">{step.website.label}</p>
                   </div>
-                  <span className="inline-flex items-center gap-1 text-[12px] font-semibold">
+                  <span className="inline-flex items-center gap-1 text-[12px] font-bold text-blue-200">
                     {step.website.buttonLabel}
                     <ExternalLink className="h-3.5 w-3.5" />
                   </span>
                 </a>
               ) : null}
 
-              <ol className="mt-6 space-y-4">
+              <ol className="mt-6 space-y-3">
                 {step.doThis.map((item, itemIndex) => (
-                  <li key={item} className="flex gap-3">
-                    <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/8 text-[11px] font-semibold text-slate-300">
+                  <li key={item} className="flex gap-3 rounded-xl border border-[#232c42] bg-[#111827] px-3 py-2.5">
+                    <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-600 text-[11px] font-bold text-white">
                       {itemIndex + 1}
                     </span>
-                    <p className="text-[14px] leading-relaxed text-slate-200">{item}</p>
+                    <p className="text-[13px] leading-relaxed text-slate-200">{item}</p>
                   </li>
                 ))}
               </ol>
 
               {step.youWillSee ? (
-                <p className="mt-6 text-[13px] leading-relaxed text-slate-500">
+                <p className="mt-5 rounded-xl border border-emerald-500/20 bg-emerald-500/8 px-3 py-2.5 text-[12px] leading-relaxed text-emerald-100/90">
                   Lalu Anda akan melihat: {step.youWillSee}
                 </p>
               ) : null}
@@ -166,10 +180,13 @@ export const TutorialModal: React.FC = () => {
           ) : (
             <div className="space-y-6">
               <div>
-                <h4 className="text-[15px] font-semibold text-white">Akun harus memenuhi ini</h4>
-                <ul className="mt-3 space-y-3">
+                <h4 className="text-[13px] font-bold text-blue-300">Akun harus memenuhi ini</h4>
+                <ul className="mt-3 space-y-2">
                   {guide.requirements.map((item) => (
-                    <li key={item} className="flex gap-3 text-[13px] leading-relaxed text-slate-300">
+                    <li
+                      key={item}
+                      className="flex gap-3 rounded-xl border border-[#232c42] bg-[#111827] px-3 py-2.5 text-[13px] leading-relaxed text-slate-300"
+                    >
                       <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
                       <span>{item}</span>
                     </li>
@@ -179,10 +196,13 @@ export const TutorialModal: React.FC = () => {
 
               {guide.warnings.length > 0 ? (
                 <div>
-                  <h4 className="text-[15px] font-semibold text-white">Kalau gagal, biasanya karena ini</h4>
-                  <ul className="mt-3 space-y-3">
+                  <h4 className="text-[13px] font-bold text-amber-300">Kalau gagal, biasanya karena ini</h4>
+                  <ul className="mt-3 space-y-2">
                     {guide.warnings.map((item) => (
-                      <li key={item} className="text-[13px] leading-relaxed text-slate-400">
+                      <li
+                        key={item}
+                        className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-3 py-2.5 text-[13px] leading-relaxed text-amber-100/80"
+                      >
                         {item}
                       </li>
                     ))}
@@ -194,7 +214,7 @@ export const TutorialModal: React.FC = () => {
                 href={guide.officialUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1.5 text-[12px] text-slate-500 hover:text-slate-300"
+                className="inline-flex items-center gap-1.5 text-[12px] text-blue-300 hover:underline"
               >
                 {guide.officialLabel}
                 <ExternalLink className="h-3 w-3" />
@@ -203,14 +223,14 @@ export const TutorialModal: React.FC = () => {
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-white/6 px-6 py-4">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[#232c42] bg-[#0c1221] px-5 py-3.5 sm:px-6">
           {view === "steps" ? (
             <>
               <button
                 type="button"
                 onClick={() => setStepIndex((value) => Math.max(0, value - 1))}
                 disabled={isFirst}
-                className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-[13px] font-medium text-slate-400 transition hover:text-white disabled:invisible cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-[12px] font-bold text-slate-400 transition hover:bg-white/5 hover:text-white disabled:invisible cursor-pointer"
               >
                 <ArrowLeft className="h-4 w-4" />
                 Kembali
@@ -224,7 +244,7 @@ export const TutorialModal: React.FC = () => {
                   }
                   setStepIndex((value) => Math.min(totalSteps - 1, value + 1));
                 }}
-                className="inline-flex items-center gap-1.5 rounded-full bg-white px-5 py-2.5 text-[13px] font-semibold text-slate-900 transition hover:bg-slate-100 cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-linear-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-[12px] font-bold text-white shadow-md shadow-blue-600/30 transition hover:brightness-110 cursor-pointer"
               >
                 {isLast ? "Selesai" : "Lanjut"}
                 {!isLast ? <ArrowRight className="h-4 w-4" /> : null}
@@ -235,7 +255,7 @@ export const TutorialModal: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setView("steps")}
-                className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-[13px] font-medium text-slate-400 transition hover:text-white cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-[12px] font-bold text-slate-400 transition hover:bg-white/5 hover:text-white cursor-pointer"
               >
                 <ArrowLeft className="h-4 w-4" />
                 Ke langkah
@@ -243,7 +263,7 @@ export const TutorialModal: React.FC = () => {
               <button
                 type="button"
                 onClick={close}
-                className="rounded-full bg-white px-5 py-2.5 text-[13px] font-semibold text-slate-900 transition hover:bg-slate-100 cursor-pointer"
+                className="rounded-xl bg-linear-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-[12px] font-bold text-white shadow-md shadow-blue-600/30 transition hover:brightness-110 cursor-pointer"
               >
                 Tutup
               </button>
